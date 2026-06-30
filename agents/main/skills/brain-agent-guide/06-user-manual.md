@@ -402,13 +402,18 @@ während `init` oder einer Chat-Antwort) — kein manuelles Neuladen nötig (der
 **Code-Index nutzen** (Code-Projekte): Der untere Bereich kennt alle Symbole des
 Projekts (aus dem automatisch gepflegten Code-Index) und macht sie direkt
 nutzbar:
-- **Symbole-Panel** (unter dem Datei-Baum): zeigt alle **Klassen, Methoden,
-  Funktionen und Variablen** des Projekts, nach Datei gruppiert, jeweils mit
-  Signatur und Zeilennummer. Das **Suchfeld** oben filtert live. **Klick** auf
-  einen Eintrag öffnet die Datei und springt an die Definition (die Zeile blinkt
-  kurz auf). Über das **↗-Symbol** klappt ein Eintrag seine **Aufrufer** (wer
-  ruft das auf) und **Verwendungen** (alle Fundstellen im Projekt) auf — beide
-  ebenfalls anklickbar zum Hinspringen. Das Panel lässt sich einklappen.
+- **Symbole im Datei-Baum** (Code-Projekte): Die Symbole (**Klassen, Methoden,
+  Funktionen und Variablen**) stecken direkt **im Datei-Baum** — kein getrenntes
+  Panel mehr. Quelldateien mit Symbolen haben einen **Aufklapp-Pfeil**; klappen
+  Sie eine Datei auf, erscheinen ihre Symbole darunter (mit Signatur und
+  Zeilennummer). **Klick** auf den Dateinamen öffnet die Datei wie gewohnt;
+  **Klick** auf ein Symbol öffnet die Datei und springt an die Definition (die
+  Zeile blinkt kurz auf). Über das **↗-Symbol** klappt ein Symbol seine
+  **Aufrufer** (wer ruft das auf) und **Verwendungen** (alle Fundstellen im
+  Projekt) auf — beide ebenfalls anklickbar zum Hinspringen.
+- **Vereinte Suche** (Suchfeld über dem Datei-Baum): filtert **gleichzeitig nach
+  Dateinamen und Symbolnamen**. Dateien, deren Symbole passen, werden automatisch
+  aufgeklappt und zeigen nur die Treffer.
 - **Symbol-Schnellsuche**: **Cmd/Strg+P** öffnet zusätzlich eine schnelle
   Suchleiste über alle Funktionen, Methoden und Klassen (↑/↓ + Enter springt).
 - **Rechtsklick auf ein Symbol** im Editor: **Gehe zu Definition** und **Wer
@@ -418,7 +423,7 @@ nutzbar:
   Strg-Leertaste — nicht Cmd-Leertaste, das ist Spotlight).
 - **Hover**: Mit der Maus über ein Symbol fahren zeigt Signatur, Docstring und
   Aufruf-Häufigkeit.
-- **Auswertungen** (Σ-Knopf im Symbole-Panel): fertige Analysen über den
+- **Auswertungen** (Σ-Knopf in der Datei-Baum-Leiste): fertige Analysen über den
   Code-Index als Karten — **komplexeste Funktionen**, **meistgenutzte
   Funktionen**, **aufruf-intensivste Funktionen**, **größte Dateien**,
   **Klassenhierarchie** — mit übersichtlicher Ergebnistabelle (Balken für
@@ -525,7 +530,11 @@ einen **neuen Ordner** direkt im Arbeitsverzeichnis an.
 
 Im unteren Bereich teilen sich der **Datei-Baum** und die **Terminal-Chats** die
 linke Spalte standardmäßig zur Hälfte; das Höhenverhältnis passen Sie über die
-**Trennlinie** dazwischen per Ziehen an (pro Projekt gemerkt).
+**Trennlinie** dazwischen per Ziehen an (pro Projekt gemerkt). Der **Maus-Tooltip**
+einer Datei zeigt Pfad, **Größe** und **letzte Änderung**. Über den
+**Sortier-Knopf** in der Baum-Leiste sortieren Sie nach **Art** (Ordner zuerst —
+Standard), **Name**, **Datum** (neueste zuerst) oder **Größe** (größte zuerst);
+die Wahl wird pro Projekt gemerkt.
 
 **Terminal-Chat** (Code-Projekte): Neben Terminal und Editor öffnen Sie im
 unteren Bereich einen **Terminal-Chat** — eine schlanke, terminalartige
@@ -536,12 +545,20 @@ Teilbereichs (oder „+ Neuer Terminal-Chat" in der Sektion **Terminal-Chats**).
 Ein Terminal-Chat lässt sich wie jeder Tab teilen — z. B. links ein Editor,
 rechts der Chat — und maximieren.
 
-Die Antworten **streamen** live mit einem Lauf-Anzeiger (Spinner); darunter
-zeigt eine **Statuszeile** das aktive Modell, die Denkstufe, Token (ein/aus),
-Kosten und die Kontext-Auslastung. Werkzeugaufrufe werden als kompakte Zeilen
+Die **Eingabezeile** sitzt — wie in einer Terminal-CLI — direkt **unter der
+letzten Antwort** und scrollt mit dem Verlauf mit. Den **Text im Verlauf** können
+Sie wie gewohnt markieren und kopieren. Die Antworten **streamen** live mit einem
+Lauf-Anzeiger (Spinner); darunter zeigt eine **Statuszeile** das aktive Modell,
+die Denkstufe, Token (ein/aus), Kosten und die Kontext-Auslastung — und rechts
+einen **⬇ .md-Knopf**, der den **Chatverlauf als Markdown** direkt herunterlädt
+(ohne Ablage im Arbeitsverzeichnis). Werkzeugaufrufe werden als kompakte Zeilen
 (`● Werkzeug Datei ✓`) eingeblendet (per `/tools` ein-/ausschaltbar). Mit
 **↑/↓** blättern Sie wie in einer Shell durch zuletzt gesendete Eingaben, mit
-**Tab** auf leerer Zeile holen Sie einen Eingabe-Vorschlag.
+**Tab** auf leerer Zeile holen Sie einen Eingabe-Vorschlag. Über das
+**Rechtsklick-Menü** eines Tabs exportieren Sie Terminal-Chat **oder**
+Shell-Terminal jederzeit **als Markdown**. Schließen Sie den letzten Tab, bleibt
+der untere Bereich **geöffnet** (leerer Teilbereich) — er wird nur über das
+✕/den Umschalter geschlossen.
 
 Sobald Sie ein **„/“** eingeben, erscheint eine **Auswahlliste** der Befehle
 (mit Beschreibung); bei Befehlen mit Optionen (z. B. `/model`, `/think`) folgt

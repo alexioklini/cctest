@@ -39,14 +39,19 @@ function _tcActiveTab() {
 function tcBuildBody(tab) {
   const el = tab.el;
   el.className = 'termchat';
+  // CLI-style layout: the composer (.tc-input-wrap) lives INSIDE the scrollback
+  // (.tc-log), right after the messages, so it scrolls with the conversation and
+  // sits directly under the last response — like the Claude Code CLI prompt.
+  // Only the status footer stays pinned at the bottom.
   el.innerHTML = `
-    <div class="tc-log" id="${esc(tab.id)}-log"></div>
-    <div class="tc-input-wrap">
-      <div class="tc-ac" id="${esc(tab.id)}-ac" style="display:none"></div>
-      <div class="tc-input">
-        <span class="tc-prompt">›</span>
-        <textarea class="tc-ta" rows="1" spellcheck="false"
-          placeholder="Nachricht … (/ Befehle · ! für Shell · ↑↓ Verlauf)"></textarea>
+    <div class="tc-log" id="${esc(tab.id)}-log">
+      <div class="tc-input-wrap">
+        <div class="tc-ac" id="${esc(tab.id)}-ac" style="display:none"></div>
+        <div class="tc-input">
+          <span class="tc-prompt">›</span>
+          <textarea class="tc-ta" rows="1" spellcheck="false"
+            placeholder="Nachricht … (/ Befehle · ! für Shell · ↑↓ Verlauf)"></textarea>
+        </div>
       </div>
     </div>
     <div class="tc-status" id="${esc(tab.id)}-status"></div>`;
@@ -67,11 +72,16 @@ function tcBuildBody(tab) {
   // Make the pane focusable so it receives key events even when nothing inside
   // is focused (clicking the log focuses the pane).
   el.tabIndex = -1;
-  el.addEventListener('mousedown', (e) => {
-    // Clicking empty log area (not selecting text in it) → keep keys flowing to
-    // the textarea so typing continues to work.
-    if (e.target === el || (e.target.closest && e.target.closest('.tc-log') && !window.getSelection().toString())) {
-      setTimeout(() => { try { ta.focus(); } catch (_) {} }, 0);
+  // Refocus the composer on a plain CLICK in the log (fires after mouseup, so an
+  // active text selection is already known). Doing this on MOUSEDOWN (the old
+  // code) stole focus mid-drag and collapsed the selection → text couldn't be
+  // selected/copied. Skip refocus when a selection exists or the click landed on
+  // the composer itself.
+  el.addEventListener('click', (e) => {
+    if (window.getSelection && window.getSelection().toString()) return;
+    if (e.target.closest && e.target.closest('.tc-input-wrap')) return;
+    if (e.target === el || (e.target.closest && e.target.closest('.tc-log'))) {
+      try { ta.focus(); } catch (_) {}
     }
   });
   tab._ac = { open: false, items: [], sel: 0 };
@@ -85,6 +95,22 @@ function _tcAutosize(ta) {
 
 function _tcLog(tab) { return document.getElementById(tab.id + '-log'); }
 function _tcScroll(tab) { const l = _tcLog(tab); if (l) l.scrollTop = l.scrollHeight; }
+
+// The composer (.tc-input-wrap) lives INSIDE .tc-log (CLI-style, scrolls with
+// the conversation), so message rows must be inserted BEFORE it to keep the
+// prompt last. Use this instead of log.appendChild for any chat/shell row.
+function _tcInputWrap(tab) { const l = _tcLog(tab); return l ? l.querySelector('.tc-input-wrap') : null; }
+function _tcAddRow(tab, node) {
+  const log = _tcLog(tab); if (!log) return;
+  const wrap = _tcInputWrap(tab);
+  if (wrap) log.insertBefore(node, wrap); else log.appendChild(node);
+}
+// Clear all message rows but KEEP the composer (.tc-input-wrap) in place.
+function _tcClearRows(tab) {
+  const log = _tcLog(tab); if (!log) return;
+  const wrap = _tcInputWrap(tab);
+  Array.from(log.children).forEach(c => { if (c !== wrap) c.remove(); });
+}
 
 // ── Input handling: Enter to send, Shift+Enter newline, ↑/↓ history ──────────
 function _tcKeydown(e, tab) {
@@ -273,7 +299,7 @@ async function tcShell(tab, command) {
   tcPrint(tab, `<span class="tc-shprompt">$</span> ${esc(command)}`, 'tc-shell');
   const running = document.createElement('div');
   running.className = 'tc-row tc-spin';
-  _tcLog(tab).appendChild(running);
+  _tcAddRow(tab, running);
   tab._shellSpin = setInterval(() => {
     tab._spinIdx = ((tab._spinIdx || 0) + 1) % _TC_SPIN.length;
     running.innerHTML = `<span class="tc-spinner">${_TC_SPIN[tab._spinIdx]}</span> läuft…`;
@@ -295,7 +321,7 @@ async function tcShell(tab, command) {
       const pre = document.createElement('div');
       pre.className = 'tc-row tc-shout';
       pre.textContent = out.replace(/\n+$/, '');
-      _tcLog(tab).appendChild(pre);
+      _tcAddRow(tab, pre);
     }
     // Exit-code line (green for 0, red otherwise; suppress the noisy "exit 0").
     if (code !== 0) tcPrint(tab, `<span class="tc-exit-bad">exit ${code}</span>`, 'tc-shell');
@@ -315,7 +341,7 @@ function tcPrint(tab, html, cls) {
   const div = document.createElement('div');
   div.className = 'tc-row ' + (cls || 'tc-sys');
   div.innerHTML = html;
-  log.appendChild(div);
+  _tcAddRow(tab, div);
   _tcScroll(tab);
 }
 
@@ -337,7 +363,7 @@ async function tcSend(tab, text) {
   const toolWrap = document.createElement('div'); toolWrap.className = 'tc-tools';
   const textRow = document.createElement('div'); textRow.className = 'tc-row tc-asst';
   const spinRow = document.createElement('div'); spinRow.className = 'tc-row tc-spin';
-  log.appendChild(thinkRow); log.appendChild(toolWrap); log.appendChild(textRow); log.appendChild(spinRow);
+  _tcAddRow(tab, thinkRow); _tcAddRow(tab, toolWrap); _tcAddRow(tab, textRow); _tcAddRow(tab, spinRow);
   const live = { thinkRow, toolWrap, textRow, spinRow, text: '', think: '', toolById: {} };
   tab._live = live;
 
@@ -533,7 +559,47 @@ function tcRenderStatus(tab) {
   const toolsBadge = tab.showTools ? '' : ' · tools:aus';
   const dot = tab.streaming ? '<span class="tc-live">●</span> ' : '';
   const cancelHint = tab.streaming ? ' · <span class="tc-cancel-hint">Esc oder /cancel zum Abbrechen</span>' : '';
-  el.innerHTML = `${dot}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}${cancelHint}`;
+  // Export-as-markdown button (direct browser download) — only meaningful once
+  // the chat has rows.
+  const exportBtn = `<button class="tc-st-btn" title="Chatverlauf als Markdown herunterladen"
+    onclick="tcExportMarkdown('${esc(tab.id)}')">⬇ .md</button>`;
+  el.innerHTML = `<span class="tc-st-info">${dot}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}${cancelHint}</span>${exportBtn}`;
+}
+
+// Build a Markdown transcript of a terminal-chat from its in-DOM rows and
+// trigger a direct browser download (no server round-trip, no artifact write).
+function tcExportMarkdown(tabId) {
+  const tab = _tcTab(tabId);
+  if (!tab) return;
+  const log = _tcLog(tab);
+  if (!log) return;
+  const lines = [];
+  const model = tab._autoPicked ? `auto→${tab._autoPicked}` : (tab.model || 'Standard');
+  lines.push(`# Terminal-Chat`, '', `*Modell: ${model}*`, '');
+  // Walk the rendered rows in order; map each row class to a Markdown block.
+  // We read textContent (rendered text) so markdown/tool/shell rows export as
+  // plain readable text — the composer + spinner rows are skipped.
+  log.querySelectorAll('.tc-row').forEach(row => {
+    if (row.closest('.tc-input-wrap')) return;          // skip the composer
+    if (row.classList.contains('tc-spin')) return;       // skip live spinner
+    const txt = (row.textContent || '').replace(/\s+$/,'');
+    if (!txt) return;
+    if (row.classList.contains('tc-user')) {
+      lines.push('## › ' + txt.replace(/^›\s*/, ''), '');
+    } else if (row.classList.contains('tc-asst')) {
+      lines.push(txt, '');
+    } else if (row.classList.contains('tc-shell') || row.classList.contains('tc-shout')) {
+      lines.push('```', txt, '```', '');
+    } else if (row.classList.contains('tc-think')) {
+      lines.push('> ' + txt.replace(/\n/g, '\n> '), '');
+    } else {
+      lines.push('_' + txt + '_', '');
+    }
+  });
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const fname = `terminal-chat_${(tab.sessionId || tab.id).slice(0, 12)}_${ts}.md`;
+  const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+  if (typeof _saveBlobAs === 'function') _saveBlobAs(blob, fname);
 }
 
 // ── Session lifecycle ────────────────────────────────────────────────────────
@@ -646,7 +712,7 @@ async function _tcCmdClear(tab) {
   tab.sessionId = '';
   tab.tokensIn = 0; tab.tokensOut = 0; tab.cost = null; tab.lastApiIn = 0;
   tab.log = []; tab._autoPicked = '';
-  const log = _tcLog(tab); if (log) log.innerHTML = '';
+  _tcClearRows(tab);
   tcPrint(tab, 'Neue Sitzung — Kontext geleert.', 'tc-sys');
   tcRenderStatus(tab);
   if (typeof renderTermchatHistory === 'function') renderTermchatHistory();
@@ -729,10 +795,11 @@ function tcCancel(tab) {
 async function tcLoadTranscript(tab) {
   if (!tab.sessionId) return;
   const log = _tcLog(tab); if (!log) return;
-  log.innerHTML = '<div class="tc-row tc-sys">Lädt…</div>';
+  _tcClearRows(tab);
+  tcPrint(tab, 'Lädt…', 'tc-sys');
   try {
     const d = await API.getSessionMessages(tab.sessionId);
-    log.innerHTML = '';
+    _tcClearRows(tab);
     if (d.model) tab.model = d.model;
     if (d.thinking_level) tab.thinking = d.thinking_level;
     if (d.max_context) tab.maxContext = d.max_context;
@@ -742,7 +809,8 @@ async function tcLoadTranscript(tab) {
     // If a turn is still streaming server-side, attach + follow it.
     if (d.streaming) _tcAttachLive(tab);
   } catch (e) {
-    log.innerHTML = '<div class="tc-row tc-err">Verlauf konnte nicht geladen werden.</div>';
+    _tcClearRows(tab);
+    tcPrint(tab, 'Verlauf konnte nicht geladen werden.', 'tc-err');
   }
 }
 
@@ -774,7 +842,7 @@ async function _tcAttachLive(tab) {
   const toolWrap = document.createElement('div'); toolWrap.className = 'tc-tools';
   const textRow = document.createElement('div'); textRow.className = 'tc-row tc-asst';
   const spinRow = document.createElement('div'); spinRow.className = 'tc-row tc-spin';
-  log.appendChild(thinkRow); log.appendChild(toolWrap); log.appendChild(textRow); log.appendChild(spinRow);
+  _tcAddRow(tab, thinkRow); _tcAddRow(tab, toolWrap); _tcAddRow(tab, textRow); _tcAddRow(tab, spinRow);
   const live = { thinkRow, toolWrap, textRow, spinRow, text: '', think: '', toolById: {} };
   tab._live = live; tab.streaming = true; _tcSpinStart(tab, 'Denkt nach'); tcRenderStatus(tab);
   try {

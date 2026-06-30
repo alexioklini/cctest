@@ -724,8 +724,10 @@ textarea { resize: none; }
 
 /* ═══ Terminal-Chat (kind:'chat' pane) ═══════════════════════════════════════
  * A terminal-STYLED chat surface inside a pane body. Absolute-inset column flex:
- * scrollback (.tc-log) grows + scrolls, status footer + input line pinned at the
- * bottom. Monospace + theme variables throughout so it follows light/dark. */
+ * scrollback (.tc-log) grows + scrolls; the composer (.tc-input-wrap) lives
+ * INSIDE the log so it scrolls right after the last response (CLI-style), and
+ * only the status footer stays pinned at the bottom. Monospace + theme variables
+ * throughout so it follows light/dark. */
 .termchat { position: absolute; inset: 0; display: flex; flex-direction: column;
   background: var(--bg-000); font-family: var(--font-mono); overflow: hidden; }
 .tc-log { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px;
@@ -800,13 +802,22 @@ textarea { resize: none; }
 /* status footer */
 .tc-status { flex: 0 0 auto; padding: 3px 12px; font-size: 11px; color: var(--text-400);
   background: var(--bg-200); border-top: 1px solid var(--border-200);
+  display: flex; align-items: center; gap: 8px; }
+.tc-status .tc-st-info { flex: 1 1 auto; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tc-st-btn { flex: 0 0 auto; cursor: pointer; font: inherit; font-size: 11px;
+  color: var(--text-300); background: transparent; border: 1px solid var(--border-200);
+  border-radius: 4px; padding: 1px 7px; }
+.tc-st-btn:hover { color: var(--accent-brand); border-color: var(--accent-brand); }
 .tc-status .tc-st-model { color: var(--text-200); font-weight: 600; }
 .tc-status .tc-live { color: var(--git-added); animation: tc-pulse 1.1s infinite; }
 .tc-status .tc-cancel-hint { color: var(--accent-brand); }
 @keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
-/* input line + slash-command autocomplete */
-.tc-input-wrap { flex: 0 0 auto; position: relative; }
+/* input line + slash-command autocomplete.
+   The wrap is a normal block at the END of the scroll log (CLI-style), so it
+   flows right after the last message instead of being pinned. A little top
+   margin separates it from the preceding response. */
+.tc-input-wrap { position: relative; margin-top: 4px; }
 /* Autocomplete popup floats ABOVE the input line (bottom-anchored). */
 .tc-ac { position: absolute; left: 8px; right: 8px; bottom: 100%; margin-bottom: 2px;
   max-height: 220px; overflow-y: auto; z-index: 30;
@@ -819,8 +830,9 @@ textarea { resize: none; }
 .tc-ac-item.sel .tc-ac-label, .tc-ac-item.sel .tc-ac-hint { color: #fff; }
 .tc-ac-label { color: var(--text-100); font-weight: 600; }
 .tc-ac-hint { color: var(--text-400); overflow: hidden; text-overflow: ellipsis; }
-.tc-input { flex: 0 0 auto; display: flex; align-items: flex-start; gap: 6px;
-  padding: 6px 12px; background: var(--bg-000); border-top: 1px solid var(--border-200); }
+/* Inline prompt line (flows after the last message): no panel chrome, just the
+   › prompt + textarea, aligned with the log's left padding. */
+.tc-input { display: flex; align-items: flex-start; gap: 6px; padding: 0; }
 /* Prompt shares the textarea's font metrics + line-height so the › sits exactly
    on the first input line (no ad-hoc padding nudge). */
 .tc-input .tc-prompt { font-family: var(--font-term); font-size: 12.5px;
@@ -1077,36 +1089,22 @@ textarea { resize: none; }
   background: var(--bg-100); color: var(--text-100);
   border: 1px solid var(--border-100); border-radius: 6px; outline: none; }
 .code-an-adv-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-/* ── Symbole panel (file-tree area) ────────────────────────────────────── */
-#terminal-symbols { display: flex; flex-direction: column; flex: 1 1 0;
-  border-top: 1px solid var(--border-200); min-height: 80px; overflow: hidden; }
-/* Collapsed: only the header takes space; let the tree reclaim the rest. */
-#terminal-symbols.sym-collapsed { flex: 0 0 auto; min-height: 0; }
-#terminal-symbols.sym-collapsed #terminal-symbols-body { display: none; }
-#terminal-symbols.sym-collapsed .sym-collapse svg { transform: rotate(-90deg); }
-#terminal-symbols-head { display: flex; align-items: center; gap: 4px;
-  padding: 3px 6px; background: var(--bg-200); border-bottom: 1px solid var(--border-200);
-  flex: 0 0 auto; }
-#terminal-symbols-head .sym-title { font-size: 11px; font-weight: 700;
-  text-transform: uppercase; letter-spacing: .04em; color: var(--text-300); }
-#terminal-symbols-head .pt-act { color: var(--text-300); padding: 2px; flex: 0 0 auto; }
-#terminal-symbols-head .pt-act:hover { color: var(--text-100); }
-.sym-collapse svg { transition: transform .12s; }
-#terminal-symbols-body { display: flex; flex-direction: column; flex: 1 1 0;
-  min-height: 0; overflow: hidden; }
-#terminal-symbols-search { padding: 5px 6px; flex: 0 0 auto; }
-#terminal-symbols-filter { width: 100%; box-sizing: border-box; font-size: 12px;
+/* ── Unified file+symbol tree: search box + inline symbols ──────────────── */
+#terminal-tree-search { padding: 5px 6px; flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-200); background: var(--bg-200); }
+#terminal-tree-filter { width: 100%; box-sizing: border-box; font-size: 12px;
   padding: 4px 8px; background: var(--bg-100); color: var(--text-100);
   border: 1px solid var(--border-100); border-radius: 5px; outline: none;
   font-family: var(--font-mono); }
-#terminal-symbols-filter:focus { border-color: var(--accent-brand); }
-#terminal-symbols-tree { overflow: auto; flex: 1 1 0; min-height: 0; padding: 2px 0 6px;
-  font-family: var(--font-mono); font-size: 12px; }
-.sym-file { display: flex; align-items: center; gap: 6px; padding: 4px 8px 2px;
-  color: var(--text-300); font-size: 10.5px; text-transform: uppercase;
-  letter-spacing: .03em; position: sticky; top: 0; background: var(--bg-000); }
-.sym-file-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sym-file-n { margin-left: auto; color: var(--text-400); font-weight: 400; }
+#terminal-tree-filter:focus { border-color: var(--accent-brand); }
+/* Symbols nested under a file row keep the file's left indent + a little extra
+   so they read as children. .pt-symchildren is the file-symbol child container
+   (parallel to .pt-children for folders). */
+.pt-symchildren { padding-left: 10px; }
+.pt-symchildren .sym-row { font-family: var(--font-mono); font-size: 12px; }
+/* Caret spacer aligns symbol-less files with files that have a caret. */
+.pt-caret-spacer { display: inline-block; width: 12px; flex: 0 0 auto; }
+.sym-none { color: var(--text-400); font-size: 11px; padding: 2px 8px 2px 22px; font-style: italic; }
 .sym-row { display: flex; align-items: baseline; gap: 6px; padding: 2px 8px 2px 14px;
   white-space: nowrap; }
 .sym-row:hover { background: var(--bg-200); }

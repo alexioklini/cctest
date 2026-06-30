@@ -82,6 +82,64 @@ function _fmtBytes(n) {
   return (n / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+// Human-readable local timestamp for a unix-seconds mtime (file-tree tooltip).
+function _fmtMtime(sec) {
+  sec = Number(sec) || 0;
+  if (!sec) return '—';
+  try { return new Date(sec * 1000).toLocaleString(); } catch (_) { return '—'; }
+}
+
+// ── File-tree sort order (per-project, persisted in localStorage) ─────────────
+// Modes: 'type' (folders first, then files, each A→Z — the default), 'name'
+// (A→Z, folders + files mixed), 'date' (newest mtime first), 'size' (largest
+// first). Sorting is applied client-side in _wdRenderTree, recursively.
+const _WD_SORT_LABELS = { type: 'Art (Ordner zuerst)', name: 'Name', date: 'Datum (neueste zuerst)', size: 'Größe (größte zuerst)' };
+function _wdSortKey() {
+  const pid = (state._projectDetail && state._projectDetail.id) || state.currentProject || 'p';
+  return `brain.wdtree.sort.${pid}`;
+}
+function _wdSortMode() {
+  try { return localStorage.getItem(_wdSortKey()) || 'type'; } catch (_) { return 'type'; }
+}
+function _wdSetSortMode(mode) {
+  try { localStorage.setItem(_wdSortKey(), mode); } catch (_) {}
+}
+// Return a NEW sorted array of sibling nodes per the active sort mode.
+function _wdSortNodes(nodes) {
+  const mode = _wdSortMode();
+  const arr = (nodes || []).slice();
+  const byName = (a, b) => (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base', numeric: true });
+  arr.sort((a, b) => {
+    const aDir = a.type === 'dir', bDir = b.type === 'dir';
+    if (mode === 'type') {
+      if (aDir !== bDir) return aDir ? -1 : 1;   // folders first
+      return byName(a, b);
+    }
+    if (mode === 'name') return byName(a, b);
+    if (mode === 'date') {
+      // Dirs carry no mtime → keep them grouped first, newest files lead.
+      if (aDir !== bDir) return aDir ? -1 : 1;
+      return (b.mtime || 0) - (a.mtime || 0) || byName(a, b);
+    }
+    if (mode === 'size') {
+      if (aDir !== bDir) return aDir ? -1 : 1;
+      return (b.size || 0) - (a.size || 0) || byName(a, b);
+    }
+    return byName(a, b);
+  });
+  return arr;
+}
+
+// Sort-mode picker (toolbar button). Sets the mode + repaints the tree.
+function wdSortMenu(ev) {
+  const cur = _wdSortMode();
+  const items = Object.keys(_WD_SORT_LABELS).map(k => ({
+    label: (k === cur ? '● ' : '○ ') + _WD_SORT_LABELS[k],
+    fn: () => { _wdSetSortMode(k); if (typeof repaintTerminalTree === 'function') repaintTerminalTree(); },
+  }));
+  _wdMenu(ev, items);
+}
+
 // ── Tree render (into the bottom panel's left column) ─────────────────────────
 // git code → human tooltip (the file ICON colour comes from data-git CSS).
 const _WD_GIT_TIP = {
@@ -113,14 +171,51 @@ function _wdIsActive(absPath) {
   return !!(t && t.id === _term.active);
 }
 
+// ── Unified file + symbol search ─────────────────────────────────────────────
+// The tree search box filters by FILENAME and by SYMBOL name. Empty = no filter.
+let _wdFilter = '';
+function wdTreeFilter(v) {
+  _wdFilter = (v || '').toLowerCase().trim();
+  if (typeof repaintTerminalTree === 'function') repaintTerminalTree();
+}
+// Symbols of `absPath` matching the active filter (or all, if the FILE name
+// itself matched). Returns [] when symbols aren't loaded.
+function _wdFileSymbolMatches(absPath, fileNameMatched) {
+  const syms = (typeof _wdSymbolsForFile === 'function') ? _wdSymbolsForFile(absPath) : [];
+  if (!_wdFilter || fileNameMatched) return syms;
+  return syms.filter(s => (s.name || '').toLowerCase().includes(_wdFilter));
+}
+// Does a FILE node survive the active filter? (filename match OR any symbol
+// match.) No filter → always visible.
+function _wdFileVisible(n, nameMatched) {
+  if (!_wdFilter) return true;
+  if (nameMatched) return true;
+  return _wdFileSymbolMatches(n.path, false).length > 0;
+}
+
+// Render a source file's symbols inline (tree child rows). Reuses the symbol
+// renderer from panels_terminal.js. Shown when the file row is expanded.
+function _wdFileSymbolsHtml(n, fileNameMatched) {
+  if (typeof _wdSymbolRowsHtml !== 'function') return '';
+  const syms = _wdFileSymbolMatches(n.path, fileNameMatched);
+  if (!syms.length) return '<div class="sym-none">keine Symbole</div>';
+  return _wdSymbolRowsHtml(syms);
+}
+
 function _wdRenderTree(nodes) {
   if (!nodes || !nodes.length) return '<div class="pt-empty">Leer.</div>';
-  return nodes.map(n => {
+  const filt = _wdFilter;
+  const html = _wdSortNodes(nodes).map(n => {
     if (n.type === 'dir') {
-      const open = _wdDirExpanded(n.path);
+      const childHtml = _wdRenderTree(n.children || []);
+      // While filtering, hide directories whose subtree rendered nothing.
+      if (filt && (!childHtml || childHtml.indexOf('pt-row') === -1)) return '';
+      // Auto-expand directories during a filter so matches are visible.
+      const open = filt ? true : _wdDirExpanded(n.path);
       const dp = esc(n.path);
       return `<div class="pt-branch pt-realdir">
         <div class="pt-row pt-realrow" data-dir="${dp}" draggable="true"
+          title="${esc(n.path || n.name)}"
           onclick="wdToggleDir(this, '${dp}')"
           oncontextmenu="wdDirMenu(event, '${dp}')"
           ondragstart="wdDragStart(event, '${dp}')" ondragend="wdDragEnd(event)"
@@ -130,9 +225,11 @@ function _wdRenderTree(nodes) {
           <span class="pt-icon">${_PT_ICON.folders}</span>
           <span class="pt-label">${esc(n.name)}</span>
         </div>
-        <div class="pt-children" style="display:${open ? 'block' : 'none'}">${_wdRenderTree(n.children || [])}</div>
+        <div class="pt-children" style="display:${open ? 'block' : 'none'}">${childHtml}</div>
       </div>`;
     }
+    const nameMatched = !filt || (n.name || '').toLowerCase().includes(filt);
+    if (!_wdFileVisible(n, nameMatched)) return '';
     const git = n.git || '';
     const dirty = _wdIsDirty(n.path);
     const sel = _wdIsActive(n.path) ? ' pt-selected' : '';
@@ -148,16 +245,60 @@ function _wdRenderTree(nodes) {
     // '*' appended to the name = open in the editor with unsaved changes.
     const star = dirty ? '<span class="tt-dirty" title="Ungespeicherte Änderungen">*</span>' : '';
     const gitTip = git ? ` · Git: ${esc(_WD_GIT_TIP[git] || git)}` : '';
+    // Tooltip: path · size · last-modified (size/mtime come from the folder-tree
+    // endpoint per file).
+    const metaTip = ` · ${_fmtBytes(n.size || 0)} · geändert ${_fmtMtime(n.mtime)}`;
     const fp = esc(n.path || '');
-    return `<div class="pt-row pt-realfile${sel}" data-path="${fp}" data-git="${esc(git)}" draggable="true"
-         title="${esc(n.path || n.name)}${gitTip}" onclick="wdOpenFile('${fp}')"
+    // Source files with indexed symbols are EXPANDABLE → caret + inline symbols
+    // (the merged former "Symbole" panel). Expanded state is auto-on while a
+    // symbol filter matches, else the persisted per-file toggle.
+    const hasSyms = (typeof _wdSymbolsForFile === 'function') && _wdSymbolsForFile(n.path).length > 0;
+    const symMatch = !!filt && !nameMatched;   // shown because of a symbol hit
+    const symOpen = hasSyms && (symMatch || _wdDirExpanded(n.path));
+    // Caret (only on files with symbols) TOGGLES the inline symbols; clicking
+    // the icon/name OPENS the file. This keeps the familiar "click file → open"
+    // behaviour while making symbols an opt-in expand.
+    const caret = hasSyms
+      ? `<span class="pt-caret${symOpen ? ' open' : ''}" onclick="event.stopPropagation();wdToggleFileSymbols(this,'${fp}')"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg></span>`
+      : '<span class="pt-caret-spacer"></span>';
+    const symChildren = hasSyms
+      ? `<div class="pt-children pt-symchildren" style="display:${symOpen ? 'block' : 'none'}">${symOpen ? _wdFileSymbolsHtml(n, nameMatched) : ''}</div>`
+      : '';
+    return `<div class="pt-branch pt-realfilebranch">
+      <div class="pt-row pt-realfile${sel}" data-path="${fp}" data-git="${esc(git)}" draggable="true"
+         title="${esc(n.path || n.name)}${metaTip}${gitTip}" onclick="wdOpenFile('${fp}')"
          oncontextmenu="wdFileMenu(event, '${fp}')"
          ondragstart="wdDragStart(event, '${fp}')" ondragend="wdDragEnd(event)">
+      ${caret}
       <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
       <span class="pt-label">${esc(n.name)}${star}</span>
       ${dot ? `<span class="pt-dot-wrap">${dot}</span>` : ''}
+      </div>
+      ${symChildren}
     </div>`;
   }).join('');
+  return html || (filt ? '<div class="pt-empty">Keine Treffer.</div>' : '<div class="pt-empty">Leer.</div>');
+}
+
+// Toggle a source file's inline symbol list (lazy-fills on first open). Opening
+// a file's symbols does NOT open the file in the editor — that's the name/icon's
+// job via double-click or the caret-less area; here the whole row toggles. Reuse
+// the folder expand-state store so it persists per file path.
+function wdToggleFileSymbols(caretEl, absPath) {
+  const branch = caretEl.closest('.pt-realfilebranch');
+  if (!branch) { wdOpenFile(absPath); return; }
+  const kids = branch.querySelector('.pt-symchildren');
+  if (!kids) { wdOpenFile(absPath); return; }
+  const show = kids.style.display === 'none';
+  if (show && !kids.innerHTML.trim()) {
+    // Lazy-fill from the loaded outline (filename considered "matched" so all
+    // of the file's symbols show, not just filtered ones).
+    const node = { path: absPath, name: (absPath || '').split('/').pop() };
+    kids.innerHTML = _wdFileSymbolsHtml(node, true);
+  }
+  kids.style.display = show ? 'block' : 'none';
+  caretEl.classList.toggle('open', show);
+  _wdSetExpanded(absPath, show);
 }
 
 // Per-project expand/collapse persistence (UI-only, localStorage). Reuses the

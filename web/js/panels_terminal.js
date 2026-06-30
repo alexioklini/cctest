@@ -980,10 +980,11 @@ async function terminalCloseTab(id, ev) {
     pane.active = left.length ? left[0].id : null;
     if (pane.active) _terminalActivate(pane.active);
   }
-  // close the whole bottom area only when NO tab remains anywhere
-  if (!_term.tabs.length) { terminalTogglePanel(false); return; }
   // Rebuild from occupancy so an emptied cell collapses and neighbours reclaim its
-  // space (the dynamic-grid contract). _terminalBuildPanes re-renders + re-shows.
+  // space (the dynamic-grid contract). When the LAST tab is closed this leaves a
+  // single EMPTY pane (its bar keeps the +/◈ new-terminal/new-chat buttons) — the
+  // bottom area stays OPEN. (Closing the last tab used to auto-close the whole
+  // panel, which read as a bug; the panel only closes via its own ✕/toggle now.)
   _terminalBuildPanes();
   if (pane && pane.active) _terminalActivate(pane.active);
   if (wasEditor && typeof repaintTerminalTree === 'function') repaintTerminalTree();
@@ -1020,7 +1021,16 @@ function _terminalTabMenu(id, ev) {
   m.className = 'terminal-tab-menu';
   m.style.left = ev.clientX + 'px';
   m.style.top = ev.clientY + 'px';
-  m.innerHTML = `
+  const _t = (_term.tabs || []).find(x => x.id === id);
+  // Chat tabs export their transcript (panels_termchat); shell terminals export
+  // their xterm scrollback. Editors already have a download button.
+  let exportRow = '';
+  if (_t && _t.kind === 'chat') {
+    exportRow = `<div onclick="tcExportMarkdown('${id}'); document.getElementById('terminal-tab-menu').remove()">Als Markdown exportieren</div>`;
+  } else if (_t && _t.kind === 'terminal') {
+    exportRow = `<div onclick="terminalExportMarkdown('${id}'); document.getElementById('terminal-tab-menu').remove()">Als Markdown exportieren</div>`;
+  }
+  m.innerHTML = `${exportRow}
     <div onclick="terminalCloseTab('${id}'); document.getElementById('terminal-tab-menu').remove()">Tab schließen</div>
     <div onclick="terminalCloseTabs('others','${id}'); document.getElementById('terminal-tab-menu').remove()">Andere schließen</div>
     <div onclick="terminalCloseTabs('right','${id}'); document.getElementById('terminal-tab-menu').remove()">Rechte schließen</div>
@@ -1028,6 +1038,30 @@ function _terminalTabMenu(id, ev) {
   document.body.appendChild(m);
   const close = () => { const e = document.getElementById('terminal-tab-menu'); if (e) e.remove(); document.removeEventListener('click', close); };
   setTimeout(() => document.addEventListener('click', close), 0);
+}
+
+// Export a shell terminal's xterm scrollback as a Markdown code block, direct
+// browser download (no server, no artifact write). Mirrors tcExportMarkdown for
+// chat tabs.
+function terminalExportMarkdown(id) {
+  const tab = (_term.tabs || []).find(t => t.id === id && t.kind === 'terminal');
+  if (!tab || !tab.term) return;
+  const buf = tab.term.buffer && tab.term.buffer.active;
+  if (!buf) return;
+  const rows = [];
+  // Walk the full scrollback (length includes off-screen lines); trim trailing
+  // blank lines so the export isn't padded out to the scrollback cap.
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    rows.push(line ? line.translateToString(true) : '');
+  }
+  while (rows.length && !rows[rows.length - 1].trim()) rows.pop();
+  const md = ['# Terminal', '', '```', rows.join('\n'), '```', ''].join('\n');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  const fname = `terminal_${ts}.md`;
+  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+  if (typeof _saveBlobAs === 'function') _saveBlobAs(blob, fname);
+  else if (typeof showToast === 'function') showToast('Export nicht verfügbar');
 }
 
 function _terminalRenderTabs() {
@@ -1167,7 +1201,9 @@ async function terminalCheckEditorsFresh() {
 function _wdTreeSignature(nodes, acc) {
   acc = acc || [];
   for (const n of (nodes || [])) {
-    acc.push((n.type === 'dir' ? 'd:' : 'f:') + n.path);
+    // Include size+mtime so the date/size sort modes repaint when a file's
+    // content changes (not just on structural add/remove).
+    acc.push((n.type === 'dir' ? 'd:' : 'f:') + n.path + (n.type === 'dir' ? '' : `:${n.size || 0}:${n.mtime || 0}`));
     if (n.type === 'dir') _wdTreeSignature(n.children || [], acc);
   }
   return acc;
@@ -1711,7 +1747,11 @@ async function _terminalJumpTo(absPath, line, col) {
 // expand an entry → its callers (from the graph) + usages (text-grep). A search
 // box filters live. Lives under the file tree; the Σ header button opens the
 // code-analysis dialog.
-let _codeOutline = { symbols: [], filter: '', loaded: false, expanded: {}, refs: {} };
+// symbols: flat project list · byFile: repo-rel-path → symbol[] (built on load) ·
+// refs: lazy callers/usages cache keyed by _outlineKey · expandedSym: which
+// symbol rows have their refs sub-list open (file-row expansion lives in the
+// tree's own _wdSetExpanded state, shared with folders).
+let _codeOutline = { symbols: [], byFile: new Map(), loaded: false, expandedSym: {}, refs: {} };
 
 // Per-label glyph + CSS class for the outline rows (compact, monochrome).
 const _OUTLINE_GLYPH = {
@@ -1728,76 +1768,73 @@ const _OUTLINE_GLYPH = {
 };
 function _outlineGlyph(label) { return _OUTLINE_GLYPH[label] || { g: '·', c: 'sym-other' }; }
 
-// Load (or reload) the project outline into the panel. force re-fetches even if
-// already loaded. Auto-called when the terminal panel opens for a code project.
+// Load (or reload) the whole-project symbol outline. Symbols are now rendered
+// INLINE in the file tree (under each source file), so after loading we build a
+// per-file index (_codeOutline.byFile, keyed by repo-relative path) and repaint
+// the tree. force re-fetches even if already loaded. Auto-called when the
+// terminal panel opens for a code project.
 async function codeOutlineLoad(force) {
-  const tree = document.getElementById('terminal-symbols-tree');
-  if (!tree) return;
-  if (_codeOutline.loaded && !force) { _codeOutlineRender(); return; }
-  tree.innerHTML = '<div class="pt-loading">Lädt…</div>';
+  if (_codeOutline.loaded && !force) { _codeOutlineReindex(); _wdRepaintTreeSafe(); return; }
   const d = await _codeIndexFetch('outline=1');
   if (!d || d.error || !Array.isArray(d.symbols)) {
-    tree.innerHTML = `<div class="pt-empty">${esc((d && d.error) || 'Kein Code-Index.')}</div>`;
-    _codeOutline.symbols = []; _codeOutline.loaded = true;
+    _codeOutline.symbols = []; _codeOutline.loaded = true; _codeOutline.byFile = new Map();
+    _wdRepaintTreeSafe();
     return;
   }
   _codeOutline.symbols = d.symbols;
   _codeOutline.loaded = true;
-  _codeOutline.expanded = {};
   _codeOutline.refs = {};
-  _codeOutlineRender();
+  _codeOutlineReindex();
+  _wdRepaintTreeSafe();
+}
+
+// (Re)build the repo-relative-path → symbol[] index off _codeOutline.symbols.
+function _codeOutlineReindex() {
+  const m = new Map();
+  for (const s of (_codeOutline.symbols || [])) {
+    const f = s.file || '';
+    if (!m.has(f)) m.set(f, []);
+    m.get(f).push(s);
+  }
+  _codeOutline.byFile = m;
+}
+
+// Symbols for an ABSOLUTE file path (tree nodes are absolute; the index is
+// repo-relative). Returns [] when none / not indexed.
+function _wdSymbolsForFile(absPath) {
+  const m = _codeOutline.byFile;
+  if (!m || !m.size) return [];
+  const rel = (typeof _wdRelToWorkingDir === 'function') ? _wdRelToWorkingDir(absPath) : absPath;
+  return m.get(rel) || [];
+}
+
+function _wdRepaintTreeSafe() {
+  try { if (typeof repaintTerminalTree === 'function') repaintTerminalTree(); } catch (_) {}
 }
 
 // Stable id for a symbol row (file + label + name + line) — used as expand key.
 function _outlineKey(s) { return `${s.file}|${s.label}|${s.name}|${s.line || 0}`; }
 
-function codeOutlineFilter(v) {
-  _codeOutline.filter = (v || '').toLowerCase().trim();
-  _codeOutlineRender();
-}
-
-function codeOutlineToggle() {
-  const panel = document.getElementById('terminal-symbols');
-  const btn = document.getElementById('terminal-symbols-toggle');
-  if (!panel) return;
-  const collapsed = panel.classList.toggle('sym-collapsed');
-  if (btn) btn.setAttribute('aria-expanded', String(!collapsed));
-}
-
-function _codeOutlineRender() {
-  const tree = document.getElementById('terminal-symbols-tree');
-  if (!tree) return;
-  const f = _codeOutline.filter;
-  let syms = _codeOutline.symbols;
-  if (f) syms = syms.filter(s => s.name.toLowerCase().includes(f)
-                              || (s.file || '').toLowerCase().includes(f));
-  if (!syms.length) {
-    tree.innerHTML = `<div class="pt-empty">${_codeOutline.symbols.length ? 'Keine Treffer.' : 'Keine Symbole.'}</div>`;
-    return;
-  }
-  // group by file (preserve first-seen order), within a file keep the symbol order
-  const byFile = new Map();
-  for (const s of syms) { if (!byFile.has(s.file)) byFile.set(s.file, []); byFile.get(s.file).push(s); }
+// Render a file's symbol rows (inline tree children). `syms` is that file's
+// symbol list (already filtered if a search is active). Mirrors the old symbol
+// panel's row markup; click a name → jump to def, ↗ → toggle callers/usages.
+function _wdSymbolRowsHtml(syms) {
   let html = '';
-  for (const [file, items] of byFile) {
-    const fileName = (file || '').split('/').pop() || file;
-    html += `<div class="sym-file"><span class="sym-file-name" title="${esc(file)}">${esc(fileName)}</span><span class="sym-file-n">${items.length}</span></div>`;
-    for (const s of items) {
-      const k = _outlineKey(s);
-      const gl = _outlineGlyph(s.label);
-      const sig = s.signature ? `<span class="sym-sig">${esc(s.signature)}</span>` : '';
-      const ln = s.line ? `<span class="sym-line">:${s.line}</span>` : '';
-      const open = _codeOutline.expanded[k] ? ' sym-open' : '';
-      html += `<div class="sym-row${open}" data-key="${esc(k)}">
-        <span class="sym-glyph ${gl.c}">${gl.g}</span>
-        <span class="sym-name" onclick="_codeOutlineJump('${esc(k)}')" title="${esc(s.name)} → ${esc(s.file)}:${s.line || ''}">${esc(s.name)}</span>
-        ${sig}${ln}
-        <span class="sym-refs-btn" onclick="_codeOutlineRefs('${esc(k)}')" title="Aufrufer &amp; Verwendungen">↗</span>
-      </div>`;
-      if (_codeOutline.expanded[k]) html += _codeOutlineRefsHtml(k);
-    }
+  for (const s of (syms || [])) {
+    const k = _outlineKey(s);
+    const gl = _outlineGlyph(s.label);
+    const sig = s.signature ? `<span class="sym-sig">${esc(s.signature)}</span>` : '';
+    const ln = s.line ? `<span class="sym-line">:${s.line}</span>` : '';
+    const open = _codeOutline.expandedSym[k] ? ' sym-open' : '';
+    html += `<div class="sym-row${open}" data-key="${esc(k)}">
+      <span class="sym-glyph ${gl.c}">${gl.g}</span>
+      <span class="sym-name" onclick="event.stopPropagation();_codeOutlineJump('${esc(k)}')" title="${esc(s.name)} → ${esc(s.file)}:${s.line || ''}">${esc(s.name)}</span>
+      ${sig}${ln}
+      <span class="sym-refs-btn" onclick="event.stopPropagation();_codeOutlineRefs('${esc(k)}')" title="Aufrufer &amp; Verwendungen">↗</span>
+    </div>`;
+    if (_codeOutline.expandedSym[k]) html += _codeOutlineRefsHtml(k);
   }
-  tree.innerHTML = html;
+  return html;
 }
 
 function _outlineByKey(k) { return _codeOutline.symbols.find(s => _outlineKey(s) === k); }
@@ -1808,14 +1845,15 @@ async function _codeOutlineJump(k) {
   await _terminalJumpTo(_codeIndexAbs(s.file), s.line || 1);
 }
 
-// Toggle the inline callers+usages sub-list for a symbol. Lazy-fetches once.
+// Toggle the inline callers+usages sub-list for a symbol. Lazy-fetches once,
+// then repaints the (merged) tree so the sub-list renders under the symbol row.
 async function _codeOutlineRefs(k) {
   const s = _outlineByKey(k);
   if (!s) return;
-  _codeOutline.expanded[k] = !_codeOutline.expanded[k];
-  if (_codeOutline.expanded[k] && !_codeOutline.refs[k]) {
+  _codeOutline.expandedSym[k] = !_codeOutline.expandedSym[k];
+  if (_codeOutline.expandedSym[k] && !_codeOutline.refs[k]) {
     _codeOutline.refs[k] = { loading: true };
-    _codeOutlineRender();
+    _wdRepaintTreeSafe();
     const d = await _codeIndexFetch(`usages=${encodeURIComponent(s.name)}`);
     _codeOutline.refs[k] = {
       loading: false,
@@ -1824,7 +1862,7 @@ async function _codeOutlineRefs(k) {
       err: d && d.error,
     };
   }
-  _codeOutlineRender();
+  _wdRepaintTreeSafe();
 }
 
 function _codeOutlineRefsHtml(k) {

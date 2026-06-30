@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.238.0",
+        "date": "2026-06-30",
+        "title": "Code-Modus: Dateibaum, Symbole & Terminal-Chat verbessert",
+        "body": "Der untere Code-Bereich wurde rundum verbessert: Im Dateibaum "
+                "zeigt der Maus-Tooltip jetzt Größe und Änderungsdatum, und Sie "
+                "sortieren die Dateien nach Art, Name, Datum oder Größe (die Wahl "
+                "wird je Projekt gemerkt). Die Symbole eines Projekts stecken nun "
+                "direkt im Dateibaum — klappen Sie eine Datei auf, sehen Sie ihre "
+                "Klassen, Funktionen und Methoden; ein Suchfeld findet zugleich "
+                "Dateien und Symbole. Im Terminal-Chat sitzt die Eingabe jetzt "
+                "wie in einer Kommandozeile direkt unter der letzten Antwort, Text "
+                "im Verlauf lässt sich markieren und kopieren, und Sie laden den "
+                "Chatverlauf (oder die Terminal-Ausgabe) jederzeit als "
+                "Markdown-Datei herunter.",
+        "audience": "user",
+        "versions": ["9.238.0"],
+    },
+    {
         "version": "9.237.1",
         "date": "2026-06-29",
         "title": "Code-Editor: R-Syntaxhervorhebung",
