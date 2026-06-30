@@ -410,7 +410,11 @@ nutzbar:
   **Klick** auf ein Symbol öffnet die Datei und springt an die Definition (die
   Zeile blinkt kurz auf). Über das **↗-Symbol** klappt ein Symbol seine
   **Aufrufer** (wer ruft das auf) und **Verwendungen** (alle Fundstellen im
-  Projekt) auf — beide ebenfalls anklickbar zum Hinspringen.
+  Projekt) auf — beide ebenfalls anklickbar zum Hinspringen. **Bei SQL- und
+  ShowCase-Dateien** (`.sql`/`.dbq`) erscheinen als Symbole die **verwendeten
+  Tabellen**, die **definierten Prozeduren und Views**, etwaige **CTEs** und
+  **Linked-Server** (OPENQUERY) — so sehen Sie pro Abfrage auf einen Blick, welche
+  Datenquellen sie anfasst.
 - **Vereinte Suche** (Suchfeld über dem Datei-Baum): filtert **gleichzeitig nach
   Dateinamen und Symbolnamen**. Dateien, deren Symbole passen, werden automatisch
   aufgeklappt und zeigen nur die Treffer.

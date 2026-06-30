@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.241.0",
+        "date": "2026-06-30",
+        "title": "Code-Modus: Symbole für SQL-Dateien",
+        "body": "SQL- und ShowCase-Dateien zeigen jetzt ihre Bestandteile direkt "
+                "im Datei-Baum: Klappen Sie eine Datei auf, sehen Sie die von ihr "
+                "verwendeten Tabellen, die definierten Prozeduren und Views, "
+                "etwaige CTEs sowie angesprochene Linked-Server — jeweils mit "
+                "Sprung an die richtige Stelle. So erkennen Sie auf einen Blick, "
+                "welche Datenquellen eine Abfrage anfasst, ohne den ganzen Code "
+                "zu lesen. Diese Dateien gelten damit als vollständig indexiert.",
+        "audience": "user",
+        "versions": ["9.241.0"],
+    },
+    {
         "version": "9.240.0",
         "date": "2026-06-30",
         "title": "Code-Editor: SQL-Farbhervorhebung & ShowCase-Doppelansicht",

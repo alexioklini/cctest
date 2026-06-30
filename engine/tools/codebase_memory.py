@@ -283,6 +283,19 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
             f = None
         if f:
             known.add(os.path.normpath(str(f)))
+    # SQL/.dbq files get their outline symbols from our regex scanner, not cbm —
+    # so a .sql with tables/procs is genuinely 'indexed' even though cbm emitted
+    # no nodes. Collect the relpaths that yield ≥1 SQL symbol so the state below
+    # shows them green instead of hollow 'no symbols'.
+    sql_sym_files: dict[str, int] = {}
+    try:
+        import engine.tools.sql_analysis as _sqla
+        for s in _sqla.sql_file_symbols(working_dir):
+            f = os.path.normpath(s.get("file") or "")
+            if f:
+                sql_sym_files[f] = sql_sym_files.get(f, 0) + 1
+    except Exception:
+        pass
     # cbm index time ≈ the cache dir mtime (rewritten each index)
     try:
         idx_mtime = os.path.getmtime(cache_dir)
@@ -312,9 +325,12 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
             except OSError:
                 fmt = 0
             is_source = ext in _CODE_EXTS
-            if n:
-                # has symbols → indexed (or stale if edited after the last index)
+            sql_syms = sql_sym_files.get(relnorm, 0)
+            if n or sql_syms:
+                # has symbols (cbm OR our SQL scanner) → indexed (or stale)
                 state = "stale" if fmt > idx_mtime else "indexed"
+                if not n:
+                    n = sql_syms  # surface the SQL symbol count in the UI
             elif lookup in known:
                 # in the graph (File/Module node) but no extractable symbols —
                 # normal for flat scripts (plain SQL SELECT files). Genuinely
@@ -466,6 +482,20 @@ def _cell(row, i):
     return None
 
 
+def _outline_working_dir(cache_dir: str) -> str:
+    """The repo root the cache indexes — needed to feed the SQL symbol scanner.
+    cbm records it as the project's root_path; fall back to the cache's parent
+    (caches live at <working_dir>/.cbm-cache)."""
+    try:
+        rp = (index_status(cache_dir) or {}).get("root_path")
+        if rp and os.path.isdir(rp):
+            return rp
+    except Exception:
+        pass
+    parent = os.path.dirname(os.path.abspath(cache_dir))
+    return parent if os.path.isdir(parent) else ""
+
+
 def code_outline(cache_dir: str) -> dict:
     """Whole-project symbol outline for the file-tree's 'Symbole' panel: every
     class/method/function/variable with its file_path (repo-relative), start line
@@ -501,6 +531,23 @@ def code_outline(cache_dir: str) -> dict:
                 "signature": _cell(row, 3) or "",
                 "qualified_name": _cell(row, 4) or "",
             })
+    # Merge SQL/.dbq symbols from our tolerant regex scanner — cbm's SQL parser
+    # emits almost nothing on flat query scripts. _outline_working_dir maps the
+    # cache back to its working dir. SQL files cbm already covered (rare) keep
+    # both; dedup is by (file,label,name,line) so there are no exact repeats.
+    try:
+        wd = _outline_working_dir(cache_dir)
+        if wd:
+            import engine.tools.sql_analysis as _sqla
+            existing = {(s["file"], s["label"], s["name"], s.get("line")) for s in out}
+            for s in _sqla.sql_file_symbols(wd):
+                key = (s["file"], s["label"], s["name"], s.get("line"))
+                if key not in existing:
+                    s.setdefault("qualified_name", "")
+                    out.append(s)
+                    existing.add(key)
+    except Exception:
+        pass  # SQL symbols are a bonus layer; never break the cbm outline
     return {"indexed": True, "symbols": out}
 
 

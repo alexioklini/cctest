@@ -39,6 +39,9 @@ _PROC = re.compile(r"\bCREATE\s+(?:OR\s+ALTER\s+)?PROC\w*\s+([\w.\[\]]+)", re.I)
 _VIEW = re.compile(r"\bCREATE\s+VIEW\s+([\w.\[\]]+)", re.I)
 _JOIN = re.compile(r"\bJOIN\b", re.I)
 _SELECT = re.compile(r"\bSELECT\b", re.I)
+# CTE: `WITH x AS (SELECT …` or a follow-on `, y AS (SELECT …`. The name is the
+# identifier right before `AS (SELECT`. Tolerant — fires on each CTE in a chain.
+_CTE = re.compile(r"\b([A-Za-z_]\w*)\s+AS\s*\(\s*SELECT", re.I)
 _NOISE = {"OPENQUERY", "SELECT", "VALUES", "DUAL"}
 
 
@@ -180,4 +183,102 @@ def sql_analyze(analysis_id: str, working_dir: str) -> dict:
         return {"error": f"SQL-Analyse fehlgeschlagen: {e}"}
     out = a[2](scan)
     out["sqlglot"] = HAVE_SQLGLOT
+    return out
+
+
+# ─── Per-file symbols for the code-index outline ─────────────────────────────
+# cbm's tree-sitter SQL parser emits almost nothing on these flat query scripts,
+# so the file-tree "Symbole" panel would be empty for SQL. This produces the
+# outline symbols ourselves from the same tolerant regex layer: the procedures /
+# views a file DEFINES, plus the tables it READS, the CTEs it declares, and the
+# linked servers it reaches. Output shape matches code_outline's symbol dicts
+# ({name, label, file, line, signature}); codebase_memory.code_outline merges it.
+_SQL_SYM_MAX_PER_FILE = 80  # safety cap so one pathological file can't flood the tree
+
+# mtime-fingerprint cache: per_file_state polls every 5s; re-scanning ~19 MB of
+# SQL each time (~260 ms) is wasteful when nothing changed. Key = working_dir,
+# value = (fingerprint, symbols). Fingerprint = count + max-mtime over .sql/.dbq.
+_SYM_CACHE: dict = {}
+
+
+def _sql_fingerprint(root: str) -> tuple:
+    n = 0
+    mx = 0.0
+    for dp, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS and not d.startswith(".")]
+        for fn in files:
+            ext = fn.lower().rsplit(".", 1)[-1] if "." in fn else ""
+            if ext in _SQL_EXTS:
+                n += 1
+                try:
+                    mx = max(mx, os.path.getmtime(os.path.join(dp, fn)))
+                except OSError:
+                    pass
+    return (n, mx)
+
+
+def sql_file_symbols(working_dir: str) -> list:
+    """[{name, label, file (repo-rel), line, signature}] for every .sql/.dbq unit.
+    Labels: Procedure / View / CTE / Table / LinkedServer. Deduped per file
+    (a table joined 5× → one symbol). Tolerant + never raises (returns []).
+    mtime-cached so repeated polls on an unchanged corpus are free."""
+    if not working_dir or not os.path.isdir(working_dir):
+        return []
+    root_fp = os.path.abspath(working_dir)
+    try:
+        fp = _sql_fingerprint(root_fp)
+        cached = _SYM_CACHE.get(root_fp)
+        if cached and cached[0] == fp:
+            return cached[1]
+    except Exception:  # noqa: BLE001
+        fp = None
+    out: list = []
+    try:
+        units = list(_walk_sql(working_dir))
+    except Exception:  # noqa: BLE001
+        return []
+    # group units by file so we can dedup + cap per file (a .dbq has one Body unit;
+    # a .sql is one unit — but keep it general).
+    by_file: dict = collections.defaultdict(list)
+    for rel, off, sql in units:
+        by_file[rel].append((off, sql))
+    for rel, parts in by_file.items():
+        seen: set = set()           # (label, name) dedup within the file
+        file_syms: list = []
+
+        def _add(label, name, line, sig=""):
+            name = (name or "").strip()
+            if not name or name.upper() in _NOISE:
+                return
+            key = (label, name.lower())
+            if key in seen:
+                return
+            seen.add(key)
+            file_syms.append({"name": name, "label": label, "file": rel,
+                              "line": line, "signature": sig})
+
+        for off, sql in parts:
+            # DEFINITIONS (precise line via the match offset within the unit)
+            for m in _PROC.finditer(sql):
+                _add("Procedure", m.group(1).strip("[]"),
+                     off + sql[:m.start()].count("\n"))
+            for m in _VIEW.finditer(sql):
+                _add("View", m.group(1).strip("[]"),
+                     off + sql[:m.start()].count("\n"))
+            for m in _CTE.finditer(sql):
+                _add("CTE", m.group(1),
+                     off + sql[:m.start()].count("\n"))
+            # REFERENCES (no definition line — point at the unit start)
+            for m in _TBL.finditer(sql):
+                leaf = _leaf(m.group(1))
+                if leaf and not leaf.startswith("{"):
+                    _add("Table", leaf, off, sig="referenziert")
+            for m in _OQ.finditer(sql):
+                _add("LinkedServer", m.group(1), off, sig="OPENQUERY")
+        # stable display order: definitions first, then refs; cap per file
+        order = {"Procedure": 0, "View": 1, "CTE": 2, "LinkedServer": 3, "Table": 4}
+        file_syms.sort(key=lambda s: (order.get(s["label"], 9), s["name"].lower()))
+        out.extend(file_syms[:_SQL_SYM_MAX_PER_FILE])
+    if fp is not None:
+        _SYM_CACHE[root_fp] = (fp, out)
     return out

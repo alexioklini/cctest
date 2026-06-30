@@ -409,12 +409,20 @@ SQL into `.brain-extracted/<rel>.dbq.sql` companions (hash-gated; same subdir
 convention as the doc→md companions), which cbm then indexes. The original
 `.dbq`'s index state in the file-tree UI is mapped from its companion.
 
+**SQL outline symbols** (`sql_analysis.sql_file_symbols`, merged into
+`code_outline`): cbm's tree-sitter SQL parser emits almost nothing on flat
+query scripts, so the tolerant regex scanner supplies the file-tree symbols for
+`.sql`/`.dbq` instead — labels `Procedure` (CREATE PROC), `View` (CREATE VIEW),
+`CTE` (WITH…AS), `Table` (FROM/JOIN reference), `LinkedServer` (OPENQUERY).
+Deduped + capped per file; mtime-cached (`_SYM_CACHE`) so the 5 s status poll
+doesn't re-scan an unchanged corpus.
+
 **Per-file index state** (`per_file_state`, drives the file-tree dots):
-`indexed` (has symbol nodes) · `stale` (symbols, but file edited after the
-index) · `indexed_no_symbols` (in the graph but no extractable symbols — normal
-for flat SQL SELECT scripts; NOT a miss) · `not_indexed` (source file absent
-from the graph — a genuine parse miss) · `not_source` (extension not in
-`_CODE_EXTS` — never indexed by design).
+`indexed` (has symbol nodes — from cbm OR the SQL scanner) · `stale` (symbols,
+but file edited after the index) · `indexed_no_symbols` (in the graph but no
+extractable symbols) · `not_indexed` (source file absent from the graph — a
+genuine parse miss) · `not_source` (extension not in `_CODE_EXTS` — never
+indexed by design). A `.sql`/`.dbq` with ≥1 SQL symbol counts as `indexed`.
 
 ### MemPalace storage
 - Palace root: from `mempalace.yaml → palace_path`

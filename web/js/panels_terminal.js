@@ -1935,6 +1935,12 @@ const _OUTLINE_GLYPH = {
   Field:    { g: '□', c: 'sym-var' },
   Variable: { g: '□', c: 'sym-var' },
   Constant: { g: '□', c: 'sym-const' },
+  // SQL/.dbq symbols (from the regex scanner, merged into the outline):
+  Procedure:  { g: 'ƒ', c: 'sym-method' },   // CREATE PROC
+  View:       { g: '◫', c: 'sym-class' },    // CREATE VIEW
+  CTE:        { g: '◇', c: 'sym-func' },     // WITH … AS (SELECT …)
+  Table:      { g: '▤', c: 'sym-var' },      // FROM/JOIN reference
+  LinkedServer: { g: '⇄', c: 'sym-other' },  // OPENQUERY linked server
 };
 function _outlineGlyph(label) { return _OUTLINE_GLYPH[label] || { g: '·', c: 'sym-other' }; }
 
