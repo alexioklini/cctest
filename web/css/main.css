@@ -4469,6 +4469,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .pt-dot[data-state="pending"] { background: #d29922; }   /* amber */
 .pt-dot[data-state="error"]   { background: #f85149; }   /* red */
 .pt-dot[data-state="stale"]   { background: #8b949e; }   /* grey */
+.pt-dot[data-state="partial"] { background: transparent; border: 1px solid #3fb950; }  /* hollow green — indexed, but no extractable symbols */
 .pt-dot[data-state="muted"]   { background: transparent; border: 1px solid #6e7681; }  /* hollow — never indexed by design */
 
 .pt-row {

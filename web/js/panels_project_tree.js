@@ -15,6 +15,7 @@ const _PT_STATE = {
   pending: { cls: 'pending', label: 'Ausstehend' },
   error:   { cls: 'error',   label: 'Fehler' },
   stale:   { cls: 'stale',   label: 'Veraltet' },
+  indexed_no_symbols: { cls: 'partial', label: 'Indexiert (keine Symbole — z. B. reines SQL-Skript)' },
   not_indexed: { cls: 'error', label: 'Nicht indexiert (sollte sein)' },
   not_source:  { cls: 'muted', label: 'Keine Quelldatei (wird nicht indexiert)' },
 };
@@ -234,6 +235,7 @@ function renderProjectSourceTree() {
   const legend = `
     <div class="pt-legend">
       <span><span class="pt-dot" data-state="indexed"></span>Indexiert</span>
+      <span><span class="pt-dot" data-state="partial"></span>Ohne Symbole</span>
       <span><span class="pt-dot" data-state="pending"></span>Ausstehend</span>
       <span><span class="pt-dot" data-state="error"></span>Fehler</span>
       <span><span class="pt-dot" data-state="stale"></span>Veraltet</span>

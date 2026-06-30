@@ -35,6 +35,7 @@ _CODE_EXTS = {
     ".cs", ".rb", ".php", ".swift", ".scala", ".sh", ".bash", ".zsh", ".lua",
     ".zig", ".dart", ".m", ".mm", ".pl", ".pm", ".r", ".jl", ".ex", ".exs",
     ".erl", ".hs", ".ml", ".mli", ".clj", ".cljs", ".vue", ".svelte", ".sql",
+    ".dbq",
 }
 
 
@@ -123,10 +124,89 @@ def _run(tool: str, payload: dict, cache_dir: str, *, want_project: bool = True)
     return {"error": f"no JSON from '{tool}'", "stderr": (p.stderr or "")[:300]}
 
 
+# ─── ShowCase .dbq SQL extraction (pre-pass before indexing) ─────────────────
+# ShowCase report files (.dbq) are XML wrappers whose <DisplaySQL> (always
+# present) / <Body> tags hold real SQL. cbm doesn't know the extension, so the
+# raw .dbq never indexes. We extract the embedded SQL into a companion
+# `.brain-extracted/<rel>.dbq.sql` (same subdir convention doc_convert uses for
+# binary docs), which cbm DOES index — making the ShowCase SQL searchable like
+# the plain .sql files. Hash-gated so re-index only rewrites changed files.
+_DBQ_EXTRACT_SUBDIR = ".brain-extracted"
+_DISPLAYSQL_RE = None  # compiled lazily in _extract_dbq_sql
+
+
+def _extract_dbq_sql(dbq_text: str) -> str:
+    """Pull the SQL out of a .dbq's <DisplaySQL> (preferred — formatted, always
+    present) or <Body>. Returns unescaped SQL, or '' if none found."""
+    global _DISPLAYSQL_RE
+    import re
+    import html
+    if _DISPLAYSQL_RE is None:
+        _DISPLAYSQL_RE = (re.compile(r"<DisplaySQL>(.*?)</DisplaySQL>", re.S),
+                          re.compile(r"<Body>(.*?)</Body>", re.S))
+    disp_re, body_re = _DISPLAYSQL_RE
+    m = disp_re.search(dbq_text) or body_re.search(dbq_text)
+    if not m:
+        return ""
+    return html.unescape(m.group(1)).strip()
+
+
+def _sync_dbq_companions(repo_path: str) -> int:
+    """Walk repo_path; for each .dbq write/refresh its companion SQL under
+    .brain-extracted/. Hash-gated. Returns count written. Best-effort — a single
+    unreadable file never aborts the indexing it precedes."""
+    import hashlib
+    root = os.path.abspath(repo_path)
+    written = 0
+    skip = {".git", "__pycache__", "node_modules", ".venv", "venv",
+            ".cbm-cache", ".trash", "dist", "build"}
+    for dirpath, dirnames, filenames in os.walk(root):
+        # don't descend into .brain-extracted (its own output) or hidden dirs
+        dirnames[:] = [d for d in dirnames
+                       if d not in skip and d != _DBQ_EXTRACT_SUBDIR
+                       and not d.startswith(".")]
+        for fn in filenames:
+            if not fn.lower().endswith(".dbq"):
+                continue
+            src = os.path.join(dirpath, fn)
+            try:
+                raw = open(src, encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            sql = _extract_dbq_sql(raw)
+            if not sql:
+                continue
+            rel = os.path.relpath(src, root)
+            comp = os.path.join(root, _DBQ_EXTRACT_SUBDIR, rel) + ".sql"
+            body = (f"-- brain-source: {src}\n"
+                    f"-- ShowCase .dbq → extracted SQL ({len(sql)} chars)\n\n"
+                    f"{sql}\n")
+            digest = hashlib.sha1(body.encode("utf-8")).hexdigest()
+            # hash-gate: skip rewrite if companion already holds this content
+            try:
+                if os.path.exists(comp):
+                    cur = open(comp, encoding="utf-8", errors="replace").read()
+                    if hashlib.sha1(cur.encode("utf-8")).hexdigest() == digest:
+                        continue
+                os.makedirs(os.path.dirname(comp), exist_ok=True)
+                with open(comp, "w", encoding="utf-8") as fh:
+                    fh.write(body)
+                written += 1
+            except OSError:
+                continue
+    return written
+
+
 # ─── Index lifecycle (called by brain on code-mode entry / re-index) ──────────
 def index_repository(repo_path: str, cache_dir: str | None = None) -> dict:
     """Build/refresh the index for a repo into its tenant cache dir. Explicit
-    re-index (repos may not be git, so we don't rely on cbm's git-watcher)."""
+    re-index (repos may not be git, so we don't rely on cbm's git-watcher).
+    Pre-pass: extract embedded SQL from any ShowCase .dbq files into companions
+    so cbm can index them too (no-op when the repo has no .dbq files)."""
+    try:
+        _sync_dbq_companions(repo_path)
+    except Exception:
+        pass  # extraction is best-effort; never block indexing
     cache_dir = cache_dir or _tenant_cache_dir()
     return _run("index_repository", {"repo_path": os.path.abspath(repo_path)},
                 cache_dir, want_project=False)
@@ -184,6 +264,25 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
             except (TypeError, ValueError):
                 cnt = 0
             counts[os.path.normpath(str(f))] = cnt
+    # ALSO collect the set of files that have ANY node in the graph (including
+    # the File/Module wrapper nodes). cbm indexes a source file but emits zero
+    # SYMBOL nodes for flat scripts (e.g. plain SQL SELECT files, which carry no
+    # named function/class/proc) — those are genuinely indexed, not a miss. We
+    # use this set to tell "in the index but symbolless" from "absent entirely".
+    known: set[str] = set()
+    res2 = _run("query_graph",
+                {"query": ("MATCH (n) WHERE n.file_path IS NOT NULL "
+                           "RETURN DISTINCT n.file_path AS f"),
+                 "project": project}, cache_dir, want_project=False)
+    for row in (res2 or {}).get("rows", []) or []:
+        if isinstance(row, dict):
+            f = row.get("f")
+        elif isinstance(row, (list, tuple)) and row:
+            f = row[0]
+        else:
+            f = None
+        if f:
+            known.add(os.path.normpath(str(f)))
     # cbm index time ≈ the cache dir mtime (rewritten each index)
     try:
         idx_mtime = os.path.getmtime(cache_dir)
@@ -198,21 +297,35 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
         for fn in filenames:
             fp = os.path.join(dirpath, fn)
             rel = os.path.relpath(fp, wd_abs)
-            n = counts.get(os.path.normpath(rel))
+            relnorm = os.path.normpath(rel)
+            ext = os.path.splitext(fn)[1].lower()
+            # ShowCase .dbq files carry no nodes themselves — their SQL is
+            # indexed via the .brain-extracted/<rel>.dbq.sql companion. Resolve
+            # the .dbq's index state from that companion's relpath.
+            lookup = relnorm
+            if ext == ".dbq":
+                lookup = os.path.normpath(
+                    os.path.join(_DBQ_EXTRACT_SUBDIR, rel) + ".sql")
+            n = counts.get(lookup)
             try:
                 fmt = os.path.getmtime(fp)
             except OSError:
                 fmt = 0
-            is_source = os.path.splitext(fn)[1].lower() in _CODE_EXTS
+            is_source = ext in _CODE_EXTS
             if n:
                 # has symbols → indexed (or stale if edited after the last index)
                 state = "stale" if fmt > idx_mtime else "indexed"
+            elif lookup in known:
+                # in the graph (File/Module node) but no extractable symbols —
+                # normal for flat scripts (plain SQL SELECT files). Genuinely
+                # indexed; the parser just had nothing nameable to emit.
+                state = "indexed_no_symbols"
             elif not is_source:
                 # non-code file (.md/.html/.txt/.yaml/…): never indexed by design
                 state = "not_source"
             else:
-                # a code file with NO symbols: either empty/unparseable, or a
-                # genuine index miss (should have been indexed but wasn't)
+                # a source file absent from the graph entirely: a genuine index
+                # miss (should have been indexed but wasn't — parse error/skip).
                 state = "not_indexed"
             files[rel] = {"state": state, "nodes": n or 0}
     return {"indexed": True, "files": files, "indexed_at": idx_mtime,

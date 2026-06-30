@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.239.0",
+        "date": "2026-06-30",
+        "title": "Code-Modus: SQL- und ShowCase-Dateien korrekt indexiert",
+        "body": "Der Index-Status im Code-Dateibaum ist jetzt für SQL-Projekte "
+                "verlässlich. Reine SQL-Skripte wurden bisher fälschlich als "
+                "„nicht indexiert“ markiert, obwohl ihr Inhalt durchsuchbar war — "
+                "sie erhalten nun einen eigenen Status „indexiert, ohne Symbole“, "
+                "sodass ein echter Index-Fehler klar erkennbar bleibt. Zusätzlich "
+                "wird das in ShowCase-Dateien (.dbq) eingebettete SQL automatisch "
+                "ausgelesen und mitindexiert — diese Auswertungen sind damit "
+                "erstmals durchsuchbar und werden im Dateibaum als indexiert "
+                "angezeigt.",
+        "audience": "admin",
+        "versions": ["9.239.0"],
+    },
+    {
         "version": "9.238.0",
         "date": "2026-06-30",
         "title": "Code-Modus: Dateibaum, Symbole & Terminal-Chat verbessert",
