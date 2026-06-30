@@ -2446,6 +2446,36 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false
+    },
+    "labs-leanstral-1-5-1": {
+      "enabled": true,
+      "shortname": "labs-leanstral-1-5-1",
+      "display_name": "labs-leanstral-1-5-1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "labs-leanstral-1-5": {
+      "enabled": true,
+      "shortname": "labs-leanstral-1-5",
+      "display_name": "labs-leanstral-1-5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

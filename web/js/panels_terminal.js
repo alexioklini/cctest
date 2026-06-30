@@ -2083,20 +2083,37 @@ function _codeIndexOverlay(innerHtml) {
 // ─── Hover: signature + docstring + caller count ─────────────────────────────
 let _codeHoverTimer = null;
 let _codeHoverTip = null;
+let _codeHoverAnchor = null;   // {x,y} where the pending/shown hover was requested
 
 function _codeIndexAttachHover(tab) {
   const wrap = tab.el.querySelector('.editor-cm');
   if (!wrap) return;
   wrap.addEventListener('mousemove', (e) => {
+    // Any movement dismisses the current tooltip IMMEDIATELY (don't wait for the
+    // next hover to resolve) — then re-arm so it only reappears once the mouse
+    // rests for 450ms. _codeHoverAnchor records where the pending hover was
+    // requested so a tiny jitter inside the same word doesn't re-flash.
+    const moved = !_codeHoverAnchor
+      || Math.abs(e.clientX - _codeHoverAnchor.x) > 3
+      || Math.abs(e.clientY - _codeHoverAnchor.y) > 3;
+    if (moved && _codeHoverTip) _codeIndexHideHover();
     clearTimeout(_codeHoverTimer);
-    _codeHoverTimer = setTimeout(() => _codeIndexHover(tab, e), 450);
+    _codeHoverAnchor = { x: e.clientX, y: e.clientY };
+    const cx = e.clientX, cy = e.clientY;
+    _codeHoverTimer = setTimeout(() => _codeIndexHover(tab, cx, cy), 450);
   });
   wrap.addEventListener('mouseleave', _codeIndexHideHover);
+  // Scrolling the editor (mouse wheel / trackpad) must dismiss the tooltip too —
+  // its anchor position is stale the moment the viewport moves. Listen on the
+  // wrap (capture, passive) AND on CodeMirror's own scroll so both wheel and
+  // programmatic scrolls clear it.
+  wrap.addEventListener('wheel', _codeIndexHideHover, { passive: true, capture: true });
+  if (tab.cm && typeof tab.cm.on === 'function') tab.cm.on('scroll', _codeIndexHideHover);
 }
 
-async function _codeIndexHover(tab, e) {
+async function _codeIndexHover(tab, cx, cy) {
   if (!tab.cm) return;
-  const pos = tab.cm.coordsChar({ left: e.clientX, top: e.clientY });
+  const pos = tab.cm.coordsChar({ left: cx, top: cy });
   const word = _wordAt(tab.cm, pos);
   if (!word) { _codeIndexHideHover(); return; }
   const d = await _codeIndexFetch(`def=${encodeURIComponent(word)}`);
@@ -2110,14 +2127,15 @@ async function _codeIndexHover(tab, e) {
   const tip = document.createElement('div');
   tip.className = 'code-hover-tip';
   tip.innerHTML = `<div class="code-hover-sig">${sig}</div>${meta}${doc}`;
-  tip.style.left = Math.min(e.clientX + 12, window.innerWidth - 360) + 'px';
-  tip.style.top = (e.clientY + 16) + 'px';
+  tip.style.left = Math.min(cx + 12, window.innerWidth - 360) + 'px';
+  tip.style.top = (cy + 16) + 'px';
   document.body.appendChild(tip);
   _codeHoverTip = tip;
 }
 
 function _codeIndexHideHover() {
   clearTimeout(_codeHoverTimer);
+  _codeHoverAnchor = null;
   if (_codeHoverTip) { _codeHoverTip.remove(); _codeHoverTip = null; }
 }
 

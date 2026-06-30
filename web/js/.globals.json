@@ -81,6 +81,7 @@
     "_codeAnalysisRun": "writable",
     "_codeAnalysisTable": "writable",
     "_codeCypherRun": "writable",
+    "_codeHoverAnchor": "writable",
     "_codeHoverTimer": "writable",
     "_codeHoverTip": "writable",
     "_codeIndexAbs": "writable",
