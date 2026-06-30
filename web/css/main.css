@@ -794,7 +794,11 @@ textarea { resize: none; }
 .tc-help-line { white-space: pre-wrap; }
 /* user echo */
 .tc-user { color: var(--text-100); }
-.tc-user .tc-uprompt, .tc-prompt { color: var(--accent-brand); font-weight: 700; }
+/* Composer prompt (input line) is the prominent one; the history echo prompt
+   (.tc-uprompt, before each sent message) stays at normal text weight/size so it
+   doesn't stand out in the transcript. */
+.tc-user .tc-uprompt { color: var(--accent-brand); font-weight: 400; }
+.tc-prompt { color: var(--accent-brand); font-weight: 700; }
 /* assistant answer — rendered markdown; normal whitespace + tight block spacing.
    Body text is the slightly softer --text-200 at weight 400 so it doesn't read as
    bold/glaring; **bold** + headings step up to the bright --text-100 so emphasis
@@ -884,11 +888,11 @@ textarea { resize: none; }
 /* Inline prompt line (flows after the last message): no panel chrome, just the
    › prompt + textarea, aligned with the log's left padding. */
 .tc-input { display: flex; align-items: flex-start; gap: 6px; padding: 0; }
-/* Prompt chevron: a touch larger + bolder than the body text so it reads as a
-   prompt marker (the plain 16px › looked too small/thin). line-height matches
-   the textarea so it still sits on the first input line. */
-.tc-input .tc-prompt { font-family: var(--font-ui); font-size: 19px; font-weight: 700;
-  line-height: 1.35; padding: 0; }
+/* Prompt chevron: clearly larger + bolder than the body text so it reads as a
+   prompt marker (the › glyph is intrinsically narrow, so it needs a real size
+   bump). line-height tuned so it sits on the first input line despite the size. */
+.tc-input .tc-prompt { font-family: var(--font-ui); font-size: 24px; font-weight: 800;
+  line-height: 1.0; padding: 0; align-self: flex-start; margin-top: -1px; }
 .tc-ta { flex: 1; resize: none; border: none; outline: none; background: transparent;
   color: var(--text-100); font-family: var(--font-ui); font-size: 16px; line-height: 1.6;
   min-height: 24px; max-height: 160px; overflow-y: auto; padding: 0; }
