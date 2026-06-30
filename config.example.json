@@ -1466,23 +1466,6 @@
       "warmup": false,
       "_audio_backfilled": true
     },
-    "labs-leanstral-2603": {
-      "enabled": false,
-      "shortname": "labs-leanstral-2603",
-      "display_name": "labs-leanstral-2603",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "mistral-large-2512": {
       "enabled": false,
       "shortname": "mistral-large-2512",
@@ -1859,50 +1842,6 @@
       "enabled": false,
       "shortname": "mistral-moderation-2603",
       "display_name": "mistral-moderation-2603",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "mistral-moderation-2411": {
-      "enabled": false,
-      "shortname": "mistral-moderation-2411",
-      "display_name": "mistral-moderation-2411",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "mistral-moderation-latest": {
-      "enabled": false,
-      "shortname": "mistral-moderation-latest",
-      "display_name": "mistral-moderation-latest",
       "icon": "🌬️",
       "priority": 45,
       "capabilities": [

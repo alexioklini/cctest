@@ -43,10 +43,13 @@ function tcBuildBody(tab) {
   // (.tc-log), right after the messages, so it scrolls with the conversation and
   // sits directly under the last response — like the Claude Code CLI prompt.
   // Only the status footer stays pinned at the bottom.
+  // NOTE: the slash-command autocomplete (.tc-ac) is a child of .termchat — NOT
+  // of .tc-input-wrap — because .tc-log has overflow:auto, which would CLIP an
+  // absolutely-positioned popup living inside it. As a sibling of .tc-log it
+  // floats freely; _tcAcRender positions it just above the input line.
   el.innerHTML = `
     <div class="tc-log" id="${esc(tab.id)}-log">
       <div class="tc-input-wrap">
-        <div class="tc-ac" id="${esc(tab.id)}-ac" style="display:none"></div>
         <div class="tc-input">
           <span class="tc-prompt">›</span>
           <textarea class="tc-ta" rows="1" spellcheck="false"
@@ -54,6 +57,7 @@ function tcBuildBody(tab) {
         </div>
       </div>
     </div>
+    <div class="tc-ac" id="${esc(tab.id)}-ac" style="display:none"></div>
     <div class="tc-status" id="${esc(tab.id)}-status"></div>`;
   const ta = el.querySelector('.tc-ta');
   ta.addEventListener('keydown', (e) => _tcKeydown(e, tab));
@@ -557,8 +561,13 @@ function _tcCallbacks(tab, live) {
       if (typeof d.last_tokens_in === 'number') tab.lastApiIn = d.last_tokens_in;
       tcRenderStatus(tab);
       _tcFinishTurn(tab, live);   // also aborts the reader → loop exits promptly
-      // Title may have been auto-generated server-side → refresh the history list.
-      if (typeof renderTermchatHistory === 'function') setTimeout(() => renderTermchatHistory(), 1500);
+      // Title is auto-generated server-side after the turn (async, variable
+      // latency) → refresh the history list a couple of times so the tab name +
+      // list pick it up. renderTermchatHistory syncs open tabs' names.
+      if (typeof renderTermchatHistory === 'function') {
+        setTimeout(() => renderTermchatHistory(), 1500);
+        setTimeout(() => renderTermchatHistory(), 5000);
+      }
     },
     error: (d) => { _tcFinishTurn(tab, live); tcPrint(tab, esc(d.message || 'Fehler'), 'tc-err'); },
   };
@@ -690,9 +699,10 @@ function _tcRekey(tab, newId) {
   // pane.active pointer
   for (const p of (_term.panes || [])) { if (p.active === oldId) p.active = newId; }
   tab.id = newId;
-  // re-id the inner DOM nodes (log/status reference tab.id)
+  // re-id the inner DOM nodes (log/status/autocomplete reference tab.id)
   const log = tab.el.querySelector('.tc-log'); if (log) log.id = newId + '-log';
   const st = tab.el.querySelector('.tc-status'); if (st) st.id = newId + '-status';
+  const ac = tab.el.querySelector('.tc-ac'); if (ac) ac.id = newId + '-ac';
   if (typeof _terminalRenderTabs === 'function') _terminalRenderTabs();
   if (typeof _terminalPersist === 'function') _terminalPersist();
 }
@@ -868,6 +878,25 @@ async function tcLoadTranscript(tab) {
     if (d.thinking_level) tab.thinking = d.thinking_level;
     if (d.max_context) tab.maxContext = d.max_context;
     if (typeof d.caveman_mode === 'number') tab.caveman = d.caveman_mode;
+    if (d.title) { tab.name = d.title; if (typeof _terminalRenderTabs === 'function') _terminalRenderTabs(); }
+    // Restore the running token/cost totals + last-used model + last prompt size
+    // from the per-message metadata so the status line reflects the conversation
+    // after a reload (was showing 0/0 tok and "Standard").
+    let tin = 0, tout = 0, cost = 0, lastModel = '', lastIn = 0, haveCost = false;
+    for (const m of (d.messages || [])) {
+      const meta = m.metadata || {};
+      if (m.role === 'assistant' || m.role === 'assistant_segment') {
+        tin += meta.tokens_in || 0;
+        tout += meta.tokens_out || 0;
+        if (typeof meta.cost === 'number') { cost += meta.cost; haveCost = true; }
+        if (meta.model) lastModel = meta.model;
+        if (meta.tokens_in) lastIn = meta.tokens_in;
+      }
+    }
+    tab.tokensIn = tin; tab.tokensOut = tout;
+    if (haveCost) tab.cost = cost;
+    if (lastIn) tab.lastApiIn = lastIn;
+    if (lastModel) tab.model = lastModel;   // most recent turn's model wins for display
     for (const m of (d.messages || [])) _tcRenderHistMsg(tab, m);
     tcRenderStatus(tab);
     _tcScrollToEnd(tab);   // open a past chat at its most recent message
@@ -933,11 +962,34 @@ async function renderTermchatHistory() {
     sessions = (d && d.sessions) || [];
   } catch (e) { /* keep empty */ }
   sessions.sort((a, b) => (b.last_active || 0) - (a.last_active || 0));
+  // Propagate freshly-generated titles to any OPEN chat tab (the title is created
+  // server-side after the first turn → the tab would otherwise stay "Chat").
+  let _tabTitleChanged = false;
+  for (const s of sessions) {
+    if (!s.title) continue;
+    const t = (_term.tabs || []).find(x => x.kind === 'chat' && x.sessionId === s.id);
+    if (t && t.name !== s.title) { t.name = s.title; _tabTitleChanged = true; }
+  }
+  if (_tabTitleChanged && typeof _terminalRenderTabs === 'function') _terminalRenderTabs();
   const openIds = new Set((_term.tabs || []).filter(t => t.kind === 'chat' && t.sessionId).map(t => t.sessionId));
+  // Which session is the ACTIVE chat tab → the selected row. The active chat is
+  // the active tab of ANY pane that currently shows a chat (prefer the active
+  // pane); falls back to the single open chat.
+  let activeSid = '';
+  const _ap = (typeof _terminalActivePane === 'function') ? _terminalActivePane() : null;
+  const _apTab = _ap && (_term.tabs || []).find(x => x.id === _ap.active && x.kind === 'chat');
+  if (_apTab) activeSid = _apTab.sessionId;
+  else {
+    for (const p of (_term.panes || [])) {
+      const t = (_term.tabs || []).find(x => x.id === p.active && x.kind === 'chat');
+      if (t) { activeSid = t.sessionId; break; }
+    }
+  }
   const rows = sessions.map(s => {
-    const active = openIds.has(s.id) ? ' tc-hist-open' : '';
+    const openCls = openIds.has(s.id) ? ' tc-hist-open' : '';
+    const activeCls = (activeSid && s.id === activeSid) ? ' tc-hist-active' : '';
     const title = s.title || 'Chat';
-    return `<div class="tc-hist-row${active}" data-sid="${esc(s.id)}" onclick="tcOpenHistory('${esc(s.id)}','${esc(title)}')"
+    return `<div class="tc-hist-row${openCls}${activeCls}" data-sid="${esc(s.id)}" onclick="tcOpenHistory('${esc(s.id)}','${esc(title)}')"
       oncontextmenu="tcHistMenu(event,'${esc(s.id)}')" title="${esc(title)}">
       <span class="tc-hist-icon">◈</span><span class="tc-hist-label">${esc(title)}</span>
       <span style="flex:1"></span>

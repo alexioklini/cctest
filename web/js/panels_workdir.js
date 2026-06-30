@@ -269,7 +269,12 @@ function _wdIsDirty(absPath) {
 function _wdIsActive(absPath) {
   const tabs = (typeof _term !== 'undefined' && _term.tabs) || [];
   const t = tabs.find(x => x.kind === 'editor' && x.path === absPath);
-  return !!(t && t.id === _term.active);
+  if (!t) return false;
+  // The active tab is tracked PER PANE (pane.active), not a global _term.active
+  // (which never existed → the highlight was always off). A file is "active" when
+  // its editor tab is the active tab of any pane.
+  const panes = (typeof _term !== 'undefined' && _term.panes) || [];
+  return panes.some(p => p.active === t.id);
 }
 
 // ── Unified file + symbol search ─────────────────────────────────────────────

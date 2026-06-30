@@ -833,7 +833,10 @@ function _terminalAddChatTab(sessionId, paneId, title, tmpId) {
   (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
   const tab = {
     id, kind: 'chat', sessionId: sessionId || '', name: title || 'Chat', el,
-    model: '', thinking: 'none', caveman: 0, showTools: true,
+    // A fresh code chat routes via 'auto' (server picks the model per turn) —
+    // show that, not a misleading "Standard". Once a turn resolves, the status
+    // line shows auto→<model> (tab._autoPicked) / the concrete model.
+    model: 'auto', thinking: 'none', caveman: 0, showTools: true,
     history: [], histIdx: -1, draft: '',
     streaming: false, _abort: null, _spinTimer: null, _live: null,
     log: [], tokensIn: 0, tokensOut: 0, cost: null, lastApiIn: 0, maxContext: 0,
@@ -873,7 +876,7 @@ function _terminalActivate(id) {
   }
   if (tab.kind === 'chat') {
     // No stream/PTY to attach — just focus the input + refresh the status footer.
-    setTimeout(() => { try { const ta = tab.el.querySelector('.tc-ta'); if (ta) ta.focus(); } catch (_) {} }, 30);
+    setTimeout(() => { try { const ta = tab.el.querySelector('.tc-ta'); if (ta) ta.focus({ preventScroll: true }); } catch (_) {} }, 30);
     if (typeof tcRenderStatus === 'function') tcRenderStatus(tab);
     if (typeof renderTermchatHistory === 'function') renderTermchatHistory();
     _terminalPersist();
@@ -1753,7 +1756,7 @@ async function _terminalJumpTo(absPath, line, col) {
 // refs: lazy callers/usages cache keyed by _outlineKey · expandedSym: which
 // symbol rows have their refs sub-list open (file-row expansion lives in the
 // tree's own _wdSetExpanded state, shared with folders).
-let _codeOutline = { symbols: [], byFile: new Map(), loaded: false, expandedSym: {}, refs: {} };
+let _codeOutline = { symbols: [], byFile: new Map(), loaded: false, expandedSym: {}, refs: {}, selectedKey: '' };
 
 // Per-label glyph + CSS class for the outline rows (compact, monochrome).
 const _OUTLINE_GLYPH = {
@@ -1828,7 +1831,8 @@ function _wdSymbolRowsHtml(syms) {
     const sig = s.signature ? `<span class="sym-sig">${esc(s.signature)}</span>` : '';
     const ln = s.line ? `<span class="sym-line">:${s.line}</span>` : '';
     const open = _codeOutline.expandedSym[k] ? ' sym-open' : '';
-    html += `<div class="sym-row${open}" data-key="${esc(k)}">
+    const seld = (_codeOutline.selectedKey === k) ? ' sym-selected' : '';
+    html += `<div class="sym-row${open}${seld}" data-key="${esc(k)}">
       <span class="sym-glyph ${gl.c}">${gl.g}</span>
       <span class="sym-name" onclick="event.stopPropagation();_codeOutlineJump('${esc(k)}')" title="${esc(s.name)} → ${esc(s.file)}:${s.line || ''}">${esc(s.name)}</span>
       ${sig}${ln}
@@ -1844,6 +1848,8 @@ function _outlineByKey(k) { return _codeOutline.symbols.find(s => _outlineKey(s)
 async function _codeOutlineJump(k) {
   const s = _outlineByKey(k);
   if (!s) return;
+  _codeOutline.selectedKey = k;           // mark as selected in the tree
+  _wdRepaintTreeSafe();
   await _terminalJumpTo(_codeIndexAbs(s.file), s.line || 1);
 }
 
@@ -2019,10 +2025,15 @@ function _codeIndexContextMenu(cm, e, tab) {
   menu.className = 'code-ctx-menu';
   menu.style.left = e.clientX + 'px';
   menu.style.top = e.clientY + 'px';
+  // Use onmousedown (not onclick) on the items: the outside-close listener below
+  // ALSO fires on mousedown and removes the menu, so an onclick would never land
+  // (mousedown closes the menu before the click resolves → actions did nothing).
+  // event.preventDefault keeps editor focus from stealing the gesture.
+  const wj = String(word).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
   menu.innerHTML = `
     <div class="code-ctx-head">${esc(word)}</div>
-    <div class="code-ctx-item" onclick="codeGotoDefinition('${esc(word)}')">Gehe zu Definition</div>
-    <div class="code-ctx-item" onclick="codeWhoCalls('${esc(word)}')">Wer ruft das auf?</div>`;
+    <div class="code-ctx-item" onmousedown="event.preventDefault();event.stopPropagation();_codeIndexCloseMenu();codeGotoDefinition('${wj}')">Gehe zu Definition</div>
+    <div class="code-ctx-item" onmousedown="event.preventDefault();event.stopPropagation();_codeIndexCloseMenu();codeWhoCalls('${wj}')">Wer ruft das auf?</div>`;
   document.body.appendChild(menu);
   // keep the menu on-screen
   const r = menu.getBoundingClientRect();

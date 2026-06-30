@@ -687,8 +687,14 @@ textarea { resize: none; }
 /* File-tree rows: tint to the editor palette (theme-aware). */
 #terminal-tree .pt-row { color: var(--text-200); }
 #terminal-tree .pt-row:hover { background: var(--bg-200); }
-#terminal-tree .pt-row.pt-selected { background: var(--bg-300); }
+/* Currently-open file = accent-highlighted (was --bg-300, barely visible, AND
+   never applied because _wdIsActive checked a nonexistent _term.active). */
+#terminal-tree .pt-row.pt-selected { background: color-mix(in srgb, var(--accent-brand) 20%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent-brand); }
 #terminal-tree .pt-label { color: inherit; }
+/* Selected symbol row (jumped-to definition). */
+#terminal-tree .sym-row.sym-selected { background: color-mix(in srgb, var(--accent-brand) 18%, transparent);
+  border-radius: 4px; }
 /* Sync dot pinned to the right edge; the label flex-grows to fill ALL the space
    up to it (a prior flex:1 spacer split the width with the label, so names
    truncated with empty space to their right). */
@@ -859,11 +865,14 @@ textarea { resize: none; }
    flows right after the last message instead of being pinned. A little top
    margin separates it from the preceding response. */
 .tc-input-wrap { position: relative; margin-top: 4px; }
-/* Autocomplete popup floats ABOVE the input line (bottom-anchored). */
-.tc-ac { position: absolute; left: 8px; right: 8px; bottom: 100%; margin-bottom: 2px;
-  max-height: 220px; overflow-y: auto; z-index: 30;
+/* Autocomplete popup. Anchored to the PANE (.termchat), not the input-wrap,
+   because the input-wrap lives inside .tc-log (overflow:auto) which would clip
+   it. It floats just above the status footer — i.e. right over the input line,
+   which always sits at the bottom of the log — and grows upward. */
+.termchat > .tc-ac { position: absolute; left: 8px; right: 8px; bottom: 30px;
+  max-height: 240px; overflow-y: auto; z-index: 30;
   background: var(--bg-000); border: 1px solid var(--border-100);
-  border-radius: 6px; box-shadow: 0 -4px 20px rgba(0,0,0,.25); padding: 3px;
+  border-radius: 6px; box-shadow: 0 -4px 20px rgba(0,0,0,.35); padding: 3px;
   font-family: var(--font-mono); font-size: 12px; }
 .tc-ac-item { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px;
   border-radius: 4px; cursor: pointer; white-space: nowrap; }
@@ -901,12 +910,20 @@ textarea { resize: none; }
 .tc-hist-head .pt-caret { display: inline-flex; transition: transform .12s; }
 .tc-hist-head .pt-caret.open { transform: rotate(90deg); }
 .tc-hist-head .pt-act { color: var(--text-300); }
+/* Match the file tree's surface (was inheriting a black bg). */
+#terminal-chats { background: var(--bg-000); }
 .tc-hist-body { flex: 1 1 auto; overflow-y: auto; padding: 4px; min-height: 0;
+  background: var(--bg-000); color: var(--text-100);
   font-family: var(--font-mono); font-size: 12px; }
 .tc-hist-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px;
   border-radius: 4px; color: var(--text-200); cursor: pointer; white-space: nowrap; }
 .tc-hist-row:hover { background: var(--bg-200); }
-.tc-hist-row.tc-hist-open { background: var(--bg-300); color: var(--text-100); }
+/* Open (in a tab) = subtle; ACTIVE (currently shown) = accent-highlighted so the
+   selected chat is clearly marked, like the file tree's pt-selected. */
+.tc-hist-row.tc-hist-open { background: var(--bg-200); color: var(--text-100); }
+.tc-hist-row.tc-hist-active { background: color-mix(in srgb, var(--accent-brand) 22%, transparent);
+  color: var(--text-100); box-shadow: inset 2px 0 0 var(--accent-brand); }
+.tc-hist-row.tc-hist-active .tc-hist-icon { color: var(--accent-brand); }
 .tc-hist-icon { color: var(--accent-brand); flex: 0 0 auto; }
 .tc-hist-label { overflow: hidden; text-overflow: ellipsis; }
 .tc-hist-empty { color: var(--text-400); padding: 4px 6px; font-size: 11px; }
