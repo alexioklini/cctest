@@ -555,7 +555,7 @@ textarea { resize: none; }
 }
 #terminal-tree-head .tt-title {
   font-size: 11px; color: var(--text-400); text-transform: uppercase; letter-spacing: .04em;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   /* Shrink + ellipsis so the long title never pushes the action buttons out of
      the column (they were overflowing + clipping at the default width). */
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -567,7 +567,7 @@ textarea { resize: none; }
 #terminal-tree-head .tt-toggle.active { color: var(--accent-brand); }
 #terminal-tree {
   flex: var(--tree-grow, 1) 1 0; min-height: 40px; overflow: auto; padding: 6px 4px;
-  font-family: var(--font-mono); font-size: 12px; color: var(--text-100);
+  font-family: var(--font-ui); font-size: 14px; line-height: 1.5; color: var(--text-100);
 }
 /* Horizontal drag handle between the file tree and the Terminal-Chats section. */
 #terminal-tree-vsplit { flex: 0 0 5px; cursor: ns-resize; background: transparent; }
@@ -765,23 +765,24 @@ textarea { resize: none; }
  * only the status footer stays pinned at the bottom. Monospace + theme variables
  * throughout so it follows light/dark. */
 .termchat { position: absolute; inset: 0; display: flex; flex-direction: column;
-  background: var(--bg-000); font-family: var(--font-mono); overflow: hidden; }
+  background: var(--bg-000); font-family: var(--font-ui); overflow: hidden; }
 /* "↓ Neue Nachrichten" pill — appears over the log's bottom edge when content
    lands while the user has scrolled up. Hidden by default; .show fades it in.
    Sits above the status footer (~22px) + a small gap. */
 .tc-newbadge { position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(6px);
   z-index: 6; display: none; opacity: 0; transition: opacity .12s, transform .12s;
-  cursor: pointer; font: inherit; font-size: 11px; font-family: var(--font-mono);
+  cursor: pointer; font: inherit; font-size: 12px; font-family: var(--font-ui);
   padding: 3px 12px; border-radius: 12px; border: 1px solid var(--accent-brand);
   background: var(--bg-000); color: var(--accent-brand);
   box-shadow: 0 2px 10px rgba(0,0,0,.25); }
 .tc-newbadge.show { display: block; opacity: 1; transform: translateX(-50%) translateY(0); }
 .tc-newbadge:hover { background: var(--accent-brand); color: #fff; }
 .tc-log { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px;
-  font-size: 12.5px; line-height: 1.5; color: var(--text-100);
-  /* terminal-grade font so prompts, shell echo + TUI output render box-drawing
-     correctly (Anthropic Mono lacks those glyphs). */
-  font-family: var(--font-term); }
+  font-size: 14px; line-height: 1.6; color: var(--text-100);
+  /* UI font to match the rest of Brain Agent (non-code-mode). Shell output +
+     code blocks stay monospace via .tc-shout / .tc-asst code/pre below; only the
+     real xterm terminal keeps the terminal-grade font. */
+  font-family: var(--font-ui); }
 .tc-row { margin: 0 0 7px; word-break: break-word; }
 .tc-row:last-child { margin-bottom: 0; }
 /* Raw-text rows (NOT rendered markdown) keep their literal newlines/spacing.
@@ -814,7 +815,7 @@ textarea { resize: none; }
 .tc-asst h1:first-child, .tc-asst h2:first-child, .tc-asst h3:first-child { margin-top: 0; }
 .tc-asst pre { background: var(--bg-200); border: 1px solid var(--border-200);
   border-radius: 5px; padding: 8px 10px; overflow-x: auto; margin: 7px 0; }
-.tc-asst code { font-family: var(--font-term); font-size: 12px; }
+.tc-asst code { font-family: var(--font-mono); font-size: 12.5px; }
 /* Inline code: a subtle tint instead of a hard box, so code mentions don't punch
    holes through every line (a big source of the "restless" look). */
 .tc-asst :not(pre) > code { background: color-mix(in srgb, var(--text-400) 12%, transparent);
@@ -839,9 +840,10 @@ textarea { resize: none; }
 .tc-shprompt { color: var(--git-added); font-weight: 700; }
 .tc-shout { color: var(--text-100); background: var(--bg-200); border-radius: 5px;
   padding: 6px 10px; white-space: pre-wrap; word-break: break-word;
-  border-left: 2px solid var(--border-200); font-size: 12px;
-  /* terminal-grade font: shell output may contain box-drawing / TUI glyphs */
-  font-family: var(--font-term); }
+  border-left: 2px solid var(--border-200); font-size: 12.5px;
+  /* monospace (like a chat code block) so shell output stays column-aligned —
+     but the app's mono, matching non-code-mode chat (only xterm uses font-term). */
+  font-family: var(--font-mono); }
 .tc-exit-bad { color: var(--git-deleted); font-weight: 600; }
 /* spinner row */
 .tc-spin { color: var(--text-400); min-height: 1em; }
@@ -885,11 +887,11 @@ textarea { resize: none; }
 .tc-input { display: flex; align-items: flex-start; gap: 6px; padding: 0; }
 /* Prompt shares the textarea's font metrics + line-height so the › sits exactly
    on the first input line (no ad-hoc padding nudge). */
-.tc-input .tc-prompt { font-family: var(--font-term); font-size: 12.5px;
-  line-height: 1.35; padding: 0; }
+.tc-input .tc-prompt { font-family: var(--font-ui); font-size: 14px;
+  line-height: 1.5; padding: 0; }
 .tc-ta { flex: 1; resize: none; border: none; outline: none; background: transparent;
-  color: var(--text-100); font-family: var(--font-term); font-size: 12.5px; line-height: 1.35;
-  min-height: 19px; max-height: 160px; overflow-y: auto; padding: 0; }
+  color: var(--text-100); font-family: var(--font-ui); font-size: 14px; line-height: 1.5;
+  min-height: 21px; max-height: 160px; overflow-y: auto; padding: 0; }
 .tc-ta::placeholder { color: var(--text-400); }
 /* live tab pulse */
 .terminal-tab.tc-tab-live .tt-name::after { content: ' ●'; color: var(--git-added);
@@ -906,7 +908,7 @@ textarea { resize: none; }
 .tc-hist-head { display: flex; align-items: center; gap: 4px; padding: 4px 8px;
   background: var(--bg-200); cursor: pointer; flex: 0 0 auto; }
 .tc-hist-title { font-size: 11px; color: var(--text-400); text-transform: uppercase;
-  letter-spacing: .04em; font-family: var(--font-mono); }
+  letter-spacing: .04em; font-family: var(--font-ui); }
 .tc-hist-head .pt-caret { display: inline-flex; transition: transform .12s; }
 .tc-hist-head .pt-caret.open { transform: rotate(90deg); }
 .tc-hist-head .pt-act { color: var(--text-300); }
@@ -914,7 +916,7 @@ textarea { resize: none; }
 #terminal-chats { background: var(--bg-000); }
 .tc-hist-body { flex: 1 1 auto; overflow-y: auto; padding: 4px; min-height: 0;
   background: var(--bg-000); color: var(--text-100);
-  font-family: var(--font-mono); font-size: 12px; }
+  font-family: var(--font-ui); font-size: 14px; line-height: 1.5; }
 .tc-hist-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px;
   border-radius: 4px; color: var(--text-200); cursor: pointer; white-space: nowrap; }
 .tc-hist-row:hover { background: var(--bg-200); }
@@ -1150,16 +1152,16 @@ textarea { resize: none; }
 /* ── Unified file+symbol tree: search box + inline symbols ──────────────── */
 #terminal-tree-search { padding: 5px 6px; flex: 0 0 auto;
   border-bottom: 1px solid var(--border-200); background: var(--bg-200); }
-#terminal-tree-filter { width: 100%; box-sizing: border-box; font-size: 12px;
+#terminal-tree-filter { width: 100%; box-sizing: border-box; font-size: 13px;
   padding: 4px 8px; background: var(--bg-100); color: var(--text-100);
   border: 1px solid var(--border-100); border-radius: 5px; outline: none;
-  font-family: var(--font-mono); }
+  font-family: var(--font-ui); }
 #terminal-tree-filter:focus { border-color: var(--accent-brand); }
 /* Symbols nested under a file row keep the file's left indent + a little extra
    so they read as children. .pt-symchildren is the file-symbol child container
    (parallel to .pt-children for folders). */
 .pt-symchildren { padding-left: 10px; }
-.pt-symchildren .sym-row { font-family: var(--font-mono); font-size: 12px; }
+.pt-symchildren .sym-row { font-family: var(--font-ui); font-size: 13px; }
 /* Caret spacer aligns symbol-less files with files that have a caret. */
 .pt-caret-spacer { display: inline-block; width: 12px; flex: 0 0 auto; }
 .sym-none { color: var(--text-400); font-size: 11px; padding: 2px 8px 2px 22px; font-style: italic; }
