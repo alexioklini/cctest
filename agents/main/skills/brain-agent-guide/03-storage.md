@@ -402,6 +402,20 @@ Managed by the brain (CLI subprocess, not MCP); the binary is vendored under
 `.codebase-memory/` (gitignored, per-machine). Queried via the `code_search`/
 `code_trace`/`code_query`/`code_snippet` tools.
 
+**ShowCase `.dbq` files** (XML report wrappers holding SQL in `<DisplaySQL>`/
+`<Body>`) are not a language cbm knows, so an index pre-pass
+(`_sync_dbq_companions`, run inside `index_repository`) extracts the embedded
+SQL into `.brain-extracted/<rel>.dbq.sql` companions (hash-gated; same subdir
+convention as the doc→md companions), which cbm then indexes. The original
+`.dbq`'s index state in the file-tree UI is mapped from its companion.
+
+**Per-file index state** (`per_file_state`, drives the file-tree dots):
+`indexed` (has symbol nodes) · `stale` (symbols, but file edited after the
+index) · `indexed_no_symbols` (in the graph but no extractable symbols — normal
+for flat SQL SELECT scripts; NOT a miss) · `not_indexed` (source file absent
+from the graph — a genuine parse miss) · `not_source` (extension not in
+`_CODE_EXTS` — never indexed by design).
+
 ### MemPalace storage
 - Palace root: from `mempalace.yaml → palace_path`
   (typically `~/.mempalace/<palace_name>/`).

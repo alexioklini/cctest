@@ -436,7 +436,9 @@ nutzbar:
     **komplexeste Abfragen** (nach Anzahl der JOINs), **Linked-Server-Zugriffe**
     (OPENQUERY-Abhängigkeiten) und einem **Prozeduren-&-Views-Inventar** (mit
     Sprung zur Definition). Funktioniert auch mit großen, gemischten SQL-Sammlungen
-    inkl. IBM-DB2/iSeries-Syntax und in `.dbq` eingebetteten Abfragen.
+    inkl. IBM-DB2/iSeries-Syntax. **ShowCase-Dateien (`.dbq`)** werden automatisch
+    mitberücksichtigt: das darin eingebettete SQL wird ausgelesen und indexiert,
+    sodass diese Auswertungen genauso durchsuchbar sind wie reine `.sql`-Dateien.
   - **R-Auswertungen**: Enthält das Projekt R-Skripte (`.R`), erscheint eine
     Gruppe **R-Auswertungen** mit: **Funktionen & Aufrufe** (inkl. Warnung bei
     Funktionen, die mehrfach in verschiedenen Dateien definiert sind),
@@ -462,7 +464,11 @@ auf bzw. zu). Jede Datei zeigt drei Signale: die **Farbe des Datei-Symbols**
 (links vom Namen) spiegelt den **Git-Status** (geändert = amber, neu/
 unversioniert = grün, gelöscht = rot, umbenannt = blau), ein **`*`** hinter dem
 Namen markiert im Editor geöffnete Dateien mit **ungespeicherten Änderungen**,
-und ein **Punkt** rechts zeigt den Index-Status. Ein Klick öffnet die Datei im
+und ein **Punkt** rechts zeigt den Index-Status (grün = indexiert,
+hohl-grün = indexiert, aber ohne extrahierbare Symbole — z. B. ein reines
+SQL-SELECT-Skript, das keine benannte Funktion/Prozedur enthält; grau =
+veraltet; rot = sollte indexiert sein, ist es aber nicht; hohl-grau = keine
+Quelldatei). Ein Klick öffnet die Datei im
 Editor; die gerade bearbeitete Datei ist im Baum hervorgehoben. Der
 **Ein-Editor-Modus** (Umschalter) lässt jeden Klick die aktuelle Datei
 **ersetzen**, statt immer einen neuen Tab zu öffnen.
