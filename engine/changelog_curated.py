@@ -39,9 +39,10 @@ CURATED_CHANGELOG: list[dict] = [
                 "die Abfrage mit SQL-Hervorhebung, „XML-Quelle“ die vollständige "
                 "Datei. Sie können in beiden Ansichten Änderungen vornehmen; beim "
                 "Speichern wird die bearbeitete SQL automatisch wieder korrekt in "
-                "die XML-Datei eingesetzt.",
+                "die XML-Datei eingesetzt. Lange SQL-Zeilen werden im Editor "
+                "automatisch umgebrochen, statt aus dem Bild zu laufen.",
         "audience": "user",
-        "versions": ["9.240.0"],
+        "versions": ["9.240.0", "9.240.1"],
     },
     {
         "version": "9.239.0",

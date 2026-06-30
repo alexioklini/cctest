@@ -1547,10 +1547,14 @@ function _terminalEditorPaint(tab) {
   const _dbqWantSql = _dbq && tab.mode === 'render';
   const _initVal = _dbq ? (_dbqWantSql ? _dbqExtractSql(tab.raw) : tab.raw) : tab.raw;
   const _initMode = _dbq ? (_dbqWantSql ? 'text/x-sql' : 'xml') : _cmModeFor(tab.ext);
+  // Wrap long lines for SQL / ShowCase content — these queries are often a
+  // single very long line and would otherwise scroll far off-screen. Normal
+  // code keeps wrapping off (editor convention).
+  const _wrap = _dbq || (tab.ext || '').toLowerCase() === 'sql';
   if (!tab.cm) {
     tab.cm = CodeMirror(cmEl, {
       value: _initVal, mode: _initMode, lineNumbers: true,
-      lineWrapping: false, indentUnit: 4,
+      lineWrapping: _wrap, indentUnit: 4,
       readOnly: _dbq ? false : (tab.mode === 'raw' ? false : 'nocursor'),
       extraKeys: {
         // index-fed autocomplete (project symbols from the cbm index).
