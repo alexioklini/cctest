@@ -1304,7 +1304,9 @@ function _cmModeFor(ext) {
   ext = (ext || '').toLowerCase();
   const m = {
     py: 'python', js: 'javascript', mjs: 'javascript', cjs: 'javascript',
-    json: { name: 'javascript', json: true }, ts: 'javascript', jsx: 'javascript', tsx: 'javascript',
+    json: { name: 'javascript', json: true }, jsonl: { name: 'javascript', json: true },
+    geojson: { name: 'javascript', json: true },
+    ts: 'javascript', jsx: 'javascript', tsx: 'javascript',
     html: 'htmlmixed', htm: 'htmlmixed', xml: 'xml', svg: 'xml',
     css: 'css', scss: 'css', less: 'css',
     md: 'markdown', markdown: 'markdown',
@@ -1319,6 +1321,46 @@ function _cmModeFor(ext) {
     dbq: 'xml',
   };
   return m[ext] || null;
+}
+
+// CodeMirror fold helper kind for an extension → 'xml' | 'brace' | null. Drives
+// the collapse arrows in the editor gutter (tree-like collapse/expand): XML-ish
+// files fold by element, JSON-ish by {}/[] braces. Everything else: no fold.
+function _cmFoldKindFor(ext) {
+  ext = (ext || '').toLowerCase();
+  if (ext === 'xml' || ext === 'svg' || ext === 'dbq' || ext === 'html' || ext === 'htm') return 'xml';
+  if (ext === 'json' || ext === 'jsonl' || ext === 'geojson') return 'brace';
+  return null;
+}
+// Is this a file type we offer a structured tree VIEW for (Ansicht mode)?
+function _terminalHasTreeView(ext) {
+  ext = (ext || '').toLowerCase();
+  return ext === 'json' || ext === 'jsonl' || ext === 'geojson' || ext === 'xml';
+}
+// Build the CodeMirror fold rangeFinder for a kind. 'xml' uses the xml-fold
+// helper, 'brace' the brace-fold helper; both fall back to indent-fold so a
+// pretty-printed-but-unusual file still folds. Guards against an addon that
+// failed to load (returns null → foldGutter simply shows no arrows).
+function _cmFoldFinder(kind) {
+  if (!window.CodeMirror || !CodeMirror.fold) return null;
+  const f = CodeMirror.fold;
+  const parts = [];
+  if (kind === 'xml' && f.xml) parts.push(f.xml);
+  if (kind === 'brace' && f.brace) parts.push(f.brace);
+  if (f.indent) parts.push(f.indent);
+  if (!parts.length) return null;
+  return parts.length === 1 ? parts[0] : CodeMirror.fold.auto || f.combine(...parts);
+}
+// Enable/disable the fold gutter on an EXISTING CodeMirror instance (used when a
+// .dbq tab switches between its foldable XML view and non-foldable SQL view).
+function _terminalSetFold(tab, kind) {
+  if (!tab || !tab.cm) return;
+  const cm = tab.cm;
+  const finder = kind ? _cmFoldFinder(kind) : null;
+  const gutters = ['CodeMirror-linenumbers'];
+  if (finder) gutters.push('CodeMirror-foldgutter');
+  cm.setOption('gutters', gutters);
+  cm.setOption('foldGutter', finder ? { rangeFinder: finder } : false);
 }
 
 // Open a file as an editor tab (or focus it if already open).
@@ -1413,6 +1455,7 @@ async function terminalOpenFile(absPath) {
     tab.truncated = !!d.truncated;
     tab.loaded = true;
     if (_isDbq(tab)) _terminalDbqRelabelModes(tab);
+    else if (_terminalHasTreeView(tab.ext)) _terminalTreeRelabelModes(tab);
     _terminalEditorPaint(tab);
     _terminalEditorStats(tab);
   } catch (e) {
@@ -1447,7 +1490,8 @@ function terminalEditorMode(id, mode) {
 // difference between view and edit is the cursor — EXCEPT renderable files
 // (html/md/svg), where read-only "Ansicht" shows the RENDERED output and edit
 // shows the CodeMirror source.
-const _ED_RENDERABLE = { html: 1, htm: 1, md: 1, markdown: 1, svg: 1 };
+const _ED_RENDERABLE = { html: 1, htm: 1, md: 1, markdown: 1, svg: 1,
+                         json: 1, jsonl: 1, geojson: 1, xml: 1 };
 function _terminalIsRenderable(ext) { return !!_ED_RENDERABLE[(ext || '').toLowerCase()]; }
 
 // ── ShowCase .dbq handling ───────────────────────────────────────────────────
@@ -1505,6 +1549,22 @@ function _terminalDbqRelabelModes(tab) {
     xmlBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>';
   }
 }
+// JSON/XML: 'render' = collapsible data tree, 'raw' = editable source (with fold
+// arrows). Relabel the eye → "Baum-Ansicht" (tree icon) so the toggle reads right.
+function _terminalTreeRelabelModes(tab) {
+  if (!tab || !tab.el) return;
+  const treeBtn = tab.el.querySelector('.ed-mode[data-mode="render"]');
+  const srcBtn = tab.el.querySelector('.ed-mode[data-mode="raw"]');
+  if (treeBtn) {
+    treeBtn.title = 'Baum-Ansicht (auf-/zuklappen)';
+    treeBtn.setAttribute('aria-label', 'Baum-Ansicht');
+    treeBtn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="6" x2="20" y2="6"/><line x1="12" y1="12" x2="20" y2="12"/><line x1="12" y1="18" x2="20" y2="18"/><path d="M4 5v4a2 2 0 0 0 2 2h2"/><path d="M6 11v4a2 2 0 0 0 2 2h2"/></svg>';
+  }
+  if (srcBtn) {
+    srcBtn.title = 'Quelltext bearbeiten (mit Aufklapp-Pfeilen)';
+    srcBtn.setAttribute('aria-label', 'Quelltext');
+  }
+}
 
 // Render a renderable file's content into the .editor-render pane (Ansicht mode).
 function _terminalEditorRender(tab) {
@@ -1512,6 +1572,36 @@ function _terminalEditorRender(tab) {
   if (!renderEl) return;
   const txt = (tab.cm && tab.dirty) ? tab.cm.getValue() : tab.raw;
   const ext = (tab.ext || '').toLowerCase();
+  if (_terminalHasTreeView(ext)) {
+    // JSON / XML → a collapsible data tree (read-only). Editing happens in the
+    // 'Bearbeiten' view (CodeMirror source, with fold arrows in the gutter).
+    renderEl.innerHTML = '';
+    const host = document.createElement('div');
+    host.className = 'editor-tree';
+    let rootNode;
+    try {
+      rootNode = (ext === 'xml')
+        ? _treeFromXml(txt)
+        : _treeFromJson(txt, ext);
+    } catch (e) {
+      host.innerHTML = `<div class="pt-empty">Konnte ${ext.toUpperCase()} nicht als Baum darstellen: ${esc(String(e.message || e))}<br><span style="opacity:.7">Nutzen Sie „Bearbeiten" für die Rohansicht.</span></div>`;
+      renderEl.appendChild(host);
+      return;
+    }
+    host.appendChild(_treeRenderNode(rootNode, true));
+    // toolbar: expand-all / collapse-all
+    const bar = document.createElement('div');
+    bar.className = 'editor-tree-bar';
+    bar.innerHTML = '<button class="ed-tree-btn" data-act="expand">Alles aufklappen</button>'
+                  + '<button class="ed-tree-btn" data-act="collapse">Alles zuklappen</button>';
+    bar.querySelector('[data-act="expand"]').onclick = () =>
+      host.querySelectorAll('.etree-node.collapsible').forEach(n => n.classList.remove('etree-collapsed'));
+    bar.querySelector('[data-act="collapse"]').onclick = () =>
+      host.querySelectorAll('.etree-node.collapsible').forEach(n => n.classList.add('etree-collapsed'));
+    renderEl.appendChild(bar);
+    renderEl.appendChild(host);
+    return;
+  }
   if (ext === 'md' || ext === 'markdown') {
     renderEl.innerHTML = (typeof renderMarkdown === 'function')
       ? `<div class="ref-inline-md msg-content" style="padding:12px">${renderMarkdown(txt)}</div>`
@@ -1527,6 +1617,127 @@ function _terminalEditorRender(tab) {
     frame.srcdoc = txt;
     renderEl.appendChild(frame);
   }
+}
+
+// ── JSON/XML data-tree viewer (Ansicht mode) ─────────────────────────────────
+// A normalized node = { kind:'object'|'array'|'leaf', key, value, children[] }.
+// Built from parsed JSON or a DOM-parsed XML document, then rendered as nested
+// collapsible rows (containers get a click-toggle caret; leaves show key:value).
+
+function _treeFromJson(txt, ext) {
+  let data;
+  if (ext === 'jsonl') {
+    // JSON Lines → an array of the per-line records (skip blank lines).
+    const recs = [];
+    txt.split('\n').forEach((ln, i) => {
+      const s = ln.trim();
+      if (!s) return;
+      try { recs.push(JSON.parse(s)); }
+      catch (e) { throw new Error(`Zeile ${i + 1}: ${e.message}`); }
+    });
+    data = recs;
+  } else {
+    data = JSON.parse(txt);
+  }
+  return _jsonToNode(undefined, data);
+}
+function _jsonToNode(key, val) {
+  if (Array.isArray(val)) {
+    return { kind: 'array', key, value: val, count: val.length,
+             children: val.map((v, i) => _jsonToNode(i, v)) };
+  }
+  if (val && typeof val === 'object') {
+    const keys = Object.keys(val);
+    return { kind: 'object', key, value: val, count: keys.length,
+             children: keys.map(k => _jsonToNode(k, val[k])) };
+  }
+  return { kind: 'leaf', key, value: val };
+}
+
+function _treeFromXml(txt) {
+  const doc = new DOMParser().parseFromString(txt, 'application/xml');
+  const err = doc.querySelector('parsererror');
+  if (err) throw new Error((err.textContent || 'XML-Parsefehler').split('\n')[0]);
+  const root = doc.documentElement;
+  if (!root) throw new Error('kein Wurzelelement');
+  return _xmlToNode(root);
+}
+function _xmlToNode(el) {
+  const attrs = Array.from(el.attributes || []).map(a => ({ name: a.name, value: a.value }));
+  // element children (ignore whitespace-only text); collect significant text
+  const elems = Array.from(el.children || []);
+  const ownText = Array.from(el.childNodes || [])
+    .filter(n => n.nodeType === 3).map(n => n.nodeValue.trim()).filter(Boolean).join(' ');
+  if (!elems.length) {
+    // leaf element: tag = text (+ attributes shown inline)
+    return { kind: 'leaf', key: el.tagName, value: ownText, attrs };
+  }
+  return { kind: 'object', key: el.tagName, value: null, attrs,
+           count: elems.length, text: ownText,
+           children: elems.map(_xmlToNode) };
+}
+
+// Render one normalized node as a collapsible row (with its subtree).
+function _treeRenderNode(node, isRoot) {
+  const wrap = document.createElement('div');
+  const isContainer = node.kind === 'object' || node.kind === 'array';
+  wrap.className = 'etree-node' + (isContainer ? ' collapsible' : '');
+  if (isContainer && !isRoot && (node.count || 0) > 30) wrap.classList.add('etree-collapsed');
+
+  const row = document.createElement('div');
+  row.className = 'etree-row';
+  // caret (containers only)
+  if (isContainer) {
+    const car = document.createElement('span');
+    car.className = 'etree-caret';
+    car.textContent = '▾';
+    car.onclick = () => wrap.classList.toggle('etree-collapsed');
+    row.appendChild(car);
+  } else {
+    const sp = document.createElement('span'); sp.className = 'etree-caret etree-caret-leaf';
+    row.appendChild(sp);
+  }
+  // key
+  if (node.key !== undefined && node.key !== null && node.key !== '') {
+    const k = document.createElement('span'); k.className = 'etree-key';
+    k.textContent = String(node.key); row.appendChild(k);
+    const c = document.createElement('span'); c.className = 'etree-colon'; c.textContent = ': ';
+    row.appendChild(c);
+  }
+  // XML attributes (compact, after the key)
+  if (node.attrs && node.attrs.length) {
+    const a = document.createElement('span'); a.className = 'etree-attrs';
+    a.textContent = node.attrs.map(x => `${x.name}="${x.value}"`).join(' ');
+    row.appendChild(a);
+  }
+  if (isContainer) {
+    const badge = document.createElement('span'); badge.className = 'etree-count';
+    badge.textContent = node.kind === 'array' ? `[${node.count}]` : `{${node.count}}`;
+    row.appendChild(badge);
+    if (node.text) {  // XML element with both text and children
+      const t = document.createElement('span'); t.className = 'etree-val etree-val-str';
+      t.textContent = ' ' + node.text; row.appendChild(t);
+    }
+  } else {
+    const v = document.createElement('span');
+    const val = node.value;
+    const cls = (val === null || val === undefined) ? 'etree-val-null'
+      : (typeof val === 'number') ? 'etree-val-num'
+      : (typeof val === 'boolean') ? 'etree-val-bool' : 'etree-val-str';
+    v.className = 'etree-val ' + cls;
+    v.textContent = (val === null || val === undefined) ? 'null'
+      : (typeof val === 'string') ? (node.attrs ? (val || '') : JSON.stringify(val)) : String(val);
+    row.appendChild(v);
+  }
+  wrap.appendChild(row);
+
+  if (isContainer) {
+    const kids = document.createElement('div');
+    kids.className = 'etree-children';
+    node.children.forEach(ch => kids.appendChild(_treeRenderNode(ch, false)));
+    wrap.appendChild(kids);
+  }
+  return wrap;
 }
 
 function _terminalEditorPaint(tab) {
@@ -1551,18 +1762,29 @@ function _terminalEditorPaint(tab) {
   // single very long line and would otherwise scroll far off-screen. Normal
   // code keeps wrapping off (editor convention).
   const _wrap = _dbq || (tab.ext || '').toLowerCase() === 'sql';
+  // Code folding (tree-like collapse/expand in the gutter). For .dbq only the
+  // XML view folds (the extracted-SQL view has no nesting). Mode string carries
+  // the fold helper kind via `foldOptions`.
+  const _foldKind = (_dbq && tab.mode === 'render') ? null : _cmFoldKindFor(tab.ext);
   if (!tab.cm) {
+    const _gutters = ['CodeMirror-linenumbers'];
+    if (_foldKind) _gutters.push('CodeMirror-foldgutter');
     tab.cm = CodeMirror(cmEl, {
       value: _initVal, mode: _initMode, lineNumbers: true,
       lineWrapping: _wrap, indentUnit: 4,
       readOnly: _dbq ? false : (tab.mode === 'raw' ? false : 'nocursor'),
+      gutters: _gutters,
+      foldGutter: _foldKind ? { rangeFinder: _cmFoldFinder(_foldKind) } : false,
       extraKeys: {
         // index-fed autocomplete (project symbols from the cbm index).
         // Ctrl-Space only — NOT Cmd-Space (that's macOS Spotlight, the OS
         // grabs it before the browser sees it).
         'Ctrl-Space': (cm) => codeIndexComplete(cm),
+        // fold/unfold the block at the cursor
+        'Ctrl-Q': (cm) => { try { cm.foldCode(cm.getCursor()); } catch (_) {} },
       },
     });
+    tab._foldKind = _foldKind;
     // CSS drives the height (.editor-cm .CodeMirror { height:100% }); a
     // refresh() after the element is laid out lets CM measure + show scrollbars.
     // (setSize('100%','100%') broke CM's scroll measurement → no scrollbars.)
@@ -1590,6 +1812,11 @@ function _terminalEditorPaint(tab) {
     // already updated (in terminalEditorMode, before the switch) so the freshly
     // shown view reflects edits made in the other view. Both views editable.
     tab.cm.setOption('mode', _initMode);
+    // XML view folds, SQL view doesn't — toggle the fold gutter accordingly.
+    if (_foldKind !== tab._foldKind) {
+      _terminalSetFold(tab, _foldKind);
+      tab._foldKind = _foldKind;
+    }
     if (tab.cm.getValue() !== _initVal) {
       tab._suppressDirty = true;            // a view swap is not a user edit
       tab.cm.setValue(_initVal);

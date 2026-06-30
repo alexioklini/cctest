@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.242.0",
+        "date": "2026-06-30",
+        "title": "Code-Editor: XML & JSON auf- und zuklappen",
+        "body": "XML- und JSON-Dateien lassen sich im Code-Editor jetzt wie eine "
+                "Baumstruktur erkunden. In der Ansicht sehen Sie die Daten als "
+                "aufklappbaren Baum — Objekte, Listen und Werte mit einem Klick "
+                "ein- und ausklappen, inklusive „Alles auf-/zuklappen“. Im "
+                "Bearbeiten-Modus zeigen kleine Pfeile am linken Rand jede "
+                "Verschachtelung, sodass Sie einzelne Abschnitte einklappen und "
+                "lange Dateien übersichtlich halten können. Beides gilt für "
+                "XML, SVG und JSON (auch JSON-Lines und GeoJSON).",
+        "audience": "user",
+        "versions": ["9.242.0"],
+    },
+    {
         "version": "9.241.0",
         "date": "2026-06-30",
         "title": "Code-Modus: Symbole für SQL-Dateien",

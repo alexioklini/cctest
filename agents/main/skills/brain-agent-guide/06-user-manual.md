@@ -485,6 +485,14 @@ nur ohne Cursor). Im **Bearbeiten**-Modus sehen Sie immer den Quelltext und
 können ihn ändern; eine Statuszeile unten zeigt Größe, Zeilenzahl und
 Änderungsdatum. **SQL-Dateien** (`.sql`) werden farblich hervorgehoben.
 
+**XML- und JSON-Dateien** (`.xml`/`.svg`/`.json`/`.jsonl`/`.geojson`) lassen
+sich wie eine Baumstruktur erkunden: In der **Ansicht** erscheint ein
+**aufklappbarer Datenbaum** — Objekte, Listen und Werte per Klick auf-/zuklappen,
+mit „Alles aufklappen/zuklappen“. Im **Bearbeiten**-Modus zeigen **Klapp-Pfeile
+am linken Rand** (Gutter) jede Verschachtelung, sodass Sie einzelne XML-Elemente
+bzw. JSON-Objekte/Arrays einklappen können (Tastenkürzel **Strg+Q** faltet am
+Cursor).
+
 **ShowCase-Dateien (`.dbq`)**: Diese Dateien sind XML-Hüllen um eine
 SQL-Abfrage. Der Editor bietet dafür **zwei bearbeitbare Ansichten**, die Sie
 über dieselben zwei Knöpfe oben umschalten (für `.dbq` beschriftet als

@@ -1036,6 +1036,48 @@ textarea { resize: none; }
 :root[data-mode="dark"] .editor-cm .cm-link { color: #ce9178; }
 .editor-pre { margin: 0; padding: 10px 12px; font-size: 12px; line-height: 1.5;
   font-family: var(--font-mono); white-space: pre; }
+/* CodeMirror fold gutter (collapse arrows for XML/JSON) — themed to match. */
+.editor-cm .CodeMirror-foldgutter { width: 14px; }
+.editor-cm .CodeMirror-foldgutter-open,
+.editor-cm .CodeMirror-foldgutter-folded { color: var(--text-500); cursor: pointer; }
+.editor-cm .CodeMirror-foldgutter-open:hover,
+.editor-cm .CodeMirror-foldgutter-folded:hover { color: var(--accent-brand); }
+.editor-cm .CodeMirror-foldmarker {
+  color: var(--accent-brand); background: var(--bg-200);
+  border: 1px solid var(--border-300); border-radius: 3px;
+  padding: 0 4px; font-family: var(--font-ui); font-size: 11px; }
+/* ── JSON/XML data-tree viewer (Ansicht mode) ─────────────────────────────── */
+.editor-tree { padding: 6px 10px 14px; font-family: var(--font-mono);
+  font-size: 12.5px; line-height: 1.55; color: var(--text-100); overflow: auto; }
+.editor-tree-bar { position: sticky; top: 0; z-index: 1; display: flex; gap: 6px;
+  padding: 6px 10px; background: var(--bg-000); border-bottom: 1px solid var(--border-100); }
+.ed-tree-btn { font-family: var(--font-ui); font-size: 11px; cursor: pointer;
+  background: var(--bg-200); color: var(--text-200); border: 1px solid var(--border-200);
+  border-radius: 4px; padding: 2px 8px; }
+.ed-tree-btn:hover { background: var(--bg-300); color: var(--text-100); }
+.etree-node { }
+.etree-row { display: flex; align-items: baseline; gap: 2px; white-space: pre-wrap;
+  word-break: break-word; padding: 0 2px; border-radius: 3px; }
+.etree-row:hover { background: var(--bg-100); }
+.etree-caret { display: inline-block; width: 13px; flex-shrink: 0; cursor: pointer;
+  color: var(--text-500); transition: transform .12s; user-select: none; text-align: center; }
+.etree-caret-leaf { cursor: default; color: transparent; }
+.etree-node.etree-collapsed > .etree-row > .etree-caret { transform: rotate(-90deg); }
+.etree-node.etree-collapsed > .etree-children { display: none; }
+.etree-children { margin-left: 13px; border-left: 1px dotted var(--border-200);
+  padding-left: 6px; }
+.etree-key { color: var(--accent-blue, #4a8); font-weight: 600; }
+.etree-colon { color: var(--text-500); }
+.etree-attrs { color: var(--text-400); font-style: italic; margin-right: 4px; }
+.etree-count { color: var(--text-500); margin-left: 4px; font-size: 11px; }
+.etree-val-str  { color: var(--accent-brand); }
+.etree-val-num  { color: #2aa198; }
+.etree-val-bool { color: #b58900; }
+.etree-val-null { color: var(--text-500); font-style: italic; }
+:root[data-mode="dark"] .etree-key { color: #9cdcfe; }
+:root[data-mode="dark"] .etree-val-str { color: #ce9178; }
+:root[data-mode="dark"] .etree-val-num { color: #b5cea8; }
+:root[data-mode="dark"] .etree-val-bool { color: #569cd6; }
 /* Editor status line (size · lines · last-modified) — pinned to the bottom. */
 .editor-status { position: absolute; bottom: 0; left: 0; right: 0; height: 24px;
   box-sizing: border-box; z-index: 2;
