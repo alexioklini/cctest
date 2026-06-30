@@ -554,8 +554,9 @@ textarea { resize: none; }
   flex: 0 0 auto;
 }
 #terminal-tree-head .tt-title {
-  font-size: 11px; color: var(--text-400); text-transform: uppercase; letter-spacing: .04em;
-  font-family: var(--font-ui);
+  /* Same font/size as the file rows below (no uppercase/letter-spacing label
+     style), just a slightly dimmer colour to read as a header. */
+  font-size: 14px; color: var(--text-300); font-family: var(--font-ui);
   /* Shrink + ellipsis so the long title never pushes the action buttons out of
      the column (they were overflowing + clipping at the default width). */
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -679,7 +680,16 @@ textarea { resize: none; }
   flex: 0 0 auto;
 }
 .tpane.tp-active > .tpane-bar { background: var(--bg-300); }
-.tpane-tabs { display: flex; gap: 2px; overflow-x: auto; flex: 1; min-width: 0; }
+.tpane-tabs { display: flex; gap: 2px; overflow-x: auto; flex: 1; min-width: 0;
+  scrollbar-width: none; -ms-overflow-style: none; }
+.tpane-tabs::-webkit-scrollbar { display: none; }   /* arrows replace the scrollbar */
+/* Tab overflow scroll arrows (shown only when the strip overflows). */
+.tpane-scroll { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 20px; padding: 0; cursor: pointer; color: var(--text-300);
+  background: var(--bg-200); border: none; border-radius: 4px; }
+.tpane-scroll:hover { color: var(--text-100); background: var(--bg-300); }
+.tpane-scroll.tpane-scroll-off { opacity: .3; cursor: default; }
+.tpane.tp-active > .tpane-bar .tpane-scroll { background: var(--bg-300); }
 .tpane-bar .pt-act { color: var(--text-300); }
 .tpane-body { flex: 1; min-height: 0; position: relative; overflow: hidden; background: var(--bg-000); }
 /* drop target highlight when dragging a tab over a pane bar */
@@ -913,8 +923,8 @@ textarea { resize: none; }
 #terminal-chats.tc-collapsed { flex: 0 0 auto; min-height: 0; }
 .tc-hist-head { display: flex; align-items: center; gap: 4px; padding: 4px 8px;
   background: var(--bg-200); cursor: pointer; flex: 0 0 auto; }
-.tc-hist-title { font-size: 11px; color: var(--text-400); text-transform: uppercase;
-  letter-spacing: .04em; font-family: var(--font-ui); }
+.tc-hist-title { font-size: 14px; color: var(--text-300);
+  font-family: var(--font-ui); }
 .tc-hist-head .pt-caret { display: inline-flex; transition: transform .12s; }
 .tc-hist-head .pt-caret.open { transform: rotate(90deg); }
 .tc-hist-head .pt-act { color: var(--text-300); }

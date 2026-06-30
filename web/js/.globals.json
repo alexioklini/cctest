@@ -565,6 +565,8 @@
     "_terminalTabDragEnd": "writable",
     "_terminalTabDragStart": "writable",
     "_terminalTabMenu": "writable",
+    "_terminalUpdateAllTabScroll": "writable",
+    "_terminalUpdateTabScroll": "writable",
     "_terminalWirePaneDrop": "writable",
     "_terminalXtermTheme": "writable",
     "_termOpenInPane": "writable",

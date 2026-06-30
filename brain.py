@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.238.8"
+VERSION = "9.238.9"
 VERSION_DATE = "2026-06-30"
 CHANGELOG = [
+    ("9.238.9", "2026-06-30", "feat/style(code-mode): (1) Titel 'Arbeitsverzeichnis' (#terminal-tree-head .tt-title) + 'Terminal-Chats' (.tc-hist-title) nutzen jetzt die GLEICHE Schrift/Groesse wie die Datei-/Chat-Eintraege darunter (14px, --font-ui, kein uppercase/letter-spacing-Label-Stil mehr, nur leicht gedaempfte Farbe als Header) -- vom Nutzer gemeldet. (2) TAB-UEBERLAUF in der Terminal-Area: passen die Tabs nicht in die Pane-Breite, erscheinen jetzt VS-Code-artige Scroll-Pfeile links/rechts (.tpane-scroll, nur bei Ueberlauf sichtbar, am jeweiligen Ende ausgegraut); Klick scrollt ~70% der Breite, der aktive Tab wird automatisch in den sichtbaren Bereich gescrollt. Native Scrollbar der .tpane-tabs ausgeblendet (Pfeile ersetzen sie). _terminalUpdateTabScroll/_terminalUpdateAllTabScroll, aufgerufen nach _terminalRenderTabs (rAF) + bei Resize. REIN FRONTEND (panels_terminal.js + main.css). JS-Gate gruen (eslint clean, net-globals 1782->1784, Smoke 5/5). KEIN kuratierter Eintrag (UI-Politur)."),
     ("9.238.8", "2026-06-30", "style(code-mode): Prompt-Zeichen > in der Chat-HISTORIE jetzt GENAUSO gross+fett wie in der Eingabezeile (24px, font-weight 800; inline-block + line-height:0 + vertical-align, damit das uebergrosse Glyph die Zeile nicht streckt). Korrigiert 9.238.7, wo die Historie versehentlich abgeschwaecht wurde. REIN CSS. KEIN kuratierter Eintrag."),
     ("9.238.7", "2026-06-30", "style(code-mode): Terminal-Chat-Prompt-Zeichen > -- (1) in der CHAT-HISTORIE (.tc-uprompt vor gesendeten Nachrichten) jetzt normale Textstaerke (war faelschlich fett, da die gemeinsame Regel .tc-user .tc-uprompt,.tc-prompt font-weight:700 setzte -> aufgeteilt); (2) in der EINGABEZEILE deutlich groesser (16->24px, font-weight 800, line-height/align justiert) -- 19px war noch zu klein, das Glyph ist von Natur aus schmal. REIN CSS (main.css). KEIN kuratierter Eintrag."),
     ("9.238.6", "2026-06-30", "style(code-mode): das Prompt-Zeichen > in der Terminal-Chat-Eingabe war zu klein/duenn -- jetzt 19px + fett (font-weight 700, line-height an die Textarea angepasst), liest sich als Prompt-Marker. REIN CSS (.tc-input .tc-prompt in main.css). KEIN kuratierter Eintrag."),

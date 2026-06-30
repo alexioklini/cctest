@@ -206,7 +206,13 @@ function _terminalMakePane(slot) {
   pane.dataset.slot = slot;
   pane.innerHTML = `
     <div class="tpane-bar" data-pane="pane-${slot}">
+      <button class="tpane-scroll tpane-scroll-l" data-scroll="l" title="Tabs nach links" style="display:none">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+      </button>
       <div class="tpane-tabs" data-pane="pane-${slot}"></div>
+      <button class="tpane-scroll tpane-scroll-r" data-scroll="r" title="Tabs nach rechts" style="display:none">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+      </button>
       <button class="pt-act" title="Neues Terminal" data-act="newterm">+</button>
       <button class="pt-act" title="Neuer Terminal-Chat" data-act="newchat">◈</button>
       <button class="pt-act" title="Neue Datei" data-act="newfile">
@@ -237,10 +243,46 @@ function _terminalMakePane(slot) {
     const tabId = e.dataTransfer.getData('text/tab-id');
     if (tabId) _terminalMoveTabToPane(tabId, 'pane-' + slot);
   });
+  // Tab overflow scroll arrows (VS Code-style): only shown when the tab strip
+  // overflows; click scrolls by ~70% of the visible width. Visibility is kept in
+  // sync on scroll/resize + after every tab render (_terminalUpdateTabScroll).
+  const tabsEl = pane.querySelector('.tpane-tabs');
+  pane.querySelectorAll('.tpane-scroll').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const dx = Math.max(80, Math.round(tabsEl.clientWidth * 0.7));
+      tabsEl.scrollBy({ left: btn.dataset.scroll === 'l' ? -dx : dx, behavior: 'smooth' });
+    };
+  });
+  tabsEl.addEventListener('scroll', () => _terminalUpdateTabScroll(pane));
   // drag-drop onto the BODY: edge zones split the grid toward that direction; the
   // centre is a plain move into this cell. The overlay highlights the target zone.
   _terminalWirePaneDrop(pane, slot);
   return pane;
+}
+
+// Show/hide the tab-scroll arrows for a pane based on overflow, and disable the
+// left/right arrow at the respective scroll extreme. Cheap; safe to over-call.
+function _terminalUpdateTabScroll(pane) {
+  if (!pane) return;
+  const tabsEl = pane.querySelector ? pane.querySelector('.tpane-tabs')
+    : (pane.paneEl && pane.paneEl.querySelector('.tpane-tabs'));
+  const root = pane.querySelector ? pane : pane.paneEl;
+  if (!tabsEl || !root) return;
+  const l = root.querySelector('.tpane-scroll-l');
+  const r = root.querySelector('.tpane-scroll-r');
+  const overflow = tabsEl.scrollWidth - tabsEl.clientWidth > 2;
+  const atL = tabsEl.scrollLeft <= 1;
+  const atR = tabsEl.scrollLeft >= (tabsEl.scrollWidth - tabsEl.clientWidth - 1);
+  if (l) { l.style.display = overflow ? '' : 'none'; l.disabled = atL; l.classList.toggle('tpane-scroll-off', atL); }
+  if (r) { r.style.display = overflow ? '' : 'none'; r.disabled = atR; r.classList.toggle('tpane-scroll-off', atR); }
+}
+
+// Refresh tab-scroll arrows for ALL panes (after a render / resize).
+function _terminalUpdateAllTabScroll() {
+  for (const p of (_term.panes || [])) {
+    if (p.paneEl) _terminalUpdateTabScroll(p.paneEl);
+  }
 }
 
 // Wire the drop overlay for a pane. The overlay (.tpane-drop) is the DROP TARGET,
@@ -1099,6 +1141,19 @@ function _terminalRenderTabs() {
       </div>`;
     }).join('');
   }
+  // Tab count/width may have changed → refresh the overflow scroll arrows, and
+  // keep the active tab of each pane scrolled into view.
+  if (typeof _terminalUpdateAllTabScroll === 'function') {
+    requestAnimationFrame(() => {
+      _terminalUpdateAllTabScroll();
+      for (const p of (_term.panes || [])) {
+        const bar = p.barEl;
+        if (!bar) continue;
+        const act = bar.querySelector('.terminal-tab.active');
+        if (act && act.scrollIntoView) { try { act.scrollIntoView({ inline: 'nearest', block: 'nearest' }); } catch (_) {} }
+      }
+    });
+  }
 }
 
 // Tab drag-and-drop between panes (HTML5 DnD). While a drag is active, raise the
@@ -1553,6 +1608,7 @@ function _terminalOnResize() {
     if (tab.kind === 'editor') { try { tab.cm && tab.cm.refresh(); } catch (_) {} }
     else { try { tab.fit.fit(); _terminalSendResize(tab); } catch (_) {} }
   }
+  if (typeof _terminalUpdateAllTabScroll === 'function') _terminalUpdateAllTabScroll();
 }
 window.addEventListener('resize', _terminalOnResize);
 
