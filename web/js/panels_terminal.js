@@ -2247,24 +2247,96 @@ function _outlineKey(s) { return `${s.file}|${s.label}|${s.name}|${s.line || 0}`
 // Render a file's symbol rows (inline tree children). `syms` is that file's
 // symbol list (already filtered if a search is active). Mirrors the old symbol
 // panel's row markup; click a name → jump to def, ↗ → toggle callers/usages.
-function _wdSymbolRowsHtml(syms) {
-  let html = '';
-  for (const s of (syms || [])) {
-    const k = _outlineKey(s);
-    const gl = _outlineGlyph(s.label);
-    const sig = s.signature ? `<span class="sym-sig">${esc(s.signature)}</span>` : '';
-    const ln = s.line ? `<span class="sym-line">:${s.line}</span>` : '';
-    const open = _codeOutline.expandedSym[k] ? ' sym-open' : '';
-    const seld = (_codeOutline.selectedKey === k) ? ' sym-selected' : '';
-    html += `<div class="sym-row${open}${seld}" data-key="${esc(k)}">
+// Render one leaf symbol row (used for non-table symbols and nested columns).
+// `display` overrides the shown label (e.g. a column shows just COLUMN under its
+// table, while the title/jump keep the full TABLE.COLUMN).
+function _wdSymRow(s, extraCls, display) {
+  const k = _outlineKey(s);
+  const gl = _outlineGlyph(s.label);
+  // nested column rows: drop the redundant "Spalte" signature (the table parent
+  // makes it obvious) — keep signatures for all other symbol rows.
+  const showSig = s.signature && !(extraCls && extraCls.indexOf('sym-col') !== -1);
+  const sig = showSig ? `<span class="sym-sig">${esc(s.signature)}</span>` : '';
+  const ln = s.line ? `<span class="sym-line">:${s.line}</span>` : '';
+  const open = _codeOutline.expandedSym[k] ? ' sym-open' : '';
+  const seld = (_codeOutline.selectedKey === k) ? ' sym-selected' : '';
+  let html = `<div class="sym-row${open}${seld}${extraCls || ''}" data-key="${esc(k)}">
       <span class="sym-glyph ${gl.c}">${gl.g}</span>
-      <span class="sym-name" onclick="event.stopPropagation();_codeOutlineJump('${esc(k)}')" title="${esc(s.name)} → ${esc(s.file)}:${s.line || ''}">${esc(s.name)}</span>
+      <span class="sym-name" onclick="event.stopPropagation();_codeOutlineJump('${esc(k)}')" title="${esc(s.name)} → ${esc(s.file)}:${s.line || ''}">${esc(display || s.name)}</span>
       ${sig}${ln}
       <span class="sym-refs-btn" onclick="event.stopPropagation();_codeOutlineRefs('${esc(k)}')" title="Aufrufer &amp; Verwendungen">↗</span>
     </div>`;
-    if (_codeOutline.expandedSym[k]) html += _codeOutlineRefsHtml(k);
+  if (_codeOutline.expandedSym[k]) html += _codeOutlineRefsHtml(k);
+  return html;
+}
+
+// Render a file's symbols. Columns (label 'Column', name 'TABLE.COL') are nested
+// under their Table row as collapsible children, so the tree reads hierarchically
+// (table › its columns) instead of a flat list of tables then columns.
+function _wdSymbolRowsHtml(syms) {
+  syms = syms || [];
+  // bucket columns by their table prefix (everything before the last '.')
+  const colsByTable = new Map();
+  const nonCols = [];
+  for (const s of syms) {
+    if (s.label === 'Column') {
+      const dot = (s.name || '').lastIndexOf('.');
+      const tbl = dot > 0 ? s.name.slice(0, dot) : s.name;
+      if (!colsByTable.has(tbl)) colsByTable.set(tbl, []);
+      colsByTable.get(tbl).push(s);
+    } else {
+      nonCols.push(s);
+    }
+  }
+  let html = '';
+  const tablesRendered = new Set();
+  for (const s of nonCols) {
+    if (s.label === 'Table' && colsByTable.has(s.name)) {
+      html += _wdTableWithCols(s, colsByTable.get(s.name));
+      tablesRendered.add(s.name);
+    } else {
+      html += _wdSymRow(s);
+    }
+  }
+  // columns whose table has no Table symbol in this file → synthetic table group
+  for (const [tbl, cols] of colsByTable) {
+    if (tablesRendered.has(tbl)) continue;
+    html += _wdTableWithCols({ label: 'Table', name: tbl, file: cols[0].file,
+                               line: cols[0].line, signature: 'Spalten' }, cols);
   }
   return html;
+}
+
+// A Table row with a caret that toggles its column children. Expansion state is
+// keyed in _codeOutline.expandedSym by the table's outline key (reuses the same
+// store as the ↗ refs toggle — distinct keys, no collision).
+function _wdTableWithCols(tableSym, cols) {
+  const tk = 'tblcols|' + tableSym.file + '|' + tableSym.name;
+  const isOpen = !!_codeOutline.expandedSym[tk];
+  const gl = _outlineGlyph('Table');
+  const caret = `<span class="sym-caret" onclick="event.stopPropagation();_wdToggleTableCols('${esc(tk)}')">${isOpen ? '▾' : '▸'}</span>`;
+  const seld = (_codeOutline.selectedKey === _outlineKey(tableSym)) ? ' sym-selected' : '';
+  let html = `<div class="sym-row sym-tablerow${seld}" data-tk="${esc(tk)}">
+      ${caret}
+      <span class="sym-glyph ${gl.c}">${gl.g}</span>
+      <span class="sym-name" onclick="event.stopPropagation();_wdToggleTableCols('${esc(tk)}')" title="${esc(tableSym.name)} (${cols.length} Spalten)">${esc(tableSym.name)}</span>
+      <span class="sym-sig">${cols.length} Spalten</span>
+    </div>`;
+  if (isOpen) {
+    html += '<div class="sym-colchildren">';
+    for (const c of cols) {
+      const dot = (c.name || '').lastIndexOf('.');
+      const short = dot > 0 ? c.name.slice(dot + 1) : c.name;  // COLUMN, not TABLE.COLUMN
+      html += _wdSymRow(c, ' sym-col', short);
+    }
+    html += '</div>';
+  }
+  return html;
+}
+
+function _wdToggleTableCols(tk) {
+  _codeOutline.expandedSym[tk] = !_codeOutline.expandedSym[tk];
+  _wdRepaintTreeSafe();
 }
 
 function _outlineByKey(k) { return _codeOutline.symbols.find(s => _outlineKey(s) === k); }
