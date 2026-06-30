@@ -72,18 +72,34 @@ function tcBuildBody(tab) {
   // Make the pane focusable so it receives key events even when nothing inside
   // is focused (clicking the log focuses the pane).
   el.tabIndex = -1;
-  // Refocus the composer on a plain CLICK in the log (fires after mouseup, so an
-  // active text selection is already known). Doing this on MOUSEDOWN (the old
-  // code) stole focus mid-drag and collapsed the selection → text couldn't be
-  // selected/copied. Skip refocus when a selection exists or the click landed on
-  // the composer itself.
+  // Refocus the composer only when the user clicks the EMPTY area of the log (or
+  // the composer line) — NOT when clicking on a message row (they're reading or
+  // selecting history; stealing focus would scroll the textarea into view and
+  // jump to the end). Also skip when a text selection exists. preventScroll keeps
+  // the viewport put even when we do focus.
   el.addEventListener('click', (e) => {
     if (window.getSelection && window.getSelection().toString()) return;
-    if (e.target.closest && e.target.closest('.tc-input-wrap')) return;
-    if (e.target === el || (e.target.closest && e.target.closest('.tc-log'))) {
-      try { ta.focus(); } catch (_) {}
+    const t = e.target;
+    const onWrap = t.closest && t.closest('.tc-input-wrap');
+    const onRow = t.closest && (t.closest('.tc-row') || t.closest('.tc-tool') || t.closest('.tc-tools'));
+    // Clicking inside the composer: the textarea handles its own focus. Clicking
+    // a content row: leave focus + scroll alone. Only a click on the bare log
+    // background refocuses the composer for typing.
+    if (onWrap || onRow) return;
+    if (t === el || (t.closest && t.closest('.tc-log'))) {
+      try { ta.focus({ preventScroll: true }); } catch (_) { try { ta.focus(); } catch (__) {} }
     }
   });
+  // Track whether the user is "stuck" to the bottom on every scroll. This is the
+  // single source of truth for auto-follow (see _tcScroll) — measuring at mutate
+  // time would mis-read because the just-added row already shifted the viewport.
+  // Reaching the bottom also clears the "new content" badge.
+  const logEl = el.querySelector('.tc-log');
+  if (logEl) logEl.addEventListener('scroll', () => {
+    tab._stick = _tcAtBottom(tab);
+    if (tab._stick) _tcHideNewBadge(tab);
+  });
+  tab._stick = true;   // fresh pane starts pinned to the bottom
   tab._ac = { open: false, items: [], sel: 0 };
   tcRenderStatus(tab);
 }
@@ -94,7 +110,51 @@ function _tcAutosize(ta) {
 }
 
 function _tcLog(tab) { return document.getElementById(tab.id + '-log'); }
-function _tcScroll(tab) { const l = _tcLog(tab); if (l) l.scrollTop = l.scrollHeight; }
+
+// Is the log scrolled to (within a small slack of) the bottom? Used to gate
+// auto-scroll: we only follow new content when the user is already at the end,
+// so scrolling up to read history is never interrupted.
+function _tcAtBottom(tab) {
+  const l = _tcLog(tab);
+  if (!l) return true;
+  // 40px slack covers sub-pixel rounding + the composer's own height.
+  return (l.scrollHeight - l.scrollTop - l.clientHeight) <= 40;
+}
+// Force scroll to the very bottom (used on explicit user intent: sending a
+// message, clicking the new-content pill).
+function _tcScrollToEnd(tab) {
+  const l = _tcLog(tab);
+  if (l) l.scrollTop = l.scrollHeight;
+  tab._stick = true;
+  _tcHideNewBadge(tab);
+}
+// Conditional auto-scroll: follow the tail ONLY when the user is "stuck" to the
+// bottom. `tab._stick` is recomputed on every USER scroll (see the scroll
+// listener), so the decision does NOT depend on measuring after a DOM mutation
+// (which would already have pushed the viewport up by the new row's height and
+// mis-read "not at bottom"). When not stuck, surface the "new content" badge.
+function _tcScroll(tab) {
+  if (tab._stick !== false) { _tcScrollToEnd(tab); }
+  else { _tcShowNewBadge(tab); }
+}
+
+// "↓ Neue Nachrichten" pill, shown over the log's bottom edge when content lands
+// while the user is scrolled up. Lives in the pane (.termchat), positioned by
+// CSS; clicking it jumps to the end.
+function _tcNewBadge(tab, create) {
+  if (!tab.el) return null;
+  let b = tab.el.querySelector('.tc-newbadge');
+  if (!b && create) {
+    b = document.createElement('button');
+    b.className = 'tc-newbadge';
+    b.textContent = '↓ Neue Nachrichten';
+    b.onclick = () => _tcScrollToEnd(tab);
+    tab.el.appendChild(b);
+  }
+  return b;
+}
+function _tcShowNewBadge(tab) { const b = _tcNewBadge(tab, true); if (b) b.classList.add('show'); }
+function _tcHideNewBadge(tab) { const b = _tcNewBadge(tab, false); if (b) b.classList.remove('show'); }
 
 // The composer (.tc-input-wrap) lives INSIDE .tc-log (CLI-style, scrolls with
 // the conversation), so message rows must be inserted BEFORE it to keep the
@@ -110,6 +170,7 @@ function _tcClearRows(tab) {
   const log = _tcLog(tab); if (!log) return;
   const wrap = _tcInputWrap(tab);
   Array.from(log.children).forEach(c => { if (c !== wrap) c.remove(); });
+  _tcHideNewBadge(tab);
 }
 
 // ── Input handling: Enter to send, Shift+Enter newline, ↑/↓ history ──────────
@@ -366,6 +427,9 @@ async function tcSend(tab, text) {
   _tcAddRow(tab, thinkRow); _tcAddRow(tab, toolWrap); _tcAddRow(tab, textRow); _tcAddRow(tab, spinRow);
   const live = { thinkRow, toolWrap, textRow, spinRow, text: '', think: '', toolById: {} };
   tab._live = live;
+
+  // Sending is explicit intent to follow the new turn → always jump to the end.
+  _tcScrollToEnd(tab);
 
   tab.streaming = true;
   _tcSpinStart(tab, 'Denkt nach');
@@ -806,6 +870,7 @@ async function tcLoadTranscript(tab) {
     if (typeof d.caveman_mode === 'number') tab.caveman = d.caveman_mode;
     for (const m of (d.messages || [])) _tcRenderHistMsg(tab, m);
     tcRenderStatus(tab);
+    _tcScrollToEnd(tab);   // open a past chat at its most recent message
     // If a turn is still streaming server-side, attach + follow it.
     if (d.streaming) _tcAttachLive(tab);
   } catch (e) {

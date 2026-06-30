@@ -1223,6 +1223,8 @@ async function terminalPollTree() {
   if (sig === _term._treeSig) return;   // no structural change → leave the tree alone
   _term._treeSig = sig;
   window._wdTreeData = data.tree;
+  // Diff vs the persisted snapshot → new/modified badges (poll = work-time edits).
+  if (typeof _wdComputeChanges === 'function') { try { _wdComputeChanges(data.tree); } catch (_) {} }
   // Also refresh the code-index sync dots, then repaint from the new data.
   if (typeof _wdLoadCodeIndexState === 'function') { try { await _wdLoadCodeIndexState(proj); } catch (_) {} }
   if (typeof repaintTerminalTree === 'function') repaintTerminalTree();

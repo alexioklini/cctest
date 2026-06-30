@@ -104,6 +104,107 @@ function _wdSortMode() {
 function _wdSetSortMode(mode) {
   try { localStorage.setItem(_wdSortKey(), mode); } catch (_) {}
 }
+// ── New / modified file detection (persisted across reloads) ─────────────────
+// We keep two per-project localStorage maps:
+//   • snapshot  brain.wdtree.snap.<pid>   = {relPath: "mtime:size"} last seen
+//   • changes   brain.wdtree.changed.<pid> = {relPath: "new"|"modified"}
+// On every tree load we diff the tree against the snapshot: paths absent from
+// the snapshot → "new", paths whose mtime/size changed → "modified". The change
+// flags ACCUMULATE (and persist) until the user opens the file (or clears all),
+// so a reload still shows what changed since last acknowledged. First-ever load
+// of a project seeds the snapshot WITHOUT flagging everything (no prior state =
+// nothing "new" to report).
+function _wdSnapKey() {
+  const pid = (state._projectDetail && state._projectDetail.id) || state.currentProject || 'p';
+  return `brain.wdtree.snap.${pid}`;
+}
+function _wdChangeKey() {
+  const pid = (state._projectDetail && state._projectDetail.id) || state.currentProject || 'p';
+  return `brain.wdtree.changed.${pid}`;
+}
+function _wdLoadMap(key) { try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch (_) { return {}; } }
+function _wdSaveMap(key, m) { try { localStorage.setItem(key, JSON.stringify(m)); } catch (_) {} }
+
+// Flatten a tree to {relPath: "mtime:size"} for files (folders tracked as "dir").
+function _wdFlattenTree(nodes, wd, acc) {
+  acc = acc || {};
+  for (const n of (nodes || [])) {
+    const rel = _wdRelToWorkingDir(n.path);
+    if (n.type === 'dir') { acc[rel] = 'dir'; _wdFlattenTree(n.children || [], wd, acc); }
+    else acc[rel] = `${n.mtime || 0}:${n.size || 0}`;
+  }
+  return acc;
+}
+
+// Diff `tree` against the persisted snapshot; merge new/modified flags into the
+// persisted change map; advance the snapshot. Returns the (path→state) change
+// map for rendering. window._wdChangeState caches it for the synchronous render.
+function _wdComputeChanges(tree) {
+  const snapKey = _wdSnapKey(), chgKey = _wdChangeKey();
+  const prev = _wdLoadMap(snapKey);
+  const cur = _wdFlattenTree(tree, '');
+  const hadSnapshot = Object.keys(prev).length > 0;
+  const changes = _wdLoadMap(chgKey);
+  // Files currently OPEN in an editor aren't "news" when their mtime changes —
+  // the user just saved them. Skip modified-flagging for those (new files still
+  // flag). Built from _term.tabs (editor kind) as repo-relative paths.
+  const openRel = new Set(
+    ((typeof _term !== 'undefined' && _term.tabs) || [])
+      .filter(t => t.kind === 'editor' && t.path)
+      .map(t => _wdRelToWorkingDir(t.path)));
+  if (hadSnapshot) {
+    for (const rel in cur) {
+      if (cur[rel] === 'dir') { if (!(rel in prev)) changes[rel] = 'new'; continue; }
+      if (!(rel in prev)) changes[rel] = 'new';
+      else if (prev[rel] !== cur[rel] && changes[rel] !== 'new' && !openRel.has(rel)) changes[rel] = 'modified';
+    }
+  }
+  // Drop change flags for paths that no longer exist (deleted/renamed away).
+  for (const rel in changes) { if (!(rel in cur)) delete changes[rel]; }
+  _wdSaveMap(snapKey, cur);
+  _wdSaveMap(chgKey, changes);
+  window._wdChangeState = changes;
+  return changes;
+}
+
+// Clear a single path's new/modified flag (called when the user opens the file)
+// and repaint so the badge disappears.
+function _wdClearChange(absPath) {
+  const chgKey = _wdChangeKey();
+  const changes = _wdLoadMap(chgKey);
+  const rel = _wdRelToWorkingDir(absPath);
+  if (rel in changes) {
+    delete changes[rel];
+    _wdSaveMap(chgKey, changes);
+    window._wdChangeState = changes;
+    if (typeof repaintTerminalTree === 'function') repaintTerminalTree();
+  }
+}
+
+// Clear ALL change flags for the active project (programmatic; markers normally
+// clear per-file on open).
+function wdClearChanges() {
+  _wdSaveMap(_wdChangeKey(), {});
+  window._wdChangeState = {};
+  if (typeof repaintTerminalTree === 'function') repaintTerminalTree();
+}
+
+// State for the current path (from the cached change map). '' when unflagged.
+function _wdChangeFor(absPath) {
+  const m = window._wdChangeState || _wdLoadMap(_wdChangeKey());
+  return m[_wdRelToWorkingDir(absPath)] || '';
+}
+
+// Does any descendant file of a dir node carry a new/modified flag? (Used to dot
+// a collapsed folder.)
+function _wdSubtreeHasChange(dirNode) {
+  for (const c of (dirNode.children || [])) {
+    if (c.type === 'dir') { if (_wdSubtreeHasChange(c)) return true; }
+    else if (_wdChangeFor(c.path)) return true;
+  }
+  return false;
+}
+
 // Return a NEW sorted array of sibling nodes per the active sort mode.
 function _wdSortNodes(nodes) {
   const mode = _wdSortMode();
@@ -213,9 +314,16 @@ function _wdRenderTree(nodes) {
       // Auto-expand directories during a filter so matches are visible.
       const open = filt ? true : _wdDirExpanded(n.path);
       const dp = esc(n.path);
+      // Folder cue: a genuinely NEW folder pills green; an existing folder that
+      // (while collapsed) hides changed descendants gets a subtler "contains
+      // changes" pill so the change isn't invisible behind a closed folder.
+      const dirChg = (typeof _wdChangeFor === 'function') ? _wdChangeFor(n.path) : '';
+      const dirHasChg = !open && (typeof _wdSubtreeHasChange === 'function') && _wdSubtreeHasChange(n);
+      const dirChgCls = dirChg ? ` pt-chg pt-chg-${dirChg}` : (dirHasChg ? ' pt-chg pt-chg-contains' : '');
+      const dirChgTip = dirChg ? ` · ${dirChg === 'new' ? 'NEUER Ordner' : 'GEÄNDERT'}` : (dirHasChg ? ' · enthält neue/geänderte Dateien' : '');
       return `<div class="pt-branch pt-realdir">
-        <div class="pt-row pt-realrow" data-dir="${dp}" draggable="true"
-          title="${esc(n.path || n.name)}"
+        <div class="pt-row pt-realrow${dirChgCls}" data-dir="${dp}" draggable="true"
+          title="${esc(n.path || n.name)}${dirChgTip}"
           onclick="wdToggleDir(this, '${dp}')"
           oncontextmenu="wdDirMenu(event, '${dp}')"
           ondragstart="wdDragStart(event, '${dp}')" ondragend="wdDragEnd(event)"
@@ -245,6 +353,13 @@ function _wdRenderTree(nodes) {
     // '*' appended to the name = open in the editor with unsaved changes.
     const star = dirty ? '<span class="tt-dirty" title="Ungespeicherte Änderungen">*</span>' : '';
     const gitTip = git ? ` · Git: ${esc(_WD_GIT_TIP[git] || git)}` : '';
+    // New/modified-since-last-seen cue (persisted; cleared when the file is
+    // opened). Draws the row as a glowing pill (CSS via the pt-chg-* class); the
+    // colour distinguishes new (green) from modified (amber). The title surfaces
+    // the meaning on hover.
+    const chg = (typeof _wdChangeFor === 'function') ? _wdChangeFor(n.path) : '';
+    const chgCls = chg ? ` pt-chg pt-chg-${chg}` : '';
+    const chgTip = chg ? ` · ${chg === 'new' ? 'NEU seit dem letzten Ansehen' : 'GEÄNDERT seit dem letzten Ansehen'}` : '';
     // Tooltip: path · size · last-modified (size/mtime come from the folder-tree
     // endpoint per file).
     const metaTip = ` · ${_fmtBytes(n.size || 0)} · geändert ${_fmtMtime(n.mtime)}`;
@@ -265,8 +380,8 @@ function _wdRenderTree(nodes) {
       ? `<div class="pt-children pt-symchildren" style="display:${symOpen ? 'block' : 'none'}">${symOpen ? _wdFileSymbolsHtml(n, nameMatched) : ''}</div>`
       : '';
     return `<div class="pt-branch pt-realfilebranch">
-      <div class="pt-row pt-realfile${sel}" data-path="${fp}" data-git="${esc(git)}" draggable="true"
-         title="${esc(n.path || n.name)}${metaTip}${gitTip}" onclick="wdOpenFile('${fp}')"
+      <div class="pt-row pt-realfile${sel}${chgCls}" data-path="${fp}" data-git="${esc(git)}" draggable="true"
+         title="${esc(n.path || n.name)}${metaTip}${gitTip}${chgTip}" onclick="wdOpenFile('${fp}')"
          oncontextmenu="wdFileMenu(event, '${fp}')"
          ondragstart="wdDragStart(event, '${fp}')" ondragend="wdDragEnd(event)">
       ${caret}
@@ -339,6 +454,8 @@ function _wdExt(p) { const n = (p || '').split('/').pop(); return n.includes('.'
 
 function wdOpenFile(absPath) {
   if (!absPath) return;
+  // Opening a file acknowledges its new/modified cue → clear it (persisted).
+  if (typeof _wdClearChange === 'function') _wdClearChange(absPath);
   // Office/PDF/media → external app; everything else → in-app editor.
   if (_WD_EXTERNAL_EXT.has(_wdExt(absPath))) { wdOpenExternal(absPath); return; }
   if (typeof terminalOpenFile === 'function') terminalOpenFile(absPath);
@@ -522,6 +639,25 @@ function _wdAllDirPaths(nodes, acc) {
   return acc;
 }
 
+// ── Viewport scroll persistence (per project, survives reload) ────────────────
+function _wdScrollKey() {
+  const pid = (state._projectDetail && state._projectDetail.id) || state.currentProject || 'p';
+  return `brain.wdtree.scroll.${pid}`;
+}
+function _wdLoadScrollTop() {
+  try { return parseInt(localStorage.getItem(_wdScrollKey()) || '0', 10) || 0; } catch (_) { return 0; }
+}
+// Attach a (once-per-element) throttled scroll listener that persists scrollTop.
+function _wdAttachScrollPersist(host) {
+  if (!host || host._wdScrollBound) return;
+  host._wdScrollBound = true;
+  let t = null;
+  host.addEventListener('scroll', () => {
+    if (t) return;
+    t = setTimeout(() => { t = null; try { localStorage.setItem(_wdScrollKey(), String(host.scrollTop)); } catch (_) {} }, 200);
+  });
+}
+
 // Expand or collapse ALL directories at once; persist the new state (per-project)
 // and repaint from the cached tree.
 function wdExpandAll(on) {
@@ -551,8 +687,17 @@ async function refreshTerminalTree() {
     const data = await API.get(`/v1/agents/${proj.agent}/projects/${encodeURIComponent(proj.name)}/folder-tree?path=${encodeURIComponent(proj.working_dir)}`);
     if (data.error) { host.innerHTML = `<div class="pt-empty">${esc(data.error)}</div>`; return; }
     window._wdTreeData = data.tree || [];
+    // Detect new/modified files vs the persisted snapshot (first load only seeds
+    // the snapshot — nothing flagged) BEFORE rendering so badges paint.
+    _wdComputeChanges(window._wdTreeData);
+    const prevTop = host.scrollTop;
     host.innerHTML = _wdRenderTree(window._wdTreeData);
     host.dataset.loaded = '1';
+    // Restore scroll: keep the live position on a refresh, or — on the very first
+    // load after a page reload — the persisted viewport, so a reload doesn't reset
+    // the tree to the top.
+    _wdAttachScrollPersist(host);
+    host.scrollTop = prevTop || _wdLoadScrollTop();
     // Keep the poll's change-detection signature in sync so a full refresh here
     // doesn't trigger a redundant repaint on the next poll tick.
     if (typeof _term !== 'undefined' && typeof _wdTreeSignature === 'function') {
@@ -578,5 +723,9 @@ function repaintTerminalTree() {
   const host = document.getElementById('terminal-tree');
   if (!host) return;
   if (!window._wdTreeData) { refreshTerminalTree(); return; }
+  // Preserve the scroll position across the innerHTML swap so a poll-driven
+  // resync doesn't jump the viewport back to the top (no flicker/reset).
+  const top = host.scrollTop;
   host.innerHTML = _wdRenderTree(window._wdTreeData);
+  host.scrollTop = top;
 }

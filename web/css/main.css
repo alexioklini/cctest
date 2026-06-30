@@ -704,6 +704,36 @@ textarea { resize: none; }
 #terminal-tree .pt-row[data-git="R"] .pt-fileicon { color: var(--git-renamed); }
 /* '*' after the name = unsaved editor changes. */
 #terminal-tree .tt-dirty { color: var(--git-modified); font-weight: 700; margin-left: 2px; }
+/* New/modified-since-last-seen cue (persisted; cleared when the file is opened):
+   the row is drawn as a GLOWING PILL — a tinted rounded background + a soft
+   coloured glow, gently pulsing so it draws the eye. New = green, modified =
+   amber, "contains changes" (collapsed folder) = a fainter green. Distinct from
+   the git ICON colouring (which only tints the icon glyph). */
+#terminal-tree .pt-row.pt-chg { border-radius: 11px; position: relative; }
+#terminal-tree .pt-row.pt-chg-new {
+  background: color-mix(in srgb, var(--git-added) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--git-added) 55%, transparent),
+              0 0 7px color-mix(in srgb, var(--git-added) 45%, transparent);
+  animation: pt-chg-glow-new 1.8s ease-in-out infinite; }
+#terminal-tree .pt-row.pt-chg-modified {
+  background: color-mix(in srgb, var(--git-modified) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--git-modified) 55%, transparent),
+              0 0 7px color-mix(in srgb, var(--git-modified) 45%, transparent);
+  animation: pt-chg-glow-mod 1.8s ease-in-out infinite; }
+/* Collapsed folder hiding changed descendants → fainter, non-pulsing pill. */
+#terminal-tree .pt-row.pt-chg-contains {
+  background: color-mix(in srgb, var(--git-added) 9%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--git-added) 35%, transparent); }
+@keyframes pt-chg-glow-new {
+  0%,100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--git-added) 55%, transparent),
+                        0 0 6px color-mix(in srgb, var(--git-added) 35%, transparent); }
+  50%     { box-shadow: 0 0 0 1px color-mix(in srgb, var(--git-added) 70%, transparent),
+                        0 0 11px color-mix(in srgb, var(--git-added) 60%, transparent); } }
+@keyframes pt-chg-glow-mod {
+  0%,100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--git-modified) 55%, transparent),
+                        0 0 6px color-mix(in srgb, var(--git-modified) 35%, transparent); }
+  50%     { box-shadow: 0 0 0 1px color-mix(in srgb, var(--git-modified) 70%, transparent),
+                        0 0 11px color-mix(in srgb, var(--git-modified) 60%, transparent); } }
 .terminal-tab {
   display: flex; align-items: center; gap: 6px;
   padding: 3px 10px; font-size: 12px; color: var(--text-300);
@@ -730,6 +760,17 @@ textarea { resize: none; }
  * throughout so it follows light/dark. */
 .termchat { position: absolute; inset: 0; display: flex; flex-direction: column;
   background: var(--bg-000); font-family: var(--font-mono); overflow: hidden; }
+/* "↓ Neue Nachrichten" pill — appears over the log's bottom edge when content
+   lands while the user has scrolled up. Hidden by default; .show fades it in.
+   Sits above the status footer (~22px) + a small gap. */
+.tc-newbadge { position: absolute; left: 50%; bottom: 30px; transform: translateX(-50%) translateY(6px);
+  z-index: 6; display: none; opacity: 0; transition: opacity .12s, transform .12s;
+  cursor: pointer; font: inherit; font-size: 11px; font-family: var(--font-mono);
+  padding: 3px 12px; border-radius: 12px; border: 1px solid var(--accent-brand);
+  background: var(--bg-000); color: var(--accent-brand);
+  box-shadow: 0 2px 10px rgba(0,0,0,.25); }
+.tc-newbadge.show { display: block; opacity: 1; transform: translateX(-50%) translateY(0); }
+.tc-newbadge:hover { background: var(--accent-brand); color: #fff; }
 .tc-log { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px;
   font-size: 12.5px; line-height: 1.5; color: var(--text-100);
   /* terminal-grade font so prompts, shell echo + TUI output render box-drawing
