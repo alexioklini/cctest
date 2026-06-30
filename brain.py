@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.238.7"
+VERSION = "9.238.8"
 VERSION_DATE = "2026-06-30"
 CHANGELOG = [
+    ("9.238.8", "2026-06-30", "style(code-mode): Prompt-Zeichen > in der Chat-HISTORIE jetzt GENAUSO gross+fett wie in der Eingabezeile (24px, font-weight 800; inline-block + line-height:0 + vertical-align, damit das uebergrosse Glyph die Zeile nicht streckt). Korrigiert 9.238.7, wo die Historie versehentlich abgeschwaecht wurde. REIN CSS. KEIN kuratierter Eintrag."),
     ("9.238.7", "2026-06-30", "style(code-mode): Terminal-Chat-Prompt-Zeichen > -- (1) in der CHAT-HISTORIE (.tc-uprompt vor gesendeten Nachrichten) jetzt normale Textstaerke (war faelschlich fett, da die gemeinsame Regel .tc-user .tc-uprompt,.tc-prompt font-weight:700 setzte -> aufgeteilt); (2) in der EINGABEZEILE deutlich groesser (16->24px, font-weight 800, line-height/align justiert) -- 19px war noch zu klein, das Glyph ist von Natur aus schmal. REIN CSS (main.css). KEIN kuratierter Eintrag."),
     ("9.238.6", "2026-06-30", "style(code-mode): das Prompt-Zeichen > in der Terminal-Chat-Eingabe war zu klein/duenn -- jetzt 19px + fett (font-weight 700, line-height an die Textarea angepasst), liest sich als Prompt-Marker. REIN CSS (.tc-input .tc-prompt in main.css). KEIN kuratierter Eintrag."),
     ("9.238.5", "2026-06-30", "style(code-mode): Terminal-Chat-Text jetzt IDENTISCH zum normalen Chat (vom Nutzer gemeldet: wirkte kleiner). REIN CSS (main.css). .tc-log 14px->16px (Body-Basis wie der normale Chat), .tc-asst-Farbe --text-200->--text-100 (wie .msg-content, das die Body-Default-Farbe erbt), Absatz-/Listen-Abstaende exakt an .msg-content angeglichen (p margin .7em line-height 1.8, ul/ol margin .7em padding 1.5em, li margin .4em line-height 1.65), Composer .tc-ta/.tc-prompt 14px->16px. Datei-Baum + Chat-Liste bleiben bei 14px (= Sidebar-Listen, korrekt). Code/Shell weiter monospace; Editor + xterm unveraendert. JS-Gate gruen (Smoke 5/5, kein JS). KEIN kuratierter Eintrag."),

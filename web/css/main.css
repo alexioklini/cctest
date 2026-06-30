@@ -794,10 +794,12 @@ textarea { resize: none; }
 .tc-help-line { white-space: pre-wrap; }
 /* user echo */
 .tc-user { color: var(--text-100); }
-/* Composer prompt (input line) is the prominent one; the history echo prompt
-   (.tc-uprompt, before each sent message) stays at normal text weight/size so it
-   doesn't stand out in the transcript. */
-.tc-user .tc-uprompt { color: var(--accent-brand); font-weight: 400; }
+/* History echo prompt (.tc-uprompt, before each sent message) matches the
+   composer prompt: same large + bold › so the prompt marker is consistent.
+   inline-block + line-height:0 keeps the oversized glyph from stretching the
+   row's line. */
+.tc-user .tc-uprompt { color: var(--accent-brand); font-weight: 800;
+  font-size: 24px; display: inline-block; line-height: 0; vertical-align: -3px; }
 .tc-prompt { color: var(--accent-brand); font-weight: 700; }
 /* assistant answer — rendered markdown; normal whitespace + tight block spacing.
    Body text is the slightly softer --text-200 at weight 400 so it doesn't read as
