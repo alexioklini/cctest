@@ -644,7 +644,10 @@ def graph_overview(cache_dir: str, limit: int = 200) -> dict:
 # ─── Agent tools (TOOL_DISPATCH entries) ─────────────────────────────────────
 def tool_code_search(args: dict) -> str:
     """search_graph: discover code by BM25 (query), regex (name_pattern), or
-    embedding (semantic_query=array). The discovery workhorse."""
+    embedding (semantic_query=array). The discovery workhorse. ALSO searches the
+    SQL/.dbq symbols our regex scanner produces (tables, procedures, views, CTEs,
+    linked servers, columns) — cbm's SQL parser doesn't emit those, so without
+    this merge a search for a SQL table/column would wrongly come back empty."""
     cache = _tenant_cache_dir()
     payload = {}
     for k in ("query", "name_pattern", "semantic_query", "label", "limit"):
@@ -653,9 +656,54 @@ def tool_code_search(args: dict) -> str:
     if not payload:
         return _err("code_search: provide query, name_pattern, or semantic_query")
     d = _run("search_graph", payload, cache)
-    if d.get("error"):
-        return _err(d["error"])
+    cbm_err = d.get("error")
+    # merge SQL-symbol matches (cbm has no SQL columns/tables) — substring on
+    # query, or regex on name_pattern. Only the simple modes; semantic_query is
+    # cbm-only. Best-effort: never let SQL matching break a working cbm search.
+    sql_hits = _sql_symbol_search(args)
+    if sql_hits:
+        if cbm_err:                       # cbm failed/empty → return SQL hits alone
+            return _ok({"results": sql_hits, "sql_only": True})
+        merged = (d.get("results") or []) + sql_hits
+        d["results"] = merged
+        return _ok(d)
+    if cbm_err:
+        return _err(cbm_err)
     return _ok(d)
+
+
+def _sql_symbol_search(args: dict) -> list:
+    """Match SQL/.dbq symbols (from sql_analysis) against a code_search request.
+    query → case-insensitive substring on the symbol name; name_pattern → regex.
+    Returns cbm-result-shaped dicts (name/label/file_path/line). Capped + safe."""
+    q = (args.get("query") or "").strip().lower()
+    pat = (args.get("name_pattern") or "").strip()
+    if not q and not pat:
+        return []   # semantic_query / label-only → cbm-only
+    try:
+        wd = _outline_working_dir(_tenant_cache_dir())
+        if not wd:
+            return []
+        import re as _re
+        import engine.tools.sql_analysis as _sqla
+        rx = _re.compile(pat, _re.I) if pat else None
+        try:
+            lim = int(args.get("limit") or 30)
+        except (TypeError, ValueError):
+            lim = 30
+        lim = max(1, min(lim, 100))
+        out = []
+        for s in _sqla.sql_file_symbols(wd):
+            nm = s.get("name", "")
+            if (q and q in nm.lower()) or (rx and rx.search(nm)):
+                out.append({"name": nm, "label": s.get("label"),
+                            "file_path": s.get("file"), "line": s.get("line"),
+                            "signature": s.get("signature", "")})
+                if len(out) >= lim:
+                    break
+        return out
+    except Exception:
+        return []
 
 
 def tool_code_trace(args: dict) -> str:

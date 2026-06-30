@@ -44,6 +44,20 @@ _SELECT = re.compile(r"\bSELECT\b", re.I)
 _CTE = re.compile(r"\b([A-Za-z_]\w*)\s+AS\s*\(\s*SELECT", re.I)
 _NOISE = {"OPENQUERY", "SELECT", "VALUES", "DUAL"}
 
+# table alias binding: `FROM/JOIN <tblref> [AS] <alias>` → {alias: table-leaf}.
+# Used to resolve a qualified column ref `alias.COLUMN` back to its base table.
+_ALIAS = re.compile(rf"\b(?:FROM|JOIN)\s+{_REF}\s+(?:AS\s+)?([A-Za-z_]\w*)", re.I)
+# qualified column reference: `alias.COLUMN` (e.g. PS00_1.PSKURZ, KD00.KDIPID).
+_QUALCOL = re.compile(r"\b([A-Za-z_]\w*)\.([A-Za-z_]\w+)\b")
+# SQL keywords / schema noise that _ALIAS can grab as a bogus alias, and that
+# _QUALCOL's left side can be (e.g. dbo.Foo) — never treat these as table aliases.
+_ALIAS_NOISE = {
+    "WHERE", "ON", "AND", "OR", "GROUP", "ORDER", "INNER", "LEFT", "RIGHT",
+    "OUTER", "FULL", "CROSS", "JOIN", "AS", "SELECT", "HAVING", "UNION",
+    "WITH", "SET", "VALUES", "INTO", "DBO", "SYS", "MSDB", "H000DTA",
+    "H010DTA", "IWPBPRD", "OPENQUERY",
+}
+
 
 def _leaf(ref: str) -> str:
     return ref.split("/")[-1].split(".")[-1].strip("[]")
@@ -194,6 +208,7 @@ def sql_analyze(analysis_id: str, working_dir: str) -> dict:
 # linked servers it reaches. Output shape matches code_outline's symbol dicts
 # ({name, label, file, line, signature}); codebase_memory.code_outline merges it.
 _SQL_SYM_MAX_PER_FILE = 80  # safety cap so one pathological file can't flood the tree
+_SQL_COL_MAX_PER_FILE = 60  # separate cap for Column symbols (the high-volume kind)
 
 # mtime-fingerprint cache: per_file_state polls every 5s; re-scanning ~19 MB of
 # SQL each time (~260 ms) is wasteful when nothing changed. Key = working_dir,
@@ -219,7 +234,9 @@ def _sql_fingerprint(root: str) -> tuple:
 
 def sql_file_symbols(working_dir: str) -> list:
     """[{name, label, file (repo-rel), line, signature}] for every .sql/.dbq unit.
-    Labels: Procedure / View / CTE / Table / LinkedServer. Deduped per file
+    Labels: Procedure / View / CTE / Table / Column / LinkedServer. Columns are
+    qualified refs `alias.COLUMN` resolved to `TABLE.COLUMN` via the FROM/JOIN
+    alias map (falls back to the raw alias when unresolved). Deduped per file
     (a table joined 5× → one symbol). Tolerant + never raises (returns []).
     mtime-cached so repeated polls on an unchanged corpus are free."""
     if not working_dir or not os.path.isdir(working_dir):
@@ -257,6 +274,8 @@ def sql_file_symbols(working_dir: str) -> list:
             file_syms.append({"name": name, "label": label, "file": rel,
                               "line": line, "signature": sig})
 
+        col_syms: list = []           # columns kept separate (own cap) so a
+        col_seen: set = set()         # column-heavy file can't crowd out tables
         for off, sql in parts:
             # DEFINITIONS (precise line via the match offset within the unit)
             for m in _PROC.finditer(sql):
@@ -275,10 +294,35 @@ def sql_file_symbols(working_dir: str) -> list:
                     _add("Table", leaf, off, sig="referenziert")
             for m in _OQ.finditer(sql):
                 _add("LinkedServer", m.group(1), off, sig="OPENQUERY")
-        # stable display order: definitions first, then refs; cap per file
+            # COLUMNS: qualified refs alias.COLUMN, resolved to the base table via
+            # the FROM/JOIN alias map. name = "TABLE.COLUMN" (or "alias.COLUMN"
+            # when the alias can't be resolved). Heavy but capped separately.
+            aliases = {}
+            for am in _ALIAS.finditer(sql):
+                al = am.group(2)
+                if al.upper() in _ALIAS_NOISE:
+                    continue
+                aliases[al.lower()] = _leaf(am.group(1))
+            for m in _QUALCOL.finditer(sql):
+                al, col = m.group(1), m.group(2)
+                if al.upper() in _ALIAS_NOISE or col.upper() in _ALIAS_NOISE:
+                    continue
+                base = aliases.get(al.lower(), al)   # resolve alias → table, else raw
+                name = f"{base}.{col}"
+                key = name.lower()
+                if key in col_seen:
+                    continue
+                col_seen.add(key)
+                col_syms.append({"name": name, "label": "Column", "file": rel,
+                                 "line": off, "signature": "Spalte"})
+        # stable display order: definitions first, then refs; cap per file.
+        # Columns get their OWN cap appended after the rest so tables/procs/views
+        # always survive even on a column-heavy file.
         order = {"Procedure": 0, "View": 1, "CTE": 2, "LinkedServer": 3, "Table": 4}
         file_syms.sort(key=lambda s: (order.get(s["label"], 9), s["name"].lower()))
+        col_syms.sort(key=lambda s: s["name"].lower())
         out.extend(file_syms[:_SQL_SYM_MAX_PER_FILE])
+        out.extend(col_syms[:_SQL_COL_MAX_PER_FILE])
     if fp is not None:
         _SYM_CACHE[root_fp] = (fp, out)
     return out

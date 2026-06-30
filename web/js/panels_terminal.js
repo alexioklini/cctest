@@ -2192,6 +2192,7 @@ const _OUTLINE_GLYPH = {
   View:       { g: '◫', c: 'sym-class' },    // CREATE VIEW
   CTE:        { g: '◇', c: 'sym-func' },     // WITH … AS (SELECT …)
   Table:      { g: '▤', c: 'sym-var' },      // FROM/JOIN reference
+  Column:     { g: '▪', c: 'sym-const' },    // qualified column ref (table.col)
   LinkedServer: { g: '⇄', c: 'sym-other' },  // OPENQUERY linked server
 };
 function _outlineGlyph(label) { return _OUTLINE_GLYPH[label] || { g: '·', c: 'sym-other' }; }

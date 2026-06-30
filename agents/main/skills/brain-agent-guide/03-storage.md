@@ -410,12 +410,18 @@ convention as the doc→md companions), which cbm then indexes. The original
 `.dbq`'s index state in the file-tree UI is mapped from its companion.
 
 **SQL outline symbols** (`sql_analysis.sql_file_symbols`, merged into
-`code_outline`): cbm's tree-sitter SQL parser emits almost nothing on flat
-query scripts, so the tolerant regex scanner supplies the file-tree symbols for
-`.sql`/`.dbq` instead — labels `Procedure` (CREATE PROC), `View` (CREATE VIEW),
-`CTE` (WITH…AS), `Table` (FROM/JOIN reference), `LinkedServer` (OPENQUERY).
-Deduped + capped per file; mtime-cached (`_SYM_CACHE`) so the 5 s status poll
-doesn't re-scan an unchanged corpus.
+`code_outline` AND `tool_code_search`): cbm's tree-sitter SQL parser emits
+almost nothing on flat query scripts, so the tolerant regex scanner supplies the
+symbols for `.sql`/`.dbq` instead — labels `Procedure` (CREATE PROC), `View`
+(CREATE VIEW), `CTE` (WITH…AS), `Table` (FROM/JOIN reference), `Column`
+(qualified `alias.COLUMN` ref, resolved to `TABLE.COLUMN` via the FROM/JOIN
+alias map — falls back to the raw alias when unresolved), `LinkedServer`
+(OPENQUERY). Deduped + capped per file (columns get their own cap so they can't
+crowd out tables); mtime-cached (`_SYM_CACHE`) so the 5 s status poll doesn't
+re-scan an unchanged corpus. **`code_search` searches these too** — its agent
+tool merges SQL-symbol matches (substring on `query`, regex on `name_pattern`)
+with cbm's results, since cbm's graph has no SQL columns/tables; a search for a
+SQL table or column would otherwise wrongly come back empty.
 
 **Per-file index state** (`per_file_state`, drives the file-tree dots):
 `indexed` (has symbol nodes — from cbm OR the SQL scanner) · `stale` (symbols,
