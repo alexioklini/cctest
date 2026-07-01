@@ -213,6 +213,19 @@ function relativeTime(ts) {
   return new Date(ts).toLocaleDateString();
 }
 
+// Prompt-cache savings helper — resolve a model's per-1M input + cache_read
+// rates from state.modelsConfig (mirrors engine.quotas._get_cost_rate:
+// cache_read = per-model cost_cache_read if >0, else 0.1× input) and return the
+// $ saved by having `cachedTokens` billed at the discounted rate vs. full input.
+function cacheSavingsUSD(modelId, cachedTokens) {
+  if (!cachedTokens) return 0;
+  const cfg = state.modelsConfig?.models?.[modelId] || {};
+  const input = Number(cfg.cost_input) || 0;
+  const ccr = Number(cfg.cost_cache_read) || 0;
+  const cacheRead = ccr > 0 ? ccr : input * 0.1;
+  return (cachedTokens / 1e6) * (input - cacheRead);
+}
+
 function modelShortName(modelId, withProvider = true) {
   if (!modelId) return '';
   if (modelId === 'auto-cloud' || modelId === 'auto') return '✨ Smart (Cloud)';  // 'auto' = legacy alias

@@ -60,6 +60,7 @@ function applyStatusBarRoleVisibility() {
   hide('status-tokens-out-wrap', isUser);
   hide('status-speed-wrap',      isUser);
   hide('status-cost-wrap',       isUser);
+  hide('status-cached-wrap',     isUser);
   hide('status-inspect-btn',     isUser);
   // Pool + queue: hidden for powerusers and users (admins-only).
   // Their monitors set display:flex on poll — see _renderPoolIndicator + QueueMonitor._render.
@@ -174,23 +175,33 @@ function updateStatusBar() {
   document.getElementById('status-tokens-out').textContent = totalOut ? totalOut.toLocaleString() : '0';
   document.getElementById('status-speed').textContent = lastSpeed ? `${lastSpeed} tok/s` : '-';
 
-  // Prompt-cache hit indicator (created on demand, like the warmup badge so we
-  // don't touch index.html). Shows cumulative cached-token count for the session
-  // — these bill at the discounted cache_read rate (~0.1×). Hidden when 0.
-  let cachedEl = document.getElementById('status-cached');
-  if (!cachedEl) {
-    cachedEl = document.createElement('div');
-    cachedEl.id = 'status-cached';
-    cachedEl.className = 'status-item';
-    const _sb = document.getElementById('status-bar');
-    if (_sb) _sb.appendChild(cachedEl);
-  }
-  if (cachedEl) {
-    if (totalCached > 0) {
-      cachedEl.style.display = '';
-      cachedEl.innerHTML = `<span style="font-size:11px;color:#10b981;font-weight:500" title="Prompt-Cache-Treffer in dieser Sitzung: ${totalCached.toLocaleString()} Tokens zum ~0,1×-Tarif (≈90% günstiger als frische Eingabe-Tokens)">⚡ ${totalCached.toLocaleString()} cached</span>`;
+  // Prompt-cache hit indicator — a first-class status item RIGHT AFTER the cost
+  // item (belongs with the token+cost group; #status-cached-wrap in index.html).
+  // Shows cumulative cached tokens + session cache-hit % + $ saved. Shown whenever
+  // the token group is (non-user role); dimmed grey at 0 (cold / short session),
+  // green once hits accumulate. Cache-hit % = cached / (full-price in + cached);
+  // savings = those tokens at the full input rate minus the cache_read rate.
+  const cachedWrap = document.getElementById('status-cached-wrap');
+  const cachedLabel = document.getElementById('status-cached-label');
+  if (cachedWrap && cachedLabel) {
+    const _promptTot = totalIn + totalCached;
+    const _hitPct = _promptTot ? Math.round(100 * totalCached / _promptTot) : 0;
+    const _save = (typeof cacheSavingsUSD === 'function') ? cacheSavingsUSD(chat.model, totalCached) : 0;
+    // Whether this model is cache-priced at all (has cost_cache_read config).
+    // If NOT, caching never happens for it — say so in the tooltip.
+    const _mcfg = state.modelsConfig?.models?.[chat.model] || {};
+    const _cachePriced = Number(_mcfg.cost_cache_read) > 0;
+    if (msgs.length === 0) {
+      cachedWrap.style.display = 'none';
     } else {
-      cachedEl.style.display = 'none';
+      cachedWrap.style.display = '';
+      cachedLabel.textContent = `${totalCached.toLocaleString()} (${_hitPct}%)`;
+      cachedLabel.style.color = totalCached > 0 ? '#10b981' : '';
+      if (!_cachePriced) {
+        cachedWrap.title = 'Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es findet kein Prompt-Caching statt. Bei cache-fähigen Modellen (z. B. Mistral via CLIProxyAPI) wird der wiederholte Prefix zum ~0,1×-Tarif abgerechnet.';
+      } else {
+        cachedWrap.title = `Prompt-Cache-Treffer dieser Sitzung: ${totalCached.toLocaleString()} Tokens = ${_hitPct}% des Prompts, zum ~0,1×-Tarif abgerechnet.${_save > 0 ? ' Ersparnis ggü. vollem Eingabe-Tarif: $' + _save.toFixed(4) + '.' : ''}`;
+      }
     }
   }
 

@@ -790,6 +790,7 @@
     "buildStreamCallbacks": "writable",
     "buildToolIntegrationRec": "writable",
     "buildToolResultBlock": "writable",
+    "cacheSavingsUSD": "writable",
     "cancelBgTask": "writable",
     "cancelBgTool": "writable",
     "cancelProjectInit": "writable",

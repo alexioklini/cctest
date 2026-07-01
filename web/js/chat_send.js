@@ -1799,7 +1799,12 @@ async function openInspectModal() {
 
     // --- Summary bar ---
     const t = data.totals || {};
-    html += `<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px">
+    const _cached = t.cache_read_tokens || 0;
+    const _hitPct = (typeof t.cache_hit_pct === 'number') ? t.cache_hit_pct : 0;
+    const _cachedCost = t.cached_cost || 0;
+    const _cachedSave = t.cached_savings || 0;
+    const _cacheColor = _cached > 0 ? '#10b981' : 'var(--text-400)';
+    html += `<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px">
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Anfragen</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.turns || 0}</div>
@@ -1811,6 +1816,11 @@ async function openInspectModal() {
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Token aus</div>
         <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${(t.tokens_out||0).toLocaleString()}</div>
+      </div>
+      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center" title="Prompt-Cache-Treffer: ${_cached.toLocaleString()} Tokens (${_hitPct}% des Prompts) zum ~0,1×-Tarif abgerechnet. Kosten dafür: $${_cachedCost.toFixed(4)} — gespart ggü. vollem Eingabe-Tarif: $${_cachedSave.toFixed(4)}.">
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">⚡ Cached</div>
+        <div style="font-size:20px;font-weight:600;color:${_cacheColor};margin-top:4px">${_cached.toLocaleString()}</div>
+        <div style="font-size:11px;color:${_cacheColor};margin-top:2px">${_hitPct}% · −$${_cachedSave.toFixed(4)}</div>
       </div>
       <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
         <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Dauer</div>

@@ -992,6 +992,7 @@ class SessionsHandlerMixin:
                         "tokens_est": len(str(content_out)) // 4,
                         "tokens_in": meta.get("tokens_in", 0),
                         "tokens_out": meta.get("tokens_out", 0),
+                        "cache_read_tokens": meta.get("cache_read_tokens", 0),
                         "tokens_total": meta.get("tokens", 0),
                         "duration": meta.get("duration", 0),
                         "model": meta.get("model", ""),
@@ -1025,8 +1026,28 @@ class SessionsHandlerMixin:
         # of (already-cumulative) per-message values.
         total_in = sum((ix["assistant"] or {}).get("tokens_in", 0) for ix in interactions if ix.get("assistant"))
         total_out = sum((ix["assistant"] or {}).get("tokens_out", 0) for ix in interactions if ix.get("assistant"))
+        total_cached = sum((ix["assistant"] or {}).get("cache_read_tokens", 0) for ix in interactions if ix.get("assistant"))
         total_duration = sum((ix["assistant"] or {}).get("duration", 0) for ix in interactions if ix.get("assistant"))
         total_cost = prev_cum_cost
+        # Cache-hit ratio = cached / (full-price in + cached) — share of prompt
+        # tokens billed at the discounted ~0.1x rate across the whole session.
+        _prompt_total = total_in + total_cached
+        cache_hit_pct = round(100.0 * total_cached / _prompt_total, 1) if _prompt_total else 0.0
+        # Cached-token COST + savings, summed per turn at each turn's model rate
+        # (cache_read rate = per-model cost_cache_read, default 0.1x input). Savings
+        # = what those cached tokens WOULD have cost at the full input rate minus
+        # what they actually cost at the cache_read rate.
+        from engine.quotas import _get_cost_rate as _rate
+        cached_cost = 0.0
+        cached_savings = 0.0
+        for _ix in interactions:
+            _a = _ix.get("assistant") or {}
+            _cr = _a.get("cache_read_tokens", 0) or 0
+            if not _cr:
+                continue
+            _r = _rate(_a.get("model") or (session.model if session else ""))
+            cached_cost += _cr / 1_000_000 * _r.get("cache_read", 0.0)
+            cached_savings += _cr / 1_000_000 * (_r.get("input", 0.0) - _r.get("cache_read", 0.0))
 
         self._send_json({
             "session_id": sid,
@@ -1041,6 +1062,10 @@ class SessionsHandlerMixin:
                 "turns": len(interactions),
                 "tokens_in": total_in,
                 "tokens_out": total_out,
+                "cache_read_tokens": total_cached,
+                "cache_hit_pct": cache_hit_pct,
+                "cached_cost": round(cached_cost, 4),
+                "cached_savings": round(cached_savings, 4),
                 "duration": round(total_duration, 2),
                 "cost": round(total_cost, 4),
             },

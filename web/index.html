@@ -1438,6 +1438,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span class="status-label">$</span>
       <span class="status-value" id="status-cost-label">0.00</span>
     </div>
+    <div class="status-item" id="status-cached-wrap" style="display:none" title="Prompt-Cache-Treffer dieser Sitzung">
+      <span class="status-label">⚡</span>
+      <span class="status-value" id="status-cached-label">0</span>
+    </div>
     <div class="status-item" id="status-quota" style="display:none;cursor:pointer;gap:4px" title="Plan-Nutzung — für Details klicken" onclick="openQuotaModal()">
       <svg id="status-quota-donut" width="16" height="16" viewBox="0 0 16 16" style="display:block">
         <circle cx="8" cy="8" r="6" fill="none" stroke="var(--border-100)" stroke-width="2.4"></circle>
