@@ -561,6 +561,36 @@ def _run_turn_inprocess(
         except Exception:
             pass
 
+    # In-process tools dispatch on THIS (worker) thread, whose request context
+    # does NOT carry an event_callback (only the old sidecar tool-dispatch thread
+    # did, via tool_mcp._apply_context). Without one, brain._after_file_write
+    # skips artifact registration AND the blocking tools (ask_user /
+    # ask_user_for_file) emit user_input_needed into a None callback → block till
+    # timeout (the v9.101.12 bug). Install the SAME artifact/passthrough callback
+    # the sidecar dispatch thread used, plus the GDPR after_file_write hook when a
+    # pseudonym mapping is active. Restore prior values after the turn.
+    _ctx = engine.get_request_context()
+    _prev_ecb = _ctx.event_callback
+    _prev_gdpr_cb = getattr(_ctx, "_gdpr_after_file_write_cb", None)
+    _prev_gdpr_mid = getattr(_ctx, "_gdpr_mapping_id", "")
+    try:
+        from handlers.chat import make_artifact_event_callback
+        _ctx.event_callback = make_artifact_event_callback(sid) if sid else None
+    except Exception:
+        _ctx.event_callback = None
+    _gdpr_mid = tool_context.get("gdpr_mapping_id") or ""
+    _ctx._gdpr_mapping_id = _gdpr_mid
+    if _gdpr_mid:
+        try:
+            from handlers.chat import make_gdpr_after_file_write_cb
+            _ctx._gdpr_after_file_write_cb = make_gdpr_after_file_write_cb(
+                mapping_id=_gdpr_mid, session_id=sid or "",
+                agent_id=tool_context.get("agent_id") or "main")
+        except Exception:
+            _ctx._gdpr_after_file_write_cb = None
+    else:
+        _ctx._gdpr_after_file_write_cb = None
+
     final_text = ""
     summary: dict[str, Any] = {}
     cancelled = False
@@ -600,6 +630,14 @@ def _run_turn_inprocess(
         except Exception:
             pass
     finally:
+        # Restore the worker context's callback state (the worker context is
+        # reused for downstream post-turn work — summariser, next-prompt, etc.).
+        try:
+            _ctx.event_callback = _prev_ecb
+            _ctx._gdpr_after_file_write_cb = _prev_gdpr_cb
+            _ctx._gdpr_mapping_id = _prev_gdpr_mid
+        except Exception:
+            pass
         if sid:
             try:
                 from server_lib.db import ChatDB as _ChatDB
