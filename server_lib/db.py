@@ -2257,19 +2257,6 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def touch_last_active(session_id, ts):
-        """Persist last_active on chat OPEN — only for ACTIVE sessions. The
-        status='active' guard means opening an ARCHIVED chat never resets its
-        clock (auto-delete must still fire). Lightweight single-column UPDATE,
-        called throttled from the hot read path."""
-        with _db_conn() as conn:
-            conn.execute(
-                "UPDATE sessions SET last_active = ? WHERE id = ? AND status = 'active'",
-                (ts, session_id))
-            conn.commit()
-
-    @staticmethod
-    @_db_safe(default=None)
     def update_session_share(session_id, *, visibility=None, team_id=None,
                              extra_member_user_ids=None, excluded_user_ids=None,
                              owner_user_id=None):
@@ -2938,7 +2925,15 @@ class ChatDB:
                   "AND (m.compacted = 0 OR m.compacted IS NULL)) > 0) "
                   "OR s.last_active >= ?)")
             params.append(stale_cutoff)
-            q += " ORDER BY s.last_active DESC"
+            # Sort the sidebar by last MODIFICATION (newest message), not by
+            # last_active — merely OPENING a chat used to bump last_active and
+            # reshuffle the list. A chat's "last used" is when its content last
+            # changed: the newest message's created_at, falling back to the
+            # session's own created_at for (freshly-created) empty sessions.
+            # idx_msg_session keeps the correlated MAX cheap.
+            q += (" ORDER BY COALESCE("
+                  "(SELECT MAX(m.created_at) FROM messages m WHERE m.session_id = s.id), "
+                  "s.created_at) DESC")
             rows = conn.execute(q, params).fetchall()
             # Confirm the JSON over-fetch + drop global rows that exclude the
             # caller. Admin (visible_user_ids is None) skips this entirely.

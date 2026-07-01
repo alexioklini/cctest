@@ -42,7 +42,12 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
 ## Sessions / Chat
 
 ### List & search
-- `GET /v1/sessions` — list chats visible to caller (sharing model applies)
+- `GET /v1/sessions` — list chats visible to caller (sharing model applies).
+  Sorted by last MODIFICATION (newest message), not by last access — merely
+  opening a chat no longer reshuffles the list.
+- `GET /v1/sessions/active` — IDs of sessions with a live chat turn running (the
+  in-memory `_streaming` set). Drives the "läuft gerade" list pills; returns bare
+  IDs only.
 - `GET /v1/sessions/search?q=...` — full-text search
 
 ### Per-session

@@ -3157,7 +3157,7 @@ def tool_write_document(args: dict) -> str:
                 _m = re.search(r"^\s*#\s+(.+)$", content, re.MULTILINE)
                 _title = (_m.group(1).strip() if _m
                           else os.path.splitext(os.path.basename(path))[0].replace("_", " "))
-                html_doc = report_html.render_report_html(content, _title, category="report")
+                html_doc = report_html.render_report_html(content, _title, category="report", doc_dir=_doc_dir)
             elif _looks_like_html(content):
                 html_doc = _finalize_raw_html(content, _style, _doc_dir)
             else:

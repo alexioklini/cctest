@@ -20,8 +20,12 @@ wechsle zu `04-recipes.md` und führe sie aus.
 **Linke Seitenleiste** — Hauptnavigation:
 - **Neuer Chat** — öffnet die Willkommens-/Eingabeansicht
 - **Suche** — unscharfe Suche über alle Chats
-- **Chats** — alle Chats, neueste zuerst; archivieren/markieren/umbenennen
-  über das Zeilenmenü
+- **Chats** — alle Chats, sortiert nach der **letzten Nachricht** (zuletzt
+  beschriebener zuerst); ein Chat bloß zu ÖFFNEN ändert die Reihenfolge nicht.
+  Archivieren/markieren/umbenennen über das Zeilenmenü. Chats, in denen gerade
+  eine Antwort erstellt wird, tragen eine grüne **„läuft"-Markierung** — auch in
+  den Projekt-Chatlisten — so ist sofort sichtbar, wo eine Antwort im Entstehen
+  ist, ohne den Chat zu öffnen.
 - **Projekte** — Wissensbasen mit eigenem Gedächtnis
 - **Favoriten** — angeheftete Chats, Artifacts, Prompts, Bilder
 - **Artifacts** — alle erzeugten oder hochgeladenen Dateien sitzungsübergreifend
@@ -792,8 +796,17 @@ Dokument in der gestylten **HTML-Ansicht** (das zugehörige Markdown bleibt als
 Fallback erhalten), und über das **⋯**-Menü **Umbenennen**, **Neu generieren** (erzeugt
 eine neue Ausgabe, die alte bleibt erhalten), **Herunterladen** (lädt das HTML) und **Löschen**
 (entfernt Eintrag + Datei; während eine Ausgabe noch generiert, ist Löschen
-gesperrt). *(Hinweis: Inline-Zitat-Chips zum Anklicken folgen in einem späteren
-Schritt; aktuell stehen die Belege als `[Quelle: …]` im Text.)*
+gesperrt). In der HTML-Ansicht erscheinen Quellenangaben als **kompakte
+nummerierte Zitat-Chips** im Text plus ein **Belege-Verzeichnis** am Ende (statt
+langer `[Quelle: …]`-Klammern).
+
+> **Schöner HTML-Report im Chat:** Man kann in **jedem** Chat einen „schönen
+> HTML-Report" verlangen — der Agent erzeugt dann dasselbe redaktionelle
+> Magazin-Layout wie oben (warme Farbwelt, Titelbild, Inhaltsverzeichnis, farbige
+> Kennzahl-Kacheln, Zitat-Chips + Belege-Liste, hell/dunkel, druckfertig).
+> Textauszeichnungen (verschachtelte Listen, Zitate, Tabellen, durchgestrichener
+> Text, eingebettete Bilder) werden dabei vollständig umgesetzt — gleichwertig
+> zur Word- und PDF-Ausgabe.
 
 **Neue Quellen finden** (Research-Tab 🔍): Auf der Projektseite gibt es den Tab
 **🔍 Research**, um neue Quellen für das Projekt zu finden. Thema eingeben, Modus

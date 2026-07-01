@@ -104,6 +104,9 @@ class API {
     if (status) url += `&status=${status}`;
     return this.get(url);
   }
+  // IDs of sessions with a live turn running — drives the "läuft gerade" pills
+  // in the sidebar + project chat lists.
+  static getActiveSessions() { return this.get('/v1/sessions/active'); }
   static getSessionMessages(id) { return this.get(`/v1/sessions/${id}/messages`); }
   // Export the chat as markdown into the session's artifacts folder.
   // kind: 'summary' (LLM, chat_summary_model) | 'dump' (verbatim, no LLM).

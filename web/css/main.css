@@ -469,6 +469,38 @@ textarea { resize: none; }
 }
 .sb-session-item .sb-sess-actions button:hover { background: var(--sidebar-hover); color: var(--text-200); }
 
+/* "läuft gerade" pill — a live-streaming indicator on chat list items. Shared by
+   the sidebar (.sb-session-item), the global chats view (.chat-list-item) and the
+   project-detail list (.project-chat-item). Green, softly pulsing. */
+.sb-stream-pill {
+  flex-shrink: 0;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  color: #fff;
+  background: var(--success, #22a06b);
+  animation: sb-stream-pulse 1.4s ease-in-out infinite;
+}
+.sb-stream-pill::before {
+  content: '';
+  display: inline-block;
+  width: 5px; height: 5px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: 0.9;
+}
+@keyframes sb-stream-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+@media (prefers-reduced-motion: reduce) { .sb-stream-pill { animation: none; } }
+/* Pull the sidebar title off the actions so the pill sits before the hover
+   buttons; the actions row already absolutely reveals on hover. */
+.sb-session-item .sb-session-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+
 /* User section at bottom */
 .sb-user-section {
   display: flex;

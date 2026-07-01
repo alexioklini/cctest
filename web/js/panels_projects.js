@@ -928,7 +928,8 @@ async function loadProjectChats(agentId, projectName) {
     }
     for (const s of sessions) {
       const item = document.createElement('div');
-      item.className = 'project-chat-item';
+      const pcStreaming = state.streamingSessions?.has(s.id);
+      item.className = 'project-chat-item' + (pcStreaming ? ' streaming' : '');
       const ago = s.last_active ? formatTimeAgo(new Date(s.last_active * 1000)) : '';
       const isArchived = filter === 'archived' || s.status === 'archived';
       // Stash status flag for the menu (avoids a second fetch).
@@ -937,6 +938,7 @@ async function loadProjectChats(agentId, projectName) {
       const pcTip = s.summary ? ` title="${esc(s.summary)}"` : '';
       item.innerHTML = `
         <span class="project-chat-item-title"${pcTip}>${esc(pcTitle)}</span>
+        ${pcStreaming ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>' : ''}
         <span class="project-chat-item-meta">${ago ? 'Letzte Nachricht ' + ago : ''}</span>
         <span class="project-chat-item-actions">
           <button style="color:var(--text-400);padding:4px" onclick="event.stopPropagation(); showProjectChatMenu(event, '${esc(s.id)}', ${isArchived ? 'true' : 'false'})" title="Weitere Optionen">

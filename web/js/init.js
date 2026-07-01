@@ -1350,6 +1350,8 @@ async function init() {
   WarmupMonitor.start();
   QueueMonitor.start();
   QuotaMonitor.start();
+  // Poll which sessions are streaming → "läuft gerade" pills in the chat lists.
+  if (typeof startActiveSessionsPoll === 'function') startActiveSessionsPoll();
 }
 
 async function renderPromptCards() {

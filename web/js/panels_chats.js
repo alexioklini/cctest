@@ -536,7 +536,9 @@ async function loadChatsList() {
       } catch(e) {}
     }
 
-    allSessions.sort((a,b) => new Date(b.last_active||0) - new Date(a.last_active||0));
+    // Merged across all agents → client sort needed; raw last_active (epoch
+    // seconds, send-only since v9.251.0), not new Date(seconds) which mis-scales.
+    allSessions.sort((a,b) => (b.last_active||0) - (a.last_active||0));
 
     // Apply search filter
     if (state.chatsSearchQuery) {
@@ -555,9 +557,10 @@ async function loadChatsList() {
       const title = s.title || s.summary || `Chat ${csid?.substring(0,8)}`;
       const tip = s.summary ? ` title="${esc(s.summary)}"` : '';
       const div = document.createElement('div');
-      div.className = 'chat-list-item';
+      const clStreaming = state.streamingSessions?.has(csid);
+      div.className = 'chat-list-item' + (clStreaming ? ' streaming' : '');
       div.innerHTML = `
-        <div class="chat-list-item-title"${tip}>${esc(title)}</div>
+        <div class="chat-list-item-title"${tip}>${esc(title)}${clStreaming ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>' : ''}</div>
         <div class="chat-list-item-meta">
           Letzte Nachricht ${relativeTime(s.last_active)}
           ${s.agentId ? ' in <span class="chat-list-item-agent">' + esc(s.agentDisplay) + '</span>' : ''}

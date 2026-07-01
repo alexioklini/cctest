@@ -1315,7 +1315,11 @@ function renderRecentChats() {
         }
       }
     }
-    allSessions.sort((a,b) => new Date(b.last_active||0) - new Date(a.last_active||0));
+    // Merged multi-agent list: server sorts each agent's list, but we interleave
+    // agents here, so a client sort is still needed. Sort by raw last_active
+    // (epoch seconds — server bumps it only on a sent message since v9.251.0),
+    // NOT new Date(seconds) which mis-scales seconds-as-ms.
+    allSessions.sort((a,b) => (b.last_active||0) - (a.last_active||0));
     allSessions = allSessions.slice(0, 15);
     renderSessionsList(container, allSessions);
     return;
@@ -1324,11 +1328,13 @@ function renderRecentChats() {
   const data = state.agentSessions[state.activeAgentId];
   if (!data?.sessions) { container.innerHTML = ''; return; }
 
+  // Single agent → the server already returns them ordered by last MODIFICATION
+  // (newest message, v9.251.0). Don't re-sort — a client last_active sort would
+  // re-introduce the "opening a chat reshuffles the list" bug.
   const sessions = data.sessions
     .filter(s => s.status !== 'archived' && s.status !== 'code'
       && (s.message_count || 0) > 0
       && !(s.project || ''))
-    .sort((a,b) => new Date(b.last_active||0) - new Date(a.last_active||0))
     .slice(0, 20);
 
   renderSessionsList(container, sessions);
@@ -1341,7 +1347,9 @@ function renderSessionsList(container, sessions) {
     const div = document.createElement('div');
     const sid = s.id || s.session_id;
     const sagent = s.agent_id || s.agent || s.agentId || state.activeAgentId;
-    div.className = 'sb-session-item' + (state.activeChat?.sessionId === sid ? ' active' : '');
+    const streaming = state.streamingSessions?.has(sid);
+    div.className = 'sb-session-item' + (state.activeChat?.sessionId === sid ? ' active' : '')
+      + (streaming ? ' streaming' : '');
     // Title primary; summary is hover-only. Falls back to summary only when
     // no title (rare — pre-first-turn rows).
     const title = s.title || s.summary || `Chat ${sid?.substring(0,6)}`;  // "Chat" identical in German
@@ -1349,6 +1357,7 @@ function renderSessionsList(container, sessions) {
     div.innerHTML = `
       <span class="sb-sess-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
       <span class="sb-session-title"${tip}>${esc(title)}</span>
+      ${streaming ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>' : ''}
       <span class="sb-sess-actions">
         <button onclick="event.stopPropagation(); archiveSession('${sid}')" title="Archivieren">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8v13H3V8M1 3h22v5H1z"/></svg>
@@ -1361,6 +1370,38 @@ function renderSessionsList(container, sessions) {
     div.onclick = () => openSession(sid, sagent);
     container.appendChild(div);
   }
+}
+
+// Poll the set of currently-streaming session IDs and, when it changes, repaint
+// the visible chat lists so their "läuft gerade" pills appear/disappear live.
+// One shared 3s timer, started on init; cheap (bare id list). Repaints only on a
+// real change (signature compare) so it never fights the other list renders.
+let _activeSessPollTimer = null;
+let _activeSessSig = '';
+async function pollActiveSessions() {
+  try {
+    const res = await API.getActiveSessions();
+    const ids = Array.isArray(res?.active) ? res.active : [];
+    const sig = ids.slice().sort().join(',');
+    if (sig === _activeSessSig) return;   // no change → no repaint
+    _activeSessSig = sig;
+    state.streamingSessions = new Set(ids);
+    // Repaint whatever chat list is on screen (sidebar always; the main-area
+    // list depends on the current view).
+    if (typeof renderRecentChats === 'function') renderRecentChats();
+    if (state.currentView === 'chats' && typeof loadChatsList === 'function') {
+      loadChatsList();
+    } else if (state.currentView === 'project-detail'
+               && typeof loadProjectChats === 'function'
+               && state._projectDetailAgent && state._projectDetailName) {
+      loadProjectChats(state._projectDetailAgent, state._projectDetailName);
+    }
+  } catch (_) { /* transient — try again next tick */ }
+}
+function startActiveSessionsPoll() {
+  if (_activeSessPollTimer) return;
+  pollActiveSessions();
+  _activeSessPollTimer = setInterval(pollActiveSessions, 3000);
 }
 
 // Sidebar renderer for project views. Shows chats whose (agentId, project)
@@ -1429,7 +1470,9 @@ async function renderRecentProjectChats(container) {
       sessions.push({...s, agentId});
     }
   }
-  sessions.sort((a, b) => new Date(b.last_active || 0) - new Date(a.last_active || 0));
+  // Merged across agents/projects → client sort needed; raw last_active (epoch
+  // seconds, send-only since v9.251.0), not new Date(seconds).
+  sessions.sort((a, b) => (b.last_active || 0) - (a.last_active || 0));
   sessions = sessions.slice(0, 30);
 
   if (!sessions.length) {

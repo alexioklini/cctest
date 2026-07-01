@@ -642,6 +642,17 @@ class SessionsHandlerMixin:
         else:
             self._send_json({"sessions": ChatDB.list_sessions(visible_user_ids=visible, visible_team_ids=vteam, caller_user_id=caller_uid)})
 
+    def _handle_active_sessions(self):
+        """GET /v1/sessions/active — IDs of sessions with a live chat turn running
+        (in-memory `_streaming`). Lightweight live signal for the sidebar/project
+        list 'läuft gerade' pills; the client only paints pills on sessions already
+        in its access-filtered list, so returning bare IDs leaks nothing."""
+        try:
+            active = sorted(sessions.streaming_session_ids())
+        except Exception:
+            active = []
+        self._send_json({"active": active})
+
     def _handle_get_messages(self, path):
         """GET /v1/sessions/<id>/messages"""
         parts = path.split("/")

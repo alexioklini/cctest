@@ -29,6 +29,31 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.252.0",
+        "date": "2026-07-01",
+        "title": "Laufende Chats auf einen Blick",
+        "body": "Chats, in denen gerade eine Antwort erstellt wird, tragen jetzt "
+                "eine grüne „läuft\"-Markierung — sowohl in der Seitenleiste als "
+                "auch in den Projekt-Chatlisten. So sehen Sie sofort, wo eine "
+                "Antwort im Entstehen ist, ohne den jeweiligen Chat erst öffnen "
+                "zu müssen.",
+        "audience": "user",
+        "versions": ["9.252.0"],
+    },
+    {
+        "version": "9.251.0",
+        "date": "2026-07-01",
+        "title": "Chatliste nach Aktivität sortiert",
+        "body": "Die Liste Ihrer Chats richtet sich jetzt danach, wann zuletzt "
+                "etwas GESCHRIEBEN wurde — nicht mehr danach, wann Sie einen Chat "
+                "zuletzt nur geöffnet haben. Ein Chat, den Sie lediglich zum "
+                "Nachlesen aufrufen, rutscht dadurch nicht mehr an die Spitze; "
+                "die Reihenfolge bleibt stabil und spiegelt Ihre tatsächliche "
+                "Arbeit wider.",
+        "audience": "user",
+        "versions": ["9.251.0"],
+    },
+    {
         "version": "9.249.0",
         "date": "2026-07-01",
         "title": "HTML-Berichte im Magazin-Layout",
@@ -38,9 +63,18 @@ CURATED_CHANGELOG: list[dict] = [
                 "Überschriften, ein mitlaufendes Inhaltsverzeichnis am Rand, "
                 "heller und dunkler Modus und druckfertig. Bitten Sie einfach um "
                 "einen „schönen HTML-Report“; das bisherige, an Word/PDF "
-                "angelehnte HTML-Format bleibt für alle anderen Fälle erhalten.",
+                "angelehnte HTML-Format bleibt für alle anderen Fälle erhalten. "
+                "Das Layout wurde zudem verfeinert: ein automatisch erzeugtes "
+                "Titelbild, farbige Kennzahl-Kacheln für Kernwerte, ein auch im "
+                "schmalen Vorschaufenster erreichbares Inhaltsverzeichnis und "
+                "eine saubere, vollständige Umsetzung aller Textauszeichnungen "
+                "(verschachtelte Listen, Zitate, Tabellen u. a.) — gleichwertig "
+                "zur Word- und PDF-Ausgabe. Quellenangaben im Text erscheinen "
+                "jetzt als kompakte nummerierte Verweise mit einem "
+                "Quellenverzeichnis am Ende, statt als lange Klammern mitten im "
+                "Satz.",
         "audience": "user",
-        "versions": ["9.249.0", "9.249.1"],
+        "versions": ["9.249.0", "9.249.1", "9.250.0"],
     },
     {
         "version": "9.246.0",

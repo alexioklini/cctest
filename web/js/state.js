@@ -20,6 +20,9 @@ const state = {
   agentChats: {},
   agentSessions: {},
   agentProjects: {},
+  // Set of session IDs with a live turn running (from GET /v1/sessions/active),
+  // refreshed by pollActiveSessions(); drives the "läuft gerade" list pills.
+  streamingSessions: new Set(),
 
   // Chat state
   currentProject: null,

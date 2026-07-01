@@ -337,7 +337,6 @@ class Session:
         self.summary: str = ""  # LLM-generated chat summary for sidebar
         self.sdk_session_id: str | None = None  # Agent SDK session ID for resume
         self._last_summary_at = 0  # Token count at last continuous summary
-        self._last_active_persisted_at = 0.0  # Throttle for on-open last_active DB writes
         self.save_to_memory: bool = False  # User toggle: always file to MemPalace
         self.caveman_mode: int = 0  # 0=off, 1=lite, 2=full, 3=ultra
         # Per-session thinking level: '' = unset (use default at send time),
@@ -495,22 +494,6 @@ class SessionManager:
             self._sessions[session.id] = session
         return session
 
-    @staticmethod
-    def _touch_on_open(s: "Session"):
-        """Persist last_active when a chat is OPENED (not just messaged), so a
-        chat you read but don't type in still counts as accessed. Throttled
-        (~5 min/session) to keep this off the hot read path, and skipped for
-        archived sessions — opening an archived chat must NOT revive it or reset
-        its auto-delete clock. The DB UPDATE itself is also status='active'-guarded."""
-        try:
-            now = s.last_active
-            if (s.status == "active"
-                    and now - getattr(s, "_last_active_persisted_at", 0.0) >= 300):
-                s._last_active_persisted_at = now
-                ChatDB.touch_last_active(s.id, now)
-        except Exception:
-            pass
-
     def get(self, session_id: str) -> Session | None:
         with self._lock:
             s = self._sessions.get(session_id)
@@ -518,8 +501,10 @@ class SessionManager:
                 # Another thread is loading this session — wait for it
                 evt = self._load_events.get(session_id)
             elif s is not None:
-                s.last_active = time.time()
-                self._touch_on_open(s)
+                # NOTE: opening/accessing a session no longer bumps last_active.
+                # last_active now reflects real ACTIVITY (a sent message, set in
+                # handlers/chat.py) only — so the sidebar's "last used" order and
+                # the auto-cleanup clock aren't disturbed by merely reading a chat.
                 return s
             else:
                 # Mark as loading to prevent duplicate construction
@@ -534,8 +519,6 @@ class SessionManager:
             with self._lock:
                 result = self._sessions.get(session_id)
                 if result is not self._LOADING_SENTINEL and result is not None:
-                    result.last_active = time.time()
-                    self._touch_on_open(result)
                     return result
             return None
 
@@ -576,6 +559,20 @@ class SessionManager:
             if s is self._LOADING_SENTINEL:
                 return None
             return s
+
+    def streaming_session_ids(self) -> set[str]:
+        """IDs of sessions with a live chat-turn worker running (in-memory
+        `_streaming` flag). This is the authoritative 'currently generating' signal
+        for the sidebar/project list pills — accurate (unlike the active_turns DB
+        table, which can outlive a crash). Cache-only, no DB load."""
+        out = set()
+        with self._lock:
+            for sid, s in self._sessions.items():
+                if s is self._LOADING_SENTINEL:
+                    continue
+                if getattr(s, "_streaming", False):
+                    out.add(sid)
+        return out
 
     def delete(self, session_id: str) -> bool:
         # Abort all running workers in this session
@@ -1540,6 +1537,8 @@ class BrainAgentHandler(
             self._handle_list_models()
         elif path == "/v1/sessions":
             self._handle_list_sessions()
+        elif path == "/v1/sessions/active":
+            self._handle_active_sessions()
         elif path == "/v1/sessions/export-bundle/download":
             self._handle_export_bundle_download()
         elif path.startswith("/v1/sessions/search"):

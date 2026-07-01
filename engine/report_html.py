@@ -27,11 +27,165 @@
 # Single public entrypoint: render_report_html(markdown, title, meta, sources,
 # category, stats) -> str (a complete <!doctype html> document).
 
+import base64
+import contextvars
 import html
+import mimetypes
+import os
 import re
 from datetime import datetime
 from typing import Optional
 from urllib.parse import urlparse
+
+# The base directory a report is written into — set per render so relative image
+# paths in `![alt](chart.png)` can be resolved + inlined. contextvar so nested/
+# concurrent renders don't clobber each other.
+_render_doc_dir: contextvars.ContextVar[str] = contextvars.ContextVar("_render_doc_dir", default="")
+
+
+def _local_image_data_uri(src: str) -> Optional[str]:
+    """Resolve a relative/absolute local image path (against the current render's
+    doc dir) and return a base64 data-URI, or None if it can't be read. Keeps the
+    report self-contained — same intent as the docx/pdf image embedding."""
+    src = (src or "").strip()
+    if not src or re.match(r"^(https?:|data:|javascript:)", src, re.I):
+        return None
+    candidates = []
+    if os.path.isabs(src):
+        candidates.append(src)
+    else:
+        base = _render_doc_dir.get() or "."
+        candidates.append(os.path.join(base, src))
+        candidates.append(src)
+    for p in candidates:
+        try:
+            if os.path.isfile(p) and os.path.getsize(p) <= 8 * 1024 * 1024:
+                ctype = mimetypes.guess_type(p)[0] or "image/png"
+                if not ctype.startswith("image/"):
+                    return None
+                with open(p, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("ascii")
+                return f"data:{ctype};base64,{b64}"
+        except OSError:
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Inline citations — [Quelle: <source> — "<quote>"] → numbered chip + legend
+# ---------------------------------------------------------------------------
+# The report model cites sources inline with the same `[Quelle: file — "quote"]`
+# convention the chat view renders as compact pins (web/js/chat_render.js). Left
+# raw, these long brackets clutter the prose. We pre-extract them into a numbered
+# chip [n] at the citation point + a "Belege" legend at the foot — a Python port
+# of the chat view's extractCitationsFromRaw / parseCitationBodyRaw / pin render.
+#
+# A sentinel token replaces each bracket BEFORE block/inline parsing so the quote
+# (which may contain markdown, pipes, quotes) never confuses the markdown pass;
+# _inline swaps the sentinel for the chip HTML. The per-render citation list rides
+# a contextvar (single render per call).
+_CITE_SENTINEL = "⁣CIT⁣{}⁣/CIT⁣"   # U+2063 invisible separator
+_CITE_SENTINEL_RE = re.compile("⁣CIT⁣(\\d+)⁣/CIT⁣")
+_render_citations: contextvars.ContextVar[list] = contextvars.ContextVar("_render_citations", default=None)
+
+# Citation bracket: either a "Quelle:/source:"-prefixed body, or a no-prefix
+# "<file> — "quote"" (the em-dash + quote guards against matching plain links).
+_CITE_BODY = (r"(?:(?:Quelle|QUELLE|source|Source|SOURCE):\s*(?:[^\[\]]|\[\.{2,3}\])+?"
+              r"|[^\[\]\n]+?\s*[—–]\s*[„\"“«][^„\"“”»\]]+[„\"“”»][^\[\]]*?)")
+_CITE_RE = re.compile(r"\[(" + _CITE_BODY + r")\]")
+_CITE_BACKTICK_RE = re.compile(
+    r"`(\[[^\]]*?(?:(?:Quelle|QUELLE|source|Source|SOURCE):|[—–][^\"]*[„\"“])[^\]]*?\])`")
+
+
+def _parse_citation_body(body: str) -> Optional[dict]:
+    """'<source> — "<quote>"' (optional 'Quelle:' prefix) → {file, locator, quote}.
+    Mirrors chat_render.parseCitationBodyRaw."""
+    if not body:
+        return None
+    s = body.strip()
+    s = re.sub(r'^(?:Quelle|QUELLE|source|Source|SOURCE):\s*', '', s, flags=re.I)
+    quote = ""
+    qm = re.search(r'\*\s*[„"“]([^„"“”]+)[“"”]\s*\*\s*$', s)
+    if not qm:
+        qm = re.search(r'[„"“]([^„"“”]+)[“"”]\s*$', s)
+    if qm:
+        quote = qm.group(1).strip()
+        s = s[:qm.start()].strip()
+        s = re.sub(r'\s*[—–-]\s*$', '', s).strip()
+    file = s
+    locator = ""
+    lm = re.search(r'\s+(Page\s+\S+|Slide\s+\S+|Sheet\s+["“„][^"“”]+["“”]|§\s*\S+.*|Zeile[n]?\s*\d+[\d\s\-–]*)$', s)
+    if lm:
+        locator = lm.group(1).strip()
+        file = s[:lm.start()].strip()
+    if not file:
+        file = body.strip()
+    file = re.sub(r'\.(pdf|docx|pptx|xlsx|xlsm|eml|msg)\.md$', r'.\1', file, flags=re.I)
+    return {"file": file, "locator": locator, "quote": quote}
+
+
+def _extract_citations(md: str) -> tuple[str, list]:
+    """Replace every citation bracket in the markdown with a sentinel + collect the
+    parsed citations. Standalone bracket lines are first pulled up onto the prior
+    line so the chip renders at the end of the claim, not as its own paragraph."""
+    text = _CITE_BACKTICK_RE.sub(r"\1", md or "")
+    # Pull a standalone bracket up onto the previous non-blank line (repeat so a
+    # run of bracket-paragraphs collapses one by one). Skip table rows.
+    pull = re.compile(r'([^\n])[ \t]*\n(?:[ \t]*\n)*[ \t]*(\[' + _CITE_BODY + r'\])')
+
+    def _join(m):
+        prev_line_start = text.rfind("\n", 0, m.start(2))
+        # crude table guard: if the char before the bracket run ends a table cell
+        return m.group(1) + " " + m.group(2)
+
+    prev = None
+    while prev != text:
+        prev = text
+        text = pull.sub(_join, text)
+
+    citations: list = []
+
+    def _repl(m):
+        parsed = _parse_citation_body(m.group(1))
+        if not parsed:
+            return m.group(0)
+        idx = len(citations)
+        citations.append(parsed)
+        return _CITE_SENTINEL.format(idx)
+
+    stripped = _CITE_RE.sub(_repl, text)
+    return stripped, citations
+
+
+def _citation_chip(c: dict, n: int) -> str:
+    """A numbered superscript chip [n] with the source+quote in its tooltip."""
+    tip = c["file"]
+    if c.get("locator"):
+        tip += " · " + c["locator"]
+    if c.get("quote"):
+        tip += f'\n\n"{c["quote"]}"'
+    return (f'<a href="#cite-{n}" class="cite-chip" title="{html.escape(tip, quote=True)}">'
+            f'<sup>[{n}]</sup></a>')
+
+
+def _citations_legend_html(citations: list) -> str:
+    """The 'Belege' footer legend: [n] → source — "quote", one row per citation."""
+    if not citations:
+        return ""
+    rows = []
+    for i, c in enumerate(citations):
+        n = i + 1
+        src = html.escape(c["file"])
+        loc = f' · {html.escape(c["locator"])}' if c.get("locator") else ""
+        quote = (f'<span class="cite-quote">„{html.escape(c["quote"])}"</span>'
+                 if c.get("quote") else "")
+        rows.append(f'<li id="cite-{n}"><span class="cite-n">[{n}]</span> '
+                    f'<span class="cite-src">{src}{loc}</span>{quote}</li>')
+    return ('<section class="citations-panel"><details open>'
+            f'<summary>Belege ({len(citations)})</summary>'
+            f'<ol class="citations-list">{"".join(rows)}</ol>'
+            '</details></section>')
+
 
 # Category → hero eyebrow label (German, to match the UI). The palette stays the
 # warm editorial one across categories — the label is what tells a product
@@ -53,8 +207,96 @@ _CATEGORY_LABEL = {
 _INLINE_CODE = re.compile(r"`([^`]+)`")
 _BOLD = re.compile(r"\*\*([^*]+)\*\*")
 _ITALIC = re.compile(r"(?<![*\w])\*([^*\n]+)\*(?![*\w])")
+_STRIKE = re.compile(r"~~([^~]+)~~")
 _IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)\s]+)(?:\s+\"([^\"]*)\")?\)")
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+
+
+# ::kpi VALUE | LABEL | risk → a coloured stat box. Same convention the docx/pdf
+# report path understands (file_tools._kpi_match / _emit_kpi_strip); ported here so
+# the editorial HTML renders the strip instead of showing the raw '::kpi …' line.
+# Models are inconsistent: they write one ::kpi per line OR several ::kpi on ONE
+# line, and a '#'/'##' marker may lead. So detection is "line CONTAINS ::kpi" and
+# a whole block is split on every ::kpi marker (not anchored to line-start).
+_KPI_HAS = re.compile(r"::kpi\b", re.IGNORECASE)
+_KPI_SPLIT = re.compile(r"::kpi\b", re.IGNORECASE)
+
+# risk keyword → (foreground hex, background hex). Mirrors file_tools._RISK_BADGES.
+_KPI_RISK_COLORS = [
+    (("sehr gut", "gering", "niedrig", "low"), ("#548235", "#e2efda")),
+    (("erhöht", "erhoht", "elevated"),         ("#c55a11", "#fce4d6")),
+    (("hoch", "high", "hohes"),                ("#c00000", "#f8d7da")),
+    (("mittel", "angemessen", "medium", "moderat"), ("#bf8f00", "#fff2cc")),
+]
+
+
+def _kpi_line(line: str) -> bool:
+    """True if a line contains at least one ::kpi marker (heading-prefix tolerated)."""
+    return bool(_KPI_HAS.search(line or ""))
+
+
+def _kpi_field(s: str) -> str:
+    """Trim a KPI field: strip whitespace, stray '#'/'*' emphasis, wrapping quotes."""
+    s = (s or "").strip().strip("#").strip()
+    s = s.strip("*").strip()
+    if len(s) >= 2 and s[0] in "\"'" and s[-1] == s[0]:
+        s = s[1:-1].strip()
+    return s
+
+
+def _parse_kpis(blob: str) -> list:
+    """Split a text blob on every ::kpi marker → [(value, label, badge)]. Each
+    record splits on '|' but caps at 3 fields, so a pipe INSIDE the third field
+    (e.g. a quoted 'Turnover|10,377,747') is preserved, not mis-split."""
+    kpis = []
+    for chunk in _KPI_SPLIT.split(blob):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        parts = chunk.split("|", 2)  # at most value | label | rest
+        value = _kpi_field(parts[0]) if parts else ""
+        label = _kpi_field(parts[1]) if len(parts) > 1 else ""
+        badge = _kpi_field(parts[2]) if len(parts) > 2 else (label or value)
+        if not value and not label:
+            continue
+        kpis.append((value, label, badge))
+    return kpis
+
+
+def _kpi_colors(badge: str):
+    """badge word → (fg, bg) hex, or a neutral default if nothing matches."""
+    v = (badge or "").strip().lower()
+    for keys, cols in _KPI_RISK_COLORS:
+        if any(k in v for k in keys):
+            return cols
+    return ("#44546a", "#edf1f8")
+
+
+def _kpi_strip_html(kpis: list) -> str:
+    """Render collected ::kpi tuples as a row of coloured stat boxes."""
+    boxes = []
+    for value, label, badge in kpis:
+        fg, bg = _kpi_colors(badge)
+        cap = (f'<span class="kpi-label">{html.escape(label.upper())}</span>'
+               if label else "")
+        boxes.append(
+            f'<div class="kpi-box" style="--kpi-fg:{fg};--kpi-bg:{bg}">'
+            f'<span class="kpi-value">{_inline(value)}</span>{cap}</div>')
+    return f'<div class="kpi-strip">{"".join(boxes)}</div>'
+
+
+def _strip_inline_md(text: str) -> str:
+    """Strip inline markdown markers to plain text — for places that can't carry
+    tags (the <title>, the hero <h1>, TOC/anchor text). Without this a model that
+    writes '# **Titel**' leaves the ** visible in the headline."""
+    t = text or ""
+    t = _INLINE_CODE.sub(r"\1", t)
+    t = _BOLD.sub(r"\1", t)
+    t = _ITALIC.sub(r"\1", t)
+    t = _LINK.sub(r"\1", t)
+    # Any leftover stray emphasis markers (unbalanced ** / *) → drop.
+    t = t.replace("**", "").strip()
+    return t
 
 
 def _slug(text: str) -> str:
@@ -71,17 +313,24 @@ def _inline(text: str) -> str:
     out = _INLINE_CODE.sub(lambda m: f"<code>{m.group(1)}</code>", out)
     out = _BOLD.sub(lambda m: f"<strong>{m.group(1)}</strong>", out)
     out = _ITALIC.sub(lambda m: f"<em>{m.group(1)}</em>", out)
+    out = _STRIKE.sub(lambda m: f"<del>{m.group(1)}</del>", out)
 
     def _image(m):
-        # Images BEFORE links (![alt](url) starts with the link pattern). Only
-        # http(s) src embedded; alt/caption escaped. Non-http → drop to text.
+        # Images BEFORE links (![alt](url) starts with the link pattern). http(s)
+        # src is embedded directly; a LOCAL path (e.g. a render_diagram PNG) is
+        # read + inlined as a base64 data-URI so the report stays self-contained
+        # (parity with the docx/pdf path). Unresolvable → drop to alt text.
         alt, url, cap = m.group(1), m.group(2), m.group(3) or ""
-        if not re.match(r"^https?://", url, re.I):
-            return html.escape(m.group(0), quote=False)
-        safe_url = html.escape(url, quote=True)
+        if re.match(r"^https?://", url, re.I):
+            safe_src = html.escape(url, quote=True)
+        else:
+            data_uri = _local_image_data_uri(url)
+            if not data_uri:
+                return html.escape(m.group(0), quote=False)
+            safe_src = html.escape(data_uri, quote=True)
         safe_alt = html.escape(alt, quote=True)
         caption = (f'<figcaption>{html.escape(cap)}</figcaption>') if cap else ""
-        return (f'<figure class="report-figure"><img src="{safe_url}" alt="{safe_alt}" '
+        return (f'<figure class="report-figure"><img src="{safe_src}" alt="{safe_alt}" '
                 f'loading="lazy" referrerpolicy="no-referrer">{caption}</figure>')
 
     out = _IMAGE.sub(_image, out)
@@ -96,7 +345,66 @@ def _inline(text: str) -> str:
         return (f'<a href="{safe_url}" target="_blank" rel="noopener noreferrer">'
                 f"{label}</a>")
 
-    return _LINK.sub(_link, out)
+    out = _LINK.sub(_link, out)
+
+    # Citation sentinels (invisible U+2063 tokens, survive html.escape) → chips.
+    cites = _render_citations.get()
+    if cites is not None and "⁣CIT⁣" in out:
+        out = _CITE_SENTINEL_RE.sub(
+            lambda m: (_citation_chip(cites[int(m.group(1))], int(m.group(1)) + 1)
+                       if int(m.group(1)) < len(cites) else ""), out)
+    return out
+
+
+# A list item: (leading indent)(marker)(space)(content). Marker = -/*/+ or `1.`.
+_LIST_ITEM = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+(.*)$")
+
+
+def _block_starts(line: str) -> bool:
+    """True if a line opens a block that must NOT be swallowed as a lazy
+    continuation (heading / fence / hr / another quote / a list item)."""
+    s = line.strip()
+    return (s.startswith("#") or s.startswith("```") or s.startswith(">")
+            or bool(re.match(r"^([-*_])\1{2,}$", s)) or bool(_LIST_ITEM.match(line)))
+
+
+def _render_list(lines: list[str], i: int, n: int) -> tuple[str, int]:
+    """Render a (possibly nested) list starting at line `i`. An item indented
+    deeper than this list's markers starts a sub-list (rendered recursively and
+    nested inside the preceding <li>); a dedent ends this list. Returns
+    (html, next_index)."""
+    m0 = _LIST_ITEM.match(lines[i])
+    base_indent = len(m0.group(1))
+    ordered = bool(re.match(r"^\d+[.)]$", m0.group(2)))
+    tag = "ol" if ordered else "ul"
+    items: list[str] = []          # each entry = inner HTML of one <li>
+    while i < n:
+        if not lines[i].strip():   # blank line: tolerate (loose list), peek ahead
+            j = i + 1
+            while j < n and not lines[j].strip():
+                j += 1
+            nxt = _LIST_ITEM.match(lines[j]) if j < n else None
+            if nxt and len(nxt.group(1)) >= base_indent:
+                i = j
+                continue
+            break
+        m = _LIST_ITEM.match(lines[i])
+        if not m:
+            break                  # non-list content ends the list
+        indent = len(m.group(1))
+        if indent < base_indent:
+            break                  # dedent → belongs to an outer list
+        if indent > base_indent:   # deeper → sub-list, nest into the last item
+            sub, i = _render_list(lines, i, n)
+            if items:
+                items[-1] += sub
+            else:
+                items.append(sub)
+            continue
+        items.append(_inline(m.group(3).strip()))
+        i += 1
+    body = "".join(f"<li>{it}</li>" for it in items)
+    return f"<{tag}>{body}</{tag}>", i
 
 
 def _md_to_html(md: str) -> tuple[str, list[tuple[int, str, str]]]:
@@ -147,6 +455,33 @@ def _md_to_html(md: str) -> tuple[str, list[tuple[int, str, str]]]:
             out.append(f"<pre><code>{body}</code></pre>")
             continue
 
+        # ::kpi stat boxes. Collect every line that CONTAINS a ::kpi marker (blank
+        # lines between them tolerated), join them, and split the whole blob on the
+        # markers — so it works whether the model wrote one ::kpi per line OR packed
+        # several onto a single line. Checked BEFORE headings so a '## ::kpi …' line
+        # becomes boxes, not a heading.
+        if _kpi_line(line):
+            flush_para()
+            blob_lines = []
+            while i < n:
+                if _kpi_line(lines[i]):
+                    blob_lines.append(lines[i])
+                    i += 1
+                elif not lines[i].strip():
+                    j = i
+                    while j < n and not lines[j].strip():
+                        j += 1
+                    if j < n and _kpi_line(lines[j]):
+                        i = j
+                    else:
+                        break
+                else:
+                    break
+            kpis = _parse_kpis(" ".join(blob_lines))
+            if kpis:
+                out.append(_kpi_strip_html(kpis))
+            continue
+
         # Horizontal rule
         if re.match(r"^\s*([-*_])\1{2,}\s*$", line):
             flush_para()
@@ -167,14 +502,21 @@ def _md_to_html(md: str) -> tuple[str, list[tuple[int, str, str]]]:
             i += 1
             continue
 
-        # Blockquote (possibly multi-line)
+        # Blockquote — collect the quoted region, strip one '>' level, then
+        # RECURSE so its inner markdown (lists, nested quotes, paragraphs) renders
+        # as real blocks instead of flattened text.
         if stripped.startswith(">"):
             flush_para()
             quote: list[str] = []
-            while i < n and lines[i].strip().startswith(">"):
-                quote.append(re.sub(r"^\s*>\s?", "", lines[i]))
+            while i < n and (lines[i].strip().startswith(">") or
+                             (quote and lines[i].strip() and not _block_starts(lines[i]))):
+                if lines[i].strip().startswith(">"):
+                    quote.append(re.sub(r"^\s*>\s?", "", lines[i]))
+                else:
+                    quote.append(lines[i])  # lazy continuation line
                 i += 1
-            out.append(f"<blockquote>{_inline(' '.join(quote).strip())}</blockquote>")
+            inner, _ = _md_to_html("\n".join(quote))
+            out.append(f"<blockquote>{inner}</blockquote>")
             continue
 
         # Pipe table — header row + separator (|---|---|) + body rows
@@ -186,17 +528,12 @@ def _md_to_html(md: str) -> tuple[str, list[tuple[int, str, str]]]:
                 i += 1
             continue
 
-        # Lists (bullet or numbered)
-        if re.match(r"^\s*([-*+]|\d+\.)\s+", line):
+        # Lists (bullet or numbered) — indentation-aware + recursive, so nested
+        # sub-lists render as real nested <ul>/<ol> instead of being flattened.
+        if _LIST_ITEM.match(line):
             flush_para()
-            ordered = bool(re.match(r"^\s*\d+\.\s+", line))
-            tag = "ol" if ordered else "ul"
-            items: list[str] = []
-            while i < n and re.match(r"^\s*([-*+]|\d+\.)\s+", lines[i]):
-                item = re.sub(r"^\s*([-*+]|\d+\.)\s+", "", lines[i])
-                items.append(f"<li>{_inline(item.strip())}</li>")
-                i += 1
-            out.append(f"<{tag}>{''.join(items)}</{tag}>")
+            html_list, i = _render_list(lines, i, n)
+            out.append(html_list)
             continue
 
         # Blank line ends a paragraph
@@ -311,7 +648,7 @@ def _toc_html(toc: list[tuple[int, str, str]]) -> str:
     links = []
     for level, anchor, text in toc:
         cls = "depth-3" if level == 3 else "depth-2"
-        links.append(f'<a href="#{anchor}" class="{cls}">{html.escape(text)}</a>')
+        links.append(f'<a href="#{anchor}" class="{cls}">{html.escape(_strip_inline_md(text))}</a>')
     return ('<aside class="toc-sidebar"><nav aria-label="Inhalt">'
             + "".join(links) + "</nav></aside>")
 
@@ -514,7 +851,23 @@ body::after {
 
 /* Layout: TOC sidebar + content */
 .layout { display: grid; grid-template-columns: 200px 1fr; max-width: calc(var(--max-w) + 260px); margin: 0 auto; }
-@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } .toc-sidebar { display: none; } }
+/* Narrow (incl. the in-app artifact panel): collapse the sidebar into a sticky,
+   horizontally-scrolling strip at the top of the content instead of hiding it —
+   the TOC stays reachable even when there's no room for a gutter. */
+@media (max-width: 860px) {
+  .layout { display: block; }
+  .toc-sidebar {
+    position: sticky; top: 0; z-index: 20; height: auto; max-height: none;
+    display: block; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+    padding: 0.55rem 0.8rem; border-right: none; border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .toc-sidebar nav { display: inline-flex; gap: 0.2rem; }
+  .toc-sidebar nav a { display: inline-block; margin: 0; padding: 0.3rem 0.6rem; }
+  .toc-sidebar nav a::before { display: none; }
+  .toc-sidebar nav a.depth-3 { padding-left: 0.6rem; }
+}
 
 .toc-sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 3.2rem 0.8rem 2rem 1.4rem; border-right: 1px solid var(--border); font-size: 0.78rem; }
 .toc-sidebar nav a {
@@ -555,6 +908,7 @@ body::after {
 .content a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 3px; transition: text-decoration-color 0.15s, color 0.15s; }
 .content a:hover { text-decoration-color: var(--accent); color: var(--accent-light); }
 .content ul, .content ol { margin: 0 0 1.1rem 1.6rem; }
+.content li > ul, .content li > ol { margin: 0.3rem 0 0.3rem 1.4rem; }
 .content li { margin-bottom: 0.4rem; }
 .content li::marker { color: var(--accent); }
 .content blockquote {
@@ -564,6 +918,7 @@ body::after {
 }
 .content blockquote::before { content: '\\201C'; position: absolute; left: 0.5rem; top: 0.3rem; font-family: var(--font-display); font-size: 3rem; font-style: normal; color: var(--gold); opacity: 0.5; line-height: 1; }
 .content hr { border: none; height: 1px; background: linear-gradient(90deg, transparent, var(--border-strong), transparent); margin: 2rem 0; }
+.content del { color: var(--text-muted); text-decoration-color: var(--accent); }
 .content code { font-family: var(--font-mono); font-size: 0.86em; background: var(--bg-surface-alt); padding: 0.15em 0.4em; border-radius: 4px; }
 .content pre { background: var(--bg-surface-alt); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; overflow-x: auto; margin: 1.25rem 0; font-size: 0.86rem; line-height: 1.6; }
 .content pre code { background: none; padding: 0; }
@@ -585,6 +940,16 @@ body::after {
   border: 1px solid var(--border); box-shadow: var(--shadow-sm);
 }
 .report-figure figcaption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-muted); font-style: italic; }
+/* ::kpi stat strip — coloured headline-metric boxes. */
+.kpi-strip { display: flex; flex-wrap: wrap; gap: 0.9rem; margin: 1.75rem 0; }
+.kpi-box {
+  flex: 1 1 140px; min-width: 120px; text-align: center; padding: 1.1rem 1rem;
+  border-radius: var(--radius); background: var(--kpi-bg); border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 0.3rem;
+}
+.kpi-box .kpi-value { font-family: var(--font-display); font-size: 1.7rem; font-weight: 700; line-height: 1.05; color: var(--kpi-fg); }
+.kpi-box .kpi-label { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
+@media (prefers-color-scheme: dark) { .kpi-box { filter: saturate(1.15) brightness(0.92); } }
 /* Hero image — sits below the headline, full content width. */
 .hero-image { max-width: var(--max-w); margin: 0 auto 1rem; padding: 0 2rem; }
 .hero-image img {
@@ -604,6 +969,24 @@ body::after {
 .sources-list .snum { color: var(--text-muted); font-size: 0.75rem; min-width: 1.5rem; text-align: right; flex-shrink: 0; }
 .sources-list .sdomain { color: var(--text-muted); font-size: 0.75rem; margin-left: auto; flex-shrink: 0; }
 
+/* Inline citation chips + the 'Belege' legend. The chip is a compact superscript
+   [n] that jumps to the matching legend row; the row shows source + verbatim quote. */
+.cite-chip { text-decoration: none; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.cite-chip sup { font-size: 0.7em; padding: 0 0.05em; }
+.cite-chip:hover { color: var(--accent-light); }
+.citations-panel { margin-top: 3rem; border-top: 2px solid var(--border); padding-top: 1.5rem; }
+.citations-panel summary { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--text); padding: 0.5rem 0; list-style: none; user-select: none; }
+.citations-panel summary::-webkit-details-marker { display: none; }
+.citations-panel summary::before { content: '\\25B6'; font-size: 0.65em; color: var(--text-muted); transition: transform 0.2s; }
+.citations-panel details[open] summary::before { transform: rotate(90deg); }
+.citations-list { list-style: none; padding: 0.5rem 0 0 0; margin: 0; counter-reset: none; }
+.citations-list li { padding: 0.45rem 0; font-size: 0.85rem; line-height: 1.5; border-bottom: 1px solid var(--border); scroll-margin-top: 4rem; }
+.citations-list li:last-child { border-bottom: none; }
+.citations-list li:target { background: var(--accent-bg); border-radius: 6px; padding-left: 0.5rem; padding-right: 0.5rem; }
+.citations-list .cite-n { color: var(--accent); font-weight: 600; margin-right: 0.4rem; }
+.citations-list .cite-src { color: var(--text-dim); font-weight: 600; }
+.citations-list .cite-quote { display: block; margin-top: 0.2rem; color: var(--text); font-family: var(--font-display); font-style: italic; }
+
 .report-footer { text-align: center; padding: 2rem; font-size: 0.75rem; color: var(--text-muted); border-top: 1px solid var(--border); margin-top: 2rem; }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -622,16 +1005,71 @@ body::after {
 """
 
 
-def _hero_image_html(hero_image: Optional[str]) -> str:
-    """A full-width hero image below the headline. Only http(s) URLs are embedded
-    (defends against data:/javascript:); empty/invalid → no hero image."""
-    if not hero_image or not isinstance(hero_image, str):
-        return ""
-    if not re.match(r"^https?://", hero_image.strip(), re.I):
-        return ""
-    safe = html.escape(hero_image.strip(), quote=True)
-    return (f'<div class="hero-image"><img src="{safe}" alt="" loading="lazy" '
-            f'referrerpolicy="no-referrer"></div>')
+# Per-category hero-banner accent (base hue, in the warm editorial family). When
+# no real hero image is supplied we synthesise a self-contained SVG banner in this
+# hue so every report has a lead visual — no network, no model call, deterministic.
+_HERO_HUE = {
+    "product":    ("#b8543a", "#c9952e"),  # terracotta → gold
+    "comparison": ("#40628a", "#5a8fb8"),  # slate blue
+    "howto":      ("#5a7d4a", "#8bad6a"),  # sage green
+    "factcheck":  ("#8a4a6a", "#b87a9a"),  # plum
+    "report":     ("#b8543a", "#c9952e"),  # terracotta → gold (default)
+    "studio":     ("#6a5a8a", "#9a8ab8"),  # muted violet
+}
+
+
+def _hero_banner_svg(title: str, category: Optional[str]) -> str:
+    """A deterministic, self-contained SVG banner used as the lead visual when no
+    real hero image is available. Warm gradient + soft geometric arcs keyed off the
+    category hue; the report title seeds the arc geometry so different reports look
+    distinct. Returned as a data-URI so the HTML stays fully offline-portable."""
+    c1, c2 = _HERO_HUE.get(category or "report", _HERO_HUE["report"])
+    # Seed a few positions from the title so banners differ report-to-report but
+    # stay stable for the same title (no Date/random — matches the module rules).
+    seed = sum(ord(ch) for ch in (title or "Bericht")) or 7
+    a = 8 + (seed % 22)          # first arc x-offset
+    b = 55 + (seed * 3 % 30)     # second arc x-offset
+    r1 = 26 + (seed % 10)        # arc radii
+    r2 = 34 + (seed * 2 % 12)
+    svg = (
+        f"<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1200 300' "
+        f"preserveAspectRatio='xMidYMid slice'>"
+        f"<defs>"
+        f"<linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>"
+        f"<stop offset='0' stop-color='{c1}'/><stop offset='1' stop-color='{c2}'/>"
+        f"</linearGradient>"
+        f"<radialGradient id='v' cx='0.5' cy='0.35' r='0.75'>"
+        f"<stop offset='0' stop-color='#ffffff' stop-opacity='0.16'/>"
+        f"<stop offset='1' stop-color='#000000' stop-opacity='0.18'/>"
+        f"</radialGradient></defs>"
+        f"<rect width='1200' height='300' fill='url(#g)'/>"
+        f"<g fill='none' stroke='#ffffff' stroke-opacity='0.14' stroke-width='2'>"
+        f"<circle cx='{a*10}' cy='120' r='{r1*4}'/>"
+        f"<circle cx='{b*12}' cy='210' r='{r2*4}'/>"
+        f"<circle cx='980' cy='90' r='150'/>"
+        f"</g>"
+        f"<g fill='#ffffff' fill-opacity='0.10'>"
+        f"<circle cx='{b*12}' cy='210' r='{r2*2}'/>"
+        f"<circle cx='140' cy='60' r='40'/>"
+        f"</g>"
+        f"<rect width='1200' height='300' fill='url(#v)'/>"
+        f"</svg>"
+    )
+    from urllib.parse import quote as _urlquote
+    return "data:image/svg+xml;utf8," + _urlquote(svg, safe="")
+
+
+def _hero_image_html(hero_image: Optional[str], title: str = "",
+                     category: Optional[str] = None) -> str:
+    """A full-width hero image below the headline. A real http(s) URL is embedded
+    (data:/javascript: refused); otherwise a synthesised SVG banner is used so
+    every report has a lead visual."""
+    if hero_image and isinstance(hero_image, str) and re.match(r"^https?://", hero_image.strip(), re.I):
+        safe = html.escape(hero_image.strip(), quote=True)
+        return (f'<div class="hero-image"><img src="{safe}" alt="" loading="lazy" '
+                f'referrerpolicy="no-referrer"></div>')
+    banner = html.escape(_hero_banner_svg(title, category), quote=True)
+    return f'<div class="hero-image hero-banner"><img src="{banner}" alt=""></div>'
 
 
 def render_report_html(
@@ -642,26 +1080,44 @@ def render_report_html(
     category: Optional[str] = None,
     stats: Optional[dict] = None,
     hero_image: Optional[str] = None,
+    doc_dir: Optional[str] = None,
 ) -> str:
     """Render a complete, self-contained HTML report document.
 
     Args:
         markdown: the report body in our markdown subset. May contain ```mermaid
             and ```chart fenced blocks, which render to inline SVG figures, and
-            standard ![alt](https-url) image markdown (embedded as <img>).
+            standard ![alt](url) image markdown — http(s) URLs are embedded and
+            LOCAL paths (relative to `doc_dir`) are inlined as base64 data-URIs.
         title: report title (hero headline).
         meta: optional {model, tokens_in, tokens_out, cost, duration_s} footer.
         sources: optional [{title, url, trust_hint}] curated source list.
         category: one of _CATEGORY_LABEL keys → hero eyebrow label.
         stats: optional {rounds, queries, sources, urls, duration} stats strip.
         hero_image: optional https URL of a lead image (e.g. an OG image from the
-            top source) shown full-width below the headline.
+            top source) shown full-width below the headline. When absent, a
+            synthesised SVG banner is used instead.
+        doc_dir: directory the report is written into — used to resolve relative
+            image paths in the markdown so they can be inlined.
     """
     label = _CATEGORY_LABEL.get(category or "report", _CATEGORY_LABEL["report"])
-    # A leading "# Title" in the body is redundant with the hero — drop it.
-    body_md = re.sub(r"^\s*#\s+.+\n+", "", markdown or "", count=1)
-    body_html, toc = _md_to_html(body_md)
-    safe_title = html.escape(title or "Bericht")
+    _tok = _render_doc_dir.set(doc_dir or "")
+    # Pull inline [Quelle: …] citations out into numbered chips + a legend, so the
+    # long source brackets don't clutter the prose (parity with the chat view).
+    body_src, inline_citations = _extract_citations(markdown or "")
+    _ctok = _render_citations.set(inline_citations)
+    try:
+        # A leading "# Title" in the body is redundant with the hero — drop it.
+        body_md = re.sub(r"^\s*#\s+.+\n+", "", body_src, count=1)
+        body_html, toc = _md_to_html(body_md)
+    finally:
+        _render_doc_dir.reset(_tok)
+        _render_citations.reset(_ctok)
+    citations_legend = _citations_legend_html(inline_citations)
+    # The title is placed verbatim into <title> and the <h1> (no tags allowed
+    # there), so strip inline markdown — a model writing '# **Titel**' otherwise
+    # leaves the ** visible in the headline.
+    safe_title = html.escape(_strip_inline_md(title) or "Bericht")
     toc_html = _toc_html(toc)
     # Without a TOC the content column shouldn't reserve the 200px gutter.
     layout_open = '<div class="layout">' if toc_html else '<div class="layout" style="grid-template-columns:1fr">'
@@ -683,7 +1139,7 @@ def render_report_html(
   <div class="hero-label">{html.escape(label)}</div>
   <h1>{safe_title}</h1>
 </header>
-{_hero_image_html(hero_image)}
+{_hero_image_html(hero_image, title, category)}
 {_stats_html(stats)}
 {layout_open}
   {toc_html}
@@ -691,6 +1147,7 @@ def render_report_html(
     <article class="content">
       {body_html}
     </article>
+    {citations_legend}
     {_sources_html(sources)}
     {_meta_footer_html(meta)}
   </main>
