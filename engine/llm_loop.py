@@ -106,6 +106,49 @@ def _parse_tool_input_json(buf: str):
     return None
 
 
+def _block_text(v) -> str:
+    """Flatten a mistral_blocks `text`/`thinking` value to a plain string.
+    The value may be a str, or a list of {type:'text', text:'..'} sub-blocks."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        out = []
+        for b in v:
+            if isinstance(b, dict):
+                out.append(b.get("text") or b.get("thinking") or "")
+            elif isinstance(b, str):
+                out.append(b)
+        return "".join(out)
+    return ""
+
+
+def _split_content(content) -> tuple[str, str]:
+    """Normalise an OpenAI `delta.content` into (visible_text, reasoning_text).
+
+    Plain string → (content, ''). Mistral `mistral_blocks` list shape →
+    text blocks joined into visible_text, thinking blocks into reasoning_text.
+    Anything unexpected coerces to str so the caller never does str += non-str."""
+    if isinstance(content, str):
+        return content, ""
+    if isinstance(content, list):
+        txt, think = [], []
+        for blk in content:
+            if not isinstance(blk, dict):
+                if blk:
+                    txt.append(str(blk))
+                continue
+            btype = blk.get("type", "")
+            if btype == "thinking":
+                think.append(_block_text(blk.get("thinking")))
+            elif btype == "text":
+                txt.append(_block_text(blk.get("text")))
+            else:
+                # Unknown block — prefer any text-ish field, don't crash.
+                txt.append(_block_text(blk.get("text") or blk.get("content")))
+        return "".join(txt), "".join(think)
+    return (str(content) if content else ""), ""
+
+
 # ---------- Request build ----------
 
 def _to_openai_messages(messages: list[dict]) -> list[dict]:
@@ -293,8 +336,22 @@ def _drain_openai_stream(resp, emit_delta: Callable[[str, str], None],
                     rr.finish_reason = fr
                 content = delta.get("content")
                 if content:
-                    rr.text += content
-                    emit_delta("text", content)
+                    # `content` is usually a plain string, but Mistral's
+                    # `mistral_blocks` reasoning path (magistral / mistral-small
+                    # 2603+ / mistral-medium 3.x+ with reasoning_effort set)
+                    # streams it as a LIST of blocks:
+                    #   [{"type":"thinking","thinking":[{"type":"text","text":..}]}]
+                    #   [{"type":"text","text":".."}]
+                    # Splitting it: thinking blocks → reasoning stream, text
+                    # blocks → visible text. (Without this we'd do `str += list`
+                    # → TypeError: can only concatenate str (not "list") to str.)
+                    _txt, _think = _split_content(content)
+                    if _txt:
+                        rr.text += _txt
+                        emit_delta("text", _txt)
+                    if _think:
+                        rr.reasoning += _think
+                        emit_delta("thinking", _think)
                 # reasoning_content (oMLX/DeepSeek/Gemini-via-cliproxy). Some
                 # providers use `reasoning` instead — accept both.
                 reasoning = delta.get("reasoning_content")
