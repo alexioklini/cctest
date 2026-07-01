@@ -2251,10 +2251,19 @@ def tool_write_document(args: dict) -> str:
     import brain as _brain
     path = args.get("path", "")
     content = args.get("content", "")
+    # Editorial report layout: style='report' (alias 'editorial') routes HTML
+    # output through the SAME renderer Deep Research + Studio use
+    # (engine.report_html.render_report_html) — the warm editorial look (drop-cap,
+    # gradient headings, sticky TOC, aurora background) instead of the Word/PDF-
+    # like doc-styles preset. Detected from the RAW style arg (before the
+    # default-preset fill) so it only fires when explicitly asked for. Only
+    # meaningful for .html; other formats fall through to the normal preset path.
+    _raw_style = (args.get("style", "") or "").strip().lower()
+    _editorial = _raw_style in ("report", "editorial")
     # Resolve the preset to apply — explicit style= wins, else a sensible default
     # (project/global/'corporate') so output is styled even when the model omits
     # style= (the common case). _load_doc_style('') would give the bare built-in.
-    _style_name = _resolve_default_style(args.get("style", ""))
+    _style_name = "" if _editorial else _resolve_default_style(args.get("style", ""))
     # style='reference' / 'reference:<filename>' → lift the look FROM a reference
     # .docx (a project instruction-file template) instead of applying a brand
     # preset. Only meaningful for .docx output; for other formats it degrades to
@@ -3138,7 +3147,18 @@ def tool_write_document(args: dict) -> str:
             #    show the source as text — the v9.152.0 bug.)
             #  • MARKDOWN → render to a self-contained styled HTML document
             #    applying the full preset (fonts/colors/sizes/tables + chrome).
-            if _looks_like_html(content):
+            if _editorial and not _looks_like_html(content):
+                # Editorial report layout (style='report'/'editorial') — same
+                # renderer as Deep Research + Studio. Needs MARKDOWN (raw HTML
+                # can't be re-flowed into this layout → falls through to the
+                # preset path below). Title = first '# H1' in the content, else
+                # the filename stem.
+                from engine import report_html
+                _m = re.search(r"^\s*#\s+(.+)$", content, re.MULTILINE)
+                _title = (_m.group(1).strip() if _m
+                          else os.path.splitext(os.path.basename(path))[0].replace("_", " "))
+                html_doc = report_html.render_report_html(content, _title, category="report")
+            elif _looks_like_html(content):
                 html_doc = _finalize_raw_html(content, _style, _doc_dir)
             else:
                 html_doc = _render_markdown_html(content, _style, _doc_dir)
