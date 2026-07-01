@@ -1715,14 +1715,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="composer-btn" data-id="btn-research-mode" data-composer-toggle="btn-research-mode" onclick="toggleResearchModeOverride()" title="Recherchemodus (Projektstandard)" style="display:none">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="13" y2="11"/></svg>
         </button>
-        <!-- Deep Research toggle (🔬): when active, the next turn runs the
-             bounded research loop (sub-questions → web search → read → cited
-             HTML report saved as a session artifact) instead of a normal chat
-             answer. Independent of the other toggles. Grayed out + disabled when
-             no search backend is configured (set by refreshDeepResearchButton()).
-             Microscope icon — distinct from the research-MODE book icon. -->
+        <!-- Deep Research toggle: when active, the next turn runs the bounded
+             research loop (sub-questions → web search → read → cited HTML report
+             saved as a session artifact) instead of a normal chat answer.
+             Independent of the other toggles. Grayed out + disabled when no search
+             backend is configured (set by refreshDeepResearchButton()).
+             Scientist icon (head + lab-coat with a flask) — clearer than the old
+             microscope; distinct from the research-MODE book icon. -->
         <button class="composer-btn" data-id="btn-deep-research" data-composer-toggle="btn-deep-research" onclick="toggleDeepResearch()" title="Deep Research: aus — klicken, um den nächsten Turn als tiefe Recherche auszuführen">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h8"/><path d="M9 18v-4"/><path d="M11 18v-4"/><circle cx="10" cy="8" r="4"/><line x1="13" y1="11" x2="16" y2="14"/></svg>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="2.6"/><path d="M4.5 20v-2a4.5 4.5 0 0 1 9 0v2"/><path d="M16 3l3.5 0M17.75 3v5.2l2.4 4.1a1.6 1.6 0 0 1-1.4 2.4h-2a1.6 1.6 0 0 1-1.4-2.4l2.4-4.1V3"/><line x1="16.3" y1="11" x2="19.2" y2="11"/></svg>
         </button>
         <button class="composer-btn" data-id="btn-refine" data-composer-toggle="btn-refine" onclick="refineInput()" title="Nachricht vor dem Senden überarbeiten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>

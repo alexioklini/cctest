@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.255.0",
+        "date": "2026-07-01",
+        "title": "Klareres Deep-Research-Symbol + ruhigerer Arbeits-Spinner",
+        "body": "Zwei kleine Verbesserungen im Chat. Das Symbol für die "
+                "Tiefen-Recherche ist jetzt ein Wissenschaftler (Figur mit "
+                "Kolben) statt des bisherigen Mikroskops — auf einen Blick "
+                "erkennbar, wofür der Knopf steht. Außerdem steht die "
+                "„arbeitet…“-Anzeige während einer Antwort nun direkt hinter dem "
+                "gerade entstehenden Text bzw. den Denk-Schritten, statt lose am "
+                "unteren Rand — so ist besser sichtbar, woran gerade gearbeitet "
+                "wird.",
+        "audience": "user",
+        "versions": ["9.255.0"],
+    },
+    {
         "version": "9.254.0",
         "date": "2026-07-01",
         "title": "Laufende Antworten steuern: Warteschlange, Pause, Zwischenfragen",

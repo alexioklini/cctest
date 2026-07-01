@@ -126,7 +126,7 @@ function renderMessages() {
       }
     } catch (_) {}
     const _drIcon = _isDeepResearch
-      ? `<svg class="turn-dr-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Deep Research"><path d="M6 18h8"/><path d="M9 18v-4"/><path d="M11 18v-4"/><circle cx="10" cy="8" r="4"/><line x1="13" y1="11" x2="16" y2="14"/></svg> `
+      ? `<svg class="turn-dr-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" title="Deep Research"><circle cx="9" cy="5" r="2.6"/><path d="M4.5 20v-2a4.5 4.5 0 0 1 9 0v2"/><path d="M16 3l3.5 0M17.75 3v5.2l2.4 4.1a1.6 1.6 0 0 1-1.4 2.4h-2a1.6 1.6 0 0 1-1.4-2.4l2.4-4.1V3"/><line x1="16.3" y1="11" x2="19.2" y2="11"/></svg> `
       : '';
     const badge = t.turnNum > 0
       ? `<div class="turn-group-header">
@@ -1251,32 +1251,6 @@ function renderStreamingMessage(chat) {
 
   let html = '<div class="msg-turn msg-turn-assistant msg-streaming">';
 
-  // Inline streaming status line (Claude-Code style) — sits at the very start
-  // of the in-flight response: spinner + working model + label + elapsed. The
-  // three spans keep their historical ids (spinner-model/label/elapsed) so the
-  // SSE handlers that write status text by id, plus the 100ms elapsed timer,
-  // keep working without change. The text content is seeded from chat state so
-  // a re-render (renderMessages wipes + this re-appends) doesn't lose the label.
-  if (chat.streaming) {
-    const modelLbl = esc(chat._streamModel || '');
-    const synthLbl = esc(chat._streamSynth || (chat._streamSynth = _streamSynthWord()));
-    const statusLbl = esc(chat._streamLabel || '');  // empty unless a specific SSE state set it
-    const elapsedLbl = esc(chat._streamElapsed || '');
-    // Simple, robust status line: the model name + the working word side by
-    // side (no overlap, no fade — the cross-fade fought the per-delta rebuild of
-    // .msg-streaming). Only the WORD rotates over time (_streamRotateTick swaps
-    // #spinner-synth by id every few seconds — a fresh, phase-aware,
-    // Brainy-synced term). The model name shows the historical id so the SSE
-    // fallback/auto_route handlers can still update it.
-    html += `<div class="stream-status">
-      <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
-      <span class="spinner-model" id="spinner-model">${modelLbl}</span>
-      <span class="spinner-synth" id="spinner-synth">${synthLbl}</span>
-      <span id="spinner-label">${statusLbl}</span>
-      <span class="spinner-elapsed" id="spinner-elapsed">${elapsedLbl}</span>
-    </div>`;
-  }
-
   // Live thinking — inline, italic, lighter (no block, no collapse), exactly
   // where it happens in the flow. Completed rounds already render via
   // renderMessages (renderThinkingMessage); this is only the in-flight buffer.
@@ -1291,6 +1265,31 @@ function renderStreamingMessage(chat) {
     const cavLive = parseInt(chat.cavemanMode) || 0;
     const cavLiveClass = cavLive ? ` msg-caveman-${cavLive}` : '';
     html += `<div class="msg-assistant msg-content${cavLiveClass}">${renderMarkdown(chat.streamingText)}</div>`;
+  }
+
+  // Inline streaming status line (Claude-Code style) — TRAILS the current live
+  // content (thinking / partial answer) so the spinner reads as "…still working"
+  // right after what is streaming now, instead of orphaned at the very bottom
+  // above nothing (the "spinner always shown as last part even with thinking"
+  // report). The three spans keep their historical ids (spinner-model/label/
+  // elapsed) so the SSE handlers that write status text by id, plus the 100ms
+  // elapsed timer, keep working without change. Seeded from chat state so a
+  // re-render (renderMessages wipes + this re-appends) doesn't lose the label.
+  if (chat.streaming) {
+    const modelLbl = esc(chat._streamModel || '');
+    const synthLbl = esc(chat._streamSynth || (chat._streamSynth = _streamSynthWord()));
+    const statusLbl = esc(chat._streamLabel || '');  // empty unless a specific SSE state set it
+    const elapsedLbl = esc(chat._streamElapsed || '');
+    // Only the WORD rotates over time (_streamRotateTick swaps #spinner-synth by
+    // id every few seconds). The model name shows the historical id so the SSE
+    // fallback/auto_route handlers can still update it.
+    html += `<div class="stream-status">
+      <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
+      <span class="spinner-model" id="spinner-model">${modelLbl}</span>
+      <span class="spinner-synth" id="spinner-synth">${synthLbl}</span>
+      <span id="spinner-label">${statusLbl}</span>
+      <span class="spinner-elapsed" id="spinner-elapsed">${elapsedLbl}</span>
+    </div>`;
   }
 
   html += '</div>';
