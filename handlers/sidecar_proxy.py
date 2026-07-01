@@ -278,7 +278,11 @@ def run_turn(
 
     # prompt_cache_key = session id (interactive): the growing byte-stable prefix
     # (system + tools + history) bills the repeated span at the discounted rate.
-    _pck = sid or ""
+    # Helpdesk (Brainy) turns run with an EMPTY tool_context session_id (so they
+    # don't collide with the main chat's active-turn tracking) but still want a
+    # stable per-conversation cache key — fall back to helpdesk_session_id so
+    # multi-round Brainy turns reuse their prefix instead of keying to "".
+    _pck = sid or tool_context.get("helpdesk_session_id") or ""
 
     try:
         # Local-provider concurrency gate — serialises local chats (+ warmup)
