@@ -119,18 +119,32 @@ const ChatTurnControl = {
     this._sendText(chat, item.text);
   },
 
-  // Auto-send the head of the queue after a turn finishes (called from `done`).
+  // Auto-send the head of the queue once the current turn has ended, by ANY
+  // path — clean done, cancel, error, or the safety net. Called both from the
+  // `done` handler and from updateStreamingUI(false) (the central turn-end
+  // choke point), so a turn that ends WITHOUT a clean `done` still delivers the
+  // queued message as the next turn. Idempotent per turn via _drainScheduled so
+  // the two callers can't double-send.
   drainNext(chat) {
     chat = chat || state.activeChat;
     if (!chat || state.activeChat !== chat) return;   // only the visible chat
+    if (chat.streaming) return;                        // turn still running — wait
     const arr = this._arr(chat);
     if (!arr.length) return;
-    if (chat.streaming) return;                        // safety: don't stack turns
+    if (chat._drainScheduled) return;                  // already draining this turn
+    chat._drainScheduled = true;
     const item = arr.shift();
     this._persist(chat);
     this.render(chat);
     // Small yield so the just-finished turn's DOM settles before the next send.
-    setTimeout(() => { try { this._sendText(chat, item.text); } catch (e) {} }, 60);
+    setTimeout(() => {
+      chat._drainScheduled = false;
+      try {
+        // Re-check: user may have started a turn or the chat changed in the gap.
+        if (!chat.streaming && state.activeChat === chat) this._sendText(chat, item.text);
+        else { arr.unshift(item); this._persist(chat); this.render(chat); }  // put it back
+      } catch (e) {}
+    }, 80);
   },
 
   // Put text into the composer and fire the normal send path (so every queued

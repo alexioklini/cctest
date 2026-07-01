@@ -2388,6 +2388,12 @@ function updateStreamingUI(isStreaming, chat) {
   // Show/hide the btw + pause buttons and repaint the queue panel with the new
   // streaming state (guarded so a load-order gap can't break the stream UI).
   try { if (typeof ChatTurnControl !== 'undefined') ChatTurnControl.renderControls(targetChat); } catch (e) {}
+  // Turn ended (by ANY path — done, error, cancel, safety net): drain the next
+  // queued message so it becomes the next turn even when the turn didn't end via
+  // a clean `done`. Idempotent per turn (drainNext guards on _drainScheduled).
+  if (!isStreaming) {
+    try { if (typeof ChatTurnControl !== 'undefined') ChatTurnControl.drainNext(targetChat); } catch (e) {}
+  }
 }
 function updateStreamTimer(chat) {
   const target = chat || state.activeChat;
