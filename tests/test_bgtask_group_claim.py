@@ -106,20 +106,20 @@ class TestGroupClaim(unittest.TestCase):
 
     def test_nesting_guard_propagates_through_dispatch_context(self):
         # Regression: the nesting guard flag (current_bg_task) is set on the
-        # runner thread, but a background task's tool calls dispatch back through
-        # the sidecar → /v1/tools/call → _apply_context (separate process/thread),
-        # which rebuilds context from the tool_context payload. The flag MUST
-        # travel via that payload (background_call bg_task=True → ctx.bg_task) or
-        # the guard never fires and background tasks recurse (the live-e2e bug).
+        # runner thread. A background task's blocking turn rebuilds the request
+        # context from the tool_context payload via sidecar_proxy._apply_bg_context
+        # (the in-process replacement for the old sidecar tool_mcp._apply_context).
+        # The flag MUST travel via that payload (background_call bg_task=True →
+        # ctx.bg_task) or the guard never fires and background tasks recurse.
         from engine.context import request_context, get_request_context
-        from server_lib import tool_mcp
+        from handlers import sidecar_proxy
         with request_context():
-            tool_mcp._apply_context({"session_id": "s", "agent_id": "main",
-                                     "user_id": "u", "bg_task": True})
+            sidecar_proxy._apply_bg_context({"session_id": "s", "agent_id": "main",
+                                             "user_id": "u", "bg_task": True})
             self.assertTrue(get_request_context().current_bg_task)
         with request_context():
-            tool_mcp._apply_context({"session_id": "s", "agent_id": "main",
-                                     "user_id": "u"})
+            sidecar_proxy._apply_bg_context({"session_id": "s", "agent_id": "main",
+                                             "user_id": "u"})
             self.assertFalse(get_request_context().current_bg_task)
 
     def test_count_unconsumed_peek_does_not_consume(self):

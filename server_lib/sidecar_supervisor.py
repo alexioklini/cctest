@@ -264,42 +264,9 @@ class ProcessSupervisor:
                     pass
 
 
-class SidecarSupervisor(ProcessSupervisor):
-    """Sidecar: a Python script run under a dedicated venv. Health = /health."""
-
-    LABEL = "sidecar"
-    CONFIG_KEY = "sidecar"
-    DEFAULT_URL = "http://127.0.0.1:8421"
-
-    def _resolve(self, cfg: dict) -> bool:
-        url = (cfg.get("url") or self.DEFAULT_URL).rstrip("/")
-        try:
-            from urllib.parse import urlparse
-            port = urlparse(url).port or 8421
-        except Exception:
-            port = 8421
-
-        venv_python = cfg.get("venv_python") or ".venv_sidecar/bin/python"
-        venv_python_abs = (venv_python if os.path.isabs(venv_python)
-                           else os.path.join(self._repo_root, venv_python))
-        sidecar_script = os.path.join(self._repo_root, "sidecar", "sidecar.py")
-
-        if not os.path.isfile(venv_python_abs):
-            print(f"[{self.LABEL}] FATAL: venv python not found at {venv_python_abs}",
-                  flush=True)
-            print(f"[{self.LABEL}]   create it:  python3 -m venv .venv_sidecar && "
-                  f".venv_sidecar/bin/pip install anthropic", flush=True)
-            return False
-        if not os.path.isfile(sidecar_script):
-            print(f"[{self.LABEL}] FATAL: sidecar.py missing at {sidecar_script}",
-                  flush=True)
-            return False
-
-        self._argv = [venv_python_abs, sidecar_script, "--port", str(port)]
-        self._proc_cwd = self._repo_root
-        self._proc_env = None  # inherit
-        self._health_url = url + "/health"
-        return True
+# (SidecarSupervisor was removed in v9.247.0 — the LLM loop now runs in-process
+# via engine/llm_loop.py, so there is no sidecar subprocess to supervise. The
+# ProcessSupervisor base is retained for SearXNG + crawl4ai.)
 
 
 class SearxngSupervisor(ProcessSupervisor):
@@ -394,10 +361,10 @@ class Crawl4aiSupervisor(ProcessSupervisor):
         return True
 
 
-# Module-level singletons. Both server.py and handlers import these instances
-# via `from server_lib.sidecar_supervisor import sidecar_supervisor`, which
-# Python resolves to the same module identity regardless of whether `server`
-# was loaded as `__main__` or as a regular import.
-sidecar_supervisor = SidecarSupervisor()
+# Module-level singletons. server.py + handlers import these instances via
+# `from server_lib.sidecar_supervisor import searxng_supervisor, …`, which Python
+# resolves to the same module identity regardless of whether `server` was loaded
+# as `__main__` or as a regular import. (The sidecar singleton was removed in
+# v9.247.0 — the LLM loop is in-process now; this file keeps SearXNG + crawl4ai.)
 searxng_supervisor = SearxngSupervisor()
 crawl4ai_supervisor = Crawl4aiSupervisor()

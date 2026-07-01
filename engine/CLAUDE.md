@@ -55,28 +55,33 @@ duplicate defs, verified by `refactor_gate.sh` Gate-2). Also long-dropped: 3 bro
 
 The invariants below describe brain.py's runtime behavior.
 
-## Agentic Loop (sidecar)
+## Agentic Loop (in-process)
 
-The loop runs in `sidecar/sidecar.py` (separate venv, anthropic 0.101.0).
-Brain hands the sidecar an Anthropic-shape payload via
-`handlers/sidecar_proxy.run_turn(...)` (interactive) or `background_call(...)`
-(scheduler / non-interactive); the sidecar drives rounds, tool calls, and
-text deltas back over SSE.
+The loop runs IN-PROCESS in `engine/llm_loop.py:run_loop(...)` on the caller's
+thread (the Anthropic-SDK sidecar subprocess was deleted in v9.247.0 — see
+`OPENAI_INPROCESS_LOOP_HANDOVER.md`). `handlers/sidecar_proxy` (legacy module
+name — no sidecar) builds the tool list + provider params and drives the loop:
+`run_turn(...)` (interactive, streaming) / `background_call(...)` →
+`run_turn_blocking(...)` (non-interactive). The loop streams OpenAI
+`/v1/chat/completions` SSE, drives rounds + tool calls, and emits the Brain
+event vocabulary via `event_callback`.
 
-- **Tool dispatch path**: sidecar emits a `tool_use` block → POSTs
-  `/v1/tools/call` to Brain → `server_lib/tool_mcp.handle_tools_call`
-  rebuilds the request context from the sidecar's `context` payload, dispatches
-  to `engine.TOOL_DISPATCH` (or MCP fallback), captures the result via
-  `sidecar_proxy.capture_tool_result(...)`, returns. Synchronous by
-  design — `tool_dispatch_done` SSE event from the sidecar is emitted
-  only after dispatch returns.
-- **Tool exec pipeline** (per Brain dispatch): built-in pre → external
+- **Tool dispatch path**: the loop parses a `tool_call` from the stream and
+  calls `engine.TOOL_DISPATCH[name](args)` DIRECTLY on its own thread (which
+  holds the `RequestContext`) — or the MCP fallback (`llm_loop.dispatch_tool`).
+  No HTTP, no nonce, no context rebuild. Result goes back as an OpenAI
+  `role:"tool"` message. Background turns rebuild context first via
+  `sidecar_proxy._apply_bg_context` (inside `with request_context()`).
+- **Tool exec pipeline** (per dispatch): built-in pre → external
   pre → execute → built-in post → external post → `_after_file_write`.
 - **`AskUserQuestion`** blocks via `_pending_answers[session_id]` +
-  `Event`; unblocked by `POST /v1/chat/answer`.
-- **Cancel**: Brain mints `turn_id`, passes via `X-Turn-Id`; the proxy's
-  `_watch_cancel` thread polls `session.cancel_token` and POSTs
-  `/cancel/<turn_id>` to the sidecar.
+  `Event`; unblocked by `POST /v1/chat/answer`. `run_turn` installs
+  `make_artifact_event_callback` on the worker context so the emit reaches the
+  LiveStream (else the tool hangs — the v9.101.12 failure mode).
+- **Cancel**: interactive turns poll `session.cancel_token` between rounds AND a
+  watcher thread closes the stream socket mid-generation; background turns use a
+  `turn_id → Event` registry in `sidecar_proxy` (`cancel_turn` trips it,
+  `run_turn_blocking` polls it via `is_cancelled`).
 - **Tool-call dedup** (Brain side): session-scoped (1h TTL, 100 entries).
   1 dup = error, 2 dups = `TaskCancelled`. `reset_tool_dedup()` runs at
   turn start. Exempt: `memory_recall`, `memory_shared`, `delegate_task`,
@@ -99,10 +104,10 @@ execution, variance kill-switches, worker-subagent envelopes,
 `resolve_provider_for_model(model)` is the **single source of truth** for `{api_key, base_url, provider_name}`.
 
 **Provider concurrency queue** (`LocalProviderQueue`): used by the warmup
-path (`run_model_warmup`) to serialize warmup hits against the local
-provider's batched-decode capacity. The sidecar owns its own connection
-to the provider via CLIProxyAPI/oMLX directly and does NOT participate in
-this queue — production rounds bypass `LocalProviderQueue` entirely.
+path (`run_model_warmup`) AND by interactive turns (`sidecar_proxy.run_turn`
+wraps the in-process loop in `acquire_if`) to serialize hits against the local
+provider's batched-decode capacity. No-op for cloud (`max_concurrent<=0`).
+Whole-turn scope (held across all rounds incl. tool execution).
 
 **KV-prefix stability**: warmup payload MUST match first-turn payload byte-for-byte — system prompt timestamp rounded to hour (not minutes), MCP tools attached, tools merged/deduped/sorted, `stream=True` + `stream_options`. Warm pool `claim()` only fires for `{agent:main, project:'', status:'', note_context:''}` — anything else changes system prompt and invalidates prefix.
 
@@ -120,7 +125,7 @@ this queue — production rounds bypass `LocalProviderQueue` entirely.
 
 ## Concurrency & Thread Safety
 
-- **Request context = `RequestContext` in a `contextvars.ContextVar`** (`engine/context.py`), read/written via `get_request_context().<field>`, entered + torn down ONLY via `with request_context(**overrides):` (token-reset = automatic total teardown). The old `_thread_local = threading.local()` bag + its name are GONE (Tier-G). The sidecar's `/v1/tools/call` callback (`tool_mcp._apply_context`) rebuilds the context per call from the request body, inside its own `with`. See root CLAUDE.md §"Concurrency & Thread Safety" for the contextvars reused-thread bleed invariant (never set request context bare on a pooled thread).
+- **Request context = `RequestContext` in a `contextvars.ContextVar`** (`engine/context.py`), read/written via `get_request_context().<field>`, entered + torn down ONLY via `with request_context(**overrides):` (token-reset = automatic total teardown). The old `_thread_local = threading.local()` bag + its name are GONE (Tier-G). Interactive turns run the tool dispatch on the worker thread that already set the context; background turns rebuild it via `sidecar_proxy._apply_bg_context` inside their own `with request_context()`. See root CLAUDE.md §"Concurrency & Thread Safety" for the contextvars reused-thread bleed invariant (never set request context bare on a pooled thread).
 - **MCPManager** (`brain.py`): `clients`, `_tool_to_server` under `self._lock`; iteration via snapshot.
 - **Background threads** (scheduler, TaskRunner, workflow engine): wrap each task's work in `with request_context(...)` (or `with request_context(): init_thread_context(...)`) so the dispatch callback sees the right scope and teardown is automatic.
 

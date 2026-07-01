@@ -290,8 +290,7 @@
           }
         }
       },
-      "cost_cache_read": 0.15,
-      "use_inprocess_openai_loop": true
+      "cost_cache_read": 0.15
     },
     "CLIProxyAPI/mistral-small-latest": {
       "enabled": true,
@@ -391,8 +390,7 @@
         }
       },
       "raw_formats": [],
-      "cost_cache_read": 0.01275,
-      "use_inprocess_openai_loop": true
+      "cost_cache_read": 0.01275
     },
     "CLIProxyAPI/mistral-medium-latest": {
       "enabled": false,
@@ -2041,8 +2039,7 @@
       "warmup": false,
       "_caps_canonical": true,
       "description": "Lokales Hintergrund-Modell (vllm-metal auf dem M4) — Kurz-Tasks: Refine, Soul-Chat, Memory-Klassifikation. Tool-Parser hermes.",
-      "parallel_tool_calls": false,
-      "use_inprocess_openai_loop": true
+      "parallel_tool_calls": false
     },
     "Qwen2.5-7B-Instruct-4bit": {
       "enabled": true,
@@ -2807,14 +2804,6 @@
   },
   "_local_mlx_whisper_seeded": true,
   "mistral_image_agent_id": "ag_019e09234bdc739c90fdabc0ac4959bb",
-  "sidecar": {
-    "enabled": true,
-    "auto_start": true,
-    "url": "http://127.0.0.1:8421",
-    "venv_python": ".venv_sdk/bin/python",
-    "tool_endpoint_internal": "http://127.0.0.1:8420/v1/tools/call",
-    "tool_call_timeout_s": 120
-  },
   "searxng": {
     "enabled": true,
     "auto_start": true,
@@ -4442,5 +4431,6 @@
     "bin": "/Users/alexander/Documents/dev/cctest/.codebase-memory/bin/codebase-memory-mcp",
     "cache_root": "/Users/alexander/Documents/dev/cctest/.codebase-memory/cache"
   },
-  "code_mode_extension": "**CODE-MODE-ARBEITSWEISE** (gilt für alle Sprachen):\nDu arbeitest in einem Projekt, dessen Code bereits indexiert (gesynct) ist. Der Index ist die frische Quelle der Wahrheit für die Struktur des Codes.\n1. NUTZE ZUERST die Code-Index-Werkzeuge — `code_search` (Symbole/Code finden), `code_query` (strukturelle Abfragen über Symbole/Beziehungen), `code_snippet` (Quelltext eines Symbols lesen), `code_trace` (Aufrufer/Verwendungen). Das gilt für JEDE Arbeit am Code, NICHT nur fürs Schreiben/Ändern: auch wenn du Code ANALYSIERST, DOKUMENTIERST, einen BERICHT/REPORT erstellst, Bestände/Abhängigkeiten/Muster INVENTARISIERST oder Fragen zur Struktur beantwortest. Diese Werkzeuge ersetzen `find`/`grep`/Datei-für-Datei-Listen und das Schreiben eigener Parser-Skripte — sie sind vollständiger (der Index kennt ALLE Treffer, nicht nur die, die du zufällig findest) und schneller. Greife erst auf direktes Lesen/Shell zurück, wenn der Index eine Frage nachweislich nicht beantworten kann.\n2. Wenn du eine Funktion änderst: benenne explizit, welche globalen Variablen oder externen Abhängigkeiten sie nutzt, und mache sie zu Parametern ODER dokumentiere die Kopplung — verändere die Ergebnis-Semantik nicht unbeabsichtigt.\n3. Gib IMMER VOLLSTÄNDIGEN, LAUFFÄHIGEN Code aus — nichts abschneiden; wird es lang, fasse Unwichtiges zusammen, liefere die Lösung aber komplett.\n4. Halte dich an den vorhandenen Projektstil und die Konventionen; achte auf Duplikate / Versions-Drift und weise darauf hin."
+  "code_mode_extension": "**CODE-MODE-ARBEITSWEISE** (gilt für alle Sprachen):\nDu arbeitest in einem Projekt, dessen Code bereits indexiert (gesynct) ist. Der Index ist die frische Quelle der Wahrheit für die Struktur des Codes.\n1. NUTZE ZUERST die Code-Index-Werkzeuge — `code_search` (Symbole/Code finden), `code_query` (strukturelle Abfragen über Symbole/Beziehungen), `code_snippet` (Quelltext eines Symbols lesen), `code_trace` (Aufrufer/Verwendungen). Das gilt für JEDE Arbeit am Code, NICHT nur fürs Schreiben/Ändern: auch wenn du Code ANALYSIERST, DOKUMENTIERST, einen BERICHT/REPORT erstellst, Bestände/Abhängigkeiten/Muster INVENTARISIERST oder Fragen zur Struktur beantwortest. Diese Werkzeuge ersetzen `find`/`grep`/Datei-für-Datei-Listen und das Schreiben eigener Parser-Skripte — sie sind vollständiger (der Index kennt ALLE Treffer, nicht nur die, die du zufällig findest) und schneller. Greife erst auf direktes Lesen/Shell zurück, wenn der Index eine Frage nachweislich nicht beantworten kann.\n2. Wenn du eine Funktion änderst: benenne explizit, welche globalen Variablen oder externen Abhängigkeiten sie nutzt, und mache sie zu Parametern ODER dokumentiere die Kopplung — verändere die Ergebnis-Semantik nicht unbeabsichtigt.\n3. Gib IMMER VOLLSTÄNDIGEN, LAUFFÄHIGEN Code aus — nichts abschneiden; wird es lang, fasse Unwichtiges zusammen, liefere die Lösung aber komplett.\n4. Halte dich an den vorhandenen Projektstil und die Konventionen; achte auf Duplikate / Versions-Drift und weise darauf hin.",
+  "use_inprocess_openai_loop": true
 }

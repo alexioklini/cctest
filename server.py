@@ -34,7 +34,6 @@ _QMD_PID_FILE = os.path.expanduser("~/.cache/qmd/mcp.pid")
 import brain as engine
 import server_daemons
 from server_lib import notifications as _notif_mod
-from server_lib import tool_mcp as _tool_mcp_mod
 from server_lib import auth as _auth_mod
 
 # --- Notification Manager (initialized in main()) ---
@@ -1017,7 +1016,7 @@ class WarmSessionPool:
 warm_pool = WarmSessionPool()
 
 
-from server_lib.sidecar_supervisor import sidecar_supervisor, searxng_supervisor, crawl4ai_supervisor
+from server_lib.sidecar_supervisor import searxng_supervisor, crawl4ai_supervisor
 
 
 from handlers.auth import AuthHandlerMixin
@@ -1219,10 +1218,7 @@ class BrainAgentHandler(
 
     # Paths that don't require auth
     _PUBLIC_GET_PATHS = {"/v1/status", "/v1/auth/me", "/v1/changelog/curated"}
-    # /v1/tools/call has its own per-turn nonce auth (see server_lib/tool_mcp.py)
-    # and is reached only from the sidecar over localhost — so it's exempt from
-    # the user-auth gate. Bind to 127.0.0.1 only (see main()) to keep it safe.
-    _PUBLIC_POST_PATHS = {"/v1/auth/login", "/v1/auth/refresh", "/v1/tools/call"}
+    _PUBLIC_POST_PATHS = {"/v1/auth/login", "/v1/auth/refresh"}
 
     # Admin-only paths. Entries ending in "/" match as prefix (any subpath is
     # admin-only). Exact paths match exactly. These gate config mutations --
@@ -1273,7 +1269,6 @@ class BrainAgentHandler(
         "/v1/services",
         "/v1/quotas/config",
         "/v1/quotas/admin/users",
-        "/v1/sidecar/status",
         "/v1/searxng/status",
         "/v1/searxng/engines",
         "/v1/crawl4ai/status",
@@ -1316,7 +1311,6 @@ class BrainAgentHandler(
         "/v1/skills/claude-code/install",
         "/v1/commands/expand",
         "/v1/nodes",
-        "/v1/sidecar/restart",
         "/v1/searxng/restart",
         "/v1/searxng/test-engines",
         "/v1/crawl4ai/restart",
@@ -1530,8 +1524,6 @@ class BrainAgentHandler(
             self._handle_wiki_tree(path)
         elif path.startswith("/v1/wiki/pages/"):
             self._handle_wiki_get(path)
-        elif path == "/v1/tools/list":
-            self._handle_tools_list()
         elif path == "/v1/chat/stream":
             self._handle_chat_stream()
         elif path == "/v1/status":
@@ -1712,8 +1704,6 @@ class BrainAgentHandler(
             self._handle_warmup_status()
         elif path == "/v1/models/benchmark/status":
             self._handle_benchmark_status()
-        elif path == "/v1/sidecar/status":
-            self._handle_sidecar_status()
         elif path == "/v1/searxng/status":
             self._handle_searxng_status()
         elif path == "/v1/crawl4ai/status":
@@ -2016,8 +2006,6 @@ class BrainAgentHandler(
             self._handle_helpdesk_config_save()
         elif path == "/v1/web/search":
             self._handle_web_search()
-        elif path == "/v1/tools/call":
-            _tool_mcp_mod.handle_tools_call(self)
         elif path == "/v1/sessions/manage":
             self._handle_manage_session()
         elif path == "/v1/sessions/export":
@@ -2050,8 +2038,6 @@ class BrainAgentHandler(
             self._handle_queue_cancel()
         elif path == "/v1/warmup/trigger":
             self._handle_warmup_trigger()
-        elif path == "/v1/sidecar/restart":
-            self._handle_sidecar_restart()
         elif path == "/v1/searxng/restart":
             self._handle_searxng_restart()
         elif path == "/v1/crawl4ai/restart":
@@ -2486,24 +2472,6 @@ class BrainAgentHandler(
             else:
                 self.send_response(204)
                 self.end_headers()
-
-    def _handle_tools_list(self):
-        """GET /v1/tools/list -- return tool schemas for MCP registration."""
-        tools = []
-        for td in engine.TOOL_DEFINITIONS:
-            if td["name"] in self._SDK_NATIVE_TOOLS:
-                continue
-            if td["name"] not in engine.TOOL_DISPATCH:
-                continue
-            desc = td["description"]
-            if isinstance(desc, tuple):
-                desc = " ".join(desc)
-            tools.append({
-                "name": td["name"],
-                "description": desc[:1000],
-                "input_schema": td["input_schema"],
-            })
-        self._send_json({"tools": tools})
 
     def _handle_status(self):
         self._send_json({
@@ -3445,14 +3413,19 @@ def _user_profile_run_llm(uid: str, prior_profile: str, samples: list[str],
     if len(joined_samples) > 12000:
         joined_samples = joined_samples[:12000] + "\n\n[…older chats truncated]"
     if prior_profile.strip():
+        # Prefix-cache ordering: constant task instructions FIRST (stable prefix
+        # → provider prompt cache hit on a cache-priced model), the volatile
+        # existing-profile + new-samples payload LAST. The grounding/capture rules
+        # live in the (stable) _PROFILE_SYSTEM_PROMPT — untouched here.
         user_msg = (
-            "EXISTING PROFILE (treat as ground truth, edit in place):\n"
+            "Update the profile below. Move stale 'Top of mind' items to "
+            "'Recent months' if no fresh evidence appears. Add new facts from "
+            "the new samples. Treat the EXISTING PROFILE as ground truth and "
+            "edit it in place. Output the COMPLETE new profile.\n\n"
+            "EXISTING PROFILE:\n"
             f"```\n{prior_profile.strip()}\n```\n\n"
             "NEW CHAT SAMPLES SINCE LAST UPDATE:\n"
-            f"{joined_samples}\n\n"
-            "Update the profile. Move stale 'Top of mind' items to "
-            "'Recent months' if no fresh evidence appears. Add new facts "
-            "from the new samples. Output the COMPLETE new profile."
+            f"{joined_samples}"
         )
     else:
         user_msg = (
@@ -4304,11 +4277,8 @@ def main():
 
     threading.Thread(target=server_daemons._mempalace_miner_loop, args=(_srv,), daemon=True, name="mempalace-miner").start()
 
-    # --- Sidecar supervisor (Phase 2) ---
-    # Brain owns the sidecar subprocess: spawn, monitor (wait + /health probe),
-    # auto-restart with a 3-crashes-in-60s circuit breaker, manual restart via
-    # POST /v1/sidecar/restart. State exposed via GET /v1/sidecar/status.
-    sidecar_supervisor.start(server_config)
+    # (The Anthropic-SDK sidecar subprocess was retired in v9.247.0 — the LLM
+    # loop now runs in-process via engine/llm_loop.py. No supervisor needed.)
 
     # --- SearXNG supervisor ---
     # Brain owns the bundled SearXNG metasearch subprocess (.venv_searxng,
@@ -4326,31 +4296,11 @@ def main():
     crawl4ai_supervisor.start(server_config)
 
     def _kick_turn_recovery():
-        # Phase 5 stage 1c: re-attach to in-flight sidecar turns from the prior
-        # process. We wait briefly for the sidecar's HTTP listener to come up
-        # so the recovery threads' first `GET /turn/<id>/events` doesn't fail
-        # with connection-refused — the sidecar process is what holds the
-        # event log across our restarts.
-        import urllib.request
-        import urllib.error
-        from handlers import sidecar_proxy as _sp
+        # In-process loop: a turn dies WITH Brain, so there's no external event
+        # log to re-attach to (the sidecar that used to provide one is gone). Boot
+        # recovery just promotes any persisted partial streaming_text + clears the
+        # stale active_turns rows (+ purges orphan pseudonym_maps).
         from handlers.chat import recover_active_turns_on_boot
-        sc_health = _sp.sidecar_url() + "/health"
-        deadline = time.time() + 10.0
-        ok = False
-        while time.time() < deadline:
-            try:
-                urllib.request.urlopen(sc_health, timeout=1.0).read()
-                ok = True
-                break
-            except Exception:
-                time.sleep(0.3)
-        if not ok:
-            # Sidecar didn't come up in 10s. Skip the scan — list_active_turns
-            # rows survive; on the next restart the sidecar may be up again.
-            print("[turn-recovery] sidecar not reachable after 10s — skipping",
-                  flush=True)
-            return
         try:
             recover_active_turns_on_boot()
         except Exception as e:
