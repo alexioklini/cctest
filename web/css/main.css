@@ -806,8 +806,47 @@ textarea { resize: none; }
  * INSIDE the log so it scrolls right after the last response (CLI-style), and
  * only the status footer stays pinned at the bottom. Monospace + theme variables
  * throughout so it follows light/dark. */
-.termchat { position: absolute; inset: 0; display: flex; flex-direction: column;
-  background: var(--bg-000); font-family: var(--font-ui); overflow: hidden; }
+.termchat {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  overflow: hidden;
+  /* CLI look: a self-contained Claude-Code terminal palette + monospace, applied
+     REGARDLESS of the app's light/dark theme (a real terminal is always dark).
+     These locally re-bind the theme vars the .tc-* rules already reference, so the
+     whole panel adopts the CLI palette without rewriting every rule. */
+  /* Use the SYSTEM terminal-grade mono (--font-term = SF Mono / Menlo / Cascadia /
+     DejaVu) — it matches the real Claude Code CLI look. (JetBrains Mono was tried
+     to fight the "too fat" look but read wrong; grayscale antialiasing + the dimmed
+     body + no-bold below carry that instead.) --font-ui is re-bound so any .tc-*
+     rule using --font-ui follows too. */
+  --font-ui: var(--font-term);
+  --bg-000: #1a1917;          /* warm near-black terminal bg */
+  --bg-200: #24231f;          /* code/shell block bg */
+  --text-100: #a8a49b;        /* primary body — dimmed further; a lower-contrast
+                                 grey reads THINNER (the main lever left, since the
+                                 font weight is already at its minimum) */
+  --text-200: #cfccc4;        /* emphasis: brighter (distinguished by COLOR, not weight) */
+  --text-300: #86827a;        /* secondary */
+  --text-400: #625f58;        /* dim (thinking, hints, status) */
+  --border-200: rgba(255,255,255,0.10);
+  --border-100: rgba(255,255,255,0.14);
+  --accent-brand: #d97757;    /* Claude terracotta — prompts, headings, accents */
+  --accent-brand-hover: #e0906f;
+  --git-added: #7bb585;
+  --git-deleted: #e06b6b;
+  background: var(--bg-000); font-family: var(--font-term);
+  color: var(--text-100); font-size: 13px; line-height: 1.45; font-weight: 400;
+  /* Grayscale antialiasing — the main lever against the "too fat" look: without it
+     macOS renders SF Mono/Menlo on a dark bg heavier. A hair of negative tracking
+     further slims the strokes optically. */
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+/* Force the body weight to 400 everywhere except explicit emphasis/headings, so
+   nothing inherits a heavier default. */
+/* NO BOLD anywhere in the terminal chat — differentiation is by COLOR only
+   (like a real terminal). This blanket rule beats the individual weight:600/700
+   declarations on headings / **bold** / tool names / prompts below. */
+.termchat, .termchat * { font-weight: 400 !important; }
 /* "↓ Neue Nachrichten" pill — appears over the log's bottom edge when content
    lands while the user has scrolled up. Hidden by default; .show fades it in.
    Sits above the status footer (~22px) + a small gap. */
@@ -820,12 +859,10 @@ textarea { resize: none; }
 .tc-newbadge.show { display: block; opacity: 1; transform: translateX(-50%) translateY(0); }
 .tc-newbadge:hover { background: var(--accent-brand); color: #fff; }
 .tc-log { flex: 1; min-height: 0; overflow-y: auto; padding: 10px 14px;
-  /* IDENTICAL to the normal chat message text: --font-ui, 16px (body base),
-     --text-100, prose line-height 1.8 (set on .tc-asst p below). Shell output +
-     code blocks stay monospace (.tc-shout / .tc-asst code/pre); only the real
-     xterm terminal keeps the terminal-grade font. */
-  font-size: 16px; line-height: 1.8; color: var(--text-100);
-  font-family: var(--font-ui); }
+  /* CLI look: terminal-grade monospace at a compact size + tight line-height, so
+     the whole transcript reads like Claude Code in a real terminal. */
+  font-size: 13px; line-height: 1.45; color: var(--text-100);
+  font-family: var(--font-term); }
 .tc-row { margin: 0 0 7px; word-break: break-word; }
 .tc-row:last-child { margin-bottom: 0; }
 /* Raw-text rows (NOT rendered markdown) keep their literal newlines/spacing.
@@ -840,29 +877,56 @@ textarea { resize: none; }
    composer prompt: same large + bold › so the prompt marker is consistent.
    inline-block + line-height:0 keeps the oversized glyph from stretching the
    row's line. */
-.tc-user .tc-uprompt { color: var(--accent-brand); font-weight: 800;
-  font-size: 24px; display: inline-block; line-height: 0; vertical-align: -3px; }
+.tc-user .tc-uprompt { color: var(--accent-brand); font-weight: 700;
+  display: inline-block; margin-right: 2px; }
 .tc-prompt { color: var(--accent-brand); font-weight: 700; }
 /* assistant answer — rendered markdown; normal whitespace + tight block spacing.
    Body text is the slightly softer --text-200 at weight 400 so it doesn't read as
    bold/glaring; **bold** + headings step up to the bright --text-100 so emphasis
    stays distinct (was: everything --text-100 → normal prose looked bold/white). */
 .tc-asst { color: var(--text-100); white-space: normal; font-weight: 400; }
-/* Calmer emphasis: weight 600 (not 700) so bold reads distinct but not punchy. */
-.tc-asst strong, .tc-asst b { color: var(--text-100); font-weight: 600; }
-.tc-asst h1, .tc-asst h2, .tc-asst h3, .tc-asst h4 { color: var(--text-100); }
-/* Spacing identical to the normal chat (.msg-content p/li). */
-.tc-asst p { margin: 0.7em 0; line-height: 1.8; }
+/* Emphasis steps UP to the brighter tier (--text-200) at weight 600 so **bold**
+   reads distinct against the softer body, without the whole line looking heavy. */
+.tc-asst strong, .tc-asst b { color: var(--text-200); font-weight: 600; }
+/* CLI-tight spacing: compact line-height + smaller inter-block gaps so an answer
+   reads like terminal output, not a web article. */
+.tc-asst p { margin: 0.55em 0; line-height: 1.45; }
 .tc-asst p:first-child { margin-top: 0; }
 .tc-asst p:last-child { margin-bottom: 0; }
-.tc-asst ul, .tc-asst ol { margin: 0.7em 0; padding-left: 1.5em; }
-.tc-asst li { margin: 0.4em 0; line-height: 1.65; }
-.tc-asst li > p { margin: 0; line-height: 1.65; }
-.tc-asst h1, .tc-asst h2, .tc-asst h3, .tc-asst h4 { margin: 10px 0 4px; line-height: 1.3; }
+.tc-asst ul, .tc-asst ol { margin: 0.55em 0; padding-left: 1.4em; }
+.tc-asst li { margin: 0.2em 0; line-height: 1.45; }
+.tc-asst li > p { margin: 0; line-height: 1.45; }
+/* List markers must match the body size — the native • disc / ○ circle render
+   visually LARGER than monospace text, which is the "different font sizes" look.
+   Pin them to 1em and tint terracotta (like a terminal's bullet). Custom bullets
+   for ul so the glyph size is under our control, not the browser's disc metric. */
+.tc-asst ul { list-style: none; padding-left: 1.4em; }
+.tc-asst ul > li { position: relative; }
+.tc-asst ul > li::before { content: '•'; position: absolute; left: -1.1em;
+  color: var(--accent-brand); font-size: 1em; line-height: inherit; }
+.tc-asst ul ul > li::before { content: '◦'; }
+.tc-asst ol { list-style: none; counter-reset: tcli; padding-left: 1.6em; }
+.tc-asst ol > li { position: relative; counter-increment: tcli; }
+.tc-asst ol > li::before { content: counter(tcli) '.'; position: absolute; left: -1.6em;
+  color: var(--accent-brand); font-size: 1em; }
+.tc-asst li::marker { font-size: 1em; color: var(--accent-brand); }
+/* Headings are the SAME SIZE as the body (a terminal has one font size) — set
+   apart only by the terracotta colour. FIXED 13px + !important so no UA default
+   (h1=2em, h2=1.5em…) or em-cascade can enlarge them. */
+.tc-asst h1, .tc-asst h2, .tc-asst h3, .tc-asst h4, .tc-asst h5, .tc-asst h6 {
+  font-size: 13px !important; line-height: 1.45; margin: 9px 0 3px;
+  color: var(--accent-brand); }
 .tc-asst h1:first-child, .tc-asst h2:first-child, .tc-asst h3:first-child { margin-top: 0; }
 .tc-asst pre { background: var(--bg-200); border: 1px solid var(--border-200);
-  border-radius: 5px; padding: 8px 10px; overflow-x: auto; margin: 7px 0; }
-.tc-asst code { font-family: var(--font-mono); font-size: 12.5px; }
+  border-radius: 4px; padding: 7px 9px; overflow-x: auto; margin: 6px 0; }
+.tc-asst code { font-family: var(--font-term); font-size: 1em; }
+/* Compact CLI table: body-sized text, thin row rules, no heavy chrome — reads
+   like an ASCII table in terminal output. */
+.tc-asst table { border-collapse: collapse; margin: 6px 0; font-size: 1em; }
+.tc-asst th, .tc-asst td { text-align: left; padding: 1px 16px 1px 0; line-height: 1.45;
+  vertical-align: top; }
+.tc-asst th { color: var(--text-200); font-weight: 600;
+  border-bottom: 1px solid var(--border-200); }
 /* Inline code: a subtle tint instead of a hard box, so code mentions don't punch
    holes through every line (a big source of the "restless" look). */
 .tc-asst :not(pre) > code { background: color-mix(in srgb, var(--text-400) 12%, transparent);
@@ -872,7 +936,7 @@ textarea { resize: none; }
 .tc-think { color: var(--text-400); font-style: italic; }
 /* tool-call lines */
 .tc-tools { margin: 0; }
-.tc-tool { color: var(--text-300); font-size: 12px; margin: 0 0 3px; }
+.tc-tool { color: var(--text-300); font-size: 1em; margin: 0 0 3px; }
 .tc-tool-dot { color: var(--accent-brand); }
 .tc-tool-name { color: var(--text-200); font-weight: 600; }
 .tc-tool-arg { color: var(--text-400); }
@@ -880,17 +944,17 @@ textarea { resize: none; }
 /* system / ack lines */
 .tc-sys { color: var(--text-400); }
 .tc-sys b, .tc-help-line b { color: var(--text-200); }
-.tc-help-line { font-size: 12px; color: var(--text-300); }
+.tc-help-line { font-size: 1em; color: var(--text-300); }
 .tc-err { color: var(--git-deleted); }
 /* `! <cmd>` shell execution: command echo + raw output block + exit code */
 .tc-shell { color: var(--text-200); }
 .tc-shprompt { color: var(--git-added); font-weight: 700; }
-.tc-shout { color: var(--text-100); background: var(--bg-200); border-radius: 5px;
-  padding: 6px 10px; white-space: pre-wrap; word-break: break-word;
-  border-left: 2px solid var(--border-200); font-size: 12.5px;
-  /* monospace (like a chat code block) so shell output stays column-aligned —
-     but the app's mono, matching non-code-mode chat (only xterm uses font-term). */
-  font-family: var(--font-mono); }
+.tc-shout { color: var(--text-100); background: var(--bg-200); border-radius: 4px;
+  padding: 6px 9px; white-space: pre-wrap; word-break: break-word;
+  border-left: 2px solid var(--border-200); font-size: 1em;
+  /* terminal-grade monospace so shell output stays column-aligned, matching the
+     rest of the CLI-styled panel. */
+  font-family: var(--font-term); }
 .tc-exit-bad { color: var(--git-deleted); font-weight: 600; }
 /* spinner row */
 .tc-spin { color: var(--text-400); min-height: 1em; }
@@ -922,7 +986,7 @@ textarea { resize: none; }
   max-height: 240px; overflow-y: auto; z-index: 30;
   background: var(--bg-000); border: 1px solid var(--border-100);
   border-radius: 6px; box-shadow: 0 -4px 20px rgba(0,0,0,.35); padding: 3px;
-  font-family: var(--font-mono); font-size: 12px; }
+  font-family: var(--font-mono); font-size: 13px; }
 .tc-ac-item { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px;
   border-radius: 4px; cursor: pointer; white-space: nowrap; }
 .tc-ac-item.sel { background: var(--accent-brand); }
@@ -935,11 +999,11 @@ textarea { resize: none; }
 /* Prompt chevron: clearly larger + bolder than the body text so it reads as a
    prompt marker (the › glyph is intrinsically narrow, so it needs a real size
    bump). line-height tuned so it sits on the first input line despite the size. */
-.tc-input .tc-prompt { font-family: var(--font-ui); font-size: 24px; font-weight: 800;
-  line-height: 1.0; padding: 0; align-self: flex-start; margin-top: -1px; }
+.tc-input .tc-prompt { font-family: var(--font-term); font-size: 13px; font-weight: 700;
+  line-height: 1.45; padding: 0; align-self: flex-start; }
 .tc-ta { flex: 1; resize: none; border: none; outline: none; background: transparent;
-  color: var(--text-100); font-family: var(--font-ui); font-size: 16px; line-height: 1.6;
-  min-height: 24px; max-height: 160px; overflow-y: auto; padding: 0; }
+  color: var(--text-100); font-family: var(--font-term); font-size: 13px; line-height: 1.45;
+  min-height: 19px; max-height: 160px; overflow-y: auto; padding: 0; }
 .tc-ta::placeholder { color: var(--text-400); }
 /* live tab pulse */
 .terminal-tab.tc-tab-live .tt-name::after { content: ' ●'; color: var(--git-added);

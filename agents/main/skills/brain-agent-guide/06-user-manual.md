@@ -570,7 +570,10 @@ die Wahl wird pro Projekt gemerkt.
 
 **Terminal-Chat** (Code-Projekte): Neben Terminal und Editor öffnen Sie im
 unteren Bereich einen **Terminal-Chat** — eine schlanke, terminalartige
-Chat-Oberfläche („wie ein Coding-Assistent im Terminal"). Sie ist als
+Chat-Oberfläche („wie ein Coding-Assistent im Terminal"). Sie ist im echten
+**CLI-Look** gestaltet: durchgehend Monospace in einheitlicher Größe, ruhige
+Terminalfarben (immer dunkel, unabhängig vom App-Theme) und Struktur allein über
+Farbe statt Fettdruck — liest sich wie die Kommandozeile. Sie ist als
 vollwertiger Ersatz für die normale Chat-Ansicht beim Arbeiten in einem
 Code-Projekt gedacht: Sie öffnen sie über den **◈-Knopf** in der Tab-Leiste eines
 Teilbereichs (oder „+ Neuer Terminal-Chat" in der Sektion **Terminal-Chats**).

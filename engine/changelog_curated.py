@@ -29,6 +29,18 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.253.0",
+        "date": "2026-07-01",
+        "title": "Terminal-Chat im echten CLI-Look",
+        "body": "Der Terminal-Chat im Code-Modus ist jetzt im Stil eines echten "
+                "Terminals gestaltet — durchgehend eine Monospace-Schrift in "
+                "einheitlicher Größe, ruhige Terminalfarben und eine klare "
+                "Struktur allein über Farbe statt Fettdruck. Das liest sich wie "
+                "die Kommandozeile und hebt sich bewusst vom normalen Chat ab.",
+        "audience": "user",
+        "versions": ["9.253.0"],
+    },
+    {
         "version": "9.252.0",
         "date": "2026-07-01",
         "title": "Laufende Chats auf einen Blick",
