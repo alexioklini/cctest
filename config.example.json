@@ -290,34 +290,8 @@
           }
         }
       },
-      "cost_cache_read": 0.15
-    },
-    "gemini-3.1-flash-lite-preview": {
-      "enabled": false,
-      "shortname": "gemini-3.1-flash-lite-preview",
-      "display_name": "gemini-3.1-flash-lite-preview",
-      "icon": "💎",
-      "priority": 70,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "none",
-      "max_context": 1000000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 1,
-        "top_p": 0.95
-      },
-      "raw_formats": [
-        "image/*",
-        "application/pdf"
-      ],
-      "provider": "CLIProxyAPI",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
+      "cost_cache_read": 0.15,
+      "use_inprocess_openai_loop": true
     },
     "CLIProxyAPI/mistral-small-latest": {
       "enabled": true,
@@ -417,142 +391,8 @@
         }
       },
       "raw_formats": [],
-      "cost_cache_read": 0.01275
-    },
-    "gemini-2.5-flash": {
-      "enabled": false,
-      "shortname": "gemini-2.5-flash",
-      "display_name": "gemini-2.5-flash",
-      "icon": "💎",
-      "priority": 70,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 1000000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 1,
-        "top_p": 0.95
-      },
-      "raw_formats": [
-        "image/*",
-        "application/pdf"
-      ],
-      "provider": "CLIProxyAPI",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "gemini-2.5-flash-lite": {
-      "enabled": false,
-      "shortname": "gemini-2.5-flash-lite",
-      "display_name": "gemini-2.5-flash-lite",
-      "icon": "💎",
-      "priority": 70,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 1000000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 1,
-        "top_p": 0.95
-      },
-      "raw_formats": [
-        "image/*",
-        "application/pdf"
-      ],
-      "provider": "CLIProxyAPI",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "gemini-3-pro-preview": {
-      "enabled": false,
-      "shortname": "gemini-3-pro-preview",
-      "display_name": "gemini-3-pro-preview",
-      "icon": "💎",
-      "priority": 70,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "none",
-      "max_context": 1000000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 1,
-        "top_p": 0.95
-      },
-      "raw_formats": [
-        "image/*",
-        "application/pdf"
-      ],
-      "provider": "CLIProxyAPI",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "gemini-3.1-pro-preview": {
-      "enabled": false,
-      "shortname": "gemini-3.1-pro-preview",
-      "display_name": "gemini-3.1-pro-preview",
-      "icon": "💎",
-      "priority": 70,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "none",
-      "max_context": 1000000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 1,
-        "top_p": 0.95
-      },
-      "raw_formats": [
-        "image/*",
-        "application/pdf"
-      ],
-      "provider": "CLIProxyAPI",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "gemini-3-flash-preview": {
-      "enabled": false,
-      "shortname": "gemini-3-flash-preview",
-      "display_name": "gemini-3-flash-preview",
-      "icon": "💎",
-      "priority": 70,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "none",
-      "max_context": 1000000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 1,
-        "top_p": 0.95
-      },
-      "raw_formats": [
-        "image/*",
-        "application/pdf"
-      ],
-      "provider": "CLIProxyAPI",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
+      "cost_cache_read": 0.01275,
+      "use_inprocess_openai_loop": true
     },
     "CLIProxyAPI/mistral-medium-latest": {
       "enabled": false,
@@ -590,33 +430,6 @@
       "thinking_format": "mistral_blocks",
       "provider": "CLIProxyAPI",
       "base_model_id": "magistral-medium-latest",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "gemini-2.5-pro": {
-      "enabled": false,
-      "shortname": "gemini-2.5-pro",
-      "display_name": "gemini-2.5-pro",
-      "icon": "💎",
-      "priority": 70,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 1000000,
-      "max_output": 65536,
-      "inference": {
-        "temperature": 1,
-        "top_p": 0.95
-      },
-      "raw_formats": [
-        "image/*",
-        "application/pdf"
-      ],
-      "provider": "CLIProxyAPI",
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": false,
@@ -2228,7 +2041,8 @@
       "warmup": false,
       "_caps_canonical": true,
       "description": "Lokales Hintergrund-Modell (vllm-metal auf dem M4) — Kurz-Tasks: Refine, Soul-Chat, Memory-Klassifikation. Tool-Parser hermes.",
-      "parallel_tool_calls": false
+      "parallel_tool_calls": false,
+      "use_inprocess_openai_loop": true
     },
     "Qwen2.5-7B-Instruct-4bit": {
       "enabled": true,
@@ -4531,7 +4345,7 @@
     "precision": "**PRECISION DISCIPLINE — no plausible-sounding filler**:\nWhen the retrieved source does not give a concrete value (interval, frequency, threshold, count, deadline, length, duration), write `nicht spezifiziert` — never substitute a plausible default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', 'angemessen'), the very next characters must be a wörtliches Zitat (`> \"...\"`) from the retrieved text proving the source actually says that. No quote → drop the qualifier. Typical phrasing remembered from training data is NOT a source.",
     "citation": "**CITATION DISCIPLINE — per-claim, not per-block**:\nEVERY factual sentence and EVERY bullet point that came from a retrieved source must carry its OWN reference right after the claim, in the form [Quelle: <kurzer Quellenname> — \"<wörtliches Zitat 10-25 Wörter>\"]. One citation at the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell which bullet came from which source, and uncited bullets are where paraphrase drift and fabrication slip in. Treat each bullet as an independent claim that must stand on its own with its own quote. A bullet with only a citation and no claim, or a claim with no citation, is not correct. This applies to PROSE too: a summary/FAZIT sentence that packs several facts (\"Bilanzsumme +5,8%, Barreserve +43%, CET1 28,13%\") needs a citation for EACH fact, not one at the end of the paragraph — split it or append a bracket per figure ([Quelle: … — \"+5,8%-quote\"] [Quelle: … — \"+43%-quote\"]). Every number you state must be traceable to a verbatim quote.\nTABLES are NOT exempt — a table is a dense block of claims, and one citation under the whole table is INSUFFICIENT for the same reason a single citation under a bullet list is. When you present retrieved data as a markdown table, add a final \"Quelle\" column and put the per-row reference ([Quelle: <name> — \"<wörtliches Zitat>\"]) in EVERY row whose figures came from a source. If several rows share one verbatim quote (e.g. a whole balance-sheet table copied from one passage), cite that quote in the first row and write \"s.o.\" (siehe oben) in the following rows' Quelle cells so it is explicit they share the source — never leave a data row's Quelle cell empty. Every relevant column's figures must be traceable: if the 2025 and 2024 columns come from different passages, the row's Quelle cell carries both brackets. A derived/computed column (e.g. a Δ you calculated) needs no quote — mark its origin once in a note under the table (\"Δ = eigene Berechnung\").\nIf you cannot find a verbatim quote in the retrieved source that supports a specific claim — DELETE that claim. Do not write claims you cannot cite. A shorter, fully-cited answer is always preferable to a longer answer with uncited statements.\nThe verbatim quote (10-25 words, copied EXACTLY from the retrieved text) is mandatory — it lets the user find and verify the statement in the original. Without a quote the citation is unverifiable.\nSource naming: use a short, recognisable source name — a document's filename (without any path or extracted-companion suffix) or, for a web source, its title or domain. Add a locator only when it is genuinely present in the retrieved text (e.g. `Page N`, `Slide N`, `Sheet \"Name\"`, or a section number the source itself prints). NEVER invent paragraph or section numbers — a locator you did not see in the text is a fabrication. If no clean locator exists, the verbatim quote alone is sufficient.\nMultiple sources for one claim → repeat the bracket: [Quelle: A — \"...\"] [Quelle: B — \"...\"]."
   },
-  "chat_summary_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
+  "chat_summary_model": "CLIProxyAPI/mistral-small-latest",
   "classification": {
     "keywords": {
       "internal": [
@@ -4604,14 +4418,14 @@
   },
   "background_task_model": "CLIProxyAPI/mistral-small-latest",
   "classifier_model": "CLIProxyAPI/mistral-small-latest",
-  "next_prompt_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
+  "next_prompt_model": "CLIProxyAPI/mistral-small-latest",
   "wiki_model": "CLIProxyAPI/mistral-small-latest",
-  "user_profile_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
+  "user_profile_model": "CLIProxyAPI/mistral-small-latest",
   "studio_model": "CLIProxyAPI/mistral-small-latest",
   "audio_overview_model": "CLIProxyAPI/mistral-small-latest",
-  "code_graph_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
+  "code_graph_model": "CLIProxyAPI/mistral-small-latest",
   "deep_research_model": "CLIProxyAPI/mistral-medium-3.5",
-  "wiki_gate_model": "Lokal-M4/Qwen2.5-7B-Instruct-4bit",
+  "wiki_gate_model": "CLIProxyAPI/mistral-small-latest",
   "composer_defaults": {
     "thinking_level": "none",
     "caveman_mode": 0

@@ -61,6 +61,32 @@ def tool_endpoint_internal() -> str:
     return cfg.get("tool_endpoint_internal") or "http://127.0.0.1:8420/v1/tools/call"
 
 
+def _top_config() -> dict:
+    """Read the whole config.json (best-effort {})."""
+    cfg_path = getattr(engine, "CONFIG_PATH", None)
+    try:
+        path = cfg_path or "config.json"
+        with open(path, "r") as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def use_inprocess_loop(model: str) -> bool:
+    """Whether to run the NEW in-process OpenAI loop (engine/llm_loop.py) for
+    this model instead of the Anthropic-SDK sidecar subprocess.
+
+    Resolution: per-model `models.<id>.use_inprocess_openai_loop` wins; else the
+    global `use_inprocess_openai_loop` flag; else False (sidecar fallback). This
+    is the Stage-0 safety net — the old path stays until every model is verified.
+    """
+    cfg = _top_config()
+    mcfg = (cfg.get("models") or {}).get(model, {}) or {}
+    if "use_inprocess_openai_loop" in mcfg:
+        return bool(mcfg["use_inprocess_openai_loop"])
+    return bool(cfg.get("use_inprocess_openai_loop", False))
+
+
 def cancel_turn(turn_id: str) -> bool:
     """POST /cancel/<turn_id> to the sidecar — the same endpoint the chat
     cancel-watch thread hits. Used by detached background tasks (which have no
@@ -478,6 +504,222 @@ def _purge_tool_results(turn_id: str) -> None:
             _TOOL_RESULT_CAPTURE.pop(k, None)
 
 
+# ---------- In-process OpenAI loop entry points (Option C) ----------
+
+def _build_tool_list_openai(*, purpose: str, agent_id: str | None,
+                            mcp_manager=None, breakdown: dict | None = None) -> list[dict]:
+    """OpenAI-shape tool schemas — same resolver as _build_tool_list but
+    is_openai_shape=True (returns {type:function,function:{...}} objects)."""
+    discovered = engine.get_request_context()._discovered_tools or set()
+    return engine.resolve_active_tools(
+        purpose=purpose, agent_id=agent_id, discovered_tools=discovered,
+        mcp_manager=mcp_manager, is_openai_shape=True, breakdown=breakdown)
+
+
+def _run_turn_inprocess(
+    *, messages, model, api_key, base_url, system_prompt, purpose,
+    tool_context, sampling, thinking_level, max_tokens, max_rounds,
+    event_callback, cancel_token, timeout_s, disable_parallel_tool_use,
+    turn_id, sid,
+) -> dict:
+    """Streaming in-process loop — the OpenAI-path replacement for run_turn's
+    sidecar POST + SSE drain. Emits the SAME Brain event vocabulary via
+    event_callback, so all downstream chat-worker plumbing is unchanged."""
+    from engine import llm_loop
+
+    # OpenAI-shape tools + dispatchable allow-list. The allowed_tools already on
+    # tool_context was computed from the Anthropic-shape list, but the NAME set is
+    # shape-independent, so it's correct; recompute the wire tools in OpenAI shape.
+    _tb: dict = {}
+    _tools = _build_tool_list_openai(
+        purpose=purpose, agent_id=tool_context.get("agent_id") or None,
+        mcp_manager=getattr(engine, "_mcp_manager", None), breakdown=_tb)
+    allowed_tools = _dispatchable_allowed_tools(_tools, _tb)
+
+    try:
+        _prov = engine.resolve_provider_for_model(model) or {}
+        _provider_name = _prov.get("provider_name", "") or "default"
+    except Exception:
+        _provider_name = "default"
+
+    def _is_cancelled() -> bool:
+        if cancel_token is None:
+            return False
+        try:
+            if getattr(cancel_token, "cancelled", False):
+                return True
+            is_set = getattr(cancel_token, "is_set", None)
+            return bool(callable(is_set) and is_set())
+        except Exception:
+            return False
+
+    def _set_tool_use_id(tuid: str) -> None:
+        # Expose tool_use_id so a subprocess-spawning tool can register under
+        # (turn_id, tool_use_id) for per-tool kill — parity with tool_mcp.
+        try:
+            engine.get_request_context().tool_use_id = tuid
+        except Exception:
+            pass
+
+    final_text = ""
+    summary: dict[str, Any] = {}
+    cancelled = False
+    error_msg: str | None = None
+
+    # prompt_cache_key = session id (interactive): the growing byte-stable prefix
+    # (system + tools + history) bills the repeated span at the discounted rate.
+    _pck = sid or ""
+
+    try:
+        with engine.get_provider_queue().acquire_if(
+                _provider_name, label=purpose or "interactive",
+                session_id=sid or None,
+                agent_id=tool_context.get("agent_id") or None,
+                user_id=tool_context.get("user_id") or None,
+                model=model, event_callback=event_callback,
+                cancel_token=cancel_token, timeout=timeout_s):
+            summary = llm_loop.run_loop(
+                model=model, system_prompt=system_prompt, messages=messages,
+                tools=_tools, allowed_tools=allowed_tools,
+                max_tokens=int(max_tokens), max_rounds=int(max_rounds),
+                sampling=sampling, thinking_level=thinking_level,
+                disable_parallel_tool_use=bool(disable_parallel_tool_use),
+                prompt_cache_key=_pck, forced_tool=None,
+                api_key=api_key, base_url=base_url,
+                emit=event_callback, is_cancelled=_is_cancelled,
+                tool_use_id_setter=_set_tool_use_id)
+            final_text = summary.get("final_text", "") or ""
+            if summary.get("stop_reason") == "cancelled":
+                cancelled = True
+    except engine.TaskCancelled:
+        cancelled = True
+    except Exception as e:
+        error_msg = f"inprocess loop {type(e).__name__}: {e}"
+        try:
+            event_callback("error", {"message": error_msg})
+        except Exception:
+            pass
+    finally:
+        if sid:
+            try:
+                from server_lib.db import ChatDB as _ChatDB
+                _ChatDB.clear_active_turn(sid, turn_id)
+            except Exception:
+                pass
+        print(f"[inprocess-loop] turn={turn_id[:8]} model={model[:24]} "
+              f"reply={len(final_text)}c rounds={summary.get('rounds', 0)} "
+              f"tools={summary.get('tool_calls_total', 0)} "
+              f"error={error_msg} cancelled={cancelled}", flush=True)
+
+    return {
+        "reply": final_text,
+        "stop_reason": summary.get("stop_reason", ""),
+        "rounds": summary.get("rounds", 0),
+        "tool_calls_total": summary.get("tool_calls_total", 0),
+        "usage_total": summary.get("usage_total", {}) or {},
+        "tool_events": summary.get("tool_events", []) or [],
+        "text_segments": summary.get("text_segments", []) or [],
+        "cancelled": cancelled,
+        "error": error_msg,
+        "turn_id": turn_id,
+    }
+
+
+def _run_blocking_inprocess(
+    *, messages, model, api_key, base_url, system_prompt, purpose,
+    tool_context, sampling, thinking_level, max_tokens, max_rounds,
+    timeout_s, turn_id, forced_tool, prompt_cache_key,
+) -> dict:
+    """Non-streaming in-process loop — replacement for run_turn_blocking's
+    sidecar POST. No event_callback (background callers drain to a final dict).
+    Runs the tool dispatch + LLM call inside a fresh request_context so the
+    tool impls see the right agent/session/project (background callers don't
+    hold a live chat-worker context)."""
+    from engine import llm_loop
+
+    if forced_tool:
+        _tools = [{
+            "type": "function",
+            "function": {
+                "name": forced_tool["name"],
+                "description": forced_tool.get("description", ""),
+                "parameters": forced_tool.get("input_schema")
+                              or forced_tool.get("parameters") or {},
+            },
+        }]
+        allowed_tools: list[str] = []
+    else:
+        _tb: dict = {}
+        _tools = _build_tool_list_openai(
+            purpose=purpose, agent_id=tool_context.get("agent_id") or None,
+            mcp_manager=getattr(engine, "_mcp_manager", None), breakdown=_tb)
+        allowed_tools = _dispatchable_allowed_tools(_tools, _tb)
+
+    def _noop_emit(_t, _d):
+        pass
+
+    summary: dict[str, Any] = {}
+    error_msg: str | None = None
+    try:
+        with engine.request_context():
+            _apply_bg_context(tool_context)
+            summary = llm_loop.run_loop(
+                model=model, system_prompt=system_prompt, messages=messages,
+                tools=_tools, allowed_tools=allowed_tools,
+                max_tokens=int(max_tokens), max_rounds=int(max_rounds),
+                sampling=sampling, thinking_level=thinking_level,
+                disable_parallel_tool_use=False,
+                prompt_cache_key=(prompt_cache_key or ""),
+                forced_tool=forced_tool, api_key=api_key, base_url=base_url,
+                emit=_noop_emit, is_cancelled=lambda: False)
+    except Exception as e:
+        error_msg = f"inprocess loop {type(e).__name__}: {e}"
+
+    return {
+        "reply": summary.get("final_text", "") or "",
+        "stop_reason": summary.get("stop_reason", ""),
+        "rounds": summary.get("rounds", 0),
+        "tool_calls_total": summary.get("tool_calls_total", 0),
+        "usage_total": summary.get("usage_total", {}) or {},
+        "tool_events": summary.get("tool_events", []) or [],
+        "forced_tool_input": summary.get("forced_tool_input"),
+        "cancelled": False,
+        "error": error_msg or summary.get("error"),
+        "turn_id": turn_id,
+    }
+
+
+def _apply_bg_context(ctx: dict) -> None:
+    """Reinstate the per-turn request context for a background in-process loop.
+
+    The old sidecar path rebuilt context in tool_mcp._apply_context on the
+    /v1/tools/call handler thread. In-process, the background caller's thread
+    runs the tools directly, so we set the same fields here (a thin mirror of
+    tool_mcp._apply_context, minus the nonce/HTTP bits)."""
+    tl = engine.get_request_context()
+    tl.current_session_id = ctx.get("session_id") or ctx.get("helpdesk_session_id") or ""
+    tl.session_id = tl.current_session_id
+    tl.current_turn_id = ctx.get("turn_id") or ""
+    tl.current_bg_task = bool(ctx.get("bg_task", False))
+    tl.current_user_id = ctx.get("user_id") or ""
+    tl.current_team_ids = list(ctx.get("team_ids") or [])
+    tl.project = ctx.get("project") or ""
+    tl.working_dir = ctx.get("working_dir") or None
+    tl.code_graph_db = ctx.get("code_graph_db") or None
+    tl.note_context = ctx.get("note_context") or None
+    tl.workflow_run_id = ctx.get("workflow_run_id") or ""
+    tl.plan_mode = bool(ctx.get("plan_mode", False))
+    tl.helpdesk_mode = bool(ctx.get("helpdesk_mode", False))
+    tl.research_mode_override = ctx.get("research_mode_override", None)
+    tl.execution_overrides = ctx.get("execution_overrides") or {}
+    tl.attachment_image_model = ctx.get("attachment_image_model") or ""
+    tl._current_model = ctx.get("model") or None
+    tl.current_agent = engine.AgentConfig(ctx.get("agent_id") or "main")
+    tl.mcp_manager = engine._mcp_manager
+    tl.caveman_chat = int(ctx.get("caveman_chat", 0) or 0)
+    tl.caveman_system = int(ctx.get("caveman_system", 0) or 0)
+
+
 # ---------- The main entry point ----------
 
 def run_turn(
@@ -553,6 +795,25 @@ def run_turn(
     tool_context["allowed_tools"] = _dispatchable_allowed_tools(_tools, _tb)
     _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
                     agent_id=tool_context.get("agent_id") or None, model=model)
+
+    # ---- In-process OpenAI loop (Option C) ----
+    # When enabled for this model, run the hand-written loop on THIS thread
+    # (no sidecar subprocess, no HTTP tool hop). Tools resolve to OpenAI shape;
+    # dispatch is a direct engine.TOOL_DISPATCH call. All the wrapping (provider
+    # queue gate, active-turn tracking, cost-ledger via event_callback) is shared
+    # with the sidecar path below.
+    if use_inprocess_loop(model):
+        tool_mcp.clear_nonce(nonce)  # in-process dispatch needs no nonce
+        return _run_turn_inprocess(
+            messages=messages, model=model, api_key=api_key, base_url=base_url,
+            system_prompt=system_prompt, purpose=purpose,
+            tool_context=tool_context, sampling=sampling,
+            thinking_level=thinking_level, max_tokens=max_tokens,
+            max_rounds=max_rounds, event_callback=event_callback,
+            cancel_token=cancel_token, timeout_s=timeout_s,
+            disable_parallel_tool_use=disable_parallel_tool_use,
+            turn_id=turn_id, sid=sid)
+
     payload: dict[str, Any] = {
         "model": engine.get_api_model_id(model),
         "base_url": _normalise_anthropic_base_url(base_url),
@@ -573,6 +834,14 @@ def run_turn(
         # path is more reliable than parallel batching.
         "disable_parallel_tool_use": bool(disable_parallel_tool_use),
     }
+    # Prompt-cache key for interactive turns = session id. A session's turns share
+    # a growing byte-stable prefix (system + tools + prior history), so keying on
+    # the session lets the provider (Mistral via CLIProxyAPI) bill the repeated
+    # prefix at the discounted cache_read rate. On a cache-priced model the tool
+    # set is frozen (model_should_optimize_tools=False), so the prefix stays
+    # stable turn-to-turn and this key actually hits.
+    if sid:
+        payload["prompt_cache_key"] = sid
     # Sampling — only forward what's set, the sidecar omits unset kwargs.
     for key in ("temperature", "top_p", "top_k", "stop_sequences"):
         if key in sampling and sampling[key] is not None:
@@ -777,6 +1046,7 @@ def run_turn_blocking(
     timeout_s: float = 1800.0,
     turn_id: str | None = None,
     forced_tool: dict | None = None,
+    prompt_cache_key: str = "",
 ) -> dict:
     """Non-streaming variant for background callers (scheduler, summariser,
     classifier, refine, ...). Returns the same shape as run_turn() minus the
@@ -821,6 +1091,18 @@ def run_turn_blocking(
         tool_context["allowed_tools"] = _dispatchable_allowed_tools(_tools, _tb)
     _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
                     agent_id=tool_context.get("agent_id") or None, model=model)
+
+    # ---- In-process OpenAI loop (Option C) ----
+    if use_inprocess_loop(model):
+        tool_mcp.clear_nonce(nonce)  # in-process dispatch needs no nonce
+        return _run_blocking_inprocess(
+            messages=messages, model=model, api_key=api_key, base_url=base_url,
+            system_prompt=system_prompt, purpose=purpose,
+            tool_context=tool_context, sampling=sampling,
+            thinking_level=thinking_level, max_tokens=max_tokens,
+            max_rounds=max_rounds, timeout_s=timeout_s, turn_id=turn_id,
+            forced_tool=forced_tool, prompt_cache_key=(prompt_cache_key or sid))
+
     payload: dict[str, Any] = {
         "model": engine.get_api_model_id(model),
         "base_url": _normalise_anthropic_base_url(base_url),
@@ -836,6 +1118,13 @@ def run_turn_blocking(
         "turn_id": turn_id,
         "trace_id": tool_context.get("trace_id") or "",
     }
+    # Prompt-cache selector (Mistral via CLIProxyAPI): binds this request to a
+    # shared prompt-cache prefix so a stable system+tools+history prefix bills the
+    # repeated span at the discounted cache_read rate. Default to the session id
+    # (stable across a session's turns); callers may pass a per-purpose key.
+    _pck = prompt_cache_key or sid
+    if _pck:
+        payload["prompt_cache_key"] = _pck
     if forced_tool:
         payload["tool_choice"] = {"type": "tool", "name": forced_tool["name"]}
         payload["capture_forced_tool"] = forced_tool["name"]
@@ -904,6 +1193,7 @@ def background_call(
     cost_purpose: str | None = None,
     forced_tool: dict | None = None,
     temperature: float | None = None,
+    prompt_cache_key: str = "",
 ) -> dict:
     """Thin convenience wrapper around `run_turn_blocking` for background /
     non-interactive LLM calls (Phase 4).
@@ -991,6 +1281,12 @@ def background_call(
         timeout_s=timeout_s,
         turn_id=turn_id,
         forced_tool=forced_tool,
+        # Prompt-cache key for background calls: default to the cost-purpose tag
+        # (or `purpose`), so all same-purpose calls (every classifier call, every
+        # summary, …) share one cache key and their byte-stable instruction/schema
+        # prefix bills the repeated span at the discounted cache_read rate. A
+        # session id would fragment the key per session and lose cross-call reuse.
+        prompt_cache_key=(prompt_cache_key or cost_purpose or purpose or ""),
     )
     # Central cost ledger seam — one row per background_call, even at $0 (local/
     # free) or zero reported usage, so the breakdown is a complete audit. Tagged
