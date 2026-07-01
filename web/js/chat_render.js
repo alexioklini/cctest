@@ -336,7 +336,11 @@ function _reconcileMessageBlocks(container, blocks) {
   const _keepTransient = !!(state.activeChat && state.activeChat.streaming);
   const _isTransientCard = (el) => {
     const id = el && el.id;
-    return typeof id === 'string' && (id.startsWith('aq-') || id.startsWith('wq-'));
+    if (typeof id === 'string' && (id.startsWith('aq-') || id.startsWith('wq-'))) return true;
+    // Injected-clarification notes (no id) — a turn-control transient row that
+    // lives in the flow but isn't part of the message model. (btw now renders in
+    // its own modal, not the flow.)
+    return !!(el && el.classList && el.classList.contains('tc-injected-note'));
   };
 
   // Index existing children by render-key for O(1) reuse lookups.

@@ -209,56 +209,176 @@ const ChatTurnControl = {
     if (typeof scrollToBottom === 'function') scrollToBottom();
   },
 
-  // ── btw: side question answered in its own bubble ────────────────────────
-  promptBtw() {
+  // ── btw: side question in a dedicated centered modal overlay ─────────────
+  // The whole btw exchange lives in its own modal, NOT in the message flow —
+  // so it's clearly separate from the running answer and survives re-renders.
+  // Always available: while a turn streams the answer is grounded in live state
+  // (round / current tool / elapsed); when idle it answers from context.
+  _btwActiveId: null,   // the btw_id we're currently waiting on
+
+  // Find the visible btw button for the current composer view (the one that
+  // was clicked) so the bubble can point at it.
+  _btwButtonEl() {
+    for (const id of ['chat-btn-btw', 'project-btn-btw', 'welcome-btn-btw']) {
+      const el = document.getElementById(id);
+      if (el && el.offsetParent !== null) return el;   // visible
+    }
+    return document.getElementById('chat-btn-btw');
+  },
+
+  openBtw() {
     const chat = state.activeChat;
-    if (!chat || !chat.streaming || !chat.sessionId) return;
-    const q = window.prompt(
-      'Nebenfrage (wird separat beantwortet, ohne die laufende Antwort zu unterbrechen) — ' +
-      'z. B. „Was machst du gerade?“ / „Wie lange dauert das noch?“:');
-    if (q === null) return;
-    const t = q.trim();
-    if (!t) return;
-    API.btwChat(chat.sessionId, t).catch(() => {
-      if (typeof showToast === 'function') showToast('btw fehlgeschlagen', true);
+    if (!chat || !chat.sessionId) {
+      if (typeof showToast === 'function') showToast('Kein aktiver Chat.', true);
+      return;
+    }
+    if (document.getElementById('btw-pop')) { this.closeBtw(); return; }  // toggle
+    const streaming = !!chat.streaming;
+    const hint = streaming
+      ? 'Unterbricht die laufende Antwort nicht. Z. B. „Was machst du gerade?“ / „Wie lange noch?“.'
+      : 'Gerade läuft keine Antwort — wird aus dem bisherigen Gespräch beantwortet.';
+
+    // Light click-catcher (no dim) so a click outside closes the bubble.
+    const scrim = document.createElement('div');
+    scrim.className = 'btw-scrim';
+    scrim.id = 'btw-scrim';
+    scrim.onclick = () => ChatTurnControl.closeBtw();
+    document.body.appendChild(scrim);
+
+    // The speech bubble itself, as a popover anchored to the button.
+    const pop = document.createElement('div');
+    pop.className = 'btw-pop';
+    pop.id = 'btw-pop';
+    pop.innerHTML =
+      '<div class="btw-pop-head">' +
+        '<span class="tc-btw-tag">btw</span>' +
+        '<span class="btw-pop-title">Zwischenfrage</span>' +
+        '<button class="btw-pop-close" onclick="ChatTurnControl.closeBtw()" title="Schließen">&times;</button>' +
+      '</div>' +
+      '<div class="btw-pop-hint">' + esc(hint) + '</div>' +
+      '<div class="btw-pop-thread" id="btw-modal-thread"></div>' +
+      '<div class="btw-pop-composer">' +
+        '<textarea id="btw-modal-input" class="btw-pop-input" rows="2" ' +
+          'placeholder="Nebenfrage stellen…"></textarea>' +
+        '<button class="btw-pop-send" id="btw-modal-send" ' +
+          'onclick="ChatTurnControl.sendBtw()">Fragen</button>' +
+      '</div>' +
+      '<div class="btw-pop-tail"></div>';
+    document.body.appendChild(pop);
+    this._positionBtwPop(pop);
+    // Reposition on resize/scroll while open.
+    this._btwReposition = () => { const p = document.getElementById('btw-pop'); if (p) ChatTurnControl._positionBtwPop(p); };
+    window.addEventListener('resize', this._btwReposition);
+    window.addEventListener('scroll', this._btwReposition, true);
+
+    const inp = document.getElementById('btw-modal-input');
+    if (inp) {
+      const comp = _composerInputEl();
+      if (comp && comp.value && comp.value.trim()) inp.value = comp.value.trim();
+      inp.focus();
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ChatTurnControl.sendBtw(); }
+        if (e.key === 'Escape') { e.preventDefault(); ChatTurnControl.closeBtw(); }
+      });
+    }
+  },
+
+  // Anchor the bubble above the btw button, with the tail pointing down at it.
+  // Clamps horizontally to the viewport; flips below the button if there's no
+  // room above.
+  _positionBtwPop(pop) {
+    const btn = this._btwButtonEl();
+    if (!btn) return;
+    const b = btn.getBoundingClientRect();
+    const pw = pop.offsetWidth || 360, ph = pop.offsetHeight || 260;
+    const gap = 12, margin = 8;
+    // Horizontal: center on the button, clamp to viewport.
+    let left = b.left + b.width / 2 - pw / 2;
+    left = Math.max(margin, Math.min(left, window.innerWidth - pw - margin));
+    // Vertical: prefer above; flip below if it wouldn't fit.
+    let top = b.top - ph - gap;
+    let below = false;
+    if (top < margin) { top = b.bottom + gap; below = true; }
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+    pop.classList.toggle('btw-pop-below', below);
+    // Point the tail at the button centre (relative to the bubble's left edge).
+    const tailX = Math.max(16, Math.min(b.left + b.width / 2 - left, pw - 16));
+    pop.style.setProperty('--btw-tail-x', tailX + 'px');
+  },
+
+  // Back-compat name (composer button + terminal call this).
+  promptBtw() { this.openBtw(); },
+
+  closeBtw() {
+    const p = document.getElementById('btw-pop'); if (p) p.remove();
+    const s = document.getElementById('btw-scrim'); if (s) s.remove();
+    if (this._btwReposition) {
+      window.removeEventListener('resize', this._btwReposition);
+      window.removeEventListener('scroll', this._btwReposition, true);
+      this._btwReposition = null;
+    }
+    this._btwActiveId = null;
+  },
+
+  sendBtw() {
+    const chat = state.activeChat;
+    if (!chat || !chat.sessionId) return;
+    const inp = document.getElementById('btw-modal-input');
+    const q = inp ? inp.value.trim() : '';
+    if (!q) return;
+    // Render the question + a pending answer bubble in the thread immediately.
+    const thread = document.getElementById('btw-modal-thread');
+    if (thread) {
+      thread.innerHTML =
+        '<div class="btw-msg btw-msg-q"></div>' +
+        '<div class="btw-msg btw-msg-a btw-pending" id="btw-modal-answer">' +
+          '<span class="tc-btw-spinner"></span> antwortet…</div>';
+      thread.querySelector('.btw-msg-q').textContent = q;
+    }
+    if (inp) { inp.value = ''; inp.focus(); }
+    const sendBtn = document.getElementById('btw-modal-send');
+    if (sendBtn) sendBtn.disabled = true;
+    const _pop = document.getElementById('btw-pop');
+    if (_pop) this._positionBtwPop(_pop);   // thread grew → re-anchor
+    // The endpoint runs the btw call synchronously and returns the answer in the
+    // response (works idle OR while streaming — no dependency on an SSE stream,
+    // which doesn't exist when the chat is idle). This response IS the primary
+    // render path; the btw_done SSE event is only a mirror for other tabs.
+    this._btwActiveId = null;
+    API.btwChat(chat.sessionId, q).then((r) => {
+      this._btwAnswer((r && r.answer) || '', (r && r.error) || '');
+    }).catch(() => {
+      this._btwAnswer('', 'Anfrage fehlgeschlagen.');
     });
   },
 
-  btwStart(chat, btwId, question) {
-    if (!btwId) return;
-    const container = document.getElementById('messages-container');
-    if (!container) return;
-    if (document.getElementById('btw-' + btwId)) return;
-    const card = document.createElement('div');
-    card.className = 'tc-btw-bubble tc-btw-pending';
-    card.id = 'btw-' + btwId;
-    card.innerHTML =
-      '<div class="tc-btw-head"><span class="tc-btw-tag">btw</span> ' +
-      '<span class="tc-btw-q"></span></div>' +
-      '<div class="tc-btw-body"><span class="tc-btw-spinner"></span> ' +
-      'antwortet nebenbei…</div>';
-    card.querySelector('.tc-btw-q').textContent = question || '';
-    container.appendChild(card);
-    if (typeof scrollToBottom === 'function') scrollToBottom();
-  },
+  // Called from the SSE handlers. The modal is the single render target; we
+  // ignore btw_start (the pending bubble is already shown by sendBtw) and fill
+  // the answer on btw_done. Match on the active id when we have it.
+  btwStart(chat, btwId, question) { this._btwActiveId = btwId || this._btwActiveId; },
 
   btwDone(chat, btwId, answer, error) {
-    if (!btwId) return;
-    const card = document.getElementById('btw-' + btwId);
-    if (!card) return;
-    card.classList.remove('tc-btw-pending');
-    const body = card.querySelector('.tc-btw-body');
-    if (!body) return;
-    if (error) {
-      body.innerHTML = '<span class="tc-btw-err"></span>';
-      body.querySelector('.tc-btw-err').textContent = 'Fehler: ' + error;
-      return;
-    }
-    // Render markdown if available, else plain text.
+    if (this._btwActiveId && btwId && btwId !== this._btwActiveId) return;
+    this._btwAnswer(answer || '', error || '');
+    this._btwActiveId = null;
+  },
+
+  _btwAnswer(answer, error) {
+    const el = document.getElementById('btw-modal-answer');
+    const sendBtn = document.getElementById('btw-modal-send');
+    if (sendBtn) sendBtn.disabled = false;
+    if (!el) return;
+    el.classList.remove('btw-pending');
+    if (error) { el.innerHTML = '<span class="tc-btw-err"></span>';
+                 el.querySelector('.tc-btw-err').textContent = 'Fehler: ' + error; return; }
     if (typeof renderMarkdown === 'function') {
-      try { body.innerHTML = renderMarkdown(answer || ''); return; } catch (e) {}
+      try { el.innerHTML = renderMarkdown(answer); } catch (e) { el.textContent = answer; }
+    } else {
+      el.textContent = answer;
     }
-    body.textContent = answer || '';
+    const pop = document.getElementById('btw-pop');
+    if (pop) this._positionBtwPop(pop);   // answer grew the bubble → re-anchor
   },
 
   // ── Rendering ────────────────────────────────────────────────────────────
@@ -273,7 +393,9 @@ const ChatTurnControl = {
       const btw = document.getElementById(p + '-btn-btw') ||
                   (p === 'chat' ? document.getElementById('chat-btn-btw') : null);
       const pause = document.getElementById(p + '-btn-pause');
-      if (btw) btw.classList.toggle('hidden', !streaming);
+      // btw is ALWAYS available (grounded in live state while streaming, in
+      // conversation context when idle) → never hidden. Pause is streaming-only.
+      if (btw) btw.classList.remove('hidden');
       if (pause) {
         pause.classList.toggle('hidden', !streaming);
         pause.classList.toggle('tc-active', streaming && !!chat._turnPaused);

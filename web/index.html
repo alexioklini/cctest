@@ -1780,7 +1780,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
              answer; pause/resume soft-holds the turn at the next round boundary.
              Injection is driven from the queue panel (ChatTurnControl mounts it
              above the composer). -->
-        <button class="composer-btn tc-btn hidden" data-id="btn-btw" onclick="ChatTurnControl.promptBtw()" title="Nebenfrage stellen (btw) — wird in einer separaten Blase beantwortet, ohne die laufende Antwort zu unterbrechen">
+        <button class="composer-btn tc-btn" data-id="btn-btw" onclick="ChatTurnControl.openBtw()" title="Nebenfrage stellen (btw) — wird in einem separaten Fenster beantwortet, ohne die laufende Antwort zu unterbrechen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="0.7" fill="currentColor"/><circle cx="12" cy="10" r="0.7" fill="currentColor"/><circle cx="15" cy="10" r="0.7" fill="currentColor"/></svg>
         </button>
         <button class="composer-btn tc-btn hidden" data-id="btn-pause" onclick="ChatTurnControl.togglePause()" title="Antwort pausieren (am nächsten Rundenende) / fortsetzen">

@@ -618,27 +618,9 @@ function _tcCallbacks(tab, live) {
     injected_message: (d) => {
       // Already surfaced as pending; this confirms the loop spliced it in.
     },
-    btw_start: (d) => {
-      if (!d.btw_id) return;
-      const row = document.createElement('div');
-      row.className = 'tc-row tc-btw';
-      row.id = tab.id + '-btw-' + d.btw_id;
-      row.innerHTML = '<span class="tc-btw-tag">btw</span> '
-        + '<span class="tc-btw-q">' + esc(d.question || '') + '</span>'
-        + '<div class="tc-btw-a">⠿ antwortet nebenbei…</div>';
-      _tcAddRow(tab, row);
-      _tcScroll(tab);
-    },
-    btw_done: (d) => {
-      if (!d.btw_id) return;
-      const row = document.getElementById(tab.id + '-btw-' + d.btw_id);
-      if (!row) return;
-      const a = row.querySelector('.tc-btw-a');
-      if (!a) return;
-      if (d.error) { a.innerHTML = '<span class="tc-err">Fehler: ' + esc(d.error) + '</span>'; }
-      else { try { a.innerHTML = renderMarkdown(d.answer || ''); } catch (e) { a.textContent = d.answer || ''; } }
-      _tcScroll(tab);
-    },
+    // btw is rendered inline by tcBtw() from the synchronous /v1/chat/btw
+    // response (works idle OR mid-stream) — no SSE btw_start/btw_done handling
+    // here, which would double-render the row on this same tab.
     done: (d) => {
       // The chronological text rows already rendered the answer as it streamed.
       // Only fall back to the full done-text if NOTHING streamed (whole reply
@@ -1005,13 +987,34 @@ function tcResume(tab) {
   tab._paused = false; tcRenderStatus(tab);
 }
 
-function tcBtw(tab, arg) {
+async function tcBtw(tab, arg) {
   const q = (arg || '').trim();
   if (!q) { tcPrint(tab, 'Verwendung: /btw &lt;Frage&gt; — z. B. „Was machst du gerade?“', 'tc-err'); return; }
   if (!tab.sessionId) { tcPrint(tab, 'Noch keine Sitzung.', 'tc-err'); return; }
-  // Works best mid-stream (it reports live progress), but also answers when idle.
-  try { API.btwChat(tab.sessionId, q); }
-  catch (e) { tcPrint(tab, 'btw fehlgeschlagen.', 'tc-err'); }
+  // Echo the question + a pending row; the endpoint runs synchronously and
+  // returns the answer in the response (works idle OR mid-stream — no dependency
+  // on an attached SSE stream). Render into a dedicated row keyed by btw_id.
+  const rowId = tab.id + '-btw-inline-' + Math.random().toString(36).slice(2, 8);
+  const row = document.createElement('div');
+  row.className = 'tc-row tc-btw';
+  row.id = rowId;
+  row.innerHTML = '<span class="tc-btw-tag">btw</span> <span class="tc-btw-q"></span>' +
+                  '<div class="tc-btw-a">⠿ antwortet…</div>';
+  row.querySelector('.tc-btw-q').textContent = q;
+  _tcAddRow(tab, row);
+  _tcScroll(tab);
+  try {
+    const r = await API.btwChat(tab.sessionId, q);
+    const a = row.querySelector('.tc-btw-a');
+    if (a) {
+      if (r && r.error) { a.innerHTML = '<span class="tc-err">Fehler: ' + esc(r.error) + '</span>'; }
+      else { try { a.innerHTML = renderMarkdown((r && r.answer) || ''); } catch (e) { a.textContent = (r && r.answer) || ''; } }
+    }
+    _tcScroll(tab);
+  } catch (e) {
+    const a = row.querySelector('.tc-btw-a');
+    if (a) a.innerHTML = '<span class="tc-err">btw fehlgeschlagen.</span>';
+  }
 }
 
 function tcInject(tab, arg) {

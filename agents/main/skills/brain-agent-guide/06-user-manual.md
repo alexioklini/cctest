@@ -191,9 +191,11 @@ Slash-Befehle und Tastenkürzel):
   `Strg-Z`) hält die Antwort am nächsten Schritt an; die aktuelle Runde und ein
   gerade laufendes Werkzeug werden noch fertig, es geht nichts verloren.
   Fortsetzen über denselben Knopf (bzw. `/resume`, `Strg-Q`).
-- **btw-Zwischenfrage** — Der **btw-Knopf** (bzw. `/btw <Frage>`) beantwortet
-  eine Nebenfrage in einer **eigenen Blase**, ohne die laufende Antwort zu
-  stören. Sie weiß, *was der Assistent gerade tut* — Sie können also
+- **btw-Zwischenfrage** — Der **btw-Knopf** öffnet eine kleine **Sprechblase**,
+  die vom Knopf ausgeht (im Terminal-Chat: `/btw <Frage>`); die Nebenfrage wird
+  dort beantwortet, ohne die laufende Antwort zu stören. Sie ist jederzeit
+  verfügbar. Der btw-Assistent weiß, *was der Assistent gerade tut* — Sie können
+  also
   „Was machst du gerade?“ oder „Wie lange dauert das noch?“ fragen und eine
   sachliche Auskunft zum aktuellen Schritt und zur bisher verstrichenen Zeit
   bekommen (eine Angabe zur Restdauer ist ausdrücklich eine grobe Schätzung).

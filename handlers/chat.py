@@ -4295,10 +4295,9 @@ class ChatHandlerMixin:
             self._send_json({"error": "Session not found"}, 404)
             return
 
-        # A distinct id lets both frontends match btw_start↔btw_done to one bubble.
+        # A distinct id lets frontends match this exchange (also emitted to the
+        # live stream so other attached tabs see it during a stream).
         btw_id = uuid.uuid4().hex[:12]
-        # Snapshot everything the worker thread needs NOW (don't touch session
-        # state from the thread beyond the LiveStream, which is thread-safe).
         model = session.model or ""
         user_id = session.user_id or ""
         agent_id = session.agent_id or "main"
@@ -4306,54 +4305,61 @@ class ChatHandlerMixin:
         # Conversation context (strip internal roles/metadata — wire-clean).
         conv_msgs = _btw_conversation_snapshot(session)
         live_state = engine.get_turn_live(sid)  # {} when no turn is running
-        live = session.live_stream
 
-        # Announce immediately so the UI can render an empty side-bubble.
+        # Announce to any live stream (streaming case, other tabs). Harmless when
+        # idle (live_stream is None) — the answer is returned in the response body
+        # below, which is the client's primary render path (works idle OR live).
+        live = session.live_stream
         if live is not None:
             live.emit("btw_start", {"btw_id": btw_id, "session_id": sid,
                                     "question": question})
 
-        def _btw_worker():
-            reply, err = "", ""
-            try:
-                with engine.request_context():
-                    _ctx = engine.get_request_context()
-                    _ctx.current_session_id = sid
-                    _ctx.current_user_id = user_id
-                    _ctx.current_agent = engine.AgentConfig(agent_id)
-                    _ctx.cost_purpose = "btw"
-                    status_preamble = _format_btw_status(live_state)
-                    sys_prompt = (
-                        "You are the assistant's live status voice for a chat that "
-                        "is CURRENTLY being answered in the main thread. Answer the "
-                        "user's aside briefly and directly, in the user's language. "
-                        "If they ask what you are doing / how long it will take / "
-                        "why it is slow, use the LIVE STATUS below. State elapsed "
-                        "time, the current step and completed steps as FACTS; if you "
-                        "estimate remaining time, say it is a rough guess. Do NOT "
-                        "pretend the main answer is finished — it is still running.\n\n"
-                        + status_preamble
-                    )
-                    msgs = list(conv_msgs) + [{"role": "user", "content": question}]
-                    result = sidecar_proxy.background_call(
-                        messages=msgs, model=model, system_prompt=sys_prompt,
-                        purpose="interactive", agent_id=agent_id, session_id=sid,
-                        project=project, user_id=user_id, max_rounds=1,
-                        max_tokens=600, cost_purpose="btw",
-                        prompt_cache_key=f"btw-{sid}")
-                    reply = (result.get("reply") or result.get("final_text") or "").strip()
-                    err = result.get("error") or ""
-            except Exception as e:  # noqa: BLE001
-                err = f"{type(e).__name__}: {e}"
-            _live = session.live_stream
-            if _live is not None:
-                _live.emit("btw_done", {"btw_id": btw_id, "session_id": sid,
-                                        "question": question,
-                                        "answer": reply, "error": err})
+        # Run SYNCHRONOUSLY on this request thread and return the answer in the
+        # response. A btw is a small 1-round call (~1-3s); running it inline means
+        # it works whether or not a turn is streaming (no dependency on an
+        # attached SSE stream, which doesn't exist when the chat is idle — the
+        # bug that made idle btw never answer). The main turn, if any, runs on its
+        # own worker thread and is untouched.
+        reply, err = "", ""
+        try:
+            with engine.request_context():
+                _ctx = engine.get_request_context()
+                _ctx.current_session_id = sid
+                _ctx.current_user_id = user_id
+                _ctx.current_agent = engine.AgentConfig(agent_id)
+                _ctx.cost_purpose = "btw"
+                status_preamble = _format_btw_status(live_state)
+                sys_prompt = (
+                    "You are a concise side assistant for an ongoing chat. Answer "
+                    "the user's aside briefly and directly, in the user's language. "
+                    "If they ask what you are doing / how long it will take / why "
+                    "it is slow, use the LIVE STATUS below: state elapsed time, the "
+                    "current step and completed steps as FACTS; if you estimate "
+                    "remaining time, say it is a rough guess. If the status says no "
+                    "turn is running, answer from the conversation instead.\n\n"
+                    + status_preamble
+                )
+                msgs = list(conv_msgs) + [{"role": "user", "content": question}]
+                result = sidecar_proxy.background_call(
+                    messages=msgs, model=model, system_prompt=sys_prompt,
+                    purpose="interactive", agent_id=agent_id, session_id=sid,
+                    project=project, user_id=user_id, max_rounds=1,
+                    max_tokens=600, cost_purpose="btw",
+                    prompt_cache_key=f"btw-{sid}")
+                reply = (result.get("reply") or result.get("final_text") or "").strip()
+                err = result.get("error") or ""
+        except Exception as e:  # noqa: BLE001
+            err = f"{type(e).__name__}: {e}"
 
-        threading.Thread(target=_btw_worker, daemon=True,
-                         name=f"btw-{btw_id}").start()
-        self._send_json({"btw_id": btw_id, "session_id": sid, "started": True})
+        # Mirror to the live stream too (streaming case / other tabs).
+        _live = session.live_stream
+        if _live is not None:
+            _live.emit("btw_done", {"btw_id": btw_id, "session_id": sid,
+                                    "question": question,
+                                    "answer": reply, "error": err})
+
+        self._send_json({"btw_id": btw_id, "session_id": sid,
+                         "answer": reply, "error": err})
 
     def _handle_web_search(self):
         """POST /v1/web/search — run a SearXNG web search and return results.

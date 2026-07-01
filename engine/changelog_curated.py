@@ -41,7 +41,8 @@ CURATED_CHANGELOG: list[dict] = [
                 "Warteschlange lässt sich bearbeiten, umsortieren und leeren. "
                 "(2) Pausieren Sie die Antwort und setzen Sie sie später fort — "
                 "sauber am nächsten Schritt, ohne etwas zu verlieren. (3) Stellen "
-                "Sie mit „btw“ eine Zwischenfrage, die in einer eigenen Blase "
+                "Sie mit „btw“ eine Zwischenfrage: Ein Klick auf den btw-Knopf "
+                "öffnet eine kleine Sprechblase direkt am Knopf, in der die Frage "
                 "beantwortet wird, ohne die laufende Antwort zu stören — sie weiß "
                 "sogar, was der Agent gerade tut, sodass Sie „Was machst du "
                 "gerade?“ oder „Wie lange dauert das noch?“ fragen können. "
@@ -49,7 +50,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "Klarstellung nach, die im nächsten Schritt berücksichtigt wird. "
                 "So kommen Sie schneller und gezielter zu besseren Antworten.",
         "audience": "user",
-        "versions": ["9.254.0"],
+        "versions": ["9.254.0", "9.254.1"],
     },
     {
         "version": "9.253.0",
