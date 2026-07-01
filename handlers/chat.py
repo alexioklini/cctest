@@ -4312,10 +4312,12 @@ class ChatHandlerMixin:
                     session.api_key = _fp["api_key"]
                     session.base_url = _fp["base_url"]
                     session.max_context = engine.get_model_max_context(_frozen)
-                # Frozen tool groups stay None (full stable set) — never reshape a
-                # cache-priced model's tools (model_should_optimize_tools returns
-                # False for it anyway, so this just makes the intent explicit).
-                session._auto_tool_groups = None
+                # Reuse the turn-1 FROZEN tool groups (the classifier ran once on
+                # turn 1 and trimmed; later turns reuse that exact set so the
+                # prefix stays byte-stable and the provider cache hits). None when
+                # turn 1 didn't trim → full stable set. Never re-run the classifier.
+                session._auto_tool_groups = getattr(
+                    session, "_cache_freeze_tool_groups", None)
                 session._auto_route_model = _frozen
             auto_route = {"model": _frozen, "reason": "cache-stable (turn-1 pick frozen)",
                           "frozen": True}
@@ -4364,22 +4366,32 @@ class ChatHandlerMixin:
             # enabled. Cleared each turn (None when off / no analysis) so no
             # stale shape carries over.
             _opt_on = engine.agent_optimize_tools_enabled(agent_cfg)
-            _opt_ok = _opt_on and engine.model_should_optimize_tools(auto_model)
+            # This is the turn-1 route (the freeze-honor branch above handles
+            # turns 2+). A cache-priced model is safe to trim HERE because turn 1
+            # is cold — and the trimmed set gets frozen just below so turns 2+ reuse
+            # it. So allow the trim when the model is normally optimizable OR it's a
+            # cache-priced model (turn-1 trim + freeze).
+            _cp_auto = engine.model_is_cache_priced(auto_model)
+            _opt_ok = _opt_on and (
+                engine.model_should_optimize_tools(auto_model) or _cp_auto)
             with session.lock:
                 session._auto_tool_groups = (
                     auto_analysis.get("tool_groups")
                     if (auto_analysis and _opt_ok) else None)
                 session._auto_route_model = auto_model or ""
                 # If this turn routed to a cache-priced model, FREEZE it: every
-                # later Auto turn reuses this model + (full, unreshaped) tool set
+                # later Auto turn reuses this model + its turn-1 (trimmed) tool set
                 # and skips the classifier, keeping the prefix byte-stable so the
                 # provider prompt cache hits. Only set under a user-picked Auto
                 # ("want_auto") — an agent pinned to model:"auto" already routes
                 # turn-1-only, so it needs no freeze flag. Once set it sticks for
                 # the session (a later turn that would need a different capability
                 # stays on the frozen model by design — see AskUserQuestion #3).
-                if want_auto and auto_model and engine.model_is_cache_priced(auto_model):
+                if want_auto and auto_model and _cp_auto:
                     session._cache_freeze_model = auto_model
+                    # Freeze the turn-1 trimmed tool groups too, so the honor
+                    # branch reuses this exact set on every later turn.
+                    session._cache_freeze_tool_groups = session._auto_tool_groups
                 # Remember the composer's auto DIRECTIVE (which Smart mode) so
                 # the post-turn restore re-persists "auto-cloud"/"auto-local"
                 # rather than flattening both to legacy "auto" — a reopened
@@ -4404,9 +4416,31 @@ class ChatHandlerMixin:
             with session.lock:
                 session._auto_tool_groups = None
                 session._auto_route_model = session.model or ""
-            if (session.model
-                    and engine.agent_optimize_tools_enabled(agent_cfg)
-                    and engine.model_should_optimize_tools(session.model)):
+            # Cache-priced models (e.g. Mistral via CLIProxyAPI): run the tool
+            # classifier on TURN 1 ONLY, then FREEZE that turn-1 tool set for the
+            # rest of the session. Turn 1 is cold (nothing cached yet) so trimming
+            # is free; freezing keeps turns 2+ byte-stable so the provider prompt
+            # cache hits. model_should_optimize_tools returns False for cache-priced
+            # models (never reshape mid-session), so we handle their turn-1 case
+            # explicitly here. On turns 2+ we reuse the frozen groups + skip the
+            # classifier LLM call entirely.
+            _cp = engine.model_is_cache_priced(session.model)
+            _first_turn = len(session.messages) == 0
+            _opt_on = engine.agent_optimize_tools_enabled(agent_cfg)
+            if _cp and not _first_turn:
+                # Later turn on a cache-priced model → reuse the frozen turn-1 set
+                # (None if turn 1 didn't trim / wasn't captured — full stable set).
+                with session.lock:
+                    session._auto_tool_groups = getattr(
+                        session, "_cache_freeze_tool_groups", None)
+                _run_classifier = False
+            else:
+                # Concrete non-cache model → classify every turn (if safe).
+                # Cache-priced model on turn 1 → classify once, then freeze below.
+                _run_classifier = _opt_on and (
+                    engine.model_should_optimize_tools(session.model)
+                    or (_cp and _first_turn))
+            if session.model and _run_classifier:
                 try:
                     _ta = engine.resolve_task_analysis(message)
                     # Trim whenever the LLM classifier RAN — keyed on the
@@ -4420,6 +4454,12 @@ class ChatHandlerMixin:
                     if isinstance(_ta, dict) and "tool_groups" in _ta:
                         with session.lock:
                             session._auto_tool_groups = _ta.get("tool_groups") or []
+                            # FREEZE turn-1's trimmed set for a cache-priced model
+                            # so every later turn reuses this exact set (byte-stable
+                            # prefix → cache hits). Captured only on the turn the
+                            # classifier actually ran (turn 1).
+                            if _cp and _first_turn:
+                                session._cache_freeze_tool_groups = session._auto_tool_groups
                     # Surface the classifier decision even on concrete-model
                     # turns (NO auto-routing), so the chat-view inspector button
                     # appears whenever the LLM classifier ran — not only in Auto
