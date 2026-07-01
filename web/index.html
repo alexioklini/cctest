@@ -1774,6 +1774,18 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <!-- (The companion now lives in the Brainy bubble bottom-right, driven by
            buddy.js — it animates there during a turn. No composer companion.) -->
       <div class="composer-footer-right">
+        <!-- Turn-control cluster: shown ONLY while a turn is streaming
+             (ChatTurnControl.renderControls toggles display). "btw" asks a side
+             question answered in a separate bubble without touching the running
+             answer; pause/resume soft-holds the turn at the next round boundary.
+             Injection is driven from the queue panel (ChatTurnControl mounts it
+             above the composer). -->
+        <button class="composer-btn tc-btn hidden" data-id="btn-btw" onclick="ChatTurnControl.promptBtw()" title="Nebenfrage stellen (btw) — wird in einer separaten Blase beantwortet, ohne die laufende Antwort zu unterbrechen">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><circle cx="9" cy="10" r="0.7" fill="currentColor"/><circle cx="12" cy="10" r="0.7" fill="currentColor"/><circle cx="15" cy="10" r="0.7" fill="currentColor"/></svg>
+        </button>
+        <button class="composer-btn tc-btn hidden" data-id="btn-pause" onclick="ChatTurnControl.togglePause()" title="Antwort pausieren (am nächsten Rundenende) / fortsetzen">
+          <svg viewBox="0 0 24 24" fill="currentColor" data-id="btn-pause-icon"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+        </button>
         <span class="model-selector-btn" data-id="model-selector" onclick="toggleModelDropdown(event)">
           <span class="warmup-dot" data-id="warmup-dot" style="display:none;margin-right:4px"></span>
           <span class="model-name" data-id="model-name">Sonnet 4.6</span>
@@ -1796,6 +1808,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/chat_nav.js"></script>
 <script src="js/chat_tools.js"></script>
 <script src="js/chat_send.js"></script>
+<script src="js/chat_turncontrol.js"></script>
 <script src="js/chat_audio.js"></script>
 <script src="js/chat_helpdesk.js"></script>
 <script src="js/panels_gdpr.js"></script>

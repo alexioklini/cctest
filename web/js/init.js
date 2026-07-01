@@ -1188,6 +1188,8 @@ function initComposers() {
       set('model-selector',       'chat-model-selector');
       set('warmup-dot',           'chat-warmup-dot');
       set('model-name',           'chat-model-name');
+      set('btn-btw',              'chat-btn-btw');
+      set('btn-pause',            'chat-btn-pause');
       set('send-btn',             'chat-send-btn');
       set('stop-btn',             'chat-stop-btn');
     } else {
@@ -1202,6 +1204,8 @@ function initComposers() {
       set('model-selector',       p + 'model-selector');
       set('warmup-dot',           p + 'warmup-dot');
       set('model-name',           p + 'model-name');
+      set('btn-btw',              p + 'btn-btw');
+      set('btn-pause',            p + 'btn-pause');
       set('send-btn',             p + 'send-btn');
       set('stop-btn',             p + 'stop-btn');
     }

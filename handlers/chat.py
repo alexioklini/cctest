@@ -8,6 +8,7 @@ import queue
 import socket
 import threading
 import time
+import uuid
 
 import brain as engine
 import pseudonymizer
@@ -1060,6 +1061,73 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                 pass
 
     return _cb
+
+
+def _btw_conversation_snapshot(session):
+    """Wire-clean copy of the conversation so far for the btw side-call.
+
+    Strips internal roles (thinking) + metadata, keeps only role+content, and
+    caps history so a huge chat doesn't blow up the side-call. Mirrors the
+    next-prompt cleaner."""
+    out = []
+    try:
+        with session.lock:
+            msgs = list(session.messages)
+    except Exception:
+        msgs = list(getattr(session, "messages", []) or [])
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        content = m.get("content")
+        if role in ("user", "assistant", "system") and content is not None:
+            out.append({"role": role, "content": content})
+    # Keep the tail (most relevant to "what's going on now"); cap to ~24 msgs.
+    return out[-24:]
+
+
+def _format_btw_status(live_state: dict) -> str:
+    """Render the live-turn snapshot into a compact status preamble the btw
+    side-model reads to answer 'what are you doing / how long'. Factual only."""
+    if not live_state:
+        return ("LIVE STATUS: No turn is running right now — the previous answer "
+                "has finished (or none has started). Answer from the conversation.")
+    lines = ["LIVE STATUS (the main answer is still being produced right now):"]
+    rnd = live_state.get("round") or 0
+    if rnd:
+        lines.append(f"- Currently on round {rnd} of the answer.")
+    elapsed_ms = int(live_state.get("elapsed_ms") or 0)
+    if elapsed_ms:
+        lines.append(f"- Elapsed so far: {elapsed_ms/1000:.0f} seconds.")
+    if live_state.get("paused"):
+        lines.append("- The turn is PAUSED (the user paused it); it will continue "
+                     "when resumed.")
+    active = live_state.get("active_tool")
+    if active:
+        started = live_state.get("active_tool_started_at")
+        dur = ""
+        if started:
+            try:
+                dur = f" (running for ~{max(0, int(time.time() - started))}s)"
+            except Exception:
+                dur = ""
+        lines.append(f"- Right now it is running the tool '{active}'{dur}.")
+    else:
+        lines.append("- Right now it is generating text (no tool running).")
+    done_tools = live_state.get("completed_tools") or []
+    if done_tools:
+        parts = []
+        for t in done_tools[-8:]:
+            nm = t.get("name", "?")
+            ms = int(t.get("elapsed_ms") or 0)
+            parts.append(f"{nm} ({ms/1000:.1f}s)")
+        lines.append(f"- Steps already completed this turn: {', '.join(parts)}.")
+    ptl = int(live_state.get("partial_text_len") or 0)
+    if ptl:
+        lines.append(f"- About {ptl} characters of the answer have been written so far.")
+    lines.append("Give a factual status; any time-remaining figure is a rough guess, "
+                 "not a promise.")
+    return "\n".join(lines)
 
 
 def make_artifact_event_callback(session_id: str):
@@ -2202,6 +2270,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             # Snapshot message count for rollback on failure
             _msg_count_before = len(session.messages)
             _req_start = time.time()
+
+            # Register the turn-control slot (pause/resume, mid-stream injection,
+            # live-progress for the btw side-call). Cleared in the finally below.
+            engine.turn_control_register(sid)
 
             try:
                 # ── Transparent anonymisation (worker-side) ──
@@ -3542,6 +3614,13 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     _rollback_messages(session, sid, _msg_count_before)
                 live.emit("error", {"message": str(e)})
             finally:
+                # Release the turn-control slot (pause gate, injections, live
+                # progress). Must run before we tear down live_stream so a
+                # paused turn can never leave its gate closed.
+                try:
+                    engine.turn_control_clear(sid)
+                except Exception:
+                    pass
                 # If the worker died without emitting a terminal event (e.g. a
                 # bare process exit), make sure subscribers aren't left hanging.
                 if not live.done:
@@ -4122,6 +4201,159 @@ class ChatHandlerMixin:
             return
         session.cancel_token.cancel()
         self._send_json({"status": "cancelled"})
+
+    def _handle_chat_pause(self):
+        """POST /v1/chat/pause — soft-pause the running turn at the next round
+        boundary. The current round + any in-flight tool finish first (no wasted
+        tokens, no torn output); the loop then holds until /v1/chat/resume."""
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        if self._session_access_check(sid) is None:
+            return
+        session = sessions.get(sid)
+        if not session:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+        ok = engine.pause_turn(sid)
+        if not ok:
+            self._send_json({"error": "no running turn for this session"}, 404)
+            return
+        # Surface the state to every attached client via the LiveStream.
+        live = session.live_stream
+        if live is not None:
+            live.emit("paused", {"session_id": sid})
+        self._send_json({"paused": True, "session_id": sid})
+
+    def _handle_chat_resume(self):
+        """POST /v1/chat/resume — resume a paused turn."""
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        if self._session_access_check(sid) is None:
+            return
+        session = sessions.get(sid)
+        if not session:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+        ok = engine.resume_turn(sid)
+        if not ok:
+            self._send_json({"error": "no running turn for this session"}, 404)
+            return
+        live = session.live_stream
+        if live is not None:
+            live.emit("resumed", {"session_id": sid})
+        self._send_json({"resumed": True, "session_id": sid})
+
+    def _handle_chat_inject(self):
+        """POST /v1/chat/inject {session_id, message} — splice a user message /
+        clarification into the RUNNING turn. The model incorporates it on its
+        next round (same mechanism as the empty-round nudge). Distinct from the
+        message queue (which sends normal turns AFTER this one finishes)."""
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        text = (body.get("message") or "").strip()
+        if not text:
+            self._send_json({"error": "message is required"}, 400)
+            return
+        if self._session_access_check(sid) is None:
+            return
+        session = sessions.get(sid)
+        if not session:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+        ok = engine.inject_message(sid, text)
+        if not ok:
+            self._send_json({"error": "no running turn for this session"}, 404)
+            return
+        # Tell the UI it's queued for the next round (the loop emits
+        # injected_message once it actually splices it in).
+        live = session.live_stream
+        if live is not None:
+            live.emit("injected_pending", {"session_id": sid, "text": text})
+        self._send_json({"injected": True, "session_id": sid})
+
+    def _handle_chat_btw(self):
+        """POST /v1/chat/btw {session_id, message} — answer a side-question in a
+        SEPARATE bubble WITHOUT touching the running turn.
+
+        The side-call knows two things: the conversation so far AND what the agent
+        is doing RIGHT NOW (current round, the tool executing + how long, tools
+        already run this turn, wall-clock elapsed, paused state) — so the user can
+        ask 'what are you doing?' / 'how long will this take?' and get a grounded
+        answer about the in-flight work. Runs as an independent background call on
+        its own thread; the main turn is never paused, cancelled, or altered.
+        """
+        body = self._read_json()
+        sid = body.get("session_id", "")
+        question = (body.get("message") or "").strip()
+        if not question:
+            self._send_json({"error": "message is required"}, 400)
+            return
+        if self._session_access_check(sid) is None:
+            return
+        session = sessions.get(sid)
+        if not session:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+
+        # A distinct id lets both frontends match btw_start↔btw_done to one bubble.
+        btw_id = uuid.uuid4().hex[:12]
+        # Snapshot everything the worker thread needs NOW (don't touch session
+        # state from the thread beyond the LiveStream, which is thread-safe).
+        model = session.model or ""
+        user_id = session.user_id or ""
+        agent_id = session.agent_id or "main"
+        project = session.project or ""
+        # Conversation context (strip internal roles/metadata — wire-clean).
+        conv_msgs = _btw_conversation_snapshot(session)
+        live_state = engine.get_turn_live(sid)  # {} when no turn is running
+        live = session.live_stream
+
+        # Announce immediately so the UI can render an empty side-bubble.
+        if live is not None:
+            live.emit("btw_start", {"btw_id": btw_id, "session_id": sid,
+                                    "question": question})
+
+        def _btw_worker():
+            reply, err = "", ""
+            try:
+                with engine.request_context():
+                    _ctx = engine.get_request_context()
+                    _ctx.current_session_id = sid
+                    _ctx.current_user_id = user_id
+                    _ctx.current_agent = engine.AgentConfig(agent_id)
+                    _ctx.cost_purpose = "btw"
+                    status_preamble = _format_btw_status(live_state)
+                    sys_prompt = (
+                        "You are the assistant's live status voice for a chat that "
+                        "is CURRENTLY being answered in the main thread. Answer the "
+                        "user's aside briefly and directly, in the user's language. "
+                        "If they ask what you are doing / how long it will take / "
+                        "why it is slow, use the LIVE STATUS below. State elapsed "
+                        "time, the current step and completed steps as FACTS; if you "
+                        "estimate remaining time, say it is a rough guess. Do NOT "
+                        "pretend the main answer is finished — it is still running.\n\n"
+                        + status_preamble
+                    )
+                    msgs = list(conv_msgs) + [{"role": "user", "content": question}]
+                    result = sidecar_proxy.background_call(
+                        messages=msgs, model=model, system_prompt=sys_prompt,
+                        purpose="interactive", agent_id=agent_id, session_id=sid,
+                        project=project, user_id=user_id, max_rounds=1,
+                        max_tokens=600, cost_purpose="btw",
+                        prompt_cache_key=f"btw-{sid}")
+                    reply = (result.get("reply") or result.get("final_text") or "").strip()
+                    err = result.get("error") or ""
+            except Exception as e:  # noqa: BLE001
+                err = f"{type(e).__name__}: {e}"
+            _live = session.live_stream
+            if _live is not None:
+                _live.emit("btw_done", {"btw_id": btw_id, "session_id": sid,
+                                        "question": question,
+                                        "answer": reply, "error": err})
+
+        threading.Thread(target=_btw_worker, daemon=True,
+                         name=f"btw-{btw_id}").start()
+        self._send_json({"btw_id": btw_id, "session_id": sid, "started": True})
 
     def _handle_web_search(self):
         """POST /v1/web/search — run a SearXNG web search and return results.

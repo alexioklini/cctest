@@ -15,6 +15,22 @@ async function sendMessage() {
   let text = input?.value?.trim();
   if (!text && !state._pendingImages.length && !state._pendingFiles.length) return;
 
+  // If a turn is already streaming on the active chat, don't start a second
+  // one — QUEUE this message instead (it auto-sends as a normal turn when the
+  // current one finishes). The composer send button already reads as "Queue"
+  // during streaming (updateSendButton). Files/images can't be queued cleanly
+  // (they'd need re-attaching), so a queued entry is text-only.
+  {
+    const _ac = state.activeChat;
+    if (_ac && _ac.streaming && text) {
+      ChatTurnControl.enqueue(_ac, text);
+      input.value = '';
+      autoResizeInput(input);
+      updateSendButton();
+      return;
+    }
+  }
+
   // Workflow-run binding: if this chat is bound to a still-running workflow
   // execution, refuse the send. Asking follow-ups about a run that's still
   // mutating its trace mid-conversation produces confusing context for the
@@ -548,11 +564,11 @@ function buildStreamCallbacks(chat, isActive) {
         // render into the turn-body before the new thinking bubble is appended.
         chat.thinkingText = '';
         if (isActive() && typeof buddyPhase === 'function') buddyPhase('thinking');
-        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
       },
       thinking_delta: (d) => {
         chat.thinkingText += d.text || '';
-        if (isActive()) renderStreamingMessage(chat);
+        if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
       },
       thinking_done: (d) => {
         // Persist this round's thinking as its own message entry so it appears
@@ -568,7 +584,7 @@ function buildStreamCallbacks(chat, isActive) {
             _seq: _nextSeq(chat),
           });
           _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
-          if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
+          if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
         }
         // Reset the streaming buffer so the next round's thinking starts fresh
         // (avoids concatenating multi-round thinking into a single live block).
@@ -617,6 +633,35 @@ function buildStreamCallbacks(chat, isActive) {
       },
       queue_released: (d) => {
         chat.queueStatus = null;
+      },
+      // ── Turn-control events (pause/resume, mid-stream injection, btw) ──
+      paused: (d) => {
+        chat._turnPaused = true;
+        if (isActive()) { try { ChatTurnControl.renderControls(chat); } catch(e){} renderStreamingMessage(chat); }
+      },
+      resumed: (d) => {
+        chat._turnPaused = false;
+        if (isActive()) { try { ChatTurnControl.renderControls(chat); } catch(e){} renderStreamingMessage(chat); }
+      },
+      injected_pending: (d) => {
+        // The user injected a clarification; it will be seen next round. Show a
+        // transient chip so they know it registered.
+        try { ChatTurnControl.notePendingInjection(chat, d.text || ''); } catch(e){}
+        if (isActive()) renderStreamingMessage(chat);
+      },
+      injected_message: (d) => {
+        // The loop actually spliced it in this round — promote to a real
+        // "injected" row in the flow and clear the pending chip.
+        try { ChatTurnControl.commitInjection(chat, d.text || ''); } catch(e){}
+        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
+      },
+      btw_start: (d) => {
+        try { ChatTurnControl.btwStart(chat, d.btw_id, d.question || ''); } catch(e){}
+        if (isActive()) renderMessages();
+      },
+      btw_done: (d) => {
+        try { ChatTurnControl.btwDone(chat, d.btw_id, d.answer || '', d.error || ''); } catch(e){}
+        if (isActive()) { renderMessages(); scrollToBottom(); }
       },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
@@ -1301,6 +1346,13 @@ function buildStreamCallbacks(chat, isActive) {
             && typeof gdprFeedbackModal === 'function') {
           maybeRunGdprFeedback(chat, d.gdpr);
         }
+
+        // ── Message queue: auto-send the next queued message as a normal turn ──
+        // The user queued messages while this turn was streaming; now that it's
+        // finished, send the head of the queue. One at a time — each becomes an
+        // ordinary turn and its own `done` drains the next, so a whole queue
+        // chains through naturally. Only when this chat is still active.
+        try { ChatTurnControl.drainNext(chat); } catch (e) { console.error('[queue] drain failed', e); }
       },
       error: (d) => {
         chat.streaming = false;
@@ -2327,9 +2379,15 @@ function updateStreamingUI(isStreaming, chat) {
   } else {
     sendBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
-    if (targetChat) { targetChat._streamModel = ''; targetChat._streamLabel = ''; targetChat._streamElapsed = ''; }
+    if (targetChat) {
+      targetChat._streamModel = ''; targetChat._streamLabel = ''; targetChat._streamElapsed = '';
+      targetChat._turnPaused = false;   // a finished/cancelled turn is never paused
+    }
     if (typeof buddyTurnEnd === 'function') buddyTurnEnd();
   }
+  // Show/hide the btw + pause buttons and repaint the queue panel with the new
+  // streaming state (guarded so a load-order gap can't break the stream UI).
+  try { if (typeof ChatTurnControl !== 'undefined') ChatTurnControl.renderControls(targetChat); } catch (e) {}
 }
 function updateStreamTimer(chat) {
   const target = chat || state.activeChat;

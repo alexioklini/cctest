@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.253.0"
+VERSION = "9.254.0"
 VERSION_DATE = "2026-07-01"
 CHANGELOG = [
+    ("9.254.0", "2026-07-01", "feat(chat + terminal-chat): Steuerung einer LAUFENDEN Antwort — Warteschlange, Pause/Fortsetzen, Zwischenfragen ('btw') und Klarstellungen einfügen. Ziel (Nutzerwunsch): schneller zu besseren Antworten, ohne den laufenden Turn abzubrechen. FUNKTIONEN (alle im normalen Web-Chat UND im Code-Mode-Terminal-Chat): (1) WARTESCHLANGE — während gestreamt wird, kann man weiter tippen/Enter drücken; die Nachricht wird eingereiht (nicht als zweiter Turn gestartet) und automatisch als normaler Turn gesendet, sobald der laufende fertig ist (eine nach der anderen, verkettet). Verwalten: bearbeiten, entfernen, umsortieren (↑/↓), 'jetzt senden', alles leeren; im Terminal per /queue [list|rm N|mv N M|edit N …|clear]. Pro Session persistiert (neue Spalte sessions.message_queue, Manage-Action message_queue, in GET /messages zurückgegeben — genau wie der Websuche-Korb), also überlebt sie Reload/Reconnect. (2) PAUSE/FORTSETZEN — weiche Pause am nächsten Rundenende: die aktuelle Runde + ein laufendes Werkzeug werden fertig, dann hält der Turn an (keine verschwendeten Tokens, kein zerrissener Text) bis zum Fortsetzen. Web: Pause-Knopf in der Composer-Leiste; Terminal: /pause + Strg-Z, /resume + Strg-Q (Esc bleibt Abbrechen). (3) 'btw' ZWISCHENFRAGE — eine Nebenfrage, die in einer SEPARATEN Blase beantwortet wird, ohne die laufende Antwort zu berühren. Sie kennt nicht nur den Gesprächsverlauf, sondern auch was der Agent GERADE tut: aktuelle Runde, welches Werkzeug läuft (und seit wann), bereits erledigte Schritte, verstrichene Zeit — man kann also 'Was machst du gerade?' / 'Wie lange dauert das noch?' fragen und eine sachliche Live-Auskunft bekommen (eine Restzeit-Schätzung wird ausdrücklich als grobe Schätzung ausgewiesen). Läuft als eigener, nebenläufiger Hintergrund-Call; der Haupt-Turn läuft unberührt weiter. Web: btw-Knopf in der Composer-Leiste; Terminal: /btw <frage>. (4) KLARSTELLUNG EINFÜGEN — Text in den LAUFENDEN Turn einspeisen, den das Modell in seiner nächsten Runde berücksichtigt (getrennt von der Warteschlange, die neue Turns startet). Terminal: /inject <text> (Alias /clarify); der Verlauf zeigt eine 'Eingefügt (nächste Runde)'-Notiz. TECHNIK: neue Loop-Callbacks in engine/llm_loop.py (pause_gate/drain_injections/progress_cb) am Rundenboundary — dieselbe Naht wie der Empty-Round-Nudge; per-Session-Registry _turn_control in brain.py (spiegelt _ask_user_pending); neue Endpoints POST /v1/chat/{pause,resume,inject,btw}; neue SSE-Events paused/resumed/injected_pending/injected_message/btw_start/btw_done; Frontend als ein neues Modul web/js/chat_turncontrol.js (ChatTurnControl) + Terminal-Erweiterungen. JS-Gate grün (eslint clean, net-globals 1813→1821 [+8: ChatTurnControl + 7 tc*-Funktionen, Baseline nachgezogen], Smoke bestanden). py_compile OK. Server-Restart nötig (Endpoints + DB-Spalte). KURATIERTER Eintrag (sichtbare neue Chat-Steuerung)."),
     ("9.253.0", "2026-07-01", "style(terminal-chat): der Code-Mode-Terminal-Chat sieht jetzt aus wie Claude Code im echten Terminal — auf Nutzerwunsch (mehrfach iteriert). Rein web/css/main.css (+ Cache-Buster in index.html). VORHER war der Terminal-Chat BEWUSST wie der normale Web-Chat gestylt (proportionale UI-Schrift 16px, Zeilenhöhe 1.8, große em-Überschriften, Fett). JETZT CLI-Look: (1) FONT — durchgehend die System-Terminalschrift --font-term (SF Mono/Menlo/Cascadia/DejaVu, wie das echte CLI). Ein Zwischenversuch mit eingebettetem JetBrains Mono wurde verworfen (sah 'komisch' aus, nicht wie Claude Code). (2) EINHEITLICHE GRÖSSE — ALLES 13px: Body, Tool-Calls (.tc-tool), Inline-Code, Shell-Output (.tc-shout), Hilfe-/System-Zeilen, Prompt, Autocomplete. Überschriften h1-h6 HART auf font-size:13px !important gepinnt (das vorherige font-size:1em löste NICHT zuverlässig auf 13px auf — vom Nutzer korrekt bemerkt, dass 'Critical Issues' etc. größer blieb; per computed-style verifiziert = 13px). Nur die feste Status-Fußzeile bleibt kompakter (wie Claude Codes eigene Statusline). (3) KEIN FETT — .termchat * { font-weight:400 !important }; Unterscheidung AUSSCHLIESSLICH über Farbe (Terracotta für Überschriften/Prompt/Tool-Punkte, helleres Off-White für Betonung, Grün für Shell-$/✓, gedimmt für Meta/Denken). (4) PALETTE — eine self-contained Claude-Code-Terminal-Palette (warmes Near-Black #1a1917, gedimmtes Off-White #a8a49b als Body, Terracotta #d97757 als Akzent), lokal auf .termchat gebunden → THEME-UNABHÄNGIG (immer dunkel, wie ein echtes Terminal), egal ob die App hell/dunkel läuft. (5) GEGEN 'ZU FETT' — grayscale font-smoothing (macOS rendert Mono auf dunklem Grund sonst schwerer) + gedimmte Body-Farbe + negatives letter-spacing (-0.01em); font-weight:300 wäre wirkungslos (SF Mono hat keinen Light-Schnitt → fiele auf 400 zurück). (6) LISTEN-MARKER — die nativen •/○-Discs rendern in Monospace intrinsisch GRÖSSER als der Text; ersetzt durch eigene ::before-Marker (•/◦/n.) fest auf 1em + Terracotta. (7) TABELLE — kompakter CLI-Stil (body-groß, dünne Header-Linie). (8) CACHE-BUSTER — main.css war ohne ?v= verlinkt, sodass eine lang offene SPA die CSS im Speicher behielt und Änderungen erst nach hartem Refresh sah; jetzt css/main.css?v=cli-termchat-1 → normaler Reload genügt. JS-Gate grün (reine CSS/HTML-Änderung, net-globals unverändert, Smoke bestanden). Kein Server-Restart nötig (statische Assets), nur Reload. KURATIERTER Eintrag (sichtbarer neuer Terminal-Look)."),
     ("9.252.0", "2026-07-01", "feat(chat-liste): 'läuft gerade'-Anzeige (grüne, pulsierende Pille) an Chats, in denen aktuell eine Antwort generiert wird — in der Sidebar (zuletzt verwendet + Projekt-Chats) UND der Projekt-Detail-Chatliste + der globalen Chats-Ansicht (vom Nutzer gewünscht: sichtbare Anzeige laufender/streamender Chats). DATENQUELLE: neuer Endpoint GET /v1/sessions/active liefert die IDs aller Sessions mit LAUFENDEM Chat-Turn — Quelle ist das IN-MEMORY-Flag Session._streaming (akkurat; anders als die active_turns-DB-Tabelle, die einen Crash überleben kann). Neuer SessionManager.streaming_session_ids() (cache-only, kein DB-Load, unter _lock) + handlers/sessions_handler._handle_active_sessions (gibt nur bare IDs zurück → der Client malt Pillen NUR auf Sessions, die ohnehin in seiner zugriffsgefilterten Liste stehen, also kein Leak). FRONTEND: state.streamingSessions (Set), API.getActiveSessions(), Poller pollActiveSessions()/startActiveSessionsPoll() (ein gemeinsamer 3s-Timer, in init() gestartet; repaint NUR bei Änderung der ID-Menge via Signatur-Vergleich, damit er die anderen Listen-Renders nicht stört) → repaint der jeweils sichtbaren Liste (renderRecentChats für die Sidebar; loadChatsList bzw. loadProjectChats je nach View). Pille gerendert in nav.renderSessionsList (Sidebar recent + Projekt-Chats), panels_chats loadChatsList (globale Chats-Ansicht) und panels_projects loadProjectChats (Projekt-Detail). CSS: .sb-stream-pill (grün, Punkt + 'läuft'-Label, sanfter Puls via @keyframes sb-stream-pulse, prefers-reduced-motion respektiert) + .streaming-Klasse auf der Zeile. JS-Gate grün (eslint clean, net-globals 1809→1813 [+pollActiveSessions/startActiveSessionsPoll/_activeSessPollTimer/_activeSessSig, Baseline nachgezogen], Playwright-Smoke bestanden). py_compile (server/handlers) OK. ZUSATZ (Aufräumen des 9.251.0-Fixes): die CLIENT-seitigen last_active-Nachsortierungen der Listen wurden korrigiert — beim EINZEL-Agent-Sidebar-Zweig entfernt (der Server liefert seit 9.251.0 bereits nach letzter Modifikation sortiert; eine erneute Client-Sortierung nach last_active hätte den 'Öffnen reshuffelt die Liste'-Bug teilweise reaktiviert), bei den GEMISCHTEN Multi-Agent/Projekt-Listen (Sidebar-Recent-über-alle-Agenten, Projekt-Chats-Sidebar, globale Chats-Ansicht) beibehalten (Interleaving braucht eine Client-Sortierung), aber von new Date(last_active) auf den ROHEN numerischen Vergleich umgestellt — last_active ist Epoch-SEKUNDEN, new Date(sekunden) interpretierte sie als Millisekunden (~1970) und war nur zufällig monoton. Server-Restart + Hard-Refresh nötig. KURATIERTER Eintrag (sichtbare Live-Anzeige laufender Chats)."),
     ("9.251.0", "2026-07-01", "fix(chat-liste): die Sidebar-Chatliste ('zuletzt verwendet') sortiert jetzt nach letzter MODIFIKATION (neueste Nachricht) statt nach last_active — das blosse ÖFFNEN eines Chats änderte bisher die Reihenfolge (vom Nutzer gemeldet). URSACHE: seit v9.182.0 persistierte SessionManager.get() last_active auch beim Öffnen eines Chats (throttled ~5min, _touch_on_open → ChatDB.touch_last_active), und die Liste sortierte per ORDER BY s.last_active DESC — also sprang ein nur GELESENER Chat nach oben. Live in chats.db bestätigt: last_active lag bis zu ~2700s VOR der letzten Nachricht (reine Open-Drift). FIX zwei Teile. (1) SORTIERUNG (server_lib/db.py list_sessions): ORDER BY COALESCE((SELECT MAX(m.created_at) FROM messages m WHERE m.session_id=s.id), s.created_at) DESC — das echte Modifikations-Signal (neueste Nachricht, Fallback Erstellzeit bei leeren Sessions); idx_msg_session hält die korrelierte MAX-Subquery billig. (2) last_active NUR NOCH BEI AKTIVITÄT: der Open-Touch in SessionManager.get() (beide Zweige) ist entfernt — last_active wird jetzt ausschliesslich beim SENDEN einer Nachricht gesetzt (handlers/chat.py, unverändert, inkl. save_session-Persist). Damit stört reines Lesen weder die Sortierung noch die Auto-Cleanup-Uhr (Auto-Archivierung misst jetzt 'Tage seit letzter Nachricht' statt 'seit letztem Zugriff' — bewusste Nutzer-Entscheidung). Tote Reste entfernt: _touch_on_open, Session._last_active_persisted_at, ChatDB.touch_last_active. Kein Schema-Wechsel, keine Migration. py_compile (server/db) OK, Sort-Query read-only gegen Live-chats.db verifiziert (neue Ordnung weicht korrekt von der alten last_active-Ordnung ab). Server-Restart nötig. KURATIERTER Eintrag (sichtbares Verhalten der Chatliste)."),
@@ -8939,9 +8940,13 @@ class ContextManager:
             except GDPRBlockedError:
                 return f"Recall blocked by GDPR policy for: {query}"
             from handlers import sidecar_proxy as _sidecar_proxy
+            # Prefix-cache ordering: the constant framing + the (session-stable)
+            # context come FIRST, the short volatile query LAST. Repeated recalls
+            # within a session share the same context prefix → provider prompt
+            # cache hits on a cache-priced model (see model_is_cache_priced).
             _msg = [{"role": "user", "content": (
-                f"Based on this conversation history, answer the following query precisely:\n\n"
-                f"**Query:** {_wire_query}\n\n**Context:**\n{_wire_ctx}"
+                f"Based on the following conversation history, answer the query at the end precisely.\n\n"
+                f"**Context:**\n{_wire_ctx}\n\n**Query:** {_wire_query}"
             )}]
             _sys = "Answer based only on the provided context. Be specific and cite details."
             _res = _sidecar_proxy.background_call(
@@ -8961,8 +8966,8 @@ class ContextManager:
                 except GDPRBlockedError:
                     return f"Recall blocked by GDPR policy for: {query}"
                 _msg = [{"role": "user", "content": (
-                    f"Based on this conversation history, answer the following query precisely:\n\n"
-                    f"**Query:** {_fb_q}\n\n**Context:**\n{_fb_ctx}"
+                    f"Based on the following conversation history, answer the query at the end precisely.\n\n"
+                    f"**Context:**\n{_fb_ctx}\n\n**Query:** {_fb_q}"
                 )}]
                 _res = _sidecar_proxy.background_call(
                     messages=_msg, model=_fb_model, system_prompt=_sys,
@@ -12545,6 +12550,133 @@ def deliver_ask_user_answer(session_id: str, answer=None, answers=None) -> bool:
 
 # _normalize_ask_questions + tool_ask_user moved to engine/tools/ask_tools.py
 # (refactor E4); re-exported below near TOOL_DISPATCH.
+
+
+# --- Interactive turn control: pause/resume, mid-stream injection, live progress ---
+# One slot per active interactive session, mirroring the _ask_user_pending pattern.
+# The chat worker registers a slot before run_turn and clears it in its finally;
+# the pause/resume/inject endpoints mutate the slot, and run_loop reads it back
+# through the pause_gate/drain_injections/progress_cb closures wired in
+# sidecar_proxy.run_turn. All three features are end-user controls over a
+# streaming turn, so they must be cheap and never wedge the worker.
+_turn_control: dict[str, dict] = {}
+_turn_control_lock = threading.Lock()
+
+
+def turn_control_register(session_id: str) -> None:
+    """Create a fresh control slot for a turn. Resume-Event starts SET (not paused)."""
+    resume = threading.Event()
+    resume.set()  # not paused
+    with _turn_control_lock:
+        _turn_control[session_id] = {
+            "resume": resume,          # cleared = paused; set = running
+            "paused": False,
+            "injections": [],          # list[str] pending, drained each round
+            "live": {},                # latest progress snapshot from run_loop
+        }
+
+
+def turn_control_clear(session_id: str) -> None:
+    with _turn_control_lock:
+        slot = _turn_control.pop(session_id, None)
+    # Never leave a paused turn's gate closed after teardown — unblock any waiter.
+    if slot is not None:
+        try:
+            slot["resume"].set()
+        except Exception:
+            pass
+
+
+def pause_turn(session_id: str) -> bool:
+    """Request a soft pause. The running round + in-flight tool finish first;
+    the loop then holds at the next round boundary. Returns False if no turn."""
+    with _turn_control_lock:
+        slot = _turn_control.get(session_id)
+        if not slot:
+            return False
+        slot["paused"] = True
+        slot["resume"].clear()
+    return True
+
+
+def resume_turn(session_id: str) -> bool:
+    with _turn_control_lock:
+        slot = _turn_control.get(session_id)
+        if not slot:
+            return False
+        slot["paused"] = False
+        slot["resume"].set()
+    return True
+
+
+def is_turn_paused(session_id: str) -> bool:
+    with _turn_control_lock:
+        slot = _turn_control.get(session_id)
+        return bool(slot and slot.get("paused"))
+
+
+def inject_message(session_id: str, text: str) -> bool:
+    """Queue a user message to be spliced into the running turn on its next round.
+    Returns False if no turn is active for the session."""
+    text = (text or "").strip()
+    if not text:
+        return False
+    with _turn_control_lock:
+        slot = _turn_control.get(session_id)
+        if not slot:
+            return False
+        slot["injections"].append(text)
+    return True
+
+
+def _turn_pause_gate(session_id: str):
+    """Closure passed to run_loop: blocks while the turn is paused."""
+    def gate():
+        with _turn_control_lock:
+            slot = _turn_control.get(session_id)
+            resume = slot["resume"] if slot else None
+        if resume is not None:
+            # wait() with a timeout loop so a cleared slot can't wedge forever.
+            while not resume.wait(timeout=1.0):
+                with _turn_control_lock:
+                    if session_id not in _turn_control:
+                        return
+    return gate
+
+
+def _turn_drain_injections(session_id: str):
+    """Closure passed to run_loop: returns + clears pending injections."""
+    def drain() -> list:
+        with _turn_control_lock:
+            slot = _turn_control.get(session_id)
+            if not slot or not slot["injections"]:
+                return []
+            pending = slot["injections"]
+            slot["injections"] = []
+            return pending
+    return drain
+
+
+def _turn_progress_cb(session_id: str):
+    """Closure passed to run_loop: stores the latest live-progress snapshot."""
+    def report(state: dict) -> None:
+        with _turn_control_lock:
+            slot = _turn_control.get(session_id)
+            if slot is not None:
+                slot["live"] = state
+    return report
+
+
+def get_turn_live(session_id: str) -> dict:
+    """Snapshot of what the running turn is doing right now (for the btw side-call).
+    Returns {} when no turn is active."""
+    with _turn_control_lock:
+        slot = _turn_control.get(session_id)
+        if not slot:
+            return {}
+        live = dict(slot.get("live") or {})
+        live["paused"] = bool(slot.get("paused"))
+        return live
 
 
 from engine.tools.image_gen import tool_generate_image, tool_render_diagram  # noqa: E402

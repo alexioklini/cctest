@@ -294,6 +294,12 @@ def run_turn(
                 user_id=tool_context.get("user_id") or None,
                 model=model, event_callback=event_callback,
                 cancel_token=cancel_token, timeout=timeout_s):
+            # Interactive turn-control closures (pause/resume, mid-stream
+            # injection, live-progress for the btw side-call). Only meaningful
+            # with a real session id; background turns pass None (loop no-ops).
+            _pause_gate = engine._turn_pause_gate(sid) if sid else None
+            _drain_inj = engine._turn_drain_injections(sid) if sid else None
+            _progress_cb = engine._turn_progress_cb(sid) if sid else None
             summary = llm_loop.run_loop(
                 model=model, system_prompt=system_prompt, messages=messages,
                 tools=_tools, allowed_tools=allowed_tools,
@@ -303,7 +309,9 @@ def run_turn(
                 prompt_cache_key=_pck, forced_tool=None,
                 api_key=api_key, base_url=base_url,
                 emit=event_callback, is_cancelled=_is_cancelled,
-                tool_use_id_setter=_set_tool_use_id)
+                tool_use_id_setter=_set_tool_use_id,
+                pause_gate=_pause_gate, drain_injections=_drain_inj,
+                progress_cb=_progress_cb)
             final_text = summary.get("final_text", "") or ""
             if summary.get("stop_reason") == "cancelled":
                 cancelled = True

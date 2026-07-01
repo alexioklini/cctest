@@ -29,6 +29,29 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.254.0",
+        "date": "2026-07-01",
+        "title": "Laufende Antworten steuern: Warteschlange, Pause, Zwischenfragen",
+        "body": "Sie müssen eine laufende Antwort nicht mehr abwarten oder "
+                "abbrechen, um weiterzumachen. Vier neue Möglichkeiten — im "
+                "normalen Chat wie im Terminal-Chat: (1) Schreiben Sie einfach "
+                "weiter, während geantwortet wird — Ihre Nachrichten reihen sich "
+                "in eine Warteschlange ein und werden automatisch nacheinander "
+                "gesendet, sobald die aktuelle Antwort fertig ist; die "
+                "Warteschlange lässt sich bearbeiten, umsortieren und leeren. "
+                "(2) Pausieren Sie die Antwort und setzen Sie sie später fort — "
+                "sauber am nächsten Schritt, ohne etwas zu verlieren. (3) Stellen "
+                "Sie mit „btw“ eine Zwischenfrage, die in einer eigenen Blase "
+                "beantwortet wird, ohne die laufende Antwort zu stören — sie weiß "
+                "sogar, was der Agent gerade tut, sodass Sie „Was machst du "
+                "gerade?“ oder „Wie lange dauert das noch?“ fragen können. "
+                "(4) Schieben Sie mitten in eine laufende Antwort eine "
+                "Klarstellung nach, die im nächsten Schritt berücksichtigt wird. "
+                "So kommen Sie schneller und gezielter zu besseren Antworten.",
+        "audience": "user",
+        "versions": ["9.254.0"],
+    },
+    {
         "version": "9.253.0",
         "date": "2026-07-01",
         "title": "Terminal-Chat im echten CLI-Look",

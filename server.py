@@ -368,6 +368,10 @@ class Session:
         # list of {url,title,snippet,query,enabled}. Persists in sessions DB so
         # it never bleeds across chats. Empty string = no basket.
         self.web_basket: str = ""
+        # Per-session message queue: JSON list of {id,text} the user typed while
+        # a turn was streaming, to auto-send as normal turns once it finishes.
+        # Persisted so a reload restores the queue. Empty string = empty.
+        self.message_queue: str = ""
         # Transparent anonymisation sticky preference (step 6.2). When non-
         # empty, the web modal is skipped on every send and this value is
         # forwarded as body.gdpr_action. Allowed: '', 'anonymise',
@@ -456,6 +460,7 @@ class Session:
                 self.gdpr_feedback_ask = bool(info.get("gdpr_feedback_ask", 0))
                 self.gdpr_details_visible = bool(info.get("gdpr_details_visible", 0))
                 self.web_basket = info.get("web_basket", "") or ""
+                self.message_queue = info.get("message_queue", "") or ""
                 _pref = info.get("gdpr_action_pref", "") or ""
                 self.gdpr_action_pref = (_pref if _pref in
                     ("anonymise", "local_model", "continue") else "")
@@ -1989,6 +1994,14 @@ class BrainAgentHandler(
             self._handle_chat()
         elif path == "/v1/chat/cancel":
             self._handle_cancel()
+        elif path == "/v1/chat/pause":
+            self._handle_chat_pause()
+        elif path == "/v1/chat/resume":
+            self._handle_chat_resume()
+        elif path == "/v1/chat/inject":
+            self._handle_chat_inject()
+        elif path == "/v1/chat/btw":
+            self._handle_chat_btw()
         elif path == "/v1/background-tasks/cancel":
             self._handle_background_task_cancel()
         elif path == "/v1/background-tasks/cancel-tool":

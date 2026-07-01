@@ -689,6 +689,7 @@ class SessionsHandlerMixin:
             resp["gdpr_feedback_ask"] = bool(getattr(session, "gdpr_feedback_ask", False))
             resp["gdpr_details_visible"] = bool(getattr(session, "gdpr_details_visible", False))
             resp["web_basket"] = getattr(session, "web_basket", "") or ""
+            resp["message_queue"] = getattr(session, "message_queue", "") or ""
             resp["gdpr_action_pref"] = getattr(session, "gdpr_action_pref", "") or ""
             resp["has_gdpr_mapping"] = bool(
                 getattr(session, "_gdpr_mapping_id", "") or "")
@@ -716,6 +717,7 @@ class SessionsHandlerMixin:
                 resp["gdpr_feedback_ask"] = bool(info.get("gdpr_feedback_ask", 0))
                 resp["gdpr_details_visible"] = bool(info.get("gdpr_details_visible", 0))
                 resp["web_basket"] = info.get("web_basket", "") or ""
+                resp["message_queue"] = info.get("message_queue", "") or ""
                 _pref_db = info.get("gdpr_action_pref", "") or ""
                 resp["gdpr_action_pref"] = (_pref_db if _pref_db in
                     ("anonymise", "local_model", "continue") else "")
@@ -2139,6 +2141,21 @@ class SessionsHandlerMixin:
             s = sessions.get(sid)
             if s:
                 s.web_basket = basket_json
+            self._send_json({"status": "ok", "session_id": sid})
+        elif action == "message_queue":
+            # Persist the per-session message queue. value is the queue list
+            # (array of {id,text}); stored as JSON. The client owns ordering /
+            # editing / removal — this just persists the current state so a
+            # reload or reconnect restores it.
+            val = body.get("value")
+            try:
+                queue_json = json.dumps(val if isinstance(val, list) else [])
+            except (TypeError, ValueError):
+                queue_json = "[]"
+            ChatDB.update_session_message_queue(sid, queue_json)
+            s = sessions.get(sid)
+            if s:
+                s.message_queue = queue_json
             self._send_json({"status": "ok", "session_id": sid})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)

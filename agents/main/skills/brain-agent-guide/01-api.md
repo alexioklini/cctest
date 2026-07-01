@@ -164,6 +164,19 @@ streaming call, per-USER history, fixed read-only tool set. See
   `done`, `error`, …).
 - `GET /v1/chat/stream?session_id=<sid>` — re-attach to a live turn (SSE)
 - `POST /v1/chat/cancel` — `{session_id}` cancels the active turn
+- `POST /v1/chat/pause` — `{session_id}` soft-pause the running turn at the next
+  round boundary (current round + in-flight tool finish first). Emits `paused`.
+- `POST /v1/chat/resume` — `{session_id}` resume a paused turn. Emits `resumed`.
+- `POST /v1/chat/inject` — `{session_id, message}` splice a clarification into
+  the RUNNING turn; the model sees it next round (emits `injected_pending` then
+  `injected_message`). Distinct from the message queue.
+- `POST /v1/chat/btw` — `{session_id, message}` ask a side question answered in a
+  SEPARATE bubble without touching the running turn. Grounded in live turn state
+  (current round, active tool + elapsed, completed steps). Runs as an independent
+  background call; emits `btw_start` then `btw_done {btw_id, answer}`.
+- Message queue persists per session (`sessions.message_queue`, manage action
+  `message_queue`, returned by `GET /messages`) — messages typed while a turn
+  streams, auto-sent as normal turns when it finishes.
 - `POST /v1/chat/answer` — `{session_id, answer}` unblocks `AskUserQuestion`
 - `POST /v1/chat/gdpr-recovery` — `{session_id, action}` resolve a
   pre-send PII modal (`block`, `proceed_local`, `proceed_pseudo`, …)

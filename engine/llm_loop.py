@@ -445,9 +445,27 @@ def run_loop(
     emit: Callable[[str, dict], None],
     is_cancelled: Callable[[], bool],
     tool_use_id_setter: Callable[[str], None] | None = None,
+    pause_gate: Callable[[], None] | None = None,
+    drain_injections: Callable[[], list[str]] | None = None,
+    progress_cb: Callable[[dict], None] | None = None,
 ) -> dict:
     """Drive one turn's rounds. `emit(type, data)` fires Brain-vocabulary events;
     `is_cancelled()` is polled between rounds and after each stream drain.
+
+    Interactive-turn extras (all optional, all no-ops for background turns):
+    - `pause_gate()` is called at each round boundary (before the next payload
+      build) and BLOCKS while the user has paused the turn; it returns once the
+      turn is resumed (or immediately if not paused). Soft pause: the current
+      round + any in-flight tool always finishes first, so no tokens are wasted
+      and output is never torn.
+    - `drain_injections()` returns a list of user-supplied strings to splice into
+      the running turn as synthetic `role:"user"` messages (consumed by the model
+      on its next round) — the same mechanism the empty-round nudge uses. Called
+      at each round boundary, right after `pause_gate()`.
+    - `progress_cb(state)` receives a live snapshot of turn progress (round, the
+      tool executing now + when it started, tools already completed, partial-text
+      length) so a concurrent "btw" side-call can report what the agent is doing
+      right now. Pure sink for data the loop already computes — cheap.
 
     Returns a summary dict shaped like the old sidecar `done` payload:
       {final_text, text_segments, stop_reason, rounds, tool_calls_total,
@@ -474,12 +492,55 @@ def run_loop(
 
     allowed_set = set(allowed_tools or [])
 
+    # --- live progress snapshot (for the concurrent "btw" side-call) ---
+    _turn_started_at = time.time()
+    _completed_tools: list[dict] = []  # [{name, elapsed_ms}] this turn
+
+    def _report_progress(**extra):
+        if progress_cb is None:
+            return
+        try:
+            progress_cb({
+                "round": extra.get("round", 0),
+                "started_at": _turn_started_at,
+                "elapsed_ms": int((time.time() - _turn_started_at) * 1000),
+                "completed_tools": list(_completed_tools),
+                "partial_text_len": len("\n\n".join(text_segments)),
+                **extra,
+            })
+        except Exception:
+            pass
+
     for round_idx in range(max_rounds):
         round_no = round_idx + 1
         if is_cancelled():
             final_stop_reason = "cancelled"
             emit("cancelled", {"round": round_no, "phase": "round_start"})
             break
+
+        # --- round boundary: honour pause, then splice in any injected messages ---
+        if pause_gate is not None:
+            try:
+                pause_gate()  # blocks while paused; returns on resume
+            except Exception:
+                pass
+        if is_cancelled():
+            final_stop_reason = "cancelled"
+            emit("cancelled", {"round": round_no, "phase": "round_start"})
+            break
+        if drain_injections is not None:
+            try:
+                _injected = drain_injections() or []
+            except Exception:
+                _injected = []
+            for _inj in _injected:
+                _inj = (_inj or "").strip()
+                if not _inj:
+                    continue
+                loop_messages.append({"role": "user", "content": _inj})
+                emit("injected_message", {"round": round_no, "text": _inj})
+
+        _report_progress(round=round_no, phase="round_start", active_tool=None)
 
         payload = build_openai_payload(
             model=model, system_prompt=system_prompt, messages=loop_messages,
@@ -654,6 +715,9 @@ def run_loop(
                 "name": tu["name"], "args": tu_args,
                 "tool_round": round_no, "tool_use_id": tu["id"],
             })
+            _report_progress(round=round_no, phase="tool_call",
+                             active_tool=tu["name"],
+                             active_tool_started_at=time.time())
             if tool_use_id_setter is not None:
                 try:
                     tool_use_id_setter(tu["id"])
@@ -695,6 +759,11 @@ def run_loop(
                 "result": result_str, "tool_round": round_no,
                 "elapsed_ms": int(elapsed * 1000), "is_error": is_error,
             })
+            _completed_tools.append({"name": tu["name"],
+                                     "elapsed_ms": int(elapsed * 1000),
+                                     "is_error": is_error})
+            _report_progress(round=round_no, phase="tool_result",
+                             active_tool=None)
             tool_events.append({
                 "round": round_no, "name": tu["name"], "args": tu_args,
                 "elapsed_ms": int(elapsed * 1000),

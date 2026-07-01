@@ -190,6 +190,12 @@ class API {
   static webSearch(query) { return this.post('/v1/web/search', { query }); }
   static inspectSession(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/inspect`); }
   static cancelChat(sessionId) { return this.post('/v1/chat/cancel', {session_id: sessionId}); }
+  // Turn-control (pause/resume a running turn, inject a mid-stream message the
+  // model sees next round, ask a side question answered in a separate bubble).
+  static pauseChat(sessionId)  { return this.post('/v1/chat/pause',  {session_id: sessionId}); }
+  static resumeChat(sessionId) { return this.post('/v1/chat/resume', {session_id: sessionId}); }
+  static injectChat(sessionId, message) { return this.post('/v1/chat/inject', {session_id: sessionId, message}); }
+  static btwChat(sessionId, message)    { return this.post('/v1/chat/btw',    {session_id: sessionId, message}); }
   // Transparent anonymisation: deliver the user's choice on the
   // anonymisation-failure recovery modal. `action` is 'local_model' | 'cancel'.
   // There is intentionally no 'send_to_cloud_anyway' value — the server

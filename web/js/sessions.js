@@ -219,6 +219,9 @@ async function openSession(sessionId, agentId) {
     // Per-session Websuche basket — load THIS session's own curated sources.
     // Never inherit the basket of the chat we just left.
     if (typeof webBasketLoadFromJson === 'function') webBasketLoadFromJson(data.web_basket || '');
+    // Per-session message queue — load THIS session's queued messages so a
+    // reload / reconnect restores what the user lined up while a turn ran.
+    if (typeof ChatTurnControl !== 'undefined') ChatTurnControl.loadFromJson(chat, data.message_queue || '');
     // Sticky transparent-anonymisation preference (step 6.2). Empty string =
     // ask each time. Other allowed values map 1:1 to body.gdpr_action.
     chat.gdprActionPref = ['anonymise', 'local_model', 'continue']

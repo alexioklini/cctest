@@ -205,16 +205,29 @@ function _tcKeydown(e, tab) {
     tcCancel(tab);
     return;
   }
+  // Turn-control shortcuts while a turn is streaming: Ctrl-Z pause / Ctrl-Q
+  // resume (Esc stays cancel). Chosen to avoid clobbering Enter/history keys.
+  if (tab.streaming && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+    const k = (e.key || '').toLowerCase();
+    if (k === 'z') { e.preventDefault(); tcPause(tab); return; }
+    if (k === 'q') { e.preventDefault(); tcResume(tab); return; }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     const text = ta.value.trim();
     if (!text) return;
-    // While a turn streams, the only thing we accept is a cancel command — so
-    // /cancel and /stop work mid-stream (everything else is ignored until the
-    // turn ends). This is why a hung/long turn can always be stopped.
+    // While a turn streams: cancel commands always work; the turn-control slash
+    // commands (/pause /resume /btw /inject /queue) are handled by tcSlash; and
+    // a plain message is QUEUED (auto-sent as a normal turn when this one ends).
     if (tab.streaming) {
       const low = text.toLowerCase();
-      if (low === '/cancel' || low === '/stop') { ta.value = ''; _tcAutosize(ta); tab.draft = ''; tcCancel(tab); }
+      if (low === '/cancel' || low === '/stop') {
+        ta.value = ''; _tcAutosize(ta); tab.draft = ''; tcCancel(tab); return;
+      }
+      ta.value = ''; _tcAutosize(ta); tab.draft = ''; tab.histIdx = -1;
+      if (text.startsWith('/')) { tcSlash(tab, text); return; }
+      if (text.startsWith('!')) { return; }   // no shell mid-stream
+      tcQueueAdd(tab, text);                   // plain text → queue
       return;
     }
     ta.value = ''; _tcAutosize(ta); tab.draft = '';
@@ -277,6 +290,12 @@ const _TC_COMMANDS = [
   { name: 'init', desc: 'BRAIN.md erzeugen' },
   { name: 'suggest', desc: 'nächste Eingabe vorschlagen' },
   { name: 'cancel', desc: 'laufende Antwort abbrechen' },
+  { name: 'pause', desc: 'laufende Antwort pausieren (Strg-Z)' },
+  { name: 'resume', desc: 'pausierte Antwort fortsetzen (Strg-Q)' },
+  { name: 'btw', desc: 'Nebenfrage (separate Blase, unterbricht nicht)' },
+  { name: 'inject', desc: 'Klarstellung in die laufende Antwort einfügen' },
+  { name: 'clarify', desc: 'Klarstellung einfügen (Alias für /inject)' },
+  { name: 'queue', desc: 'Warteschlange: [list|rm N|mv N M|edit N …|clear]' },
   { name: 'help', desc: 'Befehlsübersicht' },
 ];
 
@@ -579,6 +598,47 @@ function _tcCallbacks(tab, live) {
       if (typeof d.last_tokens_in === 'number') tab.lastApiIn = d.last_tokens_in;
       tcRenderStatus(tab);
     },
+    // ── Turn-control events ──
+    paused: () => {
+      tab._paused = true;
+      _tcSpinSet(tab, 'Pausiert');
+      tcPrint(tab, '⏸ Pausiert — /resume oder Strg-Q zum Fortsetzen.', 'tc-sys');
+      tcRenderStatus(tab);
+    },
+    resumed: () => {
+      tab._paused = false;
+      _tcSpinSet(tab, 'Denkt nach');
+      tcPrint(tab, '▶ Fortgesetzt.', 'tc-sys');
+      tcRenderStatus(tab);
+    },
+    injected_pending: (d) => {
+      tcPrint(tab, '↳ Eingefügt (wird in der nächsten Runde berücksichtigt): '
+              + esc(d.text || ''), 'tc-inject');
+    },
+    injected_message: (d) => {
+      // Already surfaced as pending; this confirms the loop spliced it in.
+    },
+    btw_start: (d) => {
+      if (!d.btw_id) return;
+      const row = document.createElement('div');
+      row.className = 'tc-row tc-btw';
+      row.id = tab.id + '-btw-' + d.btw_id;
+      row.innerHTML = '<span class="tc-btw-tag">btw</span> '
+        + '<span class="tc-btw-q">' + esc(d.question || '') + '</span>'
+        + '<div class="tc-btw-a">⠿ antwortet nebenbei…</div>';
+      _tcAddRow(tab, row);
+      _tcScroll(tab);
+    },
+    btw_done: (d) => {
+      if (!d.btw_id) return;
+      const row = document.getElementById(tab.id + '-btw-' + d.btw_id);
+      if (!row) return;
+      const a = row.querySelector('.tc-btw-a');
+      if (!a) return;
+      if (d.error) { a.innerHTML = '<span class="tc-err">Fehler: ' + esc(d.error) + '</span>'; }
+      else { try { a.innerHTML = renderMarkdown(d.answer || ''); } catch (e) { a.textContent = d.answer || ''; } }
+      _tcScroll(tab);
+    },
     done: (d) => {
       // The chronological text rows already rendered the answer as it streamed.
       // Only fall back to the full done-text if NOTHING streamed (whole reply
@@ -628,6 +688,7 @@ function _tcToolArg(args) {
 
 function _tcFinishTurn(tab, live) {
   tab.streaming = false;
+  tab._paused = false;
   _tcSpinStop(tab);
   if (live) {
     if (live.spinRow && live.spinRow.parentNode) live.spinRow.parentNode.removeChild(live.spinRow);
@@ -648,6 +709,13 @@ function _tcFinishTurn(tab, live) {
   tcRenderStatus(tab);
   const ta = tab.el && tab.el.querySelector('.tc-ta');
   if (ta) ta.focus();
+  // Auto-send the next queued message as a normal turn (one at a time; each
+  // turn's finish drains the next, so a whole queue chains through).
+  if (Array.isArray(tab._queue) && tab._queue.length && !tab.streaming) {
+    const next = tab._queue.shift();
+    _tcQueueRender(tab);
+    setTimeout(() => { try { if (!tab.streaming) tcSend(tab, next); } catch (e) {} }, 60);
+  }
 }
 
 // ── Spinner (braille) ────────────────────────────────────────────────────────
@@ -679,13 +747,18 @@ function tcRenderStatus(tab) {
   let ctx = '';
   if (tab.maxContext && tab.lastApiIn) ctx = ' · ctx ' + Math.min(100, Math.round(tab.lastApiIn / tab.maxContext * 100)) + '%';
   const toolsBadge = tab.showTools ? '' : ' · tools:aus';
-  const dot = tab.streaming ? '<span class="tc-live">●</span> ' : '';
-  const cancelHint = tab.streaming ? ' · <span class="tc-cancel-hint">Esc oder /cancel zum Abbrechen</span>' : '';
+  const pausedBadge = (tab.streaming && tab._paused) ? '<span class="tc-paused">⏸ pausiert</span> ' : '';
+  const dot = tab.streaming ? (tab._paused ? '' : '<span class="tc-live">●</span> ') : '';
+  const qn = Array.isArray(tab._queue) ? tab._queue.length : 0;
+  const queueBadge = qn ? ` · <span class="tc-queue-badge">⧉ ${qn} in Warteschlange</span>` : '';
+  const cancelHint = tab.streaming
+    ? ' · <span class="tc-cancel-hint">Esc /cancel · Strg-Z pausieren · /btw · /inject</span>'
+    : '';
   // Export-as-markdown button (direct browser download) — only meaningful once
   // the chat has rows.
   const exportBtn = `<button class="tc-st-btn" title="Chatverlauf als Markdown herunterladen"
     onclick="tcExportMarkdown('${esc(tab.id)}')">⬇ .md</button>`;
-  el.innerHTML = `<span class="tc-st-info">${dot}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}${cancelHint}</span>${exportBtn}`;
+  el.innerHTML = `<span class="tc-st-info">${dot}${pausedBadge}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}${queueBadge}${cancelHint}</span>${exportBtn}`;
 }
 
 // Build a Markdown transcript of a terminal-chat from its in-DOM rows and
@@ -773,6 +846,11 @@ async function tcSlash(tab, raw) {
     case 'sync': return _tcCmdSync(tab);
     case 'suggest': return _tcSuggest(tab, true);
     case 'cancel': case 'stop': return tcCancel(tab);
+    case 'pause': return tcPause(tab);
+    case 'resume': return tcResume(tab);
+    case 'btw': return tcBtw(tab, arg);
+    case 'inject': case 'clarify': return tcInject(tab, arg);
+    case 'queue': return tcQueueCmd(tab, arg);
     default: tcPrint(tab, `Unbekannter Befehl: <b>/${esc(c)}</b> — <b>/help</b> für die Liste.`, 'tc-err');
   }
 }
@@ -789,7 +867,13 @@ function _tcHelp(tab) {
     '/sync                  — Projekt-Sync anstoßen',
     '/init                  — Projektanweisungen generieren',
     '/suggest               — nächste Eingabe vorschlagen (auch Tab)',
-    '/cancel                — laufende Antwort abbrechen',
+    '/cancel                — laufende Antwort abbrechen (auch Esc)',
+    '<b>Während eine Antwort läuft:</b>',
+    '/pause /resume         — pausieren / fortsetzen (Strg-Z / Strg-Q)',
+    '/btw &lt;frage&gt;          — Nebenfrage (separate Blase; „Was machst du gerade?“)',
+    '/inject &lt;text&gt;        — Klarstellung einfügen (Alias /clarify); nächste Runde',
+    '/queue [list|rm N|mv N M|edit N …|clear] — Warteschlange verwalten',
+    'einfacher Text während des Streamens → wird in die Warteschlange gestellt',
     '! &lt;befehl&gt;            — Shell-Befehl im Arbeitsverzeichnis ausführen',
   ].map(s => `<div class="tc-help-line">${s}</div>`).join(''), 'tc-sys');
 }
@@ -904,6 +988,94 @@ async function _tcSuggest(tab, fill) {
     const ta = tab.el.querySelector('.tc-ta');
     if (ta) { ta.value = text; _tcAutosize(ta); ta.focus(); }
   } catch (e) { /* best-effort */ }
+}
+
+// ── Turn control: pause / resume / btw / inject / queue ──────────────────────
+function tcPause(tab) {
+  if (!tab.streaming || !tab.sessionId) { tcPrint(tab, 'Nichts läuft gerade.', 'tc-sys'); return; }
+  if (tab._paused) { tcPrint(tab, 'Läuft bereits pausiert.', 'tc-sys'); return; }
+  try { API.pauseChat(tab.sessionId); } catch (e) {}
+  // The `paused` SSE event confirms + prints; optimistic flag for the shortcut.
+  tab._paused = true; tcRenderStatus(tab);
+}
+
+function tcResume(tab) {
+  if (!tab.streaming || !tab.sessionId) return;
+  try { API.resumeChat(tab.sessionId); } catch (e) {}
+  tab._paused = false; tcRenderStatus(tab);
+}
+
+function tcBtw(tab, arg) {
+  const q = (arg || '').trim();
+  if (!q) { tcPrint(tab, 'Verwendung: /btw &lt;Frage&gt; — z. B. „Was machst du gerade?“', 'tc-err'); return; }
+  if (!tab.sessionId) { tcPrint(tab, 'Noch keine Sitzung.', 'tc-err'); return; }
+  // Works best mid-stream (it reports live progress), but also answers when idle.
+  try { API.btwChat(tab.sessionId, q); }
+  catch (e) { tcPrint(tab, 'btw fehlgeschlagen.', 'tc-err'); }
+}
+
+function tcInject(tab, arg) {
+  const t = (arg || '').trim();
+  if (!t) { tcPrint(tab, 'Verwendung: /inject &lt;Text&gt; (Alias /clarify)', 'tc-err'); return; }
+  if (!tab.streaming || !tab.sessionId) {
+    tcPrint(tab, 'Einfügen geht nur, während eine Antwort läuft.', 'tc-err'); return;
+  }
+  try { API.injectChat(tab.sessionId, t); }
+  catch (e) { tcPrint(tab, 'Einfügen fehlgeschlagen.', 'tc-err'); }
+}
+
+// Queue: add / list / rm / mv / edit / clear. tab._queue = [string].
+function tcQueueAdd(tab, text) {
+  text = (text || '').trim();
+  if (!text) return;
+  if (!Array.isArray(tab._queue)) tab._queue = [];
+  tab._queue.push(text);
+  _tcQueueRender(tab);
+  tcPrint(tab, 'In Warteschlange (' + tab._queue.length + '): ' + esc(text), 'tc-queue');
+}
+
+function tcQueueCmd(tab, arg) {
+  if (!Array.isArray(tab._queue)) tab._queue = [];
+  const parts = (arg || '').trim().split(/\s+/);
+  const sub = (parts[0] || 'list').toLowerCase();
+  const q = tab._queue;
+  const listOut = () => {
+    if (!q.length) { tcPrint(tab, 'Warteschlange ist leer.', 'tc-sys'); return; }
+    tcPrint(tab, '<b>Warteschlange:</b><br>' + q.map((t, i) =>
+      (i + 1) + '. ' + esc(t)).join('<br>'), 'tc-queue');
+  };
+  if (sub === 'list' || sub === '') return listOut();
+  if (sub === 'clear') { tab._queue = []; _tcQueueRender(tab); tcPrint(tab, 'Warteschlange geleert.', 'tc-sys'); return; }
+  if (sub === 'rm' || sub === 'remove') {
+    const n = parseInt(parts[1], 10);
+    if (!n || n < 1 || n > q.length) { tcPrint(tab, 'Verwendung: /queue rm &lt;Nr&gt;', 'tc-err'); return; }
+    const [x] = q.splice(n - 1, 1); _tcQueueRender(tab);
+    tcPrint(tab, 'Entfernt: ' + esc(x), 'tc-sys'); return;
+  }
+  if (sub === 'mv' || sub === 'move') {
+    const a = parseInt(parts[1], 10), b = parseInt(parts[2], 10);
+    if (!a || !b || a < 1 || b < 1 || a > q.length || b > q.length) {
+      tcPrint(tab, 'Verwendung: /queue mv &lt;von&gt; &lt;nach&gt;', 'tc-err'); return;
+    }
+    const [x] = q.splice(a - 1, 1); q.splice(b - 1, 0, x); _tcQueueRender(tab);
+    return listOut();
+  }
+  if (sub === 'edit') {
+    const n = parseInt(parts[1], 10);
+    const newText = parts.slice(2).join(' ').trim();
+    if (!n || n < 1 || n > q.length || !newText) {
+      tcPrint(tab, 'Verwendung: /queue edit &lt;Nr&gt; &lt;neuer Text&gt;', 'tc-err'); return;
+    }
+    q[n - 1] = newText; _tcQueueRender(tab);
+    return listOut();
+  }
+  tcPrint(tab, 'Verwendung: /queue [list|rm N|mv N M|edit N …|clear]', 'tc-err');
+}
+
+// Persistent status-line reflection of the queue length (best-effort; the queue
+// itself is in-memory per tab — terminal chat is ephemeral session state).
+function _tcQueueRender(tab) {
+  tcRenderStatus(tab);
 }
 
 function tcCancel(tab) {

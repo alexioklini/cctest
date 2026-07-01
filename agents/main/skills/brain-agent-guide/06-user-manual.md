@@ -174,6 +174,36 @@ Tippen, `Enter` drücken (Shift+Enter für Zeilenumbruch) oder den
 Senden-Knopf klicken. Während das Modell antwortet, wird der Senden-Knopf
 zum Stopp-Knopf.
 
+**Eine laufende Antwort steuern**: Sie müssen eine Antwort nicht abwarten oder
+abbrechen, um weiterzuarbeiten. Während gestreamt wird, stehen vier Werkzeuge
+bereit (im normalen Chat über Knöpfe in der Eingabeleiste, im Terminal-Chat über
+Slash-Befehle und Tastenkürzel):
+
+- **Warteschlange** — Tippen Sie einfach weiter und drücken Sie `Enter`: die
+  Nachricht wird *eingereiht* (nicht als zweite Antwort gestartet) und
+  automatisch als normaler Turn gesendet, sobald die laufende Antwort fertig
+  ist. Unter der Eingabe erscheint die Warteschlange; dort können Sie Einträge
+  **bearbeiten, entfernen, umsortieren (↑/↓), sofort senden oder alle leeren**.
+  Die Warteschlange gehört zur Sitzung und übersteht ein Neuladen. Im
+  Terminal-Chat: `/queue` (bzw. `/queue rm N`, `/queue mv N M`, `/queue edit N …`,
+  `/queue clear`).
+- **Pause / Fortsetzen** — Der **Pause-Knopf** (bzw. `/pause`, Tastenkürzel
+  `Strg-Z`) hält die Antwort am nächsten Schritt an; die aktuelle Runde und ein
+  gerade laufendes Werkzeug werden noch fertig, es geht nichts verloren.
+  Fortsetzen über denselben Knopf (bzw. `/resume`, `Strg-Q`).
+- **btw-Zwischenfrage** — Der **btw-Knopf** (bzw. `/btw <Frage>`) beantwortet
+  eine Nebenfrage in einer **eigenen Blase**, ohne die laufende Antwort zu
+  stören. Sie weiß, *was der Assistent gerade tut* — Sie können also
+  „Was machst du gerade?“ oder „Wie lange dauert das noch?“ fragen und eine
+  sachliche Auskunft zum aktuellen Schritt und zur bisher verstrichenen Zeit
+  bekommen (eine Angabe zur Restdauer ist ausdrücklich eine grobe Schätzung).
+- **Klarstellung einfügen** — Schieben Sie mitten in die laufende Antwort einen
+  Hinweis nach, den das Modell im nächsten Schritt berücksichtigt (im
+  Terminal-Chat `/inject <Text>`, Alias `/clarify`). Anders als die
+  Warteschlange startet dies keinen neuen Turn, sondern ergänzt den laufenden.
+
+Im Terminal-Chat bricht `Esc` (oder `/cancel`) die Antwort weiterhin ab.
+
 **Prompt-Vorschlag (Tab)**: Nach jeder Antwort schlägt das Modell eine
 mögliche nächste Frage vor — sie erscheint als ausgegrauter Platzhaltertext
 im Eingabefeld. Mit `Tab` (oder `→` bei leerem Feld) wird der Vorschlag

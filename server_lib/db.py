@@ -512,6 +512,14 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN web_basket TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Per-session message queue: messages the user typed WHILE a turn was
+            # streaming, held to auto-send as normal turns after the current one
+            # finishes. JSON list of {id,text}. Stored per session so a reload /
+            # reconnect restores the queue. Empty string = empty queue.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN message_queue TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # Add team_id + visibility for session team-scoping
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN team_id TEXT DEFAULT ''")
@@ -1014,6 +1022,7 @@ class ChatDB:
             for _col, _decl in (("model", "TEXT DEFAULT ''"),
                                 ("tokens_in", "INTEGER DEFAULT 0"),
                                 ("tokens_out", "INTEGER DEFAULT 0"),
+                                ("cache_read_tokens", "INTEGER DEFAULT 0"),
                                 ("cost", "REAL DEFAULT 0"),
                                 ("duration_s", "REAL DEFAULT 0")):
                 try:
@@ -1466,7 +1475,8 @@ class ChatDB:
         when status flips to a terminal state."""
         allowed = ("status", "phase", "progress", "report_output_id",
                    "proposed", "coverage_note", "error",
-                   "model", "tokens_in", "tokens_out", "cost", "duration_s")
+                   "model", "tokens_in", "tokens_out", "cache_read_tokens",
+                   "cost", "duration_s")
         sets, vals = [], []
         for k in allowed:
             if k in fields:
@@ -2367,6 +2377,16 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET web_basket = ? WHERE id = ?",
                         (basket_json or '', session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_message_queue(session_id, queue_json):
+        """Persist the per-session message queue. queue_json is a JSON string
+        (list of {id,text}); '' clears it."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET message_queue = ? WHERE id = ?",
+                        (queue_json or '', session_id))
             conn.commit()
 
     @staticmethod

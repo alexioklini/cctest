@@ -941,6 +941,16 @@ textarea { resize: none; }
 .tc-tool-name { color: var(--text-200); font-weight: 600; }
 .tc-tool-arg { color: var(--text-400); }
 .tc-tool-state.ok { color: var(--git-added); }
+/* turn-control rows: btw side-answer, injected clarification, queue ack */
+.tc-btw { border-left: 2px solid #8b5cf6; padding: 4px 0 4px 9px; margin: 4px 0; }
+.tc-btw-tag { font-size: 0.82em; font-weight: 700; color: #fff; background: #8b5cf6;
+  padding: 0 5px; border-radius: 3px; letter-spacing: 0.5px; }
+.tc-btw-q { color: var(--text-200); font-weight: 600; margin-left: 4px; }
+.tc-btw-a { color: var(--text-100); margin-top: 3px; }
+.tc-inject { color: #b45309; }
+.tc-queue { color: var(--text-300); }
+.tc-paused { color: #b45309; font-weight: 600; }
+.tc-queue-badge { color: var(--accent-brand); }
 /* system / ack lines */
 .tc-sys { color: var(--text-400); }
 .tc-sys b, .tc-help-line b { color: var(--text-200); }
@@ -2551,6 +2561,90 @@ textarea { resize: none; }
 .worker-question-card .wq-actions .wq-btn-abort { color: var(--error); border-color: var(--error); }
 .worker-question-card.wq-answered { opacity: 0.7; border-color: var(--border-100); }
 .worker-question-card.wq-answered .wq-actions { display: none; }
+
+/* ── Turn-control UI (queue / pause / inject / btw) ────────────────────── */
+/* Queue panel + pending-inject chips sit inside the composer box, above input */
+.tc-panel {
+  border-bottom: 1px solid var(--border-100);
+  padding: 6px 8px; margin-bottom: 4px;
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 180px; overflow-y: auto;
+}
+.tc-pending { display: flex; flex-wrap: wrap; gap: 4px; }
+.tc-pending-chip {
+  font-size: 12px; background: #f59e0b18; color: var(--text-200);
+  border: 1px solid #f59e0b55; border-radius: 6px; padding: 2px 8px;
+}
+.tc-pending-hint { color: var(--text-400); font-size: 11px; }
+.tc-queue-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; color: var(--text-400); text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.tc-queue-clear {
+  font-size: 11px; background: none; border: none; cursor: pointer;
+  color: var(--text-400); text-decoration: underline; padding: 0;
+}
+.tc-queue-clear:hover { color: var(--error); }
+.tc-queue-list { display: flex; flex-direction: column; gap: 3px; }
+.tc-queue-item {
+  display: flex; align-items: center; gap: 6px;
+  background: var(--bg-200); border: 1px solid var(--border-100);
+  border-radius: 6px; padding: 3px 6px;
+}
+.tc-queue-text {
+  flex: 1; font-size: 13px; color: var(--text-200);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.tc-queue-actions { display: flex; gap: 2px; flex-shrink: 0; }
+.tc-qa {
+  font-size: 12px; line-height: 1; width: 22px; height: 22px;
+  border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+  background: none; color: var(--text-300);
+}
+.tc-qa:hover:not([disabled]) { background: var(--bg-300); color: var(--text-100); }
+.tc-qa[disabled] { opacity: 0.3; cursor: default; }
+.tc-qa-del:hover { color: var(--error); }
+
+/* Composer btw/pause buttons — reuse .composer-btn; active = accent */
+.composer-btn.tc-btn.tc-active { color: #0891b2; }
+
+/* Injected-note row in the message flow */
+.tc-injected-note {
+  margin: 6px 0; padding: 6px 10px; font-size: 12px;
+  color: var(--text-400); border-left: 2px solid #f59e0b;
+  background: #f59e0b0d;
+}
+.tc-injected-arrow { color: #f59e0b; font-weight: 600; }
+.tc-injected-label { color: var(--text-300); }
+.tc-injected-text { color: var(--text-200); }
+
+/* btw side-bubble in the message flow */
+.tc-btw-bubble {
+  margin: 10px 0 10px auto; max-width: 78%;
+  border: 1.5px solid #8b5cf6; border-radius: 10px;
+  background: var(--bg-100); overflow: hidden;
+}
+.tc-btw-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  background: #8b5cf615; border-bottom: 1px solid #8b5cf633;
+  font-size: 13px; color: var(--text-200);
+}
+.tc-btw-tag {
+  font-size: 9px; font-weight: 600; background: #8b5cf6; color: #fff;
+  padding: 1px 6px; border-radius: 3px; letter-spacing: 0.5px;
+}
+.tc-btw-q { font-weight: 500; }
+.tc-btw-body { padding: 10px 12px; font-size: 14px; color: var(--text-100); }
+.tc-btw-body p:first-child { margin-top: 0; }
+.tc-btw-body p:last-child { margin-bottom: 0; }
+.tc-btw-err { color: var(--error); }
+.tc-btw-spinner {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid #8b5cf655; border-top-color: #8b5cf6;
+  animation: tc-spin 0.8s linear infinite; vertical-align: -1px; margin-right: 4px;
+}
+@keyframes tc-spin { to { transform: rotate(360deg); } }
 .tool-block-header .tool-chevron { transition: transform 0.15s; font-size: 10px; margin-left: 4px; }
 .tool-block-header .tool-timing + .tool-chevron { margin-left: 0; }
 .tool-block.open .tool-chevron { transform: rotate(90deg); }
