@@ -169,6 +169,23 @@ function _tcAddRow(tab, node) {
   const wrap = _tcInputWrap(tab);
   if (wrap) log.insertBefore(node, wrap); else log.appendChild(node);
 }
+
+// Shared live-turn state. Tool cards + answer-text rows are appended in ARRIVAL
+// order (chronological) via _tcLiveInsert, so a multi-round turn renders
+// think → tool → text → tool → text instead of clustering all tools at the top.
+// `curTextRow` is the answer-text row currently being appended to; a tool_call
+// closes it (lastWasTool=true) so the next text delta starts a FRESH text row
+// after the tool card — preserving text↔tool interleaving.
+function _tcNewLive(thinkRow, spinRow) {
+  return { thinkRow, spinRow, text: '', think: '', toolById: {},
+           curTextRow: null, lastWasTool: false };
+}
+// Insert a live row chronologically — right BEFORE the trailing spinner row.
+function _tcLiveInsert(tab, live, node) {
+  const log = _tcLog(tab); if (!log) return;
+  if (live.spinRow && live.spinRow.parentNode === log) log.insertBefore(node, live.spinRow);
+  else _tcAddRow(tab, node);
+}
 // Clear all message rows but KEEP the composer (.tc-input-wrap) in place.
 function _tcClearRows(tab) {
   const log = _tcLog(tab); if (!log) return;
@@ -422,14 +439,16 @@ async function tcSend(tab, text) {
   // user echo
   tcPrint(tab, `<span class="tc-uprompt">›</span> ${esc(text)}`, 'tc-user');
 
-  // live rows for this turn
-  const log = _tcLog(tab);
+  // live rows for this turn. Only the transient think + spin rows are
+  // pre-created; tool cards and answer-text rows are appended CHRONOLOGICALLY as
+  // events arrive (see _tcCallbacks), so a multi-round turn renders
+  // think → tool → text → tool → text in real order instead of clustering all
+  // tools at the top. New rows are inserted BEFORE spinRow to keep the spinner
+  // trailing. `_tcNewLive` builds the shared live-state object.
   const thinkRow = document.createElement('div'); thinkRow.className = 'tc-row tc-think'; thinkRow.style.display = 'none';
-  const toolWrap = document.createElement('div'); toolWrap.className = 'tc-tools';
-  const textRow = document.createElement('div'); textRow.className = 'tc-row tc-asst';
   const spinRow = document.createElement('div'); spinRow.className = 'tc-row tc-spin';
-  _tcAddRow(tab, thinkRow); _tcAddRow(tab, toolWrap); _tcAddRow(tab, textRow); _tcAddRow(tab, spinRow);
-  const live = { thinkRow, toolWrap, textRow, spinRow, text: '', think: '', toolById: {} };
+  _tcAddRow(tab, thinkRow); _tcAddRow(tab, spinRow);
+  const live = _tcNewLive(thinkRow, spinRow);
   tab._live = live;
 
   // Sending is explicit intent to follow the new turn → always jump to the end.
@@ -512,8 +531,14 @@ function _tcCallbacks(tab, live) {
       const tuid = d.tool_use_id || ('t' + Object.keys(live.toolById).length);
       let row = live.toolById[tuid];
       if (!row) {
-        row = document.createElement('div'); row.className = 'tc-tool';
-        live.toolWrap.appendChild(row); live.toolById[tuid] = row;
+        // New tool → its own row, appended chronologically (after whatever text
+        // came before it). Close the current text row so a following text delta
+        // opens a fresh one AFTER this tool card (text↔tool interleaving).
+        row = document.createElement('div'); row.className = 'tc-row tc-tool';
+        _tcLiveInsert(tab, live, row);
+        live.toolById[tuid] = row;
+        live.lastWasTool = true;
+        live.curTextRow = null;
       }
       const arg = _tcToolArg(d.args);
       row.innerHTML = `<span class="tc-tool-dot">●</span> <span class="tc-tool-name">${esc(d.name || '')}</span>` +
@@ -531,7 +556,17 @@ function _tcCallbacks(tab, live) {
     text_delta: (d) => {
       live.text += d.text || '';
       _tcSpinStop(tab);            // real text flowing → drop the spinner
-      live.textRow.innerHTML = renderMarkdown(live.text);
+      // Start a fresh answer-text row if none is open yet OR a tool just
+      // interrupted → the new text lands AFTER the tool card, chronologically.
+      if (!live.curTextRow || live.lastWasTool) {
+        live.curTextRow = document.createElement('div');
+        live.curTextRow.className = 'tc-row tc-asst';
+        live.curSegText = '';
+        _tcLiveInsert(tab, live, live.curTextRow);
+        live.lastWasTool = false;
+      }
+      live.curSegText = (live.curSegText || '') + (d.text || '');
+      live.curTextRow.innerHTML = renderMarkdown(live.curSegText);
       _tcScroll(tab);
     },
     usage: (d) => {
@@ -545,7 +580,17 @@ function _tcCallbacks(tab, live) {
       tcRenderStatus(tab);
     },
     done: (d) => {
-      if (d.text) { live.text = d.text; live.textRow.innerHTML = renderMarkdown(live.text); }
+      // The chronological text rows already rendered the answer as it streamed.
+      // Only fall back to the full done-text if NOTHING streamed (whole reply
+      // arrived in `done`, e.g. a non-streaming path) — otherwise overwriting
+      // would collapse the text↔tool interleaving into one block.
+      if (d.text && !live.curTextRow) {
+        const row = document.createElement('div'); row.className = 'tc-row tc-asst';
+        row.innerHTML = renderMarkdown(d.text);
+        _tcLiveInsert(tab, live, row);
+        live.curTextRow = row;
+      }
+      live.text = d.text || live.text;
       if (d.model && (!tab.model || tab.model === 'auto')) tab._autoPicked = d.model;
       else if (d.model) tab.model = d.model;
       // Commit this turn's tokens into the running session totals (mirrors the
@@ -587,7 +632,11 @@ function _tcFinishTurn(tab, live) {
   if (live) {
     if (live.spinRow && live.spinRow.parentNode) live.spinRow.parentNode.removeChild(live.spinRow);
     if (live.thinkRow && live.thinkRow.parentNode && (!tab.showTools || !live.thinkRow.textContent)) live.thinkRow.style.display = 'none';
-    if (live.textRow && !live.text) live.textRow.parentNode && live.textRow.parentNode.removeChild(live.textRow);
+    // Drop a trailing EMPTY answer-text row (e.g. a tool-only final round left an
+    // open, contentless curTextRow).
+    if (live.curTextRow && !live.curSegText && live.curTextRow.parentNode) {
+      live.curTextRow.parentNode.removeChild(live.curTextRow);
+    }
     // record into the durable log model so a tab switch / re-render survives
     tab.log.push({ role: 'turn' });
   }
@@ -911,7 +960,7 @@ async function tcLoadTranscript(tab) {
 function _tcRenderHistMsg(tab, m) {
   const role = m.role;
   if (role === 'user') { tcPrint(tab, `<span class="tc-uprompt">›</span> ${esc(_tcMsgText(m))}`, 'tc-user'); return; }
-  if (role === 'assistant') { tcPrint(tab, renderMarkdown(_tcMsgText(m)), 'tc-asst'); return; }
+  if (role === 'assistant') { _tcRenderHistAssistant(tab, m); return; }
   if (role === 'thinking') { if (tab.showTools) tcPrint(tab, '⠿ ' + esc(_tcMsgText(m)), 'tc-think'); return; }
   if (role === 'tool_call') {
     if (!tab.showTools) return;
@@ -921,6 +970,48 @@ function _tcRenderHistMsg(tab, m) {
   }
   // tool_result / system / assistant_segment → skip or render plainly
   if (role === 'assistant_segment') { tcPrint(tab, renderMarkdown(_tcMsgText(m)), 'tc-asst'); }
+}
+
+// Render one persisted assistant turn CHRONOLOGICALLY — interleaving its tool
+// cards (metadata.tools, ordered by tool_round) with its per-round answer text
+// (metadata.text_rounds), so a reloaded transcript matches the live view
+// (round1 tools → round1 text → round2 tools → …) instead of dumping all tools
+// then the whole answer. Tools are stored ONLY in the assistant message's
+// metadata (not as separate rows), which is why the old flat render clustered
+// them. Falls back to the plain joined text when there are no tools / rounds.
+function _tcRenderHistAssistant(tab, m) {
+  const meta = m.metadata || {};
+  const tools = tab.showTools ? (meta.tools || []) : [];
+  const rounds = meta.text_rounds || [];
+  // No round split available → render the tools (if any) then the whole answer,
+  // preserving at least tool-before-text ordering.
+  if (!rounds.length) {
+    for (const t of tools) _tcPrintHistTool(tab, t);
+    const txt = _tcMsgText(m);
+    if (txt) tcPrint(tab, renderMarkdown(txt), 'tc-asst');
+    return;
+  }
+  // Group tools by round; walk rounds in order: that round's tools, then its text.
+  const byRound = {};
+  for (const t of tools) { const r = t.tool_round || 0; (byRound[r] = byRound[r] || []).push(t); }
+  const seen = new Set();
+  const roundNos = rounds.map(r => r.round).filter(n => typeof n === 'number');
+  const maxRound = Math.max(0, ...roundNos, ...Object.keys(byRound).map(Number));
+  const textByRound = {};
+  for (const r of rounds) if (typeof r.round === 'number') textByRound[r.round] = r.text || '';
+  for (let r = 0; r <= maxRound; r++) {
+    for (const t of (byRound[r] || [])) { _tcPrintHistTool(tab, t); seen.add(t); }
+    if (textByRound[r]) tcPrint(tab, renderMarkdown(textByRound[r]), 'tc-asst');
+  }
+  // Any tools without a matching round bucket (defensive) → append at the end.
+  for (const t of tools) if (!seen.has(t)) _tcPrintHistTool(tab, t);
+}
+
+function _tcPrintHistTool(tab, t) {
+  const arg = _tcToolArg(t.args);
+  const ok = t.is_error ? '' : ' <span class="tc-tool-state ok">✓</span>';
+  tcPrint(tab, `<span class="tc-tool-dot">●</span> <span class="tc-tool-name">${esc(t.name || '')}</span>` +
+               (arg ? ` <span class="tc-tool-arg">${esc(arg)}</span>` : '') + ok, 'tc-tool');
 }
 
 function _tcMsgText(m) {
@@ -933,11 +1024,9 @@ function _tcMsgText(m) {
 async function _tcAttachLive(tab) {
   const log = _tcLog(tab);
   const thinkRow = document.createElement('div'); thinkRow.className = 'tc-row tc-think'; thinkRow.style.display = 'none';
-  const toolWrap = document.createElement('div'); toolWrap.className = 'tc-tools';
-  const textRow = document.createElement('div'); textRow.className = 'tc-row tc-asst';
   const spinRow = document.createElement('div'); spinRow.className = 'tc-row tc-spin';
-  _tcAddRow(tab, thinkRow); _tcAddRow(tab, toolWrap); _tcAddRow(tab, textRow); _tcAddRow(tab, spinRow);
-  const live = { thinkRow, toolWrap, textRow, spinRow, text: '', think: '', toolById: {} };
+  _tcAddRow(tab, thinkRow); _tcAddRow(tab, spinRow);
+  const live = _tcNewLive(thinkRow, spinRow);
   tab._live = live; tab.streaming = true; _tcSpinStart(tab, 'Denkt nach'); tcRenderStatus(tab);
   try {
     const resp = await fetch(`${BASE_URL}/v1/chat/stream?session_id=${encodeURIComponent(tab.sessionId)}`, {
