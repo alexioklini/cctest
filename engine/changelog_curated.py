@@ -29,6 +29,34 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.249.0",
+        "date": "2026-07-01",
+        "title": "HTML-Berichte im Magazin-Layout",
+        "body": "Lassen Sie sich einen Bericht als HTML im edlen Magazin-Layout "
+                "erstellen — dasselbe hochwertige Design wie bei der Deep-"
+                "Recherche: warme Farbwelt, große Anfangsinitiale, elegante "
+                "Überschriften, ein mitlaufendes Inhaltsverzeichnis am Rand, "
+                "heller und dunkler Modus und druckfertig. Bitten Sie einfach um "
+                "einen „schönen HTML-Report“; das bisherige, an Word/PDF "
+                "angelehnte HTML-Format bleibt für alle anderen Fälle erhalten.",
+        "audience": "user",
+        "versions": ["9.249.0", "9.249.1"],
+    },
+    {
+        "version": "9.246.0",
+        "date": "2026-07-01",
+        "title": "Cache-Ersparnis immer im Blick",
+        "body": "Die Prompt-Cache-Nutzung wird jetzt durchgängig angezeigt — auch "
+                "wenn (noch) nichts aus dem Cache kam: in der Statusleiste, bei "
+                "jeder einzelnen Antwort und im Sitzungs-Inspektor sehen Sie die "
+                "gecachten Tokens samt Trefferquote in Prozent und der daraus "
+                "resultierenden Ersparnis in Euro. So ist auf einen Blick "
+                "erkennbar, wie stark eine Unterhaltung vom günstigeren Cache-"
+                "Tarif profitiert.",
+        "audience": "user",
+        "versions": ["9.246.0", "9.247.0", "9.247.1", "9.247.2", "9.248.0", "9.248.1", "9.248.2"],
+    },
+    {
         "version": "9.245.0",
         "date": "2026-06-30",
         "title": "Günstigere Antworten durch Prompt-Cache",
