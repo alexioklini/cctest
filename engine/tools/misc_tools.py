@@ -666,7 +666,7 @@ def tool_web_fetch(args: dict) -> str:
 
         # JS-rendered / consent-wall fallback: re-fetch through the crawl4ai
         # headless render service when the plain HTTP+markitdown result is not
-        # the real article. Two triggers (both GET, no body):
+        # the real article. Three triggers (all GET, no body):
         #   1. Thin content — markitdown yielded essentially nothing (empty
         #      shell) OR only a stub (< 600 chars). The old < 30 gate missed
         #      consent-walled pages that convert to a ~1–2 KB teaser: the model
@@ -675,10 +675,28 @@ def tool_web_fetch(args: dict) -> str:
         #   2. Consent / cookie interstitial — the final URL was redirected to a
         #      consent path (/consent/, /tcf/, cookie-wall). The page is real
         #      but gated; a headless render clicks past it / loads the article.
+        #   3. JS SHELL — the static fetch is long enough to pass gate 1 but is
+        #      almost all navigation/link chrome with little running PROSE (the
+        #      real content is JS-rendered). Measured as prose words OUTSIDE
+        #      markdown links: a genuine article is mostly prose, a shell is
+        #      mostly link-blocks. Caught chat 0948e5e6 — wetter.orf.at/wien/
+        #      returned a 2201-char shell (86 prose words, only current-conditions
+        #      district tiles, NO forecast) → "tomorrow's weather not found",
+        #      while a headless render yields the JS-loaded Prognose (8186 chars).
         _consent_wall = any(seg in (final_url or "").lower()
                             for seg in ("/consent", "/tcf/", "cookie", "/datenschutz/zustimmung"))
-        _thin = len(usable.strip()) < 600
-        if is_html and method == "GET" and not body and (_thin or _consent_wall):
+        _u = usable.strip()
+        _thin = len(_u) < 600
+        # Prose words = word tokens with markdown links stripped out. A shell
+        # (link-heavy, prose-poor) trips this even when its char length is high.
+        # Guarded to the 600–8000 char band so we don't render huge real pages
+        # that merely happen to be link-dense (they have plenty of prose too).
+        _shell = False
+        if not _thin and 600 <= len(_u) <= 8000:
+            _prose = re.sub(r"\[[^\]]*\]\([^)]*\)", "", _u)  # drop [text](url)
+            _prose_words = len(re.findall(r"[A-Za-zÄÖÜäöüßÀ-ÿ]{3,}", _prose))
+            _shell = _prose_words < 120
+        if is_html and method == "GET" and not body and (_thin or _consent_wall or _shell):
             try:
                 report_tool_progress(phase="Rendern", note="Headless-Browser (JS-Seite)")
             except Exception:
