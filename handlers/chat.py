@@ -1450,6 +1450,7 @@ def _attach_usage_meta(meta: dict, usage_totals: dict, sid: str):
     meta["tokens_in"] = usage_totals.get("tokens_in", 0)
     meta["tokens_out"] = usage_totals.get("tokens_out", 0)
     meta["last_tokens_in"] = usage_totals.get("last_tokens_in", 0)
+    meta["cache_read_tokens"] = usage_totals.get("cache_read_tokens", 0)
     if engine._cost_tracker:
         try:
             meta["cost"] = round(engine._cost_tracker.get_session_cost(sid).get("cost", 0.0), 4)
@@ -1486,7 +1487,7 @@ def build_chat_event_callback(session, live, sid):
         "partial_tools": [],
         "partial_thinking": [],
         "thinking_summary": {},
-        "usage_totals": {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0},
+        "usage_totals": {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0, "cache_read_tokens": 0},
         # True once any round's cost has been logged to the ledger (per-round, in
         # the `usage` handler). The success path checks this so it doesn't re-log
         # the aggregate (which would double-count). Cancel/error are covered too:
@@ -1664,8 +1665,10 @@ def build_chat_event_callback(session, live, sid):
         elif event_type == "usage":
             _r_in = data.get("tokens_in", 0)
             _r_out = data.get("tokens_out", 0)
+            _r_cr = data.get("cache_read_tokens", 0)  # prompt-cache HIT this round
             _usage_totals["tokens_in"] += _r_in
             _usage_totals["tokens_out"] += _r_out
+            _usage_totals["cache_read_tokens"] += _r_cr
             _usage_totals["last_tokens_in"] = _r_in
             # Attach per-round actual tokens to the matching request_payload
             _ur = data.get("tool_round")
@@ -1689,6 +1692,7 @@ def build_chat_event_callback(session, live, sid):
                     _cost_model, _r_in, _r_out,
                     session_id=sid, tool_round=(_ur or 0),
                     api_key=session.api_key,
+                    cache_read_tokens=_r_cr,
                 )
                 state["cost_logged"] = True
             except Exception as _ce:
@@ -1706,6 +1710,7 @@ def build_chat_event_callback(session, live, sid):
                 "tokens_in": _usage_totals["tokens_in"],
                 "tokens_out": _usage_totals["tokens_out"],
                 "last_tokens_in": _usage_totals["last_tokens_in"],
+                "cache_read_tokens": _usage_totals.get("cache_read_tokens", 0),
                 "cost": _live_cost,
                 "tool_round": _ur,
             })
@@ -3165,6 +3170,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 _usage_totals["tokens_out"],
                                 session_id=sid,
                                 api_key=session.api_key,
+                                cache_read_tokens=_usage_totals.get("cache_read_tokens", 0),
                             )
                         except Exception as _ce:
                             print(f"[chat] cost log failed: {_ce}")
@@ -3184,6 +3190,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
                     msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
                     msg_metadata["last_tokens_in"] = _usage_totals["last_tokens_in"]
+                    msg_metadata["cache_read_tokens"] = _usage_totals.get("cache_read_tokens", 0)
                     if _request_payloads:
                         msg_metadata["request_payloads"] = _request_payloads
                     fb_model = engine.get_request_context()._fallback_model_used
@@ -3532,6 +3539,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         "tokens_in": _usage_totals["tokens_in"],
                         "tokens_out": _usage_totals["tokens_out"],
                         "last_tokens_in": _usage_totals["last_tokens_in"],
+                        "cache_read_tokens": _usage_totals.get("cache_read_tokens", 0),
                     }
                     # Per-round answer-text split → client reconstructs the
                     # chronological text↔tool interleave on reload (display-only).
@@ -4486,7 +4494,35 @@ class ChatHandlerMixin:
             session._auto_tool_groups = None
             session._auto_route_model = ""
         auto_by_agent = (agent_cfg.get("model") == "auto" and len(session.messages) == 0)
-        if not model_override and (want_auto or auto_by_agent):
+        # FREEZE for cache-priced models: once an Auto session has been routed to a
+        # model that has prompt-cache pricing (cost_cache_read set), we pin that
+        # model AND its turn-1 tool set for the rest of the session and SKIP the
+        # classifier on every later turn. Re-routing or reshaping tools mid-session
+        # would change the warm/provider KV prefix → kill the cache hit (Mistral
+        # bills cache reads at ~0.1×). Non-cache-priced models fall through to the
+        # normal per-turn re-classification below. The freeze is recorded on turn 1
+        # (session._cache_freeze_model) after a successful route; here we honor it.
+        _frozen = getattr(session, "_cache_freeze_model", "") or ""
+        if (not model_override and want_auto and _frozen
+                and engine.model_is_cache_priced(_frozen)):
+            # Reuse the frozen pick verbatim — no classifier LLM call this turn.
+            with session.lock:
+                if session.model != _frozen:
+                    _fp = self._resolve_provider(_frozen)
+                    session.model = _frozen
+                    session.api_key = _fp["api_key"]
+                    session.base_url = _fp["base_url"]
+                    session.max_context = engine.get_model_max_context(_frozen)
+                # Frozen tool groups stay None (full stable set) — never reshape a
+                # cache-priced model's tools (model_should_optimize_tools returns
+                # False for it anyway, so this just makes the intent explicit).
+                session._auto_tool_groups = None
+                session._auto_route_model = _frozen
+            auto_route = {"model": _frozen, "reason": "cache-stable (turn-1 pick frozen)",
+                          "frozen": True}
+            # Show the (frozen) working model in the spinner, same as a fresh route.
+            live.emit("auto_route", auto_route)
+        elif not model_override and (want_auto or auto_by_agent):
             attach_mimes = [a["media_type"] for a in all_attachments]
             # ACL-scope the candidate pool to models the caller may use.
             _user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
@@ -4535,6 +4571,16 @@ class ChatHandlerMixin:
                     auto_analysis.get("tool_groups")
                     if (auto_analysis and _opt_ok) else None)
                 session._auto_route_model = auto_model or ""
+                # If this turn routed to a cache-priced model, FREEZE it: every
+                # later Auto turn reuses this model + (full, unreshaped) tool set
+                # and skips the classifier, keeping the prefix byte-stable so the
+                # provider prompt cache hits. Only set under a user-picked Auto
+                # ("want_auto") — an agent pinned to model:"auto" already routes
+                # turn-1-only, so it needs no freeze flag. Once set it sticks for
+                # the session (a later turn that would need a different capability
+                # stays on the frozen model by design — see AskUserQuestion #3).
+                if want_auto and auto_model and engine.model_is_cache_priced(auto_model):
+                    session._cache_freeze_model = auto_model
                 # Remember the composer's auto DIRECTIVE (which Smart mode) so
                 # the post-turn restore re-persists "auto-cloud"/"auto-local"
                 # rather than flattening both to legacy "auto" — a reopened

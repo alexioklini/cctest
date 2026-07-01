@@ -1074,6 +1074,12 @@ function renderAssistantMessage(msg, idx) {
     if (speed) parts.push(speed + ' tok/s');
     if (turnCost > 0) parts.push('$' + turnCost.toFixed(4));
     if (tokIn || tokOut) parts.push(`${tokIn.toLocaleString()} in / ${tokOut.toLocaleString()} out`);
+    // Prompt-cache hit tokens (billed at ~0.1× = ~90% off). Show the cached count
+    // + an explicit savings note so the discount is visible, not buried.
+    const tokCached = meta.cache_read_tokens || 0;
+    if (tokCached > 0) {
+      parts.push(`<span class="msg-cache-hit" title="Prompt-Cache-Treffer: ${tokCached.toLocaleString()} Tokens zum ~0,1×-Tarif abgerechnet (≈90% günstiger)">⚡ ${tokCached.toLocaleString()} cached</span>`);
+    }
     // Thinking level (mirrors session-inspector badges, chat.js:756–758).
     // metadata.thinking_level is set per turn; absence with no _thinking → 'none'.
     const tLvl = meta.thinking_level || (msg._thinking || meta.thinking ? 'on' : '');

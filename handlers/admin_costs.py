@@ -221,6 +221,7 @@ class AdminCostsHandlers:
         total_calls = 0
         total_in = 0
         total_out = 0
+        total_cache_read = 0
         for r in rows:
             uc = _use_case_for(r.get("purpose", ""))
             model = r.get("model", "") or "(unbekannt)"
@@ -228,22 +229,30 @@ class AdminCostsHandlers:
             calls = int(r.get("calls", 0) or 0)
             t_in = int(r.get("tokens_in", 0) or 0)
             t_out = int(r.get("tokens_out", 0) or 0)
+            # cache-HIT tokens (billed at the discounted cache_read rate) — surfaced
+            # separately so the UI can show cache hit-rate + realized savings.
+            t_cr = int(r.get("cache_read_tokens", 0) or 0)
             total_cost += cost
             total_calls += calls
             total_in += t_in
             total_out += t_out
+            total_cache_read += t_cr
             b = buckets.setdefault(uc, {"use_case": uc, "cost": 0.0, "calls": 0,
-                                        "tokens_in": 0, "tokens_out": 0, "_models": {}})
+                                        "tokens_in": 0, "tokens_out": 0,
+                                        "cache_read_tokens": 0, "_models": {}})
             b["cost"] += cost
             b["calls"] += calls
             b["tokens_in"] += t_in
             b["tokens_out"] += t_out
+            b["cache_read_tokens"] += t_cr
             m = b["_models"].setdefault(model, {"model": model, "cost": 0.0, "calls": 0,
-                                                "tokens_in": 0, "tokens_out": 0})
+                                                "tokens_in": 0, "tokens_out": 0,
+                                                "cache_read_tokens": 0})
             m["cost"] += cost
             m["calls"] += calls
             m["tokens_in"] += t_in
             m["tokens_out"] += t_out
+            m["cache_read_tokens"] += t_cr
 
         by_use_case = []
         for b in buckets.values():
@@ -264,6 +273,7 @@ class AdminCostsHandlers:
             "total_calls": total_calls,
             "total_tokens_in": total_in,
             "total_tokens_out": total_out,
+            "total_cache_read_tokens": total_cache_read,
             "agent_filter": agent,
             "user_id": target_uid,
             "by_use_case": by_use_case,

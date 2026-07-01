@@ -359,21 +359,23 @@ def _translate_anthropic_event(ev_type: str, data: dict,
 
     if ev_type == "round_end":
         # Authoritative per-round usage from the sidecar's assembled
-        # final_message. `tokens_in` aggregates the three Anthropic input
-        # counters (input + cache_creation + cache_read) so providers that
-        # report the full prompt via cache_creation (oMLX /v1/messages
-        # always sets input_tokens=0 and puts the prompt size in
-        # cache_creation_input_tokens) aren't undercounted.
+        # final_message. `tokens_in` aggregates the FULL-PRICE input counters
+        # (input + cache_creation) so providers that report the full prompt via
+        # cache_creation (oMLX /v1/messages always sets input_tokens=0 and puts
+        # the prompt size in cache_creation_input_tokens) aren't undercounted.
+        # cache_read (a genuine prompt-cache HIT, e.g. Mistral via CLIProxyAPI)
+        # is carried SEPARATELY so the cost ledger bills it at the discounted
+        # cache_read rate — NOT folded into tokens_in.
         usage = data.get("usage") or {}
         if usage:
             tokens_in = (
                 int(usage.get("input_tokens", 0) or 0)
                 + int(usage.get("cache_creation_input_tokens", 0) or 0)
-                + int(usage.get("cache_read_input_tokens", 0) or 0)
             )
             callback("usage", {
                 "tokens_in": tokens_in,
                 "tokens_out": int(usage.get("output_tokens", 0) or 0),
+                "cache_read_tokens": int(usage.get("cache_read_input_tokens", 0) or 0),
                 "tool_round": data.get("round", state.get("round_index", 0)),
             })
         return
@@ -997,9 +999,9 @@ def background_call(
     if account_cost:
         try:
             usage = (result or {}).get("usage_total") or {}
+            cr = int(usage.get("cache_read_input_tokens", 0) or 0)
             ti = (int(usage.get("input_tokens", 0) or 0)
-                  + int(usage.get("cache_creation_input_tokens", 0) or 0)
-                  + int(usage.get("cache_read_input_tokens", 0) or 0))
+                  + int(usage.get("cache_creation_input_tokens", 0) or 0))
             to = int(usage.get("output_tokens", 0) or 0)
             # Cost-ledger bucket, in priority order: explicit cost_purpose arg →
             # request context's cost_purpose (e.g. bg-tasks set 'background_task'
@@ -1011,7 +1013,8 @@ def background_call(
                              or purpose)
             engine._log_call_cost(model, ti, to, session_id=session_id,
                                   user_id=_user_id, agent_id=agent_id,
-                                  purpose=_cost_purpose, api_key=prov.get("api_key", ""))
+                                  purpose=_cost_purpose, api_key=prov.get("api_key", ""),
+                                  cache_read_tokens=cr)
         except Exception as _ce:
             print(f"[background_call] cost log failed: {_ce}", flush=True)
     return result
@@ -1101,13 +1104,14 @@ def helpdesk_call(
     # so log here. Attributed to the helpdesk session + user; tagged 'helpdesk'.
     try:
         usage = (result or {}).get("usage_total") or {}
+        cr = int(usage.get("cache_read_input_tokens", 0) or 0)
         ti = (int(usage.get("input_tokens", 0) or 0)
-              + int(usage.get("cache_creation_input_tokens", 0) or 0)
-              + int(usage.get("cache_read_input_tokens", 0) or 0))
+              + int(usage.get("cache_creation_input_tokens", 0) or 0))
         to = int(usage.get("output_tokens", 0) or 0)
         engine._log_call_cost(model, ti, to, session_id=session_id,
                               user_id=user_id or "", agent_id="main",
-                              purpose="helpdesk", api_key=prov.get("api_key", ""))
+                              purpose="helpdesk", api_key=prov.get("api_key", ""),
+                              cache_read_tokens=cr)
     except Exception as _ce:
         print(f"[helpdesk_call] cost log failed: {_ce}", flush=True)
     return result

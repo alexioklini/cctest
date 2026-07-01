@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.245.0",
+        "date": "2026-06-30",
+        "title": "Günstigere Antworten durch Prompt-Cache",
+        "body": "Wiederkehrende Anfragen werden jetzt spürbar günstiger: Sobald "
+                "ein Modell mit Cache-Tarif genutzt wird, hält Brain die Anfrage "
+                "über die ganze Unterhaltung stabil, sodass der Anbieter den "
+                "wiederholten Teil aus seinem Cache bedient — diese Tokens kosten "
+                "nur einen Bruchteil (rund ein Zehntel) frischer Eingabe-Tokens. "
+                "In der Statusleiste und bei jeder Antwort sehen Sie nun, wie "
+                "viele Tokens aus dem Cache kamen (Symbol ⚡), und die "
+                "Kostenübersicht weist die Cache-Treffer gesondert aus, damit die "
+                "Ersparnis sichtbar wird. Für Modelle ohne Cache-Tarif bleibt "
+                "alles wie bisher.",
+        "audience": "user",
+        "versions": ["9.245.0"],
+    },
+    {
         "version": "9.242.0",
         "date": "2026-06-30",
         "title": "Code-Editor: XML & JSON auf- und zuklappen",

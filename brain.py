@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.244.1"
+VERSION = "9.245.0"
 VERSION_DATE = "2026-06-30"
 CHANGELOG = [
+    ("9.245.0", "2026-06-30", "feat(cost+routing): Cache-Token-Kostendimension + Klassifikations-Freeze fuer cache-bepreiste Modelle. ANLASS (vom Nutzer): viele Provider (Mistral via CLIProxyAPI) berechnen gecachte Prompt-Tokens zu ~0,1x; Brain faltete cache_read aber in tokens_in und verrechnete sie zum vollen Eingabe-Tarif -> Ersparnis unsichtbar UND unrealisiert. Live-Probe verifiziert: Mistral liefert usage.prompt_tokens_details.cached_tokens, CLIProxyAPI uebersetzt das korrekt nach Anthropic cache_read_input_tokens (auch im STREAMING-Pfad), der Sidecar erfasst es bereits (sidecar.py:655-656); Treffer sind best-effort/intermittierend + MODELLABHAENGIG (mistral-medium ~99% gecacht, mistral-large 0%). DREI Teile. (1) KOSTEN-MESSUNG: neue Spalte cost_log.cache_read_tokens (PRAGMA-Migration, Altzeilen=0), per-Modell-Rate cost_cache_read (Default 0,1x cost_input wenn ungesetzt) in _get_cost_rate, _compute_cost(+cache_read_tokens)/CostTracker.log_call/_log_call_cost erweitert. Die VIER Kollaps-Stellen, die cache_read bisher in tokens_in summierten (sidecar_proxy round_end/background_call/helpdesk_call + brain.account_background_usage), trennen cache_read jetzt AB und reichen es separat durch; tokens_in behaelt input+cache_creation zum vollen Tarif (oMLX meldet den ganzen Prompt unter cache_creation -> darf NICHT rabattiert werden). breakdown SELECT + /v1/costs/breakdown summieren cache_read_tokens je Bucket/Modell + total_cache_read_tokens. (2) FREEZE: neuer Helfer model_is_cache_priced(model) (wahr gdw EXPLIZIT cost_cache_read>0 in der Modell-Config — NICHT der 0,1x-Abrechnungs-Default; bewusster Operator-Opt-in). Ist eine Auto-Sitzung einmal auf ein cache-bepreistes Modell geroutet, friert handlers/chat.py das Modell + den Turn-1-Toolsatz ein und UEBERSPRINGT den Klassifizierer auf allen Folge-Turns (session._cache_freeze_model) -> byte-stabiler Prefix -> Provider-Cache trifft. Nicht-cache-bepreiste Modelle: unveraendert (Re-Klassifikation jeden Auto-Turn). model_should_optimize_tools(model) gibt fuer cache-bepreiste Modelle False zurueck (nie Tools pro Turn umformen — gleiche KV-Prefix-Stabilitaet wie warm-full). (3) ANZEIGE: cache_read_tokens fliesst in das Live-usage-Event + msg_metadata + done-Event; die Status-Leiste zeigt ein '⚡ N cached'-Badge (kumuliert je Sitzung, gruen, Tooltip ~0,1x/~90% guenstiger), die Turn-Statszeile pro Anfrage ebenso. Per-Modell cost_cache_read ist der EINE Schalter fuer beides (Abrechnung + Freeze). py_compile OK, JS-Gate gruen (net-globals unveraendert 1804). KURATIERTER EINTRAG (Nutzer+Admin sichtbar). Server-Restart noetig."),
     ("9.244.1", "2026-06-30", "ux(code-mode/sql): SQL-SPALTEN im Symbol-Outline jetzt HIERARCHISCH unter ihrer Tabelle (vom Nutzer gewuenscht) statt flach als Geschwister der Tabellen. REIN FRONTEND (panels_terminal.js + main.css + .globals-count.baseline). _wdSymbolRowsHtml gruppiert Column-Symbole (Name 'TABELLE.SPALTE') nach Tabellen-Praefix: hat die Datei ein passendes Table-Symbol, werden die Spalten als aufklappbare Kinder darunter gehaengt (Caret ▸/▾, _wdTableWithCols + _wdToggleTableCols, Expand-State in _codeOutline.expandedSym unter eigenem 'tblcols|'-Key — kollidiert nicht mit dem ↗-Refs-Toggle); Spalten ohne passendes Table-Symbol (nicht aufgeloeste Aliase / schema-qualifiziert) bekommen einen synthetischen aufklappbaren Tabellen-Kopf, bleiben also gruppiert statt verwaist. Kind-Zeilen zeigen nur den SPALTENNAMEN (TABELLE-Praefix abgeschnitten; Volltext im Title/Jump), die redundante 'Spalte'-Signatur entfaellt. Neue Helfer _wdSymRow (Leaf-Zeile mit display-Override) / _wdTableWithCols / _wdToggleTableCols (+3 net-globals, Baseline 1801->1804). CSS .sym-caret/.sym-colchildren/.sym-col. Beim Filtern (Suche) gruppieren passende Spalten unter dem synthetischen Kopf, falls die Tabelle weggefiltert ist. Grouping-Logik gegen echte Projekt-Symbole verifiziert (DJ00 → DJ00.DJCODE/DJIPID als Kinder; 8 echte + 5 synthetische Tabellen-Gruppen). JS-Gate gruen. KEIN kuratierter Eintrag (UI-Verfeinerung des SQL-Symbol-Features)."),
     ("9.244.0", "2026-06-30", "feat(code-mode/sql): SQL-SPALTEN als Symbole + code_search findet SQL-Symbole. ANLASS (vom Nutzer): Frage nach 'PS00_1.PSKURZ' im SQL-Projekt → Modell sagte 'nicht im Code-Index gefunden' und wollte wieder per Datei-Suche raten. ZWEI Ursachen behoben: (1) SPALTEN fehlten im Index — der SQL-Scanner kannte nur Table/Procedure/View/CTE/LinkedServer. NEU Label 'Column': qualifizierte Refs alias.COLUMN werden via FROM/JOIN-Alias-Map zur BASISTABELLE aufgeloest (PS00_1.PSKURZ → PS00.PSKURZ; 91% der Aliase aufloesbar, sonst roher Alias). Eigene Obergrenze _SQL_COL_MAX_PER_FILE=60 (getrennt vom 80er-Cap), damit spalten-reiche Dateien Tabellen/Procs nicht verdraengen; SQL-Keyword/Schema-Rauschen (_ALIAS_NOISE) als Alias gefiltert. Live: 15233 Column-Symbole, PS00.PSKURZ 353× (aus PS00_1./PS00. gemerged). (2) ENTSCHEIDENDER Fix: tool_code_search (das AGENTEN-Tool) fragte NUR cbm's Graph ab — unsere SQL-Symbole (Spalten/Tabellen/…) liegen aber NUR in sql_analysis, nicht in cbm. Darum kam 'PSKURZ' als LEER zurueck → Modell gab auf. JETZT merged tool_code_search zusaetzlich _sql_symbol_search: query=Teilstring (case-insensitive) bzw. name_pattern=Regex ueber die SQL-Symbolnamen, cbm+SQL-Treffer kombiniert (bei cbm-Fehler SQL-Treffer allein, sql_only=True); semantic_query bleibt cbm-only; best-effort, bricht eine funktionierende cbm-Suche nie. Verifiziert: code_search query='PSKURZ' → 385 Treffer (PS00.PSKURZ …), name_pattern='PS00\\..*' → Spalten von PS00. Frontend: Outline-Glyph 'Column' ▪. per_file_state unveraendert korrekt (885 indexed). Cache mtime-gegated (394ms kalt, 4ms warm). py_compile OK, JS-Gate gruen. KEIN kuratierter Eintrag (Praezisierung bestehender Code-Index-Faehigkeit)."),
     ("9.243.0", "2026-06-30", "fix(code-mode/discipline): Code-Mode-Disziplin-Prompt geschaerft, damit das Modell die Code-Index-Werkzeuge auch fuer ANALYSEN/REPORTS nutzt, nicht nur fuers Code-Schreiben. ANLASS (vom Nutzer gemeldet): im SQL-Projekt 'sql und showcase' erzeugte mistral-small einen 'Deep-Dive aller sp_*.sql'-HTML-Report, ohne code_search/code_query EINMAL zu nutzen — es shellte mit `find`, las eine Datei als Sample und schrieb einen eigenen Python-Regex-Parser (26 Runden), fand dabei nur 21 von ~120 Prozeduren im Ordner (UNVOLLSTAENDIG). Die Tools WAREN verfuegbar (code_graph-Gruppe via apply_domain_context undefer'd) — reines Prompt-/schwaches-Modell-Problem (mistral-small befolgt Tool-Disziplin unzuverlaessig, vgl. v9.28.0/Brainy). FIX: Punkt 1 von _CODE_MODE_EXTENSION_DEFAULT (a) benennt die Werkzeuge konkret (code_search/code_query/code_snippet/code_trace), (b) stellt klar, dass die Index-Pflicht fuer JEDE Arbeit am Code gilt — analysieren, dokumentieren, Report erstellen, inventarisieren, Strukturfragen — NICHT nur Schreiben/Aendern, (c) sagt explizit, dass die Tools `find`/`grep`/Datei-Listen + eigene Parser-Skripte ERSETZEN (vollstaendiger: der Index kennt ALLE Treffer; schneller), Shell/Direktlesen erst als Fallback. BEWUSST sprachunabhaengig + OHNE konkretes SQL-Beispiel (vom Nutzer praezisiert — ein SQL-Beispiel wuerde beim naechsten R-/Python-Projekt nicht generalisieren). Da config.json['code_mode_extension'] eine 1:1-Kopie des ALTEN Defaults war (beim ersten Speichern materialisiert), wurde auch der Live-Override auf den neuen Text gesetzt (913→1490 Zeichen), sonst greift die Default-Aenderung nicht. KV-prefix-sicher (Text pro Projekt byte-stabil, working_dir bereits im Cache-Key). py_compile OK. Server-Restart noetig. KEIN kuratierter Eintrag (Prompt-Tuning, kein neues Control)."),
@@ -11325,6 +11326,13 @@ def model_should_optimize_tools(model: str) -> bool:
         return False  # unknown -> conservative: don't reshape
     try:
         cfg = (_models_config or {}).get(model) or {}
+        # Cache-priced models get prompt-cache reuse from a byte-stable prefix
+        # (provider prefix cache, e.g. Mistral cache_read at 0.1×). Reshaping the
+        # tool set per turn changes the prefix → kills the cache hit. So a
+        # cache-priced model is NEVER tool-optimized, exactly like a warm-full
+        # local model — same KV-prefix-stability argument, different cache layer.
+        if model_is_cache_priced(model):
+            return False
         if cfg.get("warmup"):
             # Only a FULL-mode prime builds a tool-bearing KV prefix to protect.
             # A minimal-mode prime is weights-only → safe to reshape per turn.
@@ -11333,6 +11341,27 @@ def model_should_optimize_tools(model: str) -> bool:
         # No warmup: cloud OR a local model that never warms → safe to optimize.
         return True
     except Exception:
+        return False
+
+
+def model_is_cache_priced(model: str) -> bool:
+    """True iff this model has prompt-cache pricing configured — the SINGLE
+    trigger for the turn-1-freeze routing behavior.
+
+    A model is cache-priced iff its config carries an EXPLICIT non-zero
+    `cost_cache_read` (per 1M tokens). This is read straight from config, NOT via
+    the 0.1×-input billing default in `_get_cost_rate` — the default exists so
+    cost math is always sane, but the FREEZE decision must be an explicit operator
+    opt-in per model. Set `cost_cache_read` on a model ⇒ that model (a) bills cache
+    hits at that rate, (b) freezes Auto model+tool selection to turn 1 so its
+    prefix stays byte-stable and the provider cache actually hits. Leave it 0/unset
+    ⇒ current behavior (re-classify every Auto turn, no cache assumption)."""
+    if not model or model == "auto":
+        return False
+    try:
+        ccr = ((_models_config or {}).get(model) or {}).get("cost_cache_read")
+        return ccr is not None and float(ccr) > 0
+    except (TypeError, ValueError):
         return False
 
 
@@ -13929,7 +13958,8 @@ def _get_agent_limits(agent_id: str | None = None) -> dict:
 def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
                    session_id: str | None = None, tool_round: int = 0,
                    api_key: str = "", user_id: str | None = None,
-                   agent_id: str | None = None, purpose: str | None = None):
+                   agent_id: str | None = None, purpose: str | None = None,
+                   cache_read_tokens: int = 0):
     """Log an LLM call to the cost tracker (if initialized).
 
     `user_id`/`agent_id` default to the request context (interactive path), but
@@ -13939,7 +13969,11 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
 
     `purpose` is the use-case tag for the per-use-case cost breakdown (chat,
     chat_summary, scheduled, translate, ...). None → read the request context's
-    `cost_purpose`; pass explicitly when the local call site knows its purpose."""
+    `cost_purpose`; pass explicitly when the local call site knows its purpose.
+
+    `cache_read_tokens` is the prompt-cache HIT portion (billed at the discounted
+    cache_read rate, stored in its own column). It is NOT part of `tokens_in` —
+    callers split it out from the provider's cache_read_input_tokens. 0 = no hit."""
     if not _cost_tracker:
         return
     # NOTE: we deliberately do NOT skip zero-usage calls. A row is written even
@@ -13971,11 +14005,12 @@ def _log_call_cost(model: str, tokens_in: int, tokens_out: int,
     try:
         _cost_tracker.log_call(agent_id, session_id, model, provider,
                                tokens_in, tokens_out, tool_round, user_id=user_id,
-                               key_name=key_name, purpose=purpose or "")
+                               key_name=key_name, purpose=purpose or "",
+                               cache_read_tokens=cache_read_tokens)
         # Record in rate limiter too
         if _rate_limiter:
-            cost = _compute_cost(model, tokens_in, tokens_out)
-            _rate_limiter.record_usage(agent_id, tokens_in + tokens_out, cost)
+            cost = _compute_cost(model, tokens_in, tokens_out, cache_read_tokens)
+            _rate_limiter.record_usage(agent_id, tokens_in + tokens_out + (cache_read_tokens or 0), cost)
     except Exception as e:
         logging.warning(f"Cost logging error: {e}")
 
@@ -13990,18 +14025,23 @@ def account_background_usage(result: dict, model: str, *, session_id: str,
     `log=False` is COMPUTE-ONLY — returns the numbers WITHOUT a ledger write, for
     callers (Studio cards, Deep Research footer, audio totals) that already get a
     central row from `background_call` and only need the figures for display. Cost
-    is derived via the same _compute_cost rates the chat ledger uses. Includes
-    cache tokens in the input count so the figure matches the central row."""
+    is derived via the same _compute_cost rates the chat ledger uses.
+
+    cache_read is split OUT and billed at the discounted cache_read rate; tokens_in
+    keeps fresh input + cache_creation at full price (oMLX reports the whole prompt
+    under cache_creation, so that must NOT be discounted)."""
     usage = (result or {}).get("usage_total") or {}
+    cr = int(usage.get("cache_read_input_tokens", 0) or 0)
     ti = (int(usage.get("input_tokens", 0) or 0)
-          + int(usage.get("cache_creation_input_tokens", 0) or 0)
-          + int(usage.get("cache_read_input_tokens", 0) or 0))
+          + int(usage.get("cache_creation_input_tokens", 0) or 0))
     to = int(usage.get("output_tokens", 0) or 0)
     if log:
         _log_call_cost(model, ti, to, session_id=session_id,
-                       user_id=user_id, agent_id=agent_id, purpose=purpose)
+                       user_id=user_id, agent_id=agent_id, purpose=purpose,
+                       cache_read_tokens=cr)
     return {"model": model, "tokens_in": ti, "tokens_out": to,
-            "cost": round(_compute_cost(model, ti, to), 6)}
+            "cache_read_tokens": cr,
+            "cost": round(_compute_cost(model, ti, to, cr), 6)}
 
 
 # System-prompt assembly + first-turn preambles moved to engine/prompt_build.py

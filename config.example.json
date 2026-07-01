@@ -289,7 +289,8 @@
             "ts": "2026-06-03T15:08:00Z"
           }
         }
-      }
+      },
+      "cost_cache_read": 0.15
     },
     "gemini-3.1-flash-lite-preview": {
       "enabled": false,
@@ -339,8 +340,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "cost_input": 0.1,
-      "cost_output": 0.3,
+      "cost_input": 0.1275,
+      "cost_output": 0.51,
       "benchmark": {
         "coding": {
           "measured": {
@@ -415,7 +416,8 @@
           }
         }
       },
-      "raw_formats": []
+      "raw_formats": [],
+      "cost_cache_read": 0.01275
     },
     "gemini-2.5-flash": {
       "enabled": false,

@@ -234,6 +234,22 @@ cluster) is classifier-gated. When the flag is OFF, or the model is
 warmup-protected, `_auto_tool_groups` is left `None` (no classifier cost, static
 deferral stands). No-signal → static deferral stands (fail-open).
 
+**Cache-priced models freeze routing to turn 1.** A model with an explicit
+non-zero `cost_cache_read` (per-model config) is "cache-priced" —
+`brain.model_is_cache_priced(model)` is the single trigger. The point: such a
+provider (e.g. Mistral via CLIProxyAPI) serves a byte-identical prompt prefix from
+its own cache at ~0.1×, so the prefix must stay stable across turns. Two effects:
+(1) `model_should_optimize_tools` returns **False** for a cache-priced model (never
+reshape its tool set per turn — same KV-prefix-stability reason as full-mode warmup).
+(2) Once an Auto session routes to a cache-priced model, `handlers/chat.py` records
+`session._cache_freeze_model` and on every later Auto turn **reuses that model + the
+turn-1 tool set and SKIPS the classifier entirely** (no per-turn classifier LLM
+call) — the spinner shows `frozen: true`. The freeze sticks for the session even if
+a later turn's content would route elsewhere (by design — maximizes cache hits).
+Non-cache-priced models are unchanged: re-classify every Auto turn. The realized
+saving is visible — `cache_read_tokens` flows into the live usage event + turn
+metadata, rendered as a `⚡ N cached` badge in the status bar and per-turn stats.
+
 **Per-turn classification modal**: a turn with a classification persists its
 decision on the assistant turn's `metadata.auto_route` (analysis + chosen model +
 reason + `tool_gating` from `brain.classifier_gating_decision`), surviving reload

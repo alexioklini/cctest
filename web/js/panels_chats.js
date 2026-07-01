@@ -143,12 +143,13 @@ function updateStatusBar() {
   if (wwEl) wwEl.style.display = chat._warmingUp ? '' : 'none';
 
   // Compute token totals from message metadata
-  let totalIn = 0, totalOut = 0, lastSpeed = null;
+  let totalIn = 0, totalOut = 0, totalCached = 0, lastSpeed = null;
   const msgs = chat.messages || [];
   for (const m of msgs) {
     if (m.role === 'assistant' && m.metadata) {
       totalIn += m.metadata.tokens_in || 0;
       totalOut += m.metadata.tokens_out || 0;
+      totalCached += m.metadata.cache_read_tokens || 0;
       const _mTot = (m.metadata.tokens_in || 0) + (m.metadata.tokens_out || 0);
       if (m.metadata.duration > 0 && _mTot > 0) {
         lastSpeed = Math.round(_mTot / m.metadata.duration);  // total in+out / wall-clock
@@ -166,11 +167,32 @@ function updateStatusBar() {
   if (chat.streaming) {
     if (chat._liveTurnTokensIn) totalIn += chat._liveTurnTokensIn;
     if (chat._liveTurnTokensOut) totalOut += chat._liveTurnTokensOut;
+    if (chat._liveTurnCached) totalCached += chat._liveTurnCached;
   }
 
   document.getElementById('status-tokens-in').textContent = totalIn ? totalIn.toLocaleString() : '0';
   document.getElementById('status-tokens-out').textContent = totalOut ? totalOut.toLocaleString() : '0';
   document.getElementById('status-speed').textContent = lastSpeed ? `${lastSpeed} tok/s` : '-';
+
+  // Prompt-cache hit indicator (created on demand, like the warmup badge so we
+  // don't touch index.html). Shows cumulative cached-token count for the session
+  // — these bill at the discounted cache_read rate (~0.1×). Hidden when 0.
+  let cachedEl = document.getElementById('status-cached');
+  if (!cachedEl) {
+    cachedEl = document.createElement('div');
+    cachedEl.id = 'status-cached';
+    cachedEl.className = 'status-item';
+    const _sb = document.getElementById('status-bar');
+    if (_sb) _sb.appendChild(cachedEl);
+  }
+  if (cachedEl) {
+    if (totalCached > 0) {
+      cachedEl.style.display = '';
+      cachedEl.innerHTML = `<span style="font-size:11px;color:#10b981;font-weight:500" title="Prompt-Cache-Treffer in dieser Sitzung: ${totalCached.toLocaleString()} Tokens zum ~0,1×-Tarif (≈90% günstiger als frische Eingabe-Tokens)">⚡ ${totalCached.toLocaleString()} cached</span>`;
+    } else {
+      cachedEl.style.display = 'none';
+    }
+  }
 
   // Context fill bar — use last API tokens_in as real context usage
   const wrap = document.getElementById('status-context-wrap');

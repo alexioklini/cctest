@@ -163,28 +163,53 @@ _cost_rates: dict[str, dict[str, float]] = {
 
 def _get_cost_rate(model: str) -> dict[str, float]:
     """Look up cost rate for a model. Checks _models_config first, then defaults.
-    Config values of 0 are treated as unset — auto-discovery writes 0 for all models."""
+    Config values of 0 are treated as unset — auto-discovery writes 0 for all models.
+
+    Returns `{input, output, cache_read}` per 1M tokens. `cache_read` is the price
+    of a prompt-cache HIT (provider-served prefix). It's distinct from `input`
+    because cached tokens bill at a steep discount (Mistral/Anthropic ≈ 0.1×). The
+    per-model `cost_cache_read` field wins when set/non-zero; otherwise cache_read
+    defaults to 0.1× the input rate (the common provider discount) so a freshly
+    auto-discovered model still prices cache hits sensibly. A `cost_cache_read` of
+    0 (or unset) ALSO means "this model is not cache-priced" for the routing-freeze
+    decision (see brain.model_is_cache_priced) — there the explicit config field is
+    read directly, NOT this derived default."""
     import brain as _brain
     cfg = _brain._models_config.get(model, {})
     ci = cfg.get("cost_input")
     co = cfg.get("cost_output")
+    ccr = cfg.get("cost_cache_read")
     if ci is not None and co is not None and (float(ci) > 0 or float(co) > 0):
-        return {"input": float(ci), "output": float(co)}
+        inp = float(ci)
+        return {"input": inp, "output": float(co),
+                "cache_read": float(ccr) if (ccr is not None and float(ccr) > 0) else inp * 0.1}
     # Check built-in rates
     if model in _cost_rates:
-        return _cost_rates[model]
+        r = _cost_rates[model]
+        return {"input": r["input"], "output": r["output"],
+                "cache_read": r.get("cache_read", r["input"] * 0.1)}
     # Try prefix matching (e.g. "claude-opus-4-6" matches "claude-opus-4-6-20260101")
     ml = model.lower()
     for pattern, rate in _cost_rates.items():
         if ml.startswith(pattern.lower()) or pattern.lower() in ml:
-            return rate
-    return {"input": 0.0, "output": 0.0}
+            return {"input": rate["input"], "output": rate["output"],
+                    "cache_read": rate.get("cache_read", rate["input"] * 0.1)}
+    return {"input": 0.0, "output": 0.0, "cache_read": 0.0}
 
 
-def _compute_cost(model: str, tokens_in: int, tokens_out: int) -> float:
-    """Compute estimated cost in USD."""
+def _compute_cost(model: str, tokens_in: int, tokens_out: int,
+                  cache_read_tokens: int = 0) -> float:
+    """Compute estimated cost in USD.
+
+    `tokens_in` is the FULL-PRICE input count (fresh prompt + cache_creation —
+    oMLX reports the whole prompt under cache_creation, so that stays full-price).
+    `cache_read_tokens` is the cache-HIT portion, billed at the discounted
+    `cache_read` rate. Callers pass cache_read SEPARATELY from tokens_in (it is
+    NOT a subset of tokens_in) — see the collapse-site fix in sidecar_proxy."""
     rate = _get_cost_rate(model)
-    return (tokens_in * rate["input"] + tokens_out * rate["output"]) / 1_000_000
+    return (tokens_in * rate["input"]
+            + tokens_out * rate["output"]
+            + cache_read_tokens * rate["cache_read"]) / 1_000_000
 
 
 class CostTracker:
@@ -207,6 +232,7 @@ class CostTracker:
                     key_name TEXT NOT NULL DEFAULT '',
                     tokens_in INTEGER NOT NULL DEFAULT 0,
                     tokens_out INTEGER NOT NULL DEFAULT 0,
+                    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                     cost_usd REAL NOT NULL DEFAULT 0.0,
                     tool_round INTEGER DEFAULT 0,
                     purpose TEXT NOT NULL DEFAULT '',
@@ -225,6 +251,12 @@ class CostTracker:
                 # '' → surfaced as "unknown (legacy)" in the breakdown.
                 if "purpose" not in cols:
                     conn.execute("ALTER TABLE cost_log ADD COLUMN purpose TEXT NOT NULL DEFAULT ''")
+                # `cache_read_tokens` = prompt-cache HIT tokens (billed at the
+                # discounted cache_read rate, NOT folded into tokens_in). Pre-
+                # migration rows keep 0 → counted as no cache activity, which is
+                # correct for the period before cache-aware costing existed.
+                if "cache_read_tokens" not in cols:
+                    conn.execute("ALTER TABLE cost_log ADD COLUMN cache_read_tokens INTEGER NOT NULL DEFAULT 0")
             except sqlite3.Error as e:
                 logging.warning(f"cost_log migration: {e}")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cost_agent ON cost_log(agent)")
@@ -237,15 +269,21 @@ class CostTracker:
 
     def log_call(self, agent: str, session_id: str, model: str, provider: str,
                  tokens_in: int, tokens_out: int, tool_round: int = 0,
-                 user_id: str = "", key_name: str = "", purpose: str = ""):
-        """Log an LLM call with cost estimation."""
-        cost = _compute_cost(model, tokens_in, tokens_out)
+                 user_id: str = "", key_name: str = "", purpose: str = "",
+                 cache_read_tokens: int = 0):
+        """Log an LLM call with cost estimation.
+
+        `cache_read_tokens` is the prompt-cache HIT portion (billed at the
+        discounted cache_read rate). It is passed SEPARATELY from `tokens_in`
+        (full-price input) and stored in its own column so the breakdown can show
+        cache hit-rate + realized savings. 0 when the provider reported no hit."""
+        cost = _compute_cost(model, tokens_in, tokens_out, cache_read_tokens)
         try:
             with _cost_conn() as conn:
                 conn.execute("""
-                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round, purpose)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", tokens_in, tokens_out, cost, tool_round, purpose or ""))
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cache_read_tokens, cost_usd, tool_round, purpose)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", tokens_in, tokens_out, int(cache_read_tokens or 0), cost, tool_round, purpose or ""))
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"Cost tracking error: {e}")
@@ -393,8 +431,8 @@ class CostTracker:
                   user_id: str | None = None, agent: str | None = None) -> list[dict]:
         """Per-(purpose, model) aggregate for the [since, until) window. Either
         bound may be None (None since = all-time start; None until = now).
-        Rows: {purpose, model, calls, tokens_in, tokens_out, cost}. The caller
-        maps raw `purpose` → display use-case buckets and nests by model."""
+        Rows: {purpose, model, calls, tokens_in, tokens_out, cache_read_tokens, cost}.
+        The caller maps raw `purpose` → display use-case buckets and nests by model."""
         try:
             with _cost_conn() as conn:
                 conn.row_factory = sqlite3.Row
@@ -417,6 +455,7 @@ class CostTracker:
                            COUNT(*) as calls,
                            COALESCE(SUM(tokens_in), 0) as tokens_in,
                            COALESCE(SUM(tokens_out), 0) as tokens_out,
+                           COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
                            COALESCE(SUM(cost_usd), 0.0) as cost
                     FROM cost_log {where}
                     GROUP BY purpose, model

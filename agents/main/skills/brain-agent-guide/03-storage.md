@@ -170,7 +170,11 @@ Columns include: `id` (= run_id, synthetic session = `sched-<id>`),
 ```
 id INTEGER PK, agent TEXT, session_id TEXT, user_id TEXT,
 model TEXT, provider TEXT, key_name TEXT,
-tokens_in INTEGER, tokens_out INTEGER, cost_usd REAL,
+tokens_in INTEGER, tokens_out INTEGER,
+cache_read_tokens INTEGER,  -- prompt-cache HIT tokens, billed at the discounted
+                            -- cost_cache_read rate (~0.1× input). SPLIT OUT of
+                            -- tokens_in (NOT a subset); pre-v9.245.0 rows = 0.
+cost_usd REAL,
 tool_round INTEGER,
 purpose TEXT,        -- use-case tag — EVERY LLM call writes one (chat|
                      -- chat_summary|next_prompt|scheduled|background_task|
@@ -188,7 +192,12 @@ Empty `user_id` = pre-quota legacy rows. Empty `purpose` = pre-v9.89.0 legacy
 rows (the column is additive; one row per LLM round). OCR rows stash pages and
 TTS rows stash chars in `tokens_in` with an explicit `cost_usd` (char/page-billed,
 not token-billed). The `/v1/costs/breakdown` endpoint groups by `(purpose, model)`
-and collapses `purpose` into display use-case buckets.
+and collapses `purpose` into display use-case buckets; it also sums
+`cache_read_tokens` per bucket/model + a `total_cache_read_tokens`. Rates come from
+per-model `cost_input`/`cost_output`/`cost_cache_read` (USD per 1M tokens);
+`cost_cache_read` defaults to `0.1 × cost_input` when unset. A NON-ZERO
+`cost_cache_read` ALSO marks a model as "cache-priced" — `brain.model_is_cache_priced`
+reads that explicit field to freeze Auto routing to turn 1 (see 05-internals).
 
 ### auth.db → users
 ```
