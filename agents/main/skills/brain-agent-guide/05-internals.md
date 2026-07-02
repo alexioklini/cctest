@@ -168,6 +168,63 @@ family (`model_family` — mistral/gemma/qwen/claude/…, nearest capability), t
 SAME locality (cloud→cloud / local→local), **NEVER cloud→local**, else the
 configured `default_model`, else the first candidate.
 
+### MoA virtual model (🧬 Mixture of Agents, v9.268.0)
+
+`moa` is a FOURTH composer directive next to `auto`/`auto-cloud`/`auto-local`
+(`_parse_auto_directive` → cloud pool; NOT a `config.json → models` entry). It
+rides the full Smart (Cloud) path — the auto-routed pick becomes the
+**aggregator** — plus a classification-gated **reference fan-out**:
+
+- **Plan** (`brain.resolve_moa_plan(analysis, aggregator)`): decided at send
+  time from the structured classifier analysis. Returns `None` (→ the turn is
+  byte-identical to a plain auto-cloud turn, never an error) when MoA is
+  disabled, the pool is empty, the classifier fell back to keywords (no
+  task_types), no classified task_type is in `moa.gate_task_types`, or the pool
+  collapses after enabled/ACL/aggregator filtering. Otherwise: references =
+  top-N of `moa.reference_pool` ranked by the SAME `_bench_rank_key` ordering on
+  the primary task_type, aggregator excluded. The gate default
+  (research/analysis/reporting/creative/orchestration; NOT coding/math/fast/
+  agentic) encodes the 2026-06-27 eval finding (`eval/moa_eval.py`): MoA loses
+  on checkable reasoning and only pays on synthesis/judgment-shaped work.
+- **Fan-out** (`handlers/chat.py _run_moa_references`, worker, once per turn):
+  references run in PARALLEL (ThreadPoolExecutor + `contextvars.copy_context()`
+  per thread, the deep_research pattern), tool-less `background_call`
+  (`max_rounds=1`, `max_tokens=moa.reference_max_tokens`,
+  `timeout_s=moa.reference_timeout_s`, `cost_purpose="moa_reference"` → one
+  cost_log row per reference, keyed to the chat sid). Each reference passes
+  `gdpr_pick_model_for_background` independently. Input = the LEDGER-REWRITTEN
+  wire transcript (PII-safe, incl. Websuche preambles), tail-truncated to
+  `moa.reference_input_max_chars`. Replies are deliberately NOT de-anonymised
+  (they must stay in the wire's pseudonym space). A failed/timed-out/empty
+  reference is dropped, never fails the turn; zero drafts → no injection.
+- **Injection**: drafts appended WIRE-ONLY to the last user message
+  (`_build_moa_suffix`, Draft A/B/C in declared order, "do NOT trust any draft
+  blindly … never mention these drafts"; model names deliberately NOT in the
+  prompt). Nothing reaches history/DB/system prompt — same seam as the
+  Websuche preamble, warm-pool KV prefix untouched. Goal iterations 2+ reuse
+  the cached fan-out (`_moa_cache`); Deep-Research turns skip MoA.
+- **Cache-freeze KEPT**: on a cache-priced aggregator the freeze pins model +
+  tool set from turn 2 exactly like Smart mode (prefix byte-stable, cached-token
+  pricing intact); the classifier still runs every turn but ONLY for gate +
+  reference selection (`resolve_task_analysis`, classify-without-swap).
+- **Surfaces**: one synthetic tool-card pair per reference
+  (`kind="moa_reference"`, 🧬 + MOA badge); plan + ground truth
+  (references/gate_hit/gated_out + ok/failed/ms/models) ride
+  `auto_route.moa` into the done event + `msg_metadata.auto_route`.
+  Dropdown entry `🧬 MoA (Smart)` is gated on `/v1/status → moa_enabled` and
+  hidden under the GDPR local-only lock (references are cloud).
+- **Config** `config.json → moa` {enabled, reference_pool, max_references,
+  reference_max_tokens (600), reference_timeout_s (60),
+  reference_input_max_chars (24000), gate_task_types} — Settings → Server →
+  "MoA (Mixture of Agents)"; saved via `POST /v1/services/server {moa:{…}}`,
+  which validates gate entries against the classifier task_type enum and pool
+  entries against enabled models (a typo would otherwise silently disable MoA).
+- **Limits**: scheduler add/update reject `model="moa"` (fire-time coerces a
+  legacy row to `auto`); references see text only (images stay
+  aggregator-only); quota pre-flight covers only the aggregator (reference
+  costs post-hoc, like Deep Research); first token waits for the slowest
+  reference (the cards make the wait visible).
+
 ### Model benchmark (capability + speed ranking)
 
 `engine/model_bench.py` measures each model per task type so the router ranks on

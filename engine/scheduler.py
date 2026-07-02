@@ -297,6 +297,12 @@ class Scheduler:
         next_run = self._calc_next_run(schedule)
         if next_run is None:
             return {"error": f"Invalid schedule format: {schedule}"}
+        # MoA is an interactive-chat directive (reference fan-out lives in the
+        # chat worker) — a scheduled task can't run it. Reject loudly instead
+        # of silently degrading.
+        if (model or "").strip() == "moa":
+            return {"error": "MoA ist in geplanten Aufgaben nicht verfügbar — "
+                             "verwenden Sie 'auto' oder ein konkretes Modell."}
         if working_dir:
             working_dir = os.path.expanduser(working_dir)
             if not os.path.isdir(working_dir):
@@ -610,6 +616,9 @@ class Scheduler:
             # `working_dir` means "clear back to default" — translate to SQL NULL.
             if v is None:
                 continue
+            if k == "model" and str(v).strip() == "moa":
+                return {"error": "MoA ist in geplanten Aufgaben nicht verfügbar — "
+                                 "verwenden Sie 'auto' oder ein konkretes Modell."}
             if k in ("model", "working_dir") and v == "":
                 updates[k] = None
             elif k == "attachments":
@@ -1010,6 +1019,11 @@ class Scheduler:
 
         # Use delegation infrastructure
         target = _brain.AgentConfig(agent_id)
+
+        # Defense-in-depth: a legacy row that somehow stored the MoA directive
+        # (add/update reject it) degrades to plain auto at fire time.
+        if model == "moa":
+            model = "auto"
 
         if not model:
             model = target.preferred_model or _brain._delegate_fallback_model or "claude-opus-4-5-20251101"

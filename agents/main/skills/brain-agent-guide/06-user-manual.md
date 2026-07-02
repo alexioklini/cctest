@@ -287,6 +287,26 @@ nur lokale Modelle). Der Verfasser zeigt weiter „✨ Smart (…)"; welches Mod
 gerade arbeitet, steht in der Status-Zeile am Anfang der laufenden Antwort
 (siehe unten) und im Tooltip.
 
+**🧬 MoA (Smart)** (Mixture of Agents, v9.268.0): erscheint in der Liste, wenn
+ein Admin MoA aktiviert und einen Referenz-Pool gepflegt hat (Einstellungen →
+Server → „MoA (Mixture of Agents)"). Verhält sich wie Smart (Cloud) — plus:
+bei geeigneten Aufgabentypen (standardmäßig Recherche, Analyse, Berichte,
+Kreatives, Orchestrierung) entwerfen mehrere Referenzmodelle **parallel und
+ohne Tools** je einen Antwort-Vorschlag; das automatisch gewählte Smart-Modell
+prüft die Entwürfe, gleicht Widersprüche ab und formuliert die finale Antwort
+mit vollem Werkzeugzugriff. Jeder Entwurf erscheint live als eigene
+🧬-Karte im Chat (Modell, Größe, Dauer; Fehler einzelner Referenzen brechen
+die Anfrage nie ab). Bei Aufgaben, wo mehrere Meinungen nichts bringen
+(z. B. Programmierung, Mathematik, schnelle Kurzanfragen), wird der Fan-out
+automatisch übersprungen — die Anfrage läuft dann exakt wie Smart (Cloud),
+ohne Zusatzkosten. Wissenswert: Jeder Entwurf ist ein eigener
+kostenpflichtiger Modell-Aufruf (im Kosten-Popover als „moa_reference"
+ausgewiesen); die Antwort startet erst, wenn alle Entwürfe da sind (oder ihr
+Timeout abläuft); Bild-Anhänge sieht nur das antwortende Modell, nicht die
+Referenzen; MoA benötigt den LLM-/Hybrid-Klassifikator und ist unter der
+DSGVO-Sperre ausgeblendet (Referenzen sind Cloud-Modelle). In geplanten
+Aufgaben ist MoA nicht verfügbar.
+
 **Klassifikations-Inspektor (Lupe am Turn-Ende)**: Lief für eine Anfrage der
 LLM-Classifier (Einstellungen → Server → Auto-Routing = LLM/Hybrid), erscheint
 unter der Antwort eine kleine Lupe. Ein Klick öffnet ein Fenster mit der
@@ -1350,6 +1370,13 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   zurück — eine Anfrage hängt nie daran. Diese Einstellung steuert nur die
   **Modellwahl**; die **Werkzeug-Optimierung** ist davon getrennt und wird pro
   Agent geschaltet (siehe Agent-Einstellungen → Token-Optimierung).
+  Direkt darunter: **MoA (Mixture of Agents)** (9.268.0) — schaltet das
+  „🧬 MoA (Smart)"-Modell im Verfasser frei und konfiguriert es:
+  Referenz-Pool (welche Cloud-Modelle Entwürfe liefern dürfen), Aufgabentypen
+  mit Fan-out (das Klassifikator-Gate; Tippfehler sind ausgeschlossen — die
+  Auswahl ist eine Checkbox-Liste über das Klassifikator-Vokabular), max.
+  Referenzen (1–5), max. Tokens je Entwurf und Timeout je Referenz. Leerer
+  Pool oder deaktiviert = der 🧬-Eintrag verschwindet aus dem Verfasser.
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost).

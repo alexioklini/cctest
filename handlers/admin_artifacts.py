@@ -519,6 +519,10 @@ class AdminArtifactsHandlers:
                 "attachment_image_model": server_config.get("attachment_image_model", ""),
                 "chat_summary_model": server_config.get("chat_summary_model", ""),
                 "auto_route_classifier_mode": (server_config.get("auto_route", {}) or {}).get("classifier_mode", "keywords"),
+                # Effective MoA config (code defaults overlaid with saved values)
+                # + the classifier task_type vocabulary the gate editor offers.
+                "moa": {**engine.get_moa_config(),
+                        "task_type_vocab": list(engine._TASK_TYPES)},
                 "gdpr_scanner": {
                     "enabled": bool(server_config.get("gdpr_scanner", {}).get("enabled", True)),
                     "server_log": bool(server_config.get("gdpr_scanner", {}).get("server_log", True)),

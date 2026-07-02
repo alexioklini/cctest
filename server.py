@@ -2516,6 +2516,8 @@ class BrainAgentHandler(
             "scheduler_tasks": len(engine._scheduler.list_all()) if engine._scheduler else 0,
             "changelog": [{"version": v, "date": d, "changes": c} for v, d, c in engine.CHANGELOG],
             "disabled_commands": server_config.get("disabled_commands", []),
+            # Gates the composer's 🧬 MoA dropdown entry (enabled + non-empty pool).
+            "moa_enabled": engine.moa_enabled(),
         })
 
     def _handle_changelog_curated(self):
@@ -3633,6 +3635,7 @@ def main():
     server_config["deep_research_model"] = file_config.get("deep_research_model", "") or ""
     server_config["wiki_gate_model"] = file_config.get("wiki_gate_model", "") or ""
     server_config["auto_route"] = file_config.get("auto_route", {}) or {}
+    server_config["moa"] = file_config.get("moa", {}) or {}
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}
     server_config["classification"] = file_config.get("classification", {}) or {}
     server_config["classification_scanner"] = file_config.get("classification_scanner", {}) or {}

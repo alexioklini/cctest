@@ -834,6 +834,74 @@ class AdminConfigHandlers:
                 return
             result["gdpr_scanner"] = gs
 
+        # --- MoA (Mixture of Agents) virtual model ---
+        # The composer's 🧬 MoA directive: reference pool + gate. Validation is
+        # strict where a silent typo would disable the feature unnoticed:
+        # gate_task_types entries MUST be classifier vocabulary, pool entries
+        # MUST be known+enabled models.
+        if "moa" in body:
+            moa_in = body["moa"]
+            if not isinstance(moa_in, dict):
+                self._send_json({"error": "moa must be an object"}, 400)
+                return
+            mo = server_config.setdefault("moa", {})
+            if "enabled" in moa_in:
+                mo["enabled"] = bool(moa_in["enabled"])
+            if "reference_pool" in moa_in:
+                pool_in = moa_in["reference_pool"] or []
+                if not isinstance(pool_in, list):
+                    self._send_json({"error": "moa.reference_pool must be a list"}, 400)
+                    return
+                cleaned = []
+                for mid in pool_in:
+                    if not isinstance(mid, str) or not mid.strip():
+                        continue
+                    mid = mid.strip()
+                    mcfg = (engine._models_config or {}).get(mid) or {}
+                    if not mcfg.get("enabled"):
+                        self._send_json({"error": f"moa.reference_pool: unknown or disabled model '{mid}'"}, 400)
+                        return
+                    if mid not in cleaned:
+                        cleaned.append(mid)
+                mo["reference_pool"] = cleaned
+            if "gate_task_types" in moa_in:
+                gate_in = moa_in["gate_task_types"] or []
+                if not isinstance(gate_in, list):
+                    self._send_json({"error": "moa.gate_task_types must be a list"}, 400)
+                    return
+                valid_tt = set(engine._TASK_TYPES)
+                out_gate = []
+                for tt in gate_in:
+                    if tt not in valid_tt:
+                        self._send_json({"error": f"moa.gate_task_types: unknown task_type '{tt}' "
+                                                  f"(valid: {', '.join(sorted(valid_tt))})"}, 400)
+                        return
+                    if tt not in out_gate:
+                        out_gate.append(tt)
+                mo["gate_task_types"] = out_gate
+            for key, lo, hi in (("max_references", 1, 5),
+                                ("reference_max_tokens", 64, 4000),
+                                ("reference_timeout_s", 5, 600),
+                                ("reference_input_max_chars", 1000, 200000)):
+                if key in moa_in:
+                    try:
+                        mo[key] = min(max(int(moa_in[key]), lo), hi)
+                    except (TypeError, ValueError):
+                        self._send_json({"error": f"moa.{key} must be an integer"}, 400)
+                        return
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config["moa"] = mo
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["moa"] = engine.get_moa_config()
+
         if not result:
             self._send_json({"error": "No valid fields to update"}, 400)
             return

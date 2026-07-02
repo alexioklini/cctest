@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.267.0"
+VERSION = "9.268.0"
 VERSION_DATE = "2026-07-02"
 CHANGELOG = [
+    ("9.268.0", "2026-07-02", "feat(MoA virtuelles Modell): 🧬 MoA (Smart) — Mixture of Agents als vierte Composer-Direktive neben auto/auto-cloud/auto-local, KLASSIFIKATIONSGESTEUERT (die Wiederaufnahme der am 2026-06-27 abgelehnten Hermes-MoA-Evaluation, deren Kernproblem — 6× Tokens auch dort, wo MoA nachweislich verliert — das Gate jetzt behebt). MECHANIK: Referenzmodelle entwerfen pro Turn PARALLEL (tool-los, background_call, max_rounds=1) je einen Antwort-Entwurf über die PII-bereinigte Wire-History; der per Auto-Route gewählte AGGREGATOR (= das Modell, das Smart Cloud ohnehin nähme) führt den normalen Tool-Turn mit den Drafts als privatem Wire-Only-Kontext aus. Die Prompt-Klassifikation entscheidet pro Nachricht, OB der Fan-out läuft (gate_task_types — Default research/analysis/reporting/creative/orchestration; coding/math/fast/agentic übersprungen per Eval-Befund eval/moa_eval.py: auf prüfbarem Reasoning VERLIERT MoA) und WELCHE Referenzen aus dem konfigurierten Pool (Ranking = bestehender _bench_rank_key auf dem primären task_type, Aggregator ausgeschlossen). NEU: (1) brain.py resolve_moa_plan/get_moa_config/moa_enabled (+_MOA_DEFAULTS; Plan=None bei disabled/Pool leer/Keyword-Fallback/Gate-Miss/Pool-Kollaps → Turn ist byte-identisch zu auto-cloud, NIE ein Fehler). (2) config.json → moa {enabled, reference_pool, max_references, reference_max_tokens=600, reference_timeout_s=60, reference_input_max_chars=24000, gate_task_types}; Save-Branch in admin_config._handle_server_config validiert gate_task_types STRIKT gegen das Klassifikator-Enum (_TASK_TYPES) und den Pool gegen enabled models (ein Tippfehler würde MoA sonst still deaktivieren); /v1/services exponiert den effektiven Blob + task_type_vocab; /v1/status → moa_enabled gated den Dropdown-Eintrag. (3) handlers/chat.py: _parse_auto_directive kennt 'moa' (→cloud); Fresh-Route-Branch baut session._moa_plan aus auto_analysis+auto_model; der CACHE-FREEZE BLEIBT ERHALTEN (Aggregator+Tool-Set ab Turn 2 gepinnt → Prefix byte-stabil, Cached-Token-Rabatt greift wie im Smart-Modus) — im Honor-Branch läuft der Klassifikator trotzdem (resolve_task_analysis, classify-ohne-Swap wie der Concrete-Model-Zweig) NUR für Gate+Referenzwahl; _composer_auto_model dreiwertig (moa/auto-local/auto-cloud, auch im Honor-Branch nachgeführt). (4) Worker: _run_moa_references (ThreadPoolExecutor + contextvars.copy_context() pro Referenz — das deep_research-Muster; je Referenz gdpr_pick_model_for_background → background_call cost_purpose='moa_reference' session_id=sid → eine cost_log-Zeile pro Entwurf; Fehler/Timeout/leer = Referenz gedroppt, Turn läuft weiter; Drafts in deklarierter Reihenfolge; Antworten bewusst NICHT de-anonymisiert — sie müssen im selben Pseudonym-Raum bleiben wie die Wire-History, sonst sähe ein Cloud-Aggregator echte Werte); Transcript = _flatten_wire_transcript über die LEDGER-REWRITTEN Wire (inkl. Websuche-Preambles), tail-truncated; Injektion via _append_to_wire_user (_build_moa_suffix — Draft A/B/C, 'do NOT trust any draft blindly … never mention these drafts', adaptiert aus eval/moa_eval.py _AGG_SYSTEM; Modellnamen bewusst NICHT im Prompt) — wire-only, nichts erreicht History/DB/System-Prompt; Goal-Iterationen 2+ reusen den Fan-out (_moa_cache, _goal_web_cache-Muster); Deep-Research-Turns überspringen ihn; auto_route['moa'] trägt Plan (references/gate_hit/gated_out) + Ground-Truth (ok/failed/ms/models) in msg_metadata + done-Event. (5) Fortschritt: ein synthetisches Tool-Card-Paar je Referenz (kind='moa_reference', _emit_synthetic_tool_event — persistiert, nie auf der Wire); chat_tools.js rendert 🧬 + MOA-Badge + Modell/Zeichen/Dauer bzw. Fehler. (6) Frontend: isAutoModel + modelShortName/modelDescription kennen 'moa'; nav.js Dropdown-Eintrag '🧬 MoA (Smart)' im selben !localOnly-Gate wie Smart (Cloud) UND nur bei serverInfo.moa_enabled; Settings→Server neue Sektion 'MoA (Mixture of Agents)' (enabled, Pool-Checkboxen cloud-only, Gate-Checkboxen übers Enum, max_references/reference_max_tokens/reference_timeout_s, saveMoaConfig — spiegelt moa_enabled live auf state.serverInfo). (7) Scheduler: add/update lehnen model='moa' mit klarer Meldung ab; Fire-Time koerziert Legacy-Rows auf 'auto'; Background-Delivery/Handover-Pfade lösen die moa-Direktive wie auto-cloud auf. Grenzen (dokumentiert): Referenzen sehen nur Text (Bilder bleiben Aggregator-only); Quota-Pre-flight prüft nur den Aggregator (Referenzkosten wie Deep Research post-hoc); erster Token wartet auf den langsamsten Draft (Cards machen das sichtbar). js_gate GRÜN (net-globals 1834→1835, +1 saveMoaConfig, Baseline im selben Commit; Smoke 5/5); py_compile brain/server/chat/admin_config/admin_artifacts/scheduler OK. Skill 01/02(-)/05/06 + SKILL.md 1.110.0 im selben Commit. Server-Restart nötig. KURATIERTER Eintrag."),
     ("9.267.0", "2026-07-02", "feat(goal mode): Ziel-Prüfungs-Card im Aktivität-Tab zeigt jetzt Judge-Begründung + Fortsetzungs-Anweisung. Der goal_verdict-SSE trug reasoning schon immer, der Client verwarf es (ChatTurnControl.goalVerdict nahm nur status/iteration); handlers/chat.py emittiert im active-Zweig zusätzlich instruction=_gv['continue_instruction']. chat_send.js reicht beide durch, chat_turncontrol.js speichert sie auf dem goal_judge-Eintrag, panels_background.js _tcActivityCard rendert sie als Card-Body ('Begründung: …' + 'Anweisung für die nächste Iteration: …', .act-tc-text ist pre-wrap → mehrzeilig). Gilt für alle Verdicts (fulfilled/capped/judge_error zeigen ihre Begründung bzw. den Fehlertext ebenfalls); instruction nur bei verdict=active. Keine neuen Globals, kein Schema-/DB-Touch."),
     ("9.266.0", "2026-07-02", "feat(xlsx toolset v4): Streaming-Writer für 100k+-Zeilen, Formatierungs-Vergleich, Undo im Edit-Grid. (1) WRITE-ONLY-STREAMING (engine/tools/xlsx_tools.py): render_spec löst Tabellen-Daten jetzt VORAB auf; sobald ein Blatt WRITE_ONLY_ROWS=100k überschreitet, schreibt _render_spec_write_only das GANZE Workbook im openpyxl write_only-Modus (konstanter Speicher — das reguläre Zellmodell hält jedes Zellobjekt, bei 500k Zeilen GBs). Erhalten bleiben: gestylter Header (WriteOnlyCell mit kit-Font/Fill/Align), Freeze A2, Spaltenbreiten (vor dem ersten append gesetzt, Sample 200 Zeilen), Summen-=SUM-Zeile, report_tool_progress alle 50k Zeilen; entfallen (im Result als mode:'streaming'+note vermerkt): banded rows, per-Zelle-Number-Formats, Charts, Conditional, Validation. master_detail/pivot können nicht streamen — gemischt mit einem Riesen-Blatt gibt es einen Fehler mit Fix-Hinweis (eigene Datei oder per source.sql aggregieren). Create-Sourcen dürfen jetzt bis CREATE_MAX_SOURCE_ROWS=750k laden (_build_sqlite bekam max_rows-Param; Query-Anzeige bleibt bei 200k). _render_table_sheet nimmt vor-aufgelöste Daten (kein Doppel-Resolve). (2) COMPARE='FORMATS' (xlsx_diff): _format_signature baut eine kompakte, lesbare Format-Signatur je Zelle (number_format · fett/kursiv/unterstrichen · schrift:RGB · füllung:RGB; Default-Schwarz/Weiß unterdrückt); _sig_matrices liest die volle Signatur-Matrix per read_only-Pass; _fmt_rows_for_grid richtet sie über grid.row_nums (absolute Zeilen) + 1:1-Spalten auf die Wert-Grids aus. _diff_grids bekam fmt_a/fmt_b-Overlay: Zeilen-Matching bleibt auf dem WERT-Key (rows_a jetzt key→(index,row) für die A-seitige Signatur-Zuordnung), verglichen werden die Signaturen — eine umgefärbte/fett gemachte Zelle mit identischem Wert wird gefunden; funktioniert keyed+positional und mit out='diff.xlsx' (alte Signatur im Zell-Kommentar). Auf result:-Handles wie formulas abgelehnt. (3) UNDO IM EDIT-GRID (_xlsxGridMount): jeder gespeicherte Zellen-Edit pusht {sheetIdx, ri, ci, old} auf st.undoStack; neuer '↩ Rückgängig (N)'-Button in der Grid-Leiste (nur wenn editierbar; disabled bei leerem Stack) schreibt den alten Wert über denselben /v1/files/xlsx-cell-Pfad zurück (gemeinsames saveCell-Helper für Edit+Undo, aktualisiert grid.mtime/tab.mtime), poppt den Stack, wechselt zur betroffenen Tabelle und toastet. Stack lebt pro Grid-Ansicht (Tab-Wechsel im Panel = neuer Mount = leerer Stack — bewusst; die Datei selbst ist die Wahrheit). Tests: test_xlsx_tools 55 (Streaming-Mode-Switch via temporär gesenktem Threshold: mode:'streaming', Header-Bold, Freeze, =SUM-Zeile, max_row korrekt; huge+pivot→Fehler; Format-Diff: identische Werte → values-Diff 0, formats-Diff 1 mit 'fett'+'füllung:FFFF00' im Report); js_gate GRÜN (keine neuen Globals — saveCell/undo leben in _xlsxGridMount). Schemas: compare-Beschreibung + Streaming-Hinweis in xlsx_create ⟶ Warmup-Re-Prime einmalig. Skill 02/06 + SKILL.md 1.108.0 im selben Commit. Server-Restart nötig. KURATIERTER Eintrag."),
     ("9.265.0", "2026-07-02", "feat(xlsx UI): VBA-Viewer im Bottom-Panel-Grid + Zellen-Editieren jetzt auch im rechten Panel (Dateien-Tab). (1) VBA-VIEWER: engine/doc_convert.list_vba_modules(path) NEU — strukturierter Zwilling von _extract_vba ([{name, code}] via oletools VBA_Parser; _extract_vba selbst UNBERÜHRT — sein Markdown ist Mining-byte-stabil); neuer GET /v1/files/xlsm-vba?path= (handlers/admin_artifacts.py + server.py-Dispatch, xlsm/xls/xlsb/docm/pptm, _validate_file_path-gated) liefert die Module; _xlsxGridMount rendert sie als ⚙-Reiter neben den Sheet-Tabs — Syntax-Highlighting (hljs vbscript), READ-ONLY + 'Als .bas exportieren'-Button (Client-Blob-Download). BEWUSST kein Speichern: vbaProject.bin lässt sich ohne Excel nicht sicher editieren (MS-OVBA-Kompression + kompilierter P-Code + Offset-Verzeichnis; openpyxl kann nur keep_vba, der LibreOffice-Roundtrip verstümmelt VBA) — ehrlicher Hinweis in der Ansicht statt Schein-Save. Makros werden NIE ausgeführt (reine Quellcode-Ansicht, wie read_documents bestehender VBA-Anhang). Geladen im Bottom-Panel-xlsm-Tab UND in der Artefakt-Panel-Grid-Vorschau. (2) RIGHT-PANEL-EDIT: renderArtifactXlsxGrid mountet jetzt mit editable:true — Doppelklick-Zellen-Edit im Dateien-Tab des rechten Panels (gleicher POST /v1/files/xlsx-cell + 409-mtime-Konfliktcheck wie im Bottom-Panel; Artefakte sind Agent-OUTPUTS auf Disk, nur die neueste Version zeigt das Grid). Anhänge-Fullview bleibt bewusst read-only (Attachments sind Modell-INPUTS — stille Edits würden ändern, was der Agent liest). Tests: list_vba_modules graceful-[] auf makrofreier/invalider Datei (78 gesamt grün); js_gate GRÜN (keine neuen Globals — alles in _xlsxGridMount). Skill 01/02/06 + SKILL.md 1.107.0 im selben Commit. Server-Restart nötig (Endpoint). KURATIERTER Eintrag."),
@@ -11965,6 +11966,94 @@ def resolve_auto_model_for_task(agent_config: dict, message: str,
     # Only hand back analysis with actionable richer fields (LLM source).
     rich = analysis if (analysis and analysis.get("source") == "llm") else None
     return resolved, detected, rich
+
+
+# ── MoA (Mixture of Agents) virtual model ────────────────────────────────────
+# The composer's "🧬 MoA (Smart)" directive: reference models draft in parallel
+# (tool-less, on the conversation text), then the auto-routed model runs the
+# normal agentic turn with the drafts injected wire-only as private context.
+# THIS module only decides the PLAN (fan out at all? which references?) from
+# the classifier's structured analysis; the fan-out itself + the injection run
+# in handlers/chat.py. The aggregator is NOT chosen here — it is simply the
+# model auto-route picked for the task.
+
+_MOA_DEFAULTS: dict = {
+    "enabled": False,
+    "reference_pool": [],           # model ids allowed as reference drafters
+    "max_references": 3,
+    "reference_max_tokens": 600,    # cap per draft (concise advice > essay)
+    "reference_timeout_s": 60,      # a hung reference must not stall the turn
+    "reference_input_max_chars": 24000,  # tail-truncate the transcript refs see
+    # task_types where the 2026-06-27 eval (eval/moa_eval.py) showed a fan-out
+    # can pay off (synthesis/judgment-shaped work). coding/math/fast/agentic
+    # stay OUT: on checkable reasoning MoA measurably LOSES (a bad draft can
+    # derail a model that was right), on fast it is pure cost.
+    "gate_task_types": ["research", "analysis", "reporting", "creative",
+                        "orchestration"],
+}
+
+
+def get_moa_config() -> dict:
+    """Effective `moa` config: code defaults overlaid with config.json → moa.
+    Only known keys are honored so a stray config key can't leak into the plan."""
+    cfg = dict(_MOA_DEFAULTS)
+    try:
+        saved = _server_config().get("moa") or {}
+    except Exception:
+        saved = {}
+    cfg.update({k: v for k, v in saved.items() if k in _MOA_DEFAULTS and v is not None})
+    return cfg
+
+
+def moa_enabled() -> bool:
+    """True when the MoA directive is usable at all (enabled + non-empty pool).
+    Gates the composer dropdown entry and the send-handler branch."""
+    cfg = get_moa_config()
+    return bool(cfg.get("enabled")) and bool(cfg.get("reference_pool"))
+
+
+def resolve_moa_plan(analysis: dict | None, aggregator: str,
+                     *, allowed_models: set[str] | None = None) -> dict | None:
+    """Decide the per-turn MoA fan-out from the classifier's structured analysis.
+
+    Returns None (= no fan-out; the turn degrades to a plain auto-route turn)
+    when: MoA disabled / pool empty / no LLM analysis (keyword fallback has no
+    task_types — fail-safe, not fail-loud) / no classified task_type is in the
+    configured gate set / the pool collapses after enabled+ACL+aggregator
+    filtering. Otherwise returns
+      {references: [ids best-first], gate_hit, task_types, complexity}
+    with references ranked by the SAME `_bench_rank_key` ordering auto-route
+    uses (capable→cloud→fast→cheap on the primary task_type), aggregator
+    excluded so a model never advises itself.
+    """
+    cfg = get_moa_config()
+    if not (cfg.get("enabled") and cfg.get("reference_pool")):
+        return None
+    if not analysis or analysis.get("source") != "llm":
+        return None
+    task_types = [t for t in (analysis.get("task_types") or []) if t]
+    gate = set(cfg.get("gate_task_types") or [])
+    hits = [t for t in task_types if t in gate]
+    if not hits:
+        return None
+    pool_cfg = [m for m in cfg.get("reference_pool") or [] if isinstance(m, str)]
+    enabled = set(get_enabled_models())
+    pool = [m for m in dict.fromkeys(pool_cfg)  # de-dup, keep order
+            if m in enabled and m != aggregator
+            and (not allowed_models or m in allowed_models)]
+    if not pool:
+        return None
+    complexity = analysis.get("complexity")
+    floor = _complexity_floor(complexity)
+    bench_task = task_types[0]  # primary task type, most-important-first
+    pool.sort(key=lambda m: _bench_rank_key(m, bench_task, floor, complexity))
+    try:
+        n = int(cfg.get("max_references") or 3)
+    except (TypeError, ValueError):
+        n = 3
+    n = max(1, min(n, 5))
+    return {"references": pool[:n], "gate_hit": hits[0],
+            "task_types": task_types, "complexity": complexity}
 
 
 def get_model_info(model: str) -> dict:

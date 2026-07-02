@@ -230,6 +230,7 @@ function modelShortName(modelId, withProvider = true) {
   if (!modelId) return '';
   if (modelId === 'auto-cloud' || modelId === 'auto') return '✨ Smart (Cloud)';  // 'auto' = legacy alias
   if (modelId === 'auto-local') return '✨ Smart (Lokal)';
+  if (modelId === 'moa') return '🧬 MoA (Smart)';
   const cfg = state.modelsConfig?.models?.[modelId];
   let name = '';
   // Check display_name first (user-configurable), then shortname
@@ -264,18 +265,20 @@ function modelShortName(modelId, withProvider = true) {
 
 // User-editable description for a model — shown as tooltip in dropdowns.
 // Falls back to provider-qualified short name when empty.
-// True for any of the auto-routing directives: the two Smart modes plus the
-// legacy 'auto' alias (pre-split / agent.json model:"auto"). Behavioral gates
-// (spinner, warmup-skip, "keep composer on Smart") key off this, not a bare
-// === 'auto', so both Cloud/Lokal modes are handled uniformly.
+// True for any of the auto-routing directives: the two Smart modes, the
+// legacy 'auto' alias (pre-split / agent.json model:"auto"), and 'moa'
+// (Smart routing + reference fan-out). Behavioral gates (spinner,
+// warmup-skip, "keep composer on Smart") key off this, not a bare
+// === 'auto', so all directive modes are handled uniformly.
 function isAutoModel(modelId) {
-  return modelId === 'auto' || modelId === 'auto-cloud' || modelId === 'auto-local';
+  return modelId === 'auto' || modelId === 'auto-cloud' || modelId === 'auto-local' || modelId === 'moa';
 }
 
 function modelDescription(modelId) {
   if (!modelId) return '';
   if (modelId === 'auto-local') return 'Wählt für jede Nachricht automatisch das am besten passende LOKALE Modell';
   if (modelId === 'auto-cloud' || modelId === 'auto') return 'Wählt für jede Nachricht automatisch das am besten passende CLOUD-Modell';
+  if (modelId === 'moa') return 'Mixture of Agents: bei geeigneten Aufgabentypen entwerfen mehrere Modelle parallel, das Smart-Modell führt die Entwürfe zur Antwort zusammen';
   const cfg = state.modelsConfig?.models?.[modelId];
   const desc = (cfg?.description || '').trim();
   if (desc) return desc;

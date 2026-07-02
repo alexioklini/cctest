@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.268.0",
+        "date": "2026-07-02",
+        "title": "Neues Modell: 🧬 MoA (Smart)",
+        "body": "In der Modellauswahl gibt es jetzt „🧬 MoA (Smart)“ (Mixture of "
+                "Agents): Bei geeigneten Aufgaben — etwa Recherchen, Analysen oder "
+                "Berichten — entwerfen mehrere Modelle gleichzeitig je einen "
+                "Antwort-Vorschlag, und das automatisch gewählte Smart-Modell "
+                "prüft die Entwürfe, gleicht Widersprüche ab und formuliert daraus "
+                "die finale Antwort. Den Fortschritt der Entwürfe sehen Sie live "
+                "als Karten im Chat. Bei Aufgaben, wo mehrere Meinungen nichts "
+                "bringen (z. B. Programmierung oder Mathematik), läuft die Anfrage "
+                "automatisch als normale Smart-Anfrage — ohne Zusatzkosten. "
+                "Administratoren legen unter Einstellungen → Server fest, welche "
+                "Modelle Entwürfe liefern dürfen und bei welchen Aufgabentypen "
+                "sich der Mehraufwand lohnt.",
+        "audience": "user",
+        "versions": ["9.268.0"],
+    },
+    {
         "version": "9.267.0",
         "date": "2026-07-02",
         "title": "Ziel-Prüfung erklärt ihre Entscheidung",

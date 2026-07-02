@@ -691,7 +691,15 @@ Once a feedback row exists, user and admin exchange short one-line messages
 - `GET /v1/services/log?name=&lines=` — tail a service log
 - `POST /v1/services/telegram` / `/services/server` — start/stop/restart.
   `/services/server` also persists `config.default_model` (the
-  Settings → Server → Standardmodell dropdown; 9.21.4).
+  Settings → Server → Standardmodell dropdown; 9.21.4), plus
+  `chat_summary_model`, `classifier_model`, `auto_route_classifier_mode`,
+  `gdpr_scanner{…}` and (9.268.0) `moa{enabled, reference_pool,
+  gate_task_types, max_references, reference_max_tokens, reference_timeout_s}`
+  — the MoA virtual model. `gate_task_types` is validated against the
+  classifier task_type enum, `reference_pool` against known+enabled models
+  (400 on typos). `GET /v1/services → server.moa` returns the effective blob
+  incl. `task_type_vocab`; `GET /v1/status → moa_enabled` gates the composer's
+  🧬 entry.
 - `POST /v1/restart` — restart Brain (graceful)
 - `GET /v1/warmup/status` / `POST /v1/warmup/trigger`
 - `GET /v1/sidecar/status` / `POST /v1/sidecar/restart`

@@ -743,6 +743,7 @@ function renderSyntheticGdprCall(msg, idx) {
     anonymise_read: 'Tool-Ausgabe anonymisiert',
     deanonymise_text: 'Antwort wiederhergestellt',
     deanonymise_file: 'Datei wiederhergestellt',
+    moa_reference: 'MoA-Referenz',
   };
   const title = titleMap[kind] || kind;
 
@@ -768,6 +769,14 @@ function renderSyntheticGdprCall(msg, idx) {
     summary = `${n} Token wiederhergestellt`;
   } else if (kind === 'deanonymise_file') {
     summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' wiederhergestellt';
+  } else if (kind === 'moa_reference') {
+    // Dispatch args carry the planned model; the done result carries the model
+    // that actually ran (GDPR may have swapped it) + the draft size.
+    const mdl = result.model || msg.args?.model || '';
+    const mName = mdl ? modelShortName(mdl, false) : 'Modell';
+    if (status === 'pending') summary = `${mName} entwirft …`;
+    else if (status === 'error') summary = `${mName}: ${String(result.error || 'fehlgeschlagen').slice(0, 120)}`;
+    else summary = `${mName} · ${result.chars ?? 0} Zeichen`;
   }
 
   // Status icon: green check / spinner / red x.
@@ -783,10 +792,16 @@ function renderSyntheticGdprCall(msg, idx) {
   const ms = done?.duration_ms ?? 0;
   const timing = ms ? `<span class="tool-timing">${(ms / 1000).toFixed(1)}s</span>` : '';
 
-  // Shield icon as a per-row marker so users can recognise these at a glance.
-  const shieldBadge = '<span class="tool-badge-synthetic" title="Serverseitige Datenschutz-Operation" '
-    + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
-    + 'background:rgba(4,120,87,.12);color:#047857;letter-spacing:.02em;">DATENSCHUTZ</span>';
+  // Per-row marker so users can recognise these at a glance: shield for the
+  // GDPR kinds, DNA for MoA reference drafts.
+  const isMoa = kind === 'moa_reference';
+  const shieldBadge = isMoa
+    ? ('<span class="tool-badge-synthetic" title="Mixture of Agents — Referenz-Entwurf" '
+      + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
+      + 'background:rgba(79,70,229,.12);color:#4f46e5;letter-spacing:.02em;">MOA</span>')
+    : ('<span class="tool-badge-synthetic" title="Serverseitige Datenschutz-Operation" '
+      + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
+      + 'background:rgba(4,120,87,.12);color:#047857;letter-spacing:.02em;">DATENSCHUTZ</span>');
 
   // Title line ONLY — the per-finding detail table (Bereich/Treffer/Kategorien/
   // Mapping-ID) was dropped at the user's request: the summary already says what
@@ -796,7 +811,7 @@ function renderSyntheticGdprCall(msg, idx) {
     <div class="tool-block tool-block-synthetic tool-block-static${done ? ' has-result' : ''}">
       <div class="tool-block-header">
         ${iconHtml}
-        <span class="tool-name">🛡️ ${esc(title)}${summary ? ': ' + esc(summary) : ''}</span>
+        <span class="tool-name">${isMoa ? '🧬' : '🛡️'} ${esc(title)}${summary ? ': ' + esc(summary) : ''}</span>
         ${shieldBadge}
         ${timing}
       </div>

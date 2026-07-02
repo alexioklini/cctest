@@ -53,11 +53,15 @@ def _parse_auto_directive(model: str | None) -> tuple[bool, str | None]:
       - "auto"       → (True, "cloud")  — LEGACY: pre-split single Auto, and any
                        agent still pinned to model="auto"; treated as cloud so
                        stored sessions / agent.json keep working unchanged.
+      - "moa"        → (True, "cloud")  — MoA (Mixture of Agents): routes like
+                       Smart (Cloud) — the auto pick becomes the AGGREGATOR —
+                       plus a classification-gated reference fan-out decided in
+                       the send handler (want_moa) and run by the worker.
     Anything else → (False, None) (a concrete model pick).
     """
     if model == "auto-local":
         return True, "local"
-    if model in ("auto-cloud", "auto"):
+    if model in ("auto-cloud", "auto", "moa"):
         return True, "cloud"
     return False, None
 
@@ -272,6 +276,163 @@ def _append_to_wire_user(messages, suffix):
     return wire
 
 
+_MOA_REF_SYSTEM = (
+    "You are one of several AI models independently drafting a candidate answer "
+    "to the user's latest request (the last USER entry in the conversation "
+    "below). You have no tools. Draft the best direct answer you can: complete, "
+    "correct, concise. Do not mention this setup or address the other models."
+)
+
+
+def _flatten_wire_transcript(wire_messages, max_chars):
+    """Flatten the wire history (role + text content only) into one transcript
+    string for the tool-less MoA reference models, TAIL-truncated to max_chars
+    (the latest turns — including the request to draft for — matter most)."""
+    parts = []
+    for m in wire_messages or []:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = m.get("content")
+        if isinstance(content, list):
+            content = "\n".join(b.get("text", "") for b in content
+                                if isinstance(b, dict) and b.get("type") == "text")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        parts.append(f"{'USER' if role == 'user' else 'ASSISTANT'}: {content.strip()}")
+    text = "\n\n".join(parts)
+    if max_chars and len(text) > max_chars:
+        text = "[… earlier conversation truncated …]\n\n" + text[-max_chars:]
+    return text
+
+
+def _run_moa_references(plan, wire_messages, sid, live, session):
+    """MoA fan-out: run the plan's reference models in PARALLEL over the
+    (already PII-rewritten) wire transcript — tool-less, single round, per-
+    reference timeout — and return `(drafts, meta)`.
+
+    - `drafts` = ordered [(model, text), ...] in DECLARED plan order (not
+      completion order) so the injected prompt is stable across retries.
+    - `meta` = {ok, failed:[{model,error}], ms, models} — ground truth of what
+      ran, merged into auto_route.moa by the caller.
+    - Failure isolation: a failed / timed-out / empty reference is DROPPED
+      (recorded in meta.failed), never raises — the turn continues with
+      whatever drafts landed (zero drafts → no injection, plain turn).
+    - Each reference passes the GDPR background gate independently (may swap
+      to a local model per policy). The returned drafts are NOT de-anonymised:
+      they must stay in the same pseudonym space as the wire history they get
+      injected next to, or a cloud aggregator would see real values again.
+    - Progress: one synthetic tool-card pair (kind "moa_reference") per
+      reference — persisted like the GDPR anonymise cards, never on the wire.
+    - Cost: one cost_log row per reference (cost_purpose="moa_reference",
+      keyed to this chat sid so the status-bar session cost includes it).
+    """
+    import contextvars
+    from concurrent import futures as _futures
+
+    cfg = engine.get_moa_config()
+    refs = [r for r in (plan.get("references") or []) if r]
+    try:
+        _ref_max_tokens = int(cfg.get("reference_max_tokens") or 600)
+        _ref_timeout = float(cfg.get("reference_timeout_s") or 60)
+        _ref_max_chars = int(cfg.get("reference_input_max_chars") or 24000)
+    except (TypeError, ValueError):
+        _ref_max_tokens, _ref_timeout, _ref_max_chars = 600, 60.0, 24000
+    transcript = _flatten_wire_transcript(wire_messages, _ref_max_chars)
+    if not refs or not transcript:
+        return [], {"ok": 0, "failed": [], "ms": 0, "models": []}
+
+    t0 = time.time()
+    _base = f"moa_{sid[:8]}_{int(t0 * 1000) % 1_000_000}"
+    tool_ids = {}
+    for i, rm in enumerate(refs):
+        tool_ids[i] = f"{_base}_{i}"
+        try:
+            _emit_synthetic_tool_event(
+                live=live, sid=sid, kind="moa_reference",
+                tool_use_id=tool_ids[i], phase="dispatch",
+                args={"model": rm})
+        except Exception:
+            pass
+
+    def _one(ref_model):
+        # GDPR gate per reference (cloud call → may anonymise or swap local).
+        safe_model, (sys_safe, msg_safe), _deanon = (
+            engine.gdpr_pick_model_for_background(
+                ref_model, [_MOA_REF_SYSTEM, transcript],
+                purpose="moa_reference"))
+        res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": msg_safe}],
+            model=safe_model, system_prompt=sys_safe, purpose="transform",
+            cost_purpose="moa_reference", session_id=sid,
+            agent_id=session.agent_id, user_id=session.user_id or "",
+            max_rounds=1, max_tokens=_ref_max_tokens, timeout_s=_ref_timeout)
+        if res.get("error") and not (res.get("reply") or "").strip():
+            raise RuntimeError(str(res["error"])[:300])
+        # Deliberately NO _deanon here — see docstring (pseudonym-space rule).
+        return safe_model, (res.get("reply") or "").strip()
+
+    drafts_by_idx, failed = {}, []
+    parent_ctx = contextvars.copy_context()
+    with _futures.ThreadPoolExecutor(max_workers=len(refs)) as ex:
+        fut_to_idx = {
+            ex.submit(parent_ctx.copy().run, _one, rm): (i, rm)
+            for i, rm in enumerate(refs)}
+        for fut in _futures.as_completed(fut_to_idx):
+            i, rm = fut_to_idx[fut]
+            _ms = int((time.time() - t0) * 1000)
+            try:
+                safe_model, text = fut.result()
+                if text:
+                    drafts_by_idx[i] = (safe_model, text)
+                    _ev = {"status": "ok",
+                           "result": {"model": safe_model, "chars": len(text)}}
+                else:
+                    failed.append({"model": rm, "error": "empty draft"})
+                    _ev = {"status": "error",
+                           "result": {"model": safe_model, "error": "empty draft"}}
+            except Exception as e:  # one dead reference must NOT kill the turn
+                failed.append({"model": rm, "error": str(e)[:300]})
+                _ev = {"status": "error",
+                       "result": {"model": rm, "error": str(e)[:300]}}
+            try:
+                _emit_synthetic_tool_event(
+                    live=live, sid=sid, kind="moa_reference",
+                    tool_use_id=tool_ids[i], phase="done",
+                    result=_ev["result"], status=_ev["status"],
+                    duration_ms=_ms)
+            except Exception:
+                pass
+    drafts = [drafts_by_idx[i] for i in sorted(drafts_by_idx)]
+    meta = {"ok": len(drafts), "failed": failed,
+            "ms": int((time.time() - t0) * 1000),
+            "models": [m for m, _t in drafts]}
+    return drafts, meta
+
+
+def _build_moa_suffix(drafts):
+    """Wire-only suffix appended to the last user message: the reference
+    drafts as private context for the aggregator. Adapted from the eval's
+    _AGG_SYSTEM prompt (eval/moa_eval.py) — as a wire suffix, NOT the system
+    prompt, so the warm-pool KV prefix stays byte-stable. Model names are
+    deliberately NOT in the prompt (draft-source bias); they live in
+    auto_route.moa metadata + the progress cards instead."""
+    named = [(m, (t or "").strip()) for m, t in (drafts or []) if (t or "").strip()]
+    if not named:
+        return ""
+    block = "\n\n".join(f"--- Draft {chr(65 + i)} ---\n{t}"
+                        for i, (_m, t) in enumerate(named))
+    return (
+        "\n\n=== Candidate answers from other models (private context, do not quote) ===\n"
+        "The drafts below answer my request above. They were produced independently "
+        "by other AI models WITHOUT tools. They may disagree and some may be wrong — "
+        "do NOT trust any draft blindly. Verify the reasoning, reconcile "
+        "disagreements, fix errors, fill gaps, and use your tools to check facts "
+        "where needed. Answer me directly — never mention these drafts or that you "
+        "received any. If my request demands specific parts, include every demanded "
+        "part.\n\n" + block + "\n=== end candidate answers ===")
+
+
 def _session_attachment_paths(session_id: str) -> list[str]:
     """All files attached EARLIER in this session, still on disk under the
     session-scoped /tmp/brain-attachments/<sid>/ dir (the upload path never
@@ -387,7 +548,7 @@ def _resolve_session_auto_model(session) -> bool:
     The local pool is honored on a delivery turn too: "auto-local" resolves to a
     local model."""
     _directive = session.model
-    if _directive not in ("auto", "auto-cloud", "auto-local"):
+    if _directive not in ("auto", "auto-cloud", "auto-local", "moa"):
         return ""
     _pool = "local" if _directive == "auto-local" else "cloud"
     resolved = engine._resolve_auto_model_tiered(None, pool=_pool) or engine.resolve_model("auto")
@@ -1469,7 +1630,7 @@ def _generate_handover_document(session) -> tuple[str, str, str]:
         # here, else background_call fails and the handover comes back empty
         # (generation_failed). Read-only: don't mutate session.model.
         model = session.model
-        if model in ("auto", "auto-cloud", "auto-local"):
+        if model in ("auto", "auto-cloud", "auto-local", "moa"):
             _pool = "local" if model == "auto-local" else "cloud"
             _resolved = (engine._resolve_auto_model_tiered(None, pool=_pool)
                          or engine.resolve_model("auto"))
@@ -2822,6 +2983,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 _goal_iter = 0
                 _goal_done_meta = None   # → done_data["goal"]
                 _goal_web_cache = None   # curated-web fetch: once, reused per iteration
+                _moa_cache = None        # MoA reference fan-out: once, reused per iteration
 
                 def _goal_set(status=None, iteration=None):
                     """Mirror a goal-state change onto the live Session + DB."""
@@ -2928,6 +3090,35 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     if _bg_pre:
                         _wire_messages = _inject_web_preamble_into_wire(
                             _wire_messages, _bg_pre)
+                    # MoA (🧬): fan the PII-safe wire history out to the plan's
+                    # reference models (tool-less, parallel) and append their
+                    # drafts wire-only to the last user message — private
+                    # context for the aggregator, never persisted (same seam as
+                    # the Websuche preamble). Runs at most ONCE per turn: goal
+                    # iterations 2+ reuse the first pass's drafts, exactly like
+                    # _goal_web_cache. The transcript is built AFTER the ledger
+                    # rewrite + web/bg preambles above, so references see the
+                    # same PII-safe view (incl. curated sources) the aggregator
+                    # sees. Deep-Research turns skip it (own multi-model loop).
+                    _moa_plan_now = getattr(session, "_moa_plan", None)
+                    if (_moa_plan_now and _moa_plan_now.get("references")
+                            and not deep_research):
+                        if _moa_cache is None:
+                            _moa_cache = _run_moa_references(
+                                _moa_plan_now, _wire_messages, sid, live, session)
+                            # Ground truth of what actually ran → rides
+                            # auto_route into both the done event and
+                            # msg_metadata.auto_route.moa (in-place merge).
+                            _drafts, _moa_meta = _moa_cache
+                            if isinstance(auto_route, dict) and _moa_meta:
+                                _m = dict(auto_route.get("moa") or {})
+                                _m.update(_moa_meta)
+                                auto_route["moa"] = _m
+                        _drafts, _moa_meta = _moa_cache
+                        _moa_suffix = _build_moa_suffix(_drafts)
+                        if _moa_suffix:
+                            _wire_messages = _append_to_wire_user(
+                                _wire_messages, _moa_suffix)
                     # Research-mode citation discipline — TWO mutually-exclusive paths,
                     # chosen by the auto-route classifier mode:
                     #  • LLM/hybrid mode → DYNAMIC: trigger on the EFFECTIVE active
@@ -4596,6 +4787,13 @@ class ChatHandlerMixin:
         # auto request and drop it from the override path so we don't try to
         # resolve a provider for the literal string "auto".
         want_auto, auto_pool = _parse_auto_directive(model_override)
+        # MoA rides the auto path (same routing → aggregator) plus a per-turn
+        # reference fan-out. When MoA is disabled/pool-empty the directive
+        # silently degrades to plain Smart (Cloud) — never an error. The bare
+        # directive is remembered separately so the post-turn restore keeps
+        # showing MoA in the composer even while the feature is admin-disabled.
+        moa_directive = (model_override == "moa")
+        want_moa = moa_directive and engine.moa_enabled()
         if want_auto:
             model_override = None
 
@@ -4731,6 +4929,9 @@ class ChatHandlerMixin:
         with session.lock:
             session._auto_tool_groups = None
             session._auto_route_model = ""
+            # Clear any prior turn's MoA fan-out plan for the same reason — a
+            # later non-MoA turn on this session must never inherit it.
+            session._moa_plan = None
         auto_by_agent = (agent_cfg.get("model") == "auto" and len(session.messages) == 0)
         # FREEZE for cache-priced models: once an Auto session has been routed to a
         # model that has prompt-cache pricing (cost_cache_read set), we pin that
@@ -4758,8 +4959,42 @@ class ChatHandlerMixin:
                 # re-run the classifier on a frozen model.
                 session._auto_tool_groups = _cache_freeze_groups(session).get(_frozen)
                 session._auto_route_model = _frozen
+                # Track the CURRENT directive so a mid-session Smart↔MoA switch
+                # survives the post-turn composer restore (mirrors fresh route).
+                session._composer_auto_model = (
+                    "moa" if moa_directive
+                    else ("auto-local" if auto_pool == "local" else "auto-cloud"))
             auto_route = {"model": _frozen, "reason": "cache-stable (turn-1 pick frozen)",
                           "frozen": True}
+            # MoA on a frozen session: model + tool set stay pinned (prefix
+            # byte-stable, cache pricing intact) but the classifier still runs —
+            # ONLY to decide the fan-out (gate + reference pick), never to
+            # re-route. Same classify-without-swap pattern as the concrete-model
+            # branch below.
+            if want_moa:
+                _user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+                _allowed = None
+                if _user and _user.get("role") != "admin" and _user.get("id") != "__system__":
+                    _allowed = _auth_mod.AuthDB.get_user_allowed_models(_user["id"])
+                try:
+                    _analysis = engine.resolve_task_analysis(message)
+                except Exception:
+                    _analysis = None
+                _plan = engine.resolve_moa_plan(_analysis, _frozen, allowed_models=_allowed)
+                with session.lock:
+                    session._moa_plan = _plan
+                auto_route["moa"] = {
+                    "references": (_plan or {}).get("references", []),
+                    "gate_hit": (_plan or {}).get("gate_hit", ""),
+                    "gated_out": _plan is None,
+                }
+                if _analysis and _analysis.get("source") == "llm":
+                    auto_route["analysis"] = {
+                        "task_types": _analysis.get("task_types", []),
+                        "tools": _analysis.get("tools", []),
+                        "complexity": _analysis.get("complexity", ""),
+                        "reasoning": _analysis.get("reasoning", ""),
+                    }
             # Show the (frozen) working model in the spinner, same as a fresh route.
             live.emit("auto_route", auto_route)
         elif not model_override and (want_auto or auto_by_agent):
@@ -4788,6 +5023,19 @@ class ChatHandlerMixin:
                         "tools": auto_analysis.get("tools", []),
                         "complexity": auto_analysis.get("complexity", ""),
                         "reasoning": auto_analysis.get("reasoning", ""),
+                    }
+            # MoA: the auto pick above IS the aggregator; the plan adds the
+            # classification-gated reference fan-out (None = degrade to a plain
+            # Smart turn — gate miss / keyword fallback / pool collapsed).
+            _moa_plan = None
+            if want_moa and auto_model:
+                _moa_plan = engine.resolve_moa_plan(
+                    auto_analysis, auto_model, allowed_models=allowed)
+                if auto_route is not None:
+                    auto_route["moa"] = {
+                        "references": (_moa_plan or {}).get("references", []),
+                        "gate_hit": (_moa_plan or {}).get("gate_hit", ""),
+                        "gated_out": _moa_plan is None,
                     }
             if auto_model and auto_model != session.model:
                 provider = self._resolve_provider(auto_model)
@@ -4818,6 +5066,7 @@ class ChatHandlerMixin:
                     auto_analysis.get("tool_groups")
                     if (auto_analysis and _opt_ok) else None)
                 session._auto_route_model = auto_model or ""
+                session._moa_plan = _moa_plan
                 # If this turn routed to a cache-priced model, FREEZE it: every
                 # later Auto turn reuses this model + its turn-1 (trimmed) tool set
                 # and skips the classifier, keeping the prefix byte-stable so the
@@ -4837,7 +5086,8 @@ class ChatHandlerMixin:
                 # rather than flattening both to legacy "auto" — a reopened
                 # Smart (Lokal) session must come back as Lokal, not Cloud.
                 session._composer_auto_model = (
-                    "auto-local" if auto_pool == "local" else "auto-cloud")
+                    "moa" if moa_directive
+                    else ("auto-local" if auto_pool == "local" else "auto-cloud"))
             # Emit the pick at turn start so the spinner shows the model that's
             # actually doing the work (the composer label stays "Auto").
             if auto_route:
