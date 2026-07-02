@@ -1220,6 +1220,7 @@
     "renderArtifactContent": "writable",
     "renderArtifactDocument": "writable",
     "renderArtifactsBrowse": "writable",
+    "renderArtifactXlsxGrid": "writable",
     "renderAssistantMessage": "writable",
     "renderAssistantSegment": "writable",
     "renderAttachmentsPane": "writable",

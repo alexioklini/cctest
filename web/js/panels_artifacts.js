@@ -583,6 +583,16 @@ async function loadArtifactVersion(version) {
   // that base64 into hljs (the "JVBERi0…" bug). PDF → native viewer via an
   // auth'd blob iframe; Office (docx/xlsx/pptx/…) → a clean file card, since
   // browsers can't render those inline.
+  // Spreadsheets (v9.263.0): render the LATEST version as an in-panel grid
+  // (sheet tabs, shared _xlsxGridHtml renderer) from the disk file. Older
+  // versions have no disk copy → they keep the file card below.
+  if ((regExt === 'xlsx' || regExt === 'xlsm') && reg?.path
+      && Number(version) === Number(reg?.latest_version || version)
+      && typeof _xlsxGridHtml === 'function') {
+    await renderArtifactXlsxGrid(reg.path, artifactId, version,
+                                 reg?.name || 'workbook', regExt);
+    return;
+  }
   if (reg?.type === 'document' || _DOC_PREVIEW_EXTS.has(regExt)) {
     await renderArtifactDocument(artifactId, version, reg?.name || 'document', regExt);
     return;
@@ -611,6 +621,28 @@ const _DOC_EXT_COLOR = {
   pdf: '#d33', docx: '#2b579a', doc: '#2b579a', xlsx: '#217346', xls: '#217346',
   pptx: '#d24726', ppt: '#d24726', odt: '#2b579a', ods: '#217346', odp: '#d24726',
 };
+
+// Spreadsheet artifact → in-panel table grid (v9.263.0). Fetches the parsed
+// grid from /v1/files/xlsx-grid (same loader the agent's xlsx tools use) and
+// renders it with the shared _xlsxGridHtml (panels_terminal.js). Any failure
+// falls back to the office file card.
+async function renderArtifactXlsxGrid(path, artifactId, version, name, ext) {
+  const container = document.getElementById('artifact-content');
+  container.innerHTML = '<div class="artifact-empty"><div class="wave-bars"><span></span><span></span><span></span></div></div>';
+  try {
+    const g = await API.get(`/v1/files/xlsx-grid?path=${encodeURIComponent(path)}`);
+    if (!g || g.error) throw new Error((g && g.error) || 'leere Antwort');
+    const paint = (idx) => {
+      container.innerHTML = `<div class="xgrid-fullview">${_xlsxGridHtml(g, idx)}</div>`;
+      container.querySelectorAll('.xgrid-sheet-btn').forEach(b => {
+        b.onclick = () => paint(parseInt(b.dataset.idx, 10));
+      });
+    };
+    paint(0);
+  } catch (e) {
+    await renderArtifactDocument(artifactId, version, name, ext);
+  }
+}
 
 // Render a binary document artifact (PDF inline, Office as a file card), fed by
 // the auth'd download blob (the download URL is Bearer-only so a bare <iframe
