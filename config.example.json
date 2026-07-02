@@ -4531,8 +4531,10 @@
   "moa": {
     "enabled": true,
     "reference_pool": [
+      "CLIProxyAPI/mistral-medium-3.5",
       "CLIProxyAPI/mistral-small-latest",
-      "deepseek-v4-flash"
+      "deepseek-v4-flash",
+      "deepseek-v4-pro"
     ],
     "gate_task_types": [
       "research",
@@ -4541,8 +4543,32 @@
       "creative",
       "orchestration"
     ],
-    "max_references": 2,
+    "max_references": 3,
     "reference_max_tokens": 500,
-    "reference_timeout_s": 60
+    "reference_timeout_s": 60,
+    "task_pools": {
+      "research": [
+        "CLIProxyAPI/mistral-medium-3.5",
+        "deepseek-v4-pro",
+        "CLIProxyAPI/mistral-small-latest"
+      ],
+      "analysis": [
+        "CLIProxyAPI/mistral-medium-3.5",
+        "CLIProxyAPI/mistral-small-latest",
+        "deepseek-v4-flash"
+      ],
+      "reporting": [
+        "CLIProxyAPI/mistral-small-latest",
+        "deepseek-v4-flash"
+      ],
+      "creative": [
+        "CLIProxyAPI/mistral-medium-3.5",
+        "deepseek-v4-pro"
+      ],
+      "orchestration": [
+        "CLIProxyAPI/mistral-medium-3.5",
+        "CLIProxyAPI/mistral-small-latest"
+      ]
+    }
   }
 }

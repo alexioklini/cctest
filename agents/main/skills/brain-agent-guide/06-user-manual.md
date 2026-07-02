@@ -1370,13 +1370,17 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   zurück — eine Anfrage hängt nie daran. Diese Einstellung steuert nur die
   **Modellwahl**; die **Werkzeug-Optimierung** ist davon getrennt und wird pro
   Agent geschaltet (siehe Agent-Einstellungen → Token-Optimierung).
-  Direkt darunter: **MoA (Mixture of Agents)** (9.268.0) — schaltet das
-  „🧬 MoA (Smart)"-Modell im Verfasser frei und konfiguriert es:
-  Referenz-Pool (welche Cloud-Modelle Entwürfe liefern dürfen), Aufgabentypen
-  mit Fan-out (das Klassifikator-Gate; Tippfehler sind ausgeschlossen — die
-  Auswahl ist eine Checkbox-Liste über das Klassifikator-Vokabular), max.
-  Referenzen (1–5), max. Tokens je Entwurf und Timeout je Referenz. Leerer
-  Pool oder deaktiviert = der 🧬-Eintrag verschwindet aus dem Verfasser.
+  Direkt darunter: **MoA (Mixture of Agents)** (9.268.0, Matrix seit 9.269.0)
+  — schaltet das „🧬 MoA (Smart)"-Modell im Verfasser frei und konfiguriert es
+  über eine **Matrix „Modell × Aufgabentyp"**: Zeilen sind die aktivierten
+  Cloud-Modelle, Spalten die Aufgabentypen des Klassifikators (Recherche,
+  Analyse, Berichte, …). Pro Spalte haken Sie an, welche Modelle bei diesem
+  Aufgabentyp Entwürfe liefern; eine Spalte ohne Häkchen heißt: für diesen Typ
+  läuft kein Fan-out (die Anfrage verhält sich wie „Smart (Cloud)"). Das
+  Modell, das die Anfrage gerade selbst beantwortet, wird als Referenz
+  automatisch ausgelassen. Dazu: max. Referenzen (1–5), max. Tokens je Entwurf
+  und Timeout je Referenz. Komplett leere Matrix oder deaktiviert = der
+  🧬-Eintrag verschwindet aus dem Verfasser.
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost).

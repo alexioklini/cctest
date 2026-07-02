@@ -49,32 +49,45 @@ async function _genTab_server(C) {
           })()}
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        ${SEC('MoA (Mixture of Agents)', 'Das „🧬 MoA (Smart)"-Modell im Verfasser: mehrere Referenzmodelle entwerfen parallel (ohne Tools) je einen Antwort-Entwurf, das per Auto-Routing gewählte Modell prüft die Entwürfe und führt sie zur finalen Antwort zusammen. Die Aufgaben-Klassifikation entscheidet pro Nachricht, OB sich der Fan-out lohnt (nur bei den unten markierten Aufgabentypen — bei Programmierung/Mathematik/Schnellaufgaben bringt er nachweislich nichts und wird übersprungen) und WELCHE Modelle aus dem Pool befragt werden. Benötigt Klassifikator-Modus „LLM" oder „Hybrid"; ohne LLM-Klassifikation (und bei leerem Pool oder deaktiviert) verhält sich MoA still wie „Smart (Cloud)". Jeder Referenz-Entwurf ist ein eigener kostenpflichtiger Modell-Aufruf.')}
+        ${SEC('MoA (Mixture of Agents)', 'Das „🧬 MoA (Smart)"-Modell im Verfasser: mehrere Referenzmodelle entwerfen parallel (ohne Tools) je einen Antwort-Entwurf, das per Auto-Routing gewählte Modell prüft die Entwürfe und führt sie zur finalen Antwort zusammen. Die Matrix unten legt PRO AUFGABENTYP fest, welche Modelle Entwürfe liefern: Spalte ohne Häkchen = für diesen Aufgabentyp läuft KEIN Fan-out (die Anfrage verhält sich wie „Smart (Cloud)"); Häkchen = genau diese Modelle sind die Kandidaten (das am besten geeignete Top-N tritt an; das Modell, das gerade selbst antwortet, wird automatisch ausgelassen). Tipp: Programmierung/Mathematik/Schnell leer lassen — dort bringt der Fan-out nachweislich nichts. Benötigt Klassifikator-Modus „LLM" oder „Hybrid". Jeder Entwurf ist ein eigener kostenpflichtiger Modell-Aufruf.')}
         ${(() => {
           const mo = srv.moa || {};
-          const pool = mo.reference_pool || [];
           const vocab = mo.task_type_vocab || ['coding','math','research','analysis','reporting','creative','orchestration','agentic','fast'];
-          const gate = mo.gate_task_types || [];
           const ttDe = {coding:'Programmierung', math:'Mathematik', research:'Recherche',
                         analysis:'Analyse', reporting:'Berichte', creative:'Kreativ',
                         orchestration:'Orchestrierung', agentic:'Agentisch', fast:'Schnell'};
           const cloudModels = enabledModelsWithCapability('chat').filter(([id]) => !isModelLocal(id));
-          const modelBoxes = cloudModels.map(([id]) =>
-            `<label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-200)">
-               <input type="checkbox" class="moa-pool-cb" value="${esc(id)}" ${pool.includes(id)?'checked':''}> ${esc(modelShortName(id))}
-             </label>`).join('');
-          const gateBoxes = vocab.map(tt =>
-            `<label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-200)">
-               <input type="checkbox" class="moa-gate-cb" value="${esc(tt)}" ${gate.includes(tt)?'checked':''}> ${esc(ttDe[tt]||tt)} <span style="${MONO}">${esc(tt)}</span>
-             </label>`).join('');
+          // Seed: per-task matrix if configured, else derive from the legacy
+          // flat pool × gate (so the first open of the new UI shows the
+          // effective current behavior instead of an empty grid).
+          const tp = mo.task_pools || {};
+          const hasTp = Object.values(tp).some(v => Array.isArray(v) && v.length);
+          const legacyPool = mo.reference_pool || [];
+          const legacyGate = mo.gate_task_types || [];
+          const isOn = (tt, mid) => hasTp
+            ? ((tp[tt] || []).includes(mid))
+            : (legacyGate.includes(tt) && legacyPool.includes(mid));
+          const th = vocab.map(tt =>
+            `<th style="padding:4px 6px;font-size:11px;color:var(--text-200);font-weight:600;white-space:nowrap;text-align:center" title="${esc(tt)}">${esc(ttDe[tt]||tt)}</th>`).join('');
+          const rows = cloudModels.map(([id]) => {
+            const cells = vocab.map(tt =>
+              `<td style="text-align:center;padding:3px 6px"><input type="checkbox" class="moa-tp-cb" data-tt="${esc(tt)}" data-mid="${esc(id)}" ${isOn(tt, id)?'checked':''}></td>`).join('');
+            return `<tr>
+              <td style="padding:3px 8px 3px 0;font-size:12px;color:var(--text-100);white-space:nowrap">${esc(modelShortName(id))}</td>
+              ${cells}
+            </tr>`;
+          }).join('');
           return `<div style="${G('10px')}">
             <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-100)">
               <input type="checkbox" id="moa-enabled" ${mo.enabled?'checked':''}> MoA aktiviert (blendet das 🧬-Modell im Verfasser ein)
             </label>
-            <div style="font-size:12px;color:var(--text-200);font-weight:600">Referenz-Pool (Cloud-Modelle, die Entwürfe liefern dürfen)</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px">${modelBoxes || '<span style="font-size:12px;color:var(--text-300)">Keine Cloud-Modelle aktiviert.</span>'}</div>
-            <div style="font-size:12px;color:var(--text-200);font-weight:600">Aufgabentypen mit Fan-out (Klassifikator-Gate)</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px 12px">${gateBoxes}</div>
+            <div style="font-size:12px;color:var(--text-200);font-weight:600">Referenz-Matrix: welches Modell entwirft bei welchem Aufgabentyp</div>
+            <div style="overflow-x:auto;border:1px solid var(--border-100);border-radius:8px;padding:8px;background:var(--bg-100)">
+              ${cloudModels.length ? `<table style="border-collapse:collapse;min-width:100%">
+                <thead><tr><th style="text-align:left;padding:4px 8px 4px 0;font-size:11px;color:var(--text-200)">Modell</th>${th}</tr></thead>
+                <tbody>${rows}</tbody>
+              </table>` : '<span style="font-size:12px;color:var(--text-300)">Keine Cloud-Modelle aktiviert.</span>'}
+            </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
               <label style="font-size:12px;color:var(--text-200)">Max. Referenzen
                 <input class="form-input" id="moa-max-refs" type="number" min="1" max="5" value="${parseInt(mo.max_references)||3}" style="width:100%;margin-top:4px">
@@ -2596,12 +2609,16 @@ async function saveComposerDefaults() {
 }
 
 async function saveMoaConfig() {
-  const pool = Array.from(document.querySelectorAll('.moa-pool-cb:checked')).map(cb => cb.value);
-  const gate = Array.from(document.querySelectorAll('.moa-gate-cb:checked')).map(cb => cb.value);
+  // Matrix → {task_type: [model ids]}; empty columns are simply absent (an
+  // empty column = no fan-out for that task type).
+  const taskPools = {};
+  document.querySelectorAll('.moa-tp-cb:checked').forEach(cb => {
+    const tt = cb.dataset.tt, mid = cb.dataset.mid;
+    (taskPools[tt] = taskPools[tt] || []).push(mid);
+  });
   const body = {moa: {
     enabled: !!document.getElementById('moa-enabled')?.checked,
-    reference_pool: pool,
-    gate_task_types: gate,
+    task_pools: taskPools,
     max_references: Math.max(1, Math.min(5, parseInt(document.getElementById('moa-max-refs')?.value) || 3)),
     reference_max_tokens: parseInt(document.getElementById('moa-ref-tokens')?.value) || 600,
     reference_timeout_s: parseInt(document.getElementById('moa-ref-timeout')?.value) || 60,
@@ -2611,8 +2628,9 @@ async function saveMoaConfig() {
     // Mirror the effective gate onto serverInfo so the composer's 🧬 entry
     // appears/disappears without a page reload.
     const eff = r.moa || body.moa;
+    const tpAny = Object.values(eff.task_pools || {}).some(v => Array.isArray(v) && v.length);
     if (state.serverInfo) {
-      state.serverInfo.moa_enabled = !!(eff.enabled && (eff.reference_pool || []).length);
+      state.serverInfo.moa_enabled = !!(eff.enabled && (tpAny || (eff.reference_pool || []).length));
     }
     showToast('MoA-Einstellungen gespeichert');
   } catch (e) {

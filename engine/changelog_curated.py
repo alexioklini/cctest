@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.269.0",
+        "date": "2026-07-02",
+        "title": "MoA: Matrix „Modell × Aufgabentyp“",
+        "body": "Die MoA-Konfiguration (Einstellungen → Server) ist jetzt eine "
+                "übersichtliche Matrix: Sie haken pro Aufgabentyp (Recherche, "
+                "Analyse, Berichte, …) genau die Modelle an, die dort Entwürfe "
+                "liefern sollen. Eine Spalte ohne Häkchen bedeutet: für diesen "
+                "Aufgabentyp läuft kein Fan-out — die Anfrage verhält sich wie "
+                "eine normale Smart-Anfrage. Die bisherige getrennte Pflege von "
+                "Modell-Pool und Aufgabentypen-Liste entfällt.",
+        "audience": "admin",
+        "versions": ["9.269.0"],
+    },
+    {
         "version": "9.268.0",
         "date": "2026-07-02",
         "title": "Neues Modell: 🧬 MoA (Smart)",

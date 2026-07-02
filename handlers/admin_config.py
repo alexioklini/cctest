@@ -879,6 +879,38 @@ class AdminConfigHandlers:
                     if tt not in out_gate:
                         out_gate.append(tt)
                 mo["gate_task_types"] = out_gate
+            # Per-task pools (the Settings matrix). Same strictness as the
+            # legacy fields: unknown task_type or unknown/disabled model = 400.
+            # Empty lists are dropped (an empty column = gated out anyway).
+            if "task_pools" in moa_in:
+                tp_in = moa_in["task_pools"] or {}
+                if not isinstance(tp_in, dict):
+                    self._send_json({"error": "moa.task_pools must be an object {task_type: [models]}"}, 400)
+                    return
+                valid_tt = set(engine._TASK_TYPES)
+                out_tp = {}
+                for tt, mids in tp_in.items():
+                    if tt not in valid_tt:
+                        self._send_json({"error": f"moa.task_pools: unknown task_type '{tt}' "
+                                                  f"(valid: {', '.join(sorted(valid_tt))})"}, 400)
+                        return
+                    if not isinstance(mids, list):
+                        self._send_json({"error": f"moa.task_pools.{tt} must be a list of model ids"}, 400)
+                        return
+                    cleaned = []
+                    for mid in mids:
+                        if not isinstance(mid, str) or not mid.strip():
+                            continue
+                        mid = mid.strip()
+                        mcfg = (engine._models_config or {}).get(mid) or {}
+                        if not mcfg.get("enabled"):
+                            self._send_json({"error": f"moa.task_pools.{tt}: unknown or disabled model '{mid}'"}, 400)
+                            return
+                        if mid not in cleaned:
+                            cleaned.append(mid)
+                    if cleaned:
+                        out_tp[tt] = cleaned
+                mo["task_pools"] = out_tp
             for key, lo, hi in (("max_references", 1, 5),
                                 ("reference_max_tokens", 64, 4000),
                                 ("reference_timeout_s", 5, 600),

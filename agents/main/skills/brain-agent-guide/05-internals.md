@@ -178,14 +178,20 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
 - **Plan** (`brain.resolve_moa_plan(analysis, aggregator)`): decided at send
   time from the structured classifier analysis. Returns `None` (→ the turn is
   byte-identical to a plain auto-cloud turn, never an error) when MoA is
-  disabled, the pool is empty, the classifier fell back to keywords (no
-  task_types), no classified task_type is in `moa.gate_task_types`, or the pool
-  collapses after enabled/ACL/aggregator filtering. Otherwise: references =
-  top-N of `moa.reference_pool` ranked by the SAME `_bench_rank_key` ordering on
-  the primary task_type, aggregator excluded. The gate default
-  (research/analysis/reporting/creative/orchestration; NOT coding/math/fast/
-  agentic) encodes the 2026-06-27 eval finding (`eval/moa_eval.py`): MoA loses
-  on checkable reasoning and only pays on synthesis/judgment-shaped work.
+  disabled, no pool matches the classified types, the classifier fell back to
+  keywords (no task_types), or the pool collapses after enabled/ACL/aggregator
+  filtering. Candidate source, two modes (v9.269.0): **`moa.task_pools`**
+  (`{task_type: [model ids]}` — the Settings matrix; the gate is IMPLICIT: a
+  task type with an empty/missing list is gated out, a non-empty list is
+  exactly that type's candidate set; with several classified types the FIRST
+  — most-important, classifier order — type with a pool wins) when any column
+  is non-empty, else the LEGACY flat pair `moa.gate_task_types` +
+  `moa.reference_pool`. Either way: references = top-N ranked by the SAME
+  `_bench_rank_key` ordering on the primary task_type, aggregator excluded.
+  The legacy gate default (research/analysis/reporting/creative/orchestration;
+  NOT coding/math/fast/agentic) encodes the 2026-06-27 eval finding
+  (`eval/moa_eval.py`): MoA loses on checkable reasoning and only pays on
+  synthesis/judgment-shaped work — the matrix tooltip repeats that advice.
 - **Fan-out** (`handlers/chat.py _run_moa_references`, worker, once per turn):
   references run in PARALLEL (ThreadPoolExecutor + `contextvars.copy_context()`
   per thread, the deep_research pattern), tool-less `background_call`
@@ -213,12 +219,16 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   `auto_route.moa` into the done event + `msg_metadata.auto_route`.
   Dropdown entry `🧬 MoA (Smart)` is gated on `/v1/status → moa_enabled` and
   hidden under the GDPR local-only lock (references are cloud).
-- **Config** `config.json → moa` {enabled, reference_pool, max_references,
-  reference_max_tokens (600), reference_timeout_s (60),
-  reference_input_max_chars (24000), gate_task_types} — Settings → Server →
-  "MoA (Mixture of Agents)"; saved via `POST /v1/services/server {moa:{…}}`,
-  which validates gate entries against the classifier task_type enum and pool
-  entries against enabled models (a typo would otherwise silently disable MoA).
+- **Config** `config.json → moa` {enabled, task_pools (the matrix),
+  max_references, reference_max_tokens (600), reference_timeout_s (60),
+  reference_input_max_chars (24000); legacy: reference_pool, gate_task_types}
+  — Settings → Server → "MoA (Mixture of Agents)" renders a scrollable
+  model × task_type checkbox MATRIX (rows = enabled cloud models, columns =
+  the 9 classifier task_types; first open without task_pools seeds from
+  legacy pool × gate). Saved via `POST /v1/services/server {moa:{…}}`, which
+  validates task_types against the classifier enum and models against enabled
+  models (a typo would otherwise silently disable MoA); empty columns are
+  dropped on save.
 - **Limits**: scheduler add/update reject `model="moa"` (fire-time coerces a
   legacy row to `auto`); references see text only (images stay
   aggregator-only); quota pre-flight covers only the aggregator (reference
