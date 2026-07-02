@@ -1199,6 +1199,47 @@ def _extract_xlsx(path: str, *, caps: bool = True,
             # generator was for streaming, but sheets we extract are already
             # capped/previewed; buffering one sheet's rows is fine.
             data_rows = list(rows)
+            # Trim dead trailing columns BEFORE any per-column work below.
+            # Excel reports max_column up to the sheet limit (16384) when stray
+            # formatting or auto-named placeholder headers (e.g. "Spalte41" …
+            # "Spalte16347") extend past the real data — openpyxl then yields
+            # thousands of columns whose header is non-empty but whose every DATA
+            # cell is blank. A trailing-EMPTY-header trim can't catch these (the
+            # headers are named), so the flattened table exploded to ~1.5 MB and
+            # every downstream pass (footer-group scan, table render) crawled over
+            # 16k columns (~60 s). Compute the last column any header OR data cell
+            # actually uses, then slice header + rows to it up front — so this is
+            # the ONLY full-width pass. Real columns kept, dead placeholders gone.
+            # The last column any DATA row actually fills. Placeholder columns
+            # ("Spalte41"…) carry a header name but no data, so keying off the
+            # data extent (not the header) is what drops them. We keep header
+            # columns only up to one past the last data column OR the last
+            # CONTIGUOUS real header — whichever is larger — so a legit trailing
+            # column that happens to be data-empty in the preview isn't lost,
+            # while the 16k-placeholder tail is.
+            _data_last = -1
+            for _r in data_rows:
+                for _ci in range(len(_r) - 1, _data_last, -1):
+                    if _cell(_r[_ci]) != "":
+                        _data_last = _ci
+                        break
+            # Real headers are contiguous from col 0; the placeholder tail begins
+            # at the first header whose name matches Excel's auto pattern
+            # "Spalte<N>" AND which has no data. Find where the contiguous
+            # non-auto header block ends.
+            import re as _re
+            _hdr_real_last = -1
+            for _ci, _hv in enumerate(header):
+                _hs = _cell(_hv)
+                if _hs == "" or _re.fullmatch(r"Spalte\d+", _hs):
+                    break
+                _hdr_real_last = _ci
+            _last_used = max(_data_last, _hdr_real_last)
+            if _last_used < 0:
+                _last_used = 0
+            if _last_used < len(header) - 1:
+                header = header[:_last_used + 1]
+                data_rows = [_r[:_last_used + 1] for _r in data_rows]
             # Footer-grouping note: some reports encode group membership by
             # POSITION — a "group key" column (e.g. Kostenstelle) is filled only
             # on a TOTAL/footer row BELOW its member rows (whose key cell is
@@ -1224,7 +1265,8 @@ def _extract_xlsx(path: str, *, caps: bool = True,
                 parts.append("")  # blank line before the raw table
             cells = [_cell(c) for c in header]
             # Drop trailing empty columns so the table doesn't have ragged
-            # padding from sparsely-used right side of the sheet.
+            # padding from sparsely-used right side of the sheet. (The wide-sheet
+            # placeholder case is already handled by the up-front trim above.)
             while cells and cells[-1] == "":
                 cells.pop()
             if not cells:

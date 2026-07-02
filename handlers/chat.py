@@ -3712,9 +3712,31 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         except Exception:
                             pass
                     else:
-                        # Empty reply — rollback all intermediate messages from tool loop
-                        _rollback_messages(session, sid, _msg_count_before)
-                        live.emit("done", {"text": "", "tokens": 0, "model": session.model})
+                        # Empty reply. If the turn made TOOL CALLS before stopping
+                        # (e.g. the model read the attachments over 2 rounds, then
+                        # produced no final text — the c8ff6c66 case), those tool
+                        # calls were shown live in the right panel. Dropping the
+                        # whole turn via _rollback_messages made them vanish on
+                        # reload ("live sichtbar, nach Reload weg"). Persist them as
+                        # a partial assistant turn with a marker so the user's work
+                        # survives — same principle as the cancel/error branches.
+                        # Only a truly empty turn (no text AND no tools) rolls back.
+                        if _partial_tools:
+                            _rollback_messages(session, sid, _msg_count_before)
+                            _marker = ("*(Keine Textantwort — das Modell hat die "
+                                       "Werkzeuge ausgeführt, aber keine Antwort "
+                                       "formuliert. Bitte erneut senden.)*")
+                            meta = {"model": session.model, "partial": True,
+                                    "tools": _sanitize_partial_tools(_partial_tools)}
+                            _attach_usage_meta(meta, _usage_totals, sid)
+                            session.add_message("assistant", _marker, metadata=meta)
+                            live.emit("done", {"text": _marker, "tokens": 0,
+                                               "model": session.model})
+                        else:
+                            # Empty reply, no tools — rollback all intermediate
+                            # messages from the tool loop.
+                            _rollback_messages(session, sid, _msg_count_before)
+                            live.emit("done", {"text": "", "tokens": 0, "model": session.model})
                     # Terminal turn (goal met/capped/off/error/empty) — the only
                     # way the loop repeats is the explicit `continue` in the
                     # goal-judge step above.
