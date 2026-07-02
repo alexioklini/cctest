@@ -1230,6 +1230,10 @@ textarea { resize: none; }
   color: var(--text-400); border-top: 1px solid var(--border-100); }
 .xgrid-fullview { width: 100%; height: 100%; overflow: auto;
   background: var(--bg-000); border-radius: 8px; }
+.xgrid-vba { margin: 0; padding: 10px 14px; font-family: var(--font-mono);
+  font-size: 12px; line-height: 1.5; color: var(--text-100);
+  white-space: pre; overflow: auto; }
+.xgrid-vba-btn { font-style: italic; }
 /* Editor status line (size · lines · last-modified) — pinned to the bottom. */
 .editor-status { position: absolute; bottom: 0; left: 0; right: 0; height: 24px;
   box-sizing: border-box; z-index: 2;

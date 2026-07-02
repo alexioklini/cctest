@@ -241,6 +241,12 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
   xlsx tab → writes via `POST /v1/files/xlsx-cell`, mtime conflict check);
   JSON/XML render as the collapsible data tree in the right panel too
   (attachments + artifacts; the Quelltext toggle keeps the raw view).
+  v9.265.0: cell editing ALSO in the right panel's Dateien tab (artifacts =
+  agent outputs; attachments stay read-only — they're model inputs), and
+  .xlsm files show their **VBA module sources** as ⚙-tabs in the grid viewer
+  (`GET /v1/files/xlsm-vba`, oletools, read-only + .bas export; macros never
+  execute — writing VBA back into vbaProject.bin needs Excel, so there is
+  deliberately NO save).
 - **Project profiles**: project-sync files one structure profile per project
   spreadsheet (`<pdir>/xlsx-profiles/xlsxprofile-<hash>.md`, mtime-gated,
   stale-pruned, mined into the wing, NO KG pass) — "welche Datei hat Spalte

@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.265.0",
+        "date": "2026-07-02",
+        "title": "VBA-Ansicht und Zellen-Bearbeitung im Panel",
+        "body": "Makrofähige Excel-Dateien (.xlsm) zeigen in der "
+                "Tabellen-Vorschau jetzt zusätzlich den VBA-Quellcode ihrer "
+                "Makros — als eigene Reiter neben den Tabellenblättern, mit "
+                "Syntax-Hervorhebung und Export als .bas-Datei (nur lesend; "
+                "Makros werden nie ausgeführt, und das Zurückschreiben von "
+                "VBA erfordert prinzipbedingt Excel). Außerdem können Sie "
+                "Zellen jetzt auch direkt im rechten Panel unter „Dateien“ "
+                "per Doppelklick bearbeiten — nicht mehr nur im unteren "
+                "Arbeitsbereich.",
+        "audience": "user",
+        "versions": ["9.265.0"],
+    },
+    {
         "version": "9.264.0",
         "date": "2026-07-02",
         "title": "Excel-Vollausbau: bearbeiten, vergleichen, auswerten",

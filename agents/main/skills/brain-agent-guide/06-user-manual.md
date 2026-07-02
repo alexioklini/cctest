@@ -1699,6 +1699,18 @@ Blatt, verbundene zweizeilige Überschriften).
 - **JSON/XML übersichtlich**: JSON- und XML-Dateien erscheinen im rechten
   Panel (Anhänge und Dateien) als aufklappbarer Datenbaum — wie im unteren
   Editor-Bereich; der Quelltext bleibt über den Code-Umschalter erreichbar.
+
+**Neu in v9.265.0:**
+- **Zellen auch im rechten Panel bearbeiten**: Im Dateien-Tab (Artefakte)
+  genügt jetzt ebenfalls ein Doppelklick auf eine Zelle — Enter speichert,
+  Esc bricht ab. Bearbeitbar sind die vom Agenten erzeugten Dateien
+  (neueste Version); Anhänge bleiben bewusst nur lesbar, damit sich die
+  Eingaben des Agenten nicht unbemerkt ändern.
+- **VBA-Ansicht für .xlsm**: Makrofähige Arbeitsmappen zeigen in der
+  Tabellen-Vorschau (unten wie im Dateien-Tab) ihre VBA-Module als eigene
+  ⚙-Reiter — Quellcode mit Syntax-Hervorhebung, exportierbar als `.bas`.
+  Nur lesend: Makros werden nie ausgeführt, und VBA zurückzuschreiben
+  erfordert prinzipbedingt Excel (Rechtsklick → „extern öffnen").
 - Für wiederkehrende Excel-Reports und tägliche Bestandsabgleiche gibt es
   fertige Rezepte (geplante Aufgaben) — fragen Sie Brainy nach
   „wiederkehrender Excel-Report".

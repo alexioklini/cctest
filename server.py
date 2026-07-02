@@ -1867,6 +1867,8 @@ class BrainAgentHandler(
             self._handle_file_stat()
         elif path == "/v1/files/xlsx-grid":
             self._handle_file_xlsx_grid()
+        elif path == "/v1/files/xlsm-vba":
+            self._handle_file_xlsm_vba()
         elif path == "/v1/files/tree":
             self._handle_file_tree()
         elif path == "/v1/favourites":

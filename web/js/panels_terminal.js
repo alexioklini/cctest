@@ -1455,6 +1455,14 @@ async function terminalOpenFile(absPath) {
       tab.size = g.size || 0;
       tab.mtime = g.mtime || 0;
       tab.loaded = true;
+      // .xlsm: fetch the VBA module sources too → ⚙-tabs in the grid view
+      // (read-only viewer + .bas export; VBA is never executed).
+      if (ext === 'xlsm') {
+        try {
+          const v = await API.get(`/v1/files/xlsm-vba?path=${encodeURIComponent(absPath)}`);
+          tab.vba = (v && v.modules) || [];
+        } catch (_) { tab.vba = []; }
+      }
       _terminalEditorShowGrid(tab, 0);
       _terminalEditorStats(tab);
     } catch (e) {
@@ -1665,7 +1673,8 @@ function _xlsxGridMount(container, grid, opts) {
     return;
   }
   const st = { idx: Math.min(opts.initialSheet || 0, sheets.length - 1),
-               sortCol: -1, sortDir: 1, filter: '' };
+               sortCol: -1, sortDir: 1, filter: '', vbaIdx: null };
+  const vbaMods = opts.vba || [];
 
   const coerce = (t) => {
     // mirror the server's cell coercion so the local grid state matches what
@@ -1679,6 +1688,48 @@ function _xlsxGridMount(container, grid, opts) {
   };
 
   const paint = () => {
+    // VBA module view (v9.265.0): modules render as ⚙-tabs next to the sheet
+    // tabs — syntax-highlighted READ-ONLY source + .bas export. No save: VBA
+    // inside vbaProject.bin can't be edited safely without Excel.
+    const sheetTabs = sheets.length > 1 || vbaMods.length
+      ? sheets.map((sh, i) =>
+          `<button class="xgrid-sheet-btn${st.vbaIdx === null && i === st.idx ? ' active' : ''}" data-idx="${i}">${esc(sh.name)}</button>`).join('')
+      : '';
+    const vbaTabs = vbaMods.map((m, i) =>
+      `<button class="xgrid-sheet-btn xgrid-vba-btn${st.vbaIdx === i ? ' active' : ''}" data-vba="${i}" title="VBA-Modul (nur lesen)">⚙ ${esc(m.name)}</button>`).join('');
+    if (st.vbaIdx !== null && vbaMods[st.vbaIdx]) {
+      const m = vbaMods[st.vbaIdx];
+      let code;
+      try { code = hljs.highlight(m.code, { language: 'vbscript' }).value; }
+      catch (_) { code = esc(m.code); }
+      container.innerHTML =
+        `<div class="xgrid-bar"><div class="xgrid-tabs-inline">${sheetTabs}${vbaTabs}</div>`
+        + `<span style="flex:1"></span>`
+        + `<button class="xgrid-sheet-btn" data-act="bas">Als .bas exportieren</button></div>`
+        + `<div class="xgrid-wrap"><pre class="xgrid-vba"><code class="hljs">${code}</code></pre></div>`
+        + `<div class="xgrid-note">VBA-Quellcode (nur lesen — wird nie ausgeführt). `
+        + `Bearbeiten von VBA in .xlsm erfordert Excel; zum Weiterverwenden als .bas exportieren.</div>`;
+      container.querySelectorAll('.xgrid-sheet-btn[data-idx]').forEach(b => {
+        b.onclick = () => { st.vbaIdx = null; st.idx = parseInt(b.dataset.idx, 10); paint(); };
+      });
+      container.querySelectorAll('.xgrid-vba-btn').forEach(b => {
+        b.onclick = () => { st.vbaIdx = parseInt(b.dataset.vba, 10); paint(); };
+      });
+      const basBtn = container.querySelector('[data-act="bas"]');
+      if (basBtn) {
+        basBtn.onclick = () => {
+          const blob = new Blob([m.code], { type: 'text/plain' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = `${m.name.replace(/[^\w.-]+/g, '_')}.bas`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+        };
+      }
+      return;
+    }
     const s = sheets[st.idx];
     const canEdit = !!(opts.editable && opts.path && s.sheet_title
                        && (s.row_nums || []).length);
@@ -1698,11 +1749,7 @@ function _xlsxGridMount(container, grid, opts) {
         return String(va).localeCompare(String(vb), 'de', { numeric: true }) * st.sortDir;
       });
     }
-    const tabsHtml = sheets.length > 1
-      ? sheets.map((sh, i) =>
-          `<button class="xgrid-sheet-btn${i === st.idx ? ' active' : ''}" data-idx="${i}">${esc(sh.name)}</button>`).join('')
-      : '';
-    const bar = `<div class="xgrid-bar"><div class="xgrid-tabs-inline">${tabsHtml}</div>`
+    const bar = `<div class="xgrid-bar"><div class="xgrid-tabs-inline">${sheetTabs}${vbaTabs}</div>`
       + `<span style="flex:1"></span>`
       + `<input class="xgrid-search" type="search" placeholder="Suchen…" value="${esc(st.filter)}">`
       + `</div>`;
@@ -1725,13 +1772,17 @@ function _xlsxGridMount(container, grid, opts) {
     const note = bits.length ? `<div class="xgrid-note">${esc(bits.join(' · '))}</div>` : '';
     container.innerHTML = `${bar}<div class="xgrid-wrap"><table class="xgrid-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>${note}`;
 
-    container.querySelectorAll('.xgrid-sheet-btn').forEach(b => {
+    container.querySelectorAll('.xgrid-sheet-btn[data-idx]').forEach(b => {
       b.onclick = () => {
         st.idx = parseInt(b.dataset.idx, 10);
+        st.vbaIdx = null;
         st.sortCol = -1; st.filter = '';
         if (opts.onSheetChange) opts.onSheetChange(st.idx);
         paint();
       };
+    });
+    container.querySelectorAll('.xgrid-vba-btn').forEach(b => {
+      b.onclick = () => { st.vbaIdx = parseInt(b.dataset.vba, 10); paint(); };
     });
     container.querySelectorAll('.xgrid-th').forEach(th => {
       th.onclick = () => {
@@ -1809,6 +1860,7 @@ function _terminalEditorShowGrid(tab, sheetIdx) {
     editable: !!tab.gridOnly,
     path: tab.path,
     initialSheet: tab.gridSheet,
+    vba: tab.vba || [],
     onSheetChange: (i) => { tab.gridSheet = i; },
     onCellSaved: (resp) => { if (resp && resp.mtime) tab.mtime = resp.mtime; },
   });

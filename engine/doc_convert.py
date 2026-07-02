@@ -1397,6 +1397,37 @@ def _extract_xlsb(path: str, *, caps: bool = True,
     return "\n".join(parts) + "\n", None
 
 
+def list_vba_modules(path: str) -> list[dict]:
+    """VBA module sources of a macro-enabled Office file as structured data
+    [{name, code}] — the JSON twin of _extract_vba's markdown (which stays
+    byte-stable for mining). Macros are NEVER executed; read of the stored
+    source only. Empty list when there are no macros / oletools is absent.
+    Feeds the bottom-panel VBA viewer (GET /v1/files/xlsm-vba, v9.265.0)."""
+    try:
+        from oletools.olevba import VBA_Parser  # type: ignore
+    except ImportError:
+        return []
+    vp = None
+    try:
+        vp = VBA_Parser(path)
+        if not vp.detect_vba_macros():
+            return []
+        modules = []
+        for (_fname, _stream, vba_name, vba_code) in vp.extract_macros():
+            code = (vba_code or "").strip()
+            if code:
+                modules.append({"name": vba_name, "code": code})
+        return modules
+    except Exception:
+        return []
+    finally:
+        if vp is not None:
+            try:
+                vp.close()
+            except Exception:
+                pass
+
+
 def _extract_vba(path: str) -> str:
     """Extract VBA macro source from a macro-enabled Office file as a markdown
     section (one fenced code block per module), or '' when there are no macros /

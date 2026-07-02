@@ -638,8 +638,20 @@ async function renderArtifactXlsxGrid(path, artifactId, version, name, ext) {
   try {
     const g = await API.get(`/v1/files/xlsx-grid?path=${encodeURIComponent(path)}`);
     if (!g || g.error) throw new Error((g && g.error) || 'leere Antwort');
+    let vba = [];
+    if (ext === 'xlsm') {
+      try {
+        const v = await API.get(`/v1/files/xlsm-vba?path=${encodeURIComponent(path)}`);
+        vba = (v && v.modules) || [];
+      } catch (_) { /* viewer stays table-only */ }
+    }
     container.innerHTML = '<div class="xgrid-fullview"></div>';
-    _xlsxGridMount(container.firstChild, g, {});
+    // v9.265.0: artifacts are the agent's OUTPUT files on disk — cell editing
+    // is enabled here too (dblclick, same /v1/files/xlsx-cell path + mtime
+    // conflict check as the bottom-panel editor). Attachments stay read-only
+    // (they're the model's INPUTS; silent edits would change what the agent
+    // reads).
+    _xlsxGridMount(container.firstChild, g, { editable: true, path, vba });
   } catch (e) {
     await renderArtifactDocument(artifactId, version, name, ext);
   }

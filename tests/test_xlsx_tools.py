@@ -859,5 +859,16 @@ class TestV3LegacyAndRecalc(_ToolFixture):
         self.assertIn("| 2 |", out["result"])
 
 
+class TestVbaModules(_XlsxFixture):
+    """list_vba_modules (doc_convert) — the structured twin of _extract_vba
+    feeding the UI VBA viewer. Graceful [] on macro-free/invalid files."""
+
+    def test_macro_free_workbook_is_empty(self):
+        self.assertEqual(doc_convert.list_vba_modules(self.orders_path), [])
+
+    def test_invalid_path_is_empty(self):
+        self.assertEqual(doc_convert.list_vba_modules("/nope/x.xlsm"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

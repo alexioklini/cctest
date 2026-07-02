@@ -1998,6 +1998,34 @@ class AdminArtifactsHandlers:
         except Exception as e:
             self._send_json({"error": f"Zelle konnte nicht geschrieben werden: {e}"}, 500)
 
+    def _handle_file_xlsm_vba(self):
+        """GET /v1/files/xlsm-vba?path=<abs> — VBA module sources of a
+        macro-enabled workbook as {modules: [{name, code}]} for the
+        bottom-panel VBA viewer (v9.265.0). READ-ONLY by design: editing
+        vbaProject.bin in place isn't safely possible without Excel (MS-OVBA
+        compression + compiled P-code + offset directory), so the UI offers
+        per-module .bas export instead of a fake save. Macros are never
+        executed."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        resolved = self._validate_file_path(qs.get("path", [""])[0])
+        if not resolved:
+            self._send_json({"error": "Invalid or disallowed file path"}, 403)
+            return
+        if not os.path.isfile(resolved):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        if not resolved.lower().endswith((".xlsm", ".xls", ".xlsb",
+                                          ".docm", ".pptm")):
+            self._send_json({"error": "Kein makrofähiges Office-Format"}, 400)
+            return
+        try:
+            from engine.doc_convert import list_vba_modules
+            self._send_json({"path": resolved,
+                             "modules": list_vba_modules(resolved)})
+        except Exception as e:
+            self._send_json({"error": f"VBA-Extraktion fehlgeschlagen: {e}"}, 500)
+
     # ── Code Mode Endpoints ──
 
     def _handle_file_tree(self):
