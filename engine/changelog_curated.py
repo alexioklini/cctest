@@ -59,7 +59,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "Modelle Entwürfe liefern dürfen und bei welchen Aufgabentypen "
                 "sich der Mehraufwand lohnt.",
         "audience": "user",
-        "versions": ["9.268.0"],
+        "versions": ["9.268.0", "9.269.1"],
     },
     {
         "version": "9.267.0",

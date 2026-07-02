@@ -214,7 +214,11 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   pricing intact); the classifier still runs every turn but ONLY for gate +
   reference selection (`resolve_task_analysis`, classify-without-swap).
 - **Surfaces**: one synthetic tool-card pair per reference
-  (`kind="moa_reference"`, 🧬 + MOA badge); plan + ground truth
+  (`kind="moa_reference"`, 🧬 + MOA badge) — rendered INLINE in the
+  conversation flow like real tool cards, NOT inside the Datenschutz
+  collapsible and independent of the showGdprDetails toggle (9.269.1: the
+  privacy bucket's counter-gated early-return swallowed MoA-only turns
+  entirely); plan + ground truth
   (references/gate_hit/gated_out + ok/failed/ms/models) ride
   `auto_route.moa` into the done event + `msg_metadata.auto_route`.
   Dropdown entry `🧬 MoA (Smart)` is gated on `/v1/status → moa_enabled` and

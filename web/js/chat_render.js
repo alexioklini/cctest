@@ -533,6 +533,15 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
     if (isSynthetic(m)) {
       // tool_result is rendered paired inside the tool_call — skip standalone.
       if (m.role !== 'tool_call') continue;
+      // MoA reference cards are NOT privacy ops — render them INLINE like real
+      // tool calls (🧬 card via renderToolCall's synthetic branch), never
+      // inside the Datenschutz collapsible: its header counts only anon/
+      // de-anon and returns '' otherwise, which swallowed MoA-only turns
+      // entirely (chat 58988960), and its body hangs on showGdprDetails.
+      if ((m.kind || m.name) === 'moa_reference') {
+        bodyItems.push({ kind: 'tool', sortTs: sortKey(m), item: { idx, m } });
+        continue;
+      }
       if (!realOpsByCall.has(idx)) continue;
       let ts = sortKey(m);
       if (userMemberPos >= 0 && i < userMemberPos) {
