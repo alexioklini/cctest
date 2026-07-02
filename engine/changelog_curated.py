@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.259.0",
+        "date": "2026-07-02",
+        "title": "Saubere HTML-Berichte",
+        "body": "Als HTML erzeugte Berichte werden jetzt durchgängig sauber "
+                "formatiert. Bisher konnten in längeren Dokumenten vereinzelt "
+                "Roh-Textzeichen sichtbar bleiben — etwa „---“-Striche zwischen "
+                "Abschnitten, „>“ vor Hinweiszeilen, „-“ vor Aufzählungspunkten "
+                "oder Sternchen im Fenstertitel. Diese werden nun korrekt in "
+                "Trennlinien, hervorgehobene Zitatblöcke und echte Listen "
+                "umgesetzt, und eine irrtümlich vorangestellte Kopfzeile wird "
+                "entfernt. Ihre Berichte sehen damit so aus, wie sie gemeint sind.",
+        "audience": "user",
+        "versions": ["9.259.0"],
+    },
+    {
         "version": "9.258.0",
         "date": "2026-07-02",
         "title": "Zwischenfragen-Tab und sichtbare Turn-Aktivität",

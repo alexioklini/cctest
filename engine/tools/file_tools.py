@@ -1184,9 +1184,47 @@ def _render_markdown_html(content: str, style: dict, doc_dir: str) -> str:
     # ── body: reuse the same line-walk as the other branches ──
     body = []
     lines = content.split("\n")
+    # Strip a leading YAML frontmatter block (--- … ---) — non-standard framing
+    # the model sometimes prefixes; without this it renders as literal <p> text.
+    if lines and lines[0].strip() == "---":
+        for j in range(1, min(len(lines), 20)):
+            if lines[j].strip() == "---":
+                lines = lines[j + 1:]
+                break
     i = 0
     while i < len(lines):
         line = lines[i]
+        stripped_full = line.strip()
+        # Horizontal rule: a line of only ---/***/___ (3+) → <hr> (was <p>---</p>).
+        if re.match(r'^(-{3,}|\*{3,}|_{3,})$', stripped_full):
+            body.append('<hr>')
+            i += 1
+            continue
+        # Blockquote: one or more consecutive `> ` lines → a single <blockquote>.
+        if re.match(r'^>\s?', line):
+            quote_lines = []
+            while i < len(lines) and re.match(r'^>\s?', lines[i]):
+                quote_lines.append(re.sub(r'^>\s?', '', lines[i]))
+                i += 1
+            inner = "".join(f'<p>{_html_inline_md(q.strip())}</p>'
+                             for q in quote_lines if q.strip())
+            body.append(f'<blockquote>{inner}</blockquote>')
+            continue
+        # Unordered / ordered list: consecutive `- `/`* `/`+ ` or `1. ` lines.
+        m_li = re.match(r'^(\s*)([-*+]|\d+\.)\s+(.*)', line)
+        if m_li:
+            ordered = bool(re.match(r'^\d+\.$', m_li.group(2)))
+            items = []
+            while i < len(lines):
+                mm = re.match(r'^(\s*)([-*+]|\d+\.)\s+(.*)', lines[i])
+                if not mm:
+                    break
+                items.append(mm.group(3).strip())
+                i += 1
+            tag = 'ol' if ordered else 'ul'
+            lis = "".join(f'<li>{_html_inline_md(it)}</li>' for it in items)
+            body.append(f'<{tag}>{lis}</{tag}>')
+            continue
         m_img = _MD_IMAGE_RE.match(line)
         if m_img:
             src = _resolve_doc_image(m_img.group(2), doc_dir)
@@ -1273,6 +1311,12 @@ def _render_markdown_html(content: str, style: dict, doc_dir: str) -> str:
     a {{ color: {c.get('accent', '#2E74B5')}; }}
     code {{ font-family: '{fm}', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }}
     p.figure {{ text-align: center; }} p.figure img {{ max-width: 100%; height: auto; }}
+    hr {{ border: none; border-top: 1px solid #ddd; margin: 1.4em 0; }}
+    blockquote {{ margin: 12px 0; padding: 4px 16px; border-left: 3px solid {c.get('accent', '#2E74B5')};
+      color: #555; background: #fafafa; }}
+    blockquote p {{ margin: .3em 0; }}
+    ul, ol {{ margin: .6em 0 .6em 1.4em; padding: 0; }}
+    li {{ margin: .2em 0; }}
     table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
     th, td {{ border: 1px solid #ddd; padding: 5px 9px; text-align: left; }}
     th {{ background: {c.get('table_header_bg', '#1F3864')};
@@ -1288,7 +1332,10 @@ def _render_markdown_html(content: str, style: dict, doc_dir: str) -> str:
     title = ""
     m_title = re.search(r'^#\s+(.+)$', content, flags=re.MULTILINE)
     if m_title:
-        title = _html.escape(m_title.group(1).strip())
+        # Strip inline-markdown markers (**bold**/*italic*/`code`) — the <title>
+        # is plain text, so they'd otherwise show up literally in the browser tab.
+        raw_title = re.sub(r'[*`]', '', m_title.group(1)).strip()
+        title = _html.escape(raw_title)
     return (f'<!DOCTYPE html>\n<html lang="de">\n<head>\n<meta charset="UTF-8">\n'
             f'<meta name="viewport" content="width=device-width, initial-scale=1.0">\n'
             f'<title>{title or "Dokument"}</title>\n<style>{css}</style>\n</head>\n<body>\n'
