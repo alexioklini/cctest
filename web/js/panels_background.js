@@ -10,7 +10,8 @@
  * Globals (load order: after panels_right.js, before init.js):
  *   loadBackgroundTasks, renderBackgroundTasksPane, backgroundTasksActiveCount,
  *   refreshBackgroundTasksPill, startBackgroundTasksPoll, stopBackgroundTasksPoll,
- *   cancelBgTask, deleteBgTask, openBgTranscript
+ *   cancelBgTask, deleteBgTask, openBgTranscript, _turnControlEntries,
+ *   _tcActivityCard
  */
 
 let _bgPollHandle = null;
@@ -543,6 +544,87 @@ function _bgEntries() {
   return entries;
 }
 
+// Turn-control activity of the CURRENT session (chat_turncontrol.js writes
+// chat.turnActivity): mid-turn injections + goal-mode judge/round events,
+// normalised to activity entries so they render as cards next to tool calls.
+// While a goal is armed and a turn is streaming, a synthetic "geplant" entry
+// announces the judge call that will run after the reply (future activity).
+// Entries still open when the turn has ended are shown finished/stale here —
+// the loop that would complete them is gone (no teardown hook needed).
+function _turnControlEntries() {
+  const chat = state.activeChat;
+  const arr = (chat && Array.isArray(chat.turnActivity)) ? chat.turnActivity : [];
+  const streaming = !!(chat && chat.streaming);
+  const out = arr.map((e, i) => ({
+    kind: 'tc', tc: e, id: e.id || ('tc-' + i),
+    status: (e.status !== 'done' && streaming) ? 'running' : 'done',
+    stale: e.status !== 'done' && !streaming,
+    ts: e.ts || 0, seq: i, isBackground: false,
+  }));
+  if (streaming && chat.goalStatus === 'active'
+      && !arr.some(e => e.kind === 'goal_judge' && e.status === 'running')) {
+    out.push({
+      kind: 'tc', id: 'tc-goal-planned', status: 'running', stale: false,
+      ts: Date.now(), seq: arr.length, isBackground: false,
+      tc: { kind: 'goal_planned', iteration: (chat._goalIteration || 0) + 1,
+            max: chat._goalMax || chat.goalMaxIterations || 0 },
+    });
+  }
+  return out;
+}
+
+// Card for one turn-control entry (injection / goal judge / goal round /
+// planned judge) — same visual language as a tool-call card: dot + title +
+// status line + optional text body.
+function _tcActivityCard(e) {
+  const t = e.tc || {};
+  const running = e.status === 'running';
+  const iterBit = t.max ? ` (Iteration ${t.iteration || '?'}/${t.max})`
+    : (t.iteration ? ` (Iteration ${t.iteration})` : '');
+  let title = '', line = '', body = '';
+  let dot = running ? 'bg-st-running' : 'bg-st-done';
+  if (t.kind === 'inject') {
+    title = 'Klarstellung an die laufende Antwort';
+    if (t.status === 'done') {
+      line = t.round ? `In Runde ${t.round} übernommen` : 'Übernommen';
+    } else if (e.stale) {
+      line = 'Nicht übernommen — die Antwort war schon beendet';
+      dot = 'bg-st-error';
+    } else {
+      line = 'Wartet auf das nächste Rundenende …';
+    }
+    body = t.text || '';
+  } else if (t.kind === 'goal_judge') {
+    title = '🎯 Ziel-Prüfung' + iterBit;
+    const v = t.verdict || '';
+    line = (t.status !== 'done' && !e.stale) ? 'Judge bewertet die Antwort …'
+      : v === 'fulfilled' ? 'Ziel erreicht ✓'
+      : v === 'active' ? 'Ziel noch nicht erreicht → weitere Iteration'
+      : v === 'capped' ? 'Nicht erreicht — Iterations-Limit oder unerreichbar'
+      : v === 'judge_error' ? 'Prüfung fehlgeschlagen — Durchlauf beendet'
+      : 'Beendet';
+    if (v === 'capped' || v === 'judge_error') dot = 'bg-st-error';
+  } else if (t.kind === 'goal_round') {
+    title = '🎯 Zusätzliche Iteration' + iterBit;
+    line = running ? 'Der Agent arbeitet weiter am Ziel …' : 'Abgeschlossen';
+    body = t.text || '';
+  } else if (t.kind === 'goal_planned') {
+    title = '🎯 Ziel-Prüfung geplant' + iterBit;
+    line = 'Startet nach Abschluss der laufenden Antwort';
+    dot = 'bg-st-warn';
+  }
+  const bodyHtml = body ? `<div class="act-tc-text">${escapeHtml(body)}</div>` : '';
+  return `
+    <div class="bgtask-card act-tc-card" data-act="${escapeHtml(e.id)}">
+      <div class="bgtask-row1">
+        <span class="bgtask-dot ${dot}"></span>
+        <span class="bgtask-title">${escapeHtml(title)}</span>
+      </div>
+      <div class="bgtask-row2 ${running ? 'bg-st-running' : ''}">${escapeHtml(line)}</div>
+      ${bodyHtml}
+    </div>`;
+}
+
 // The unified, sorted activity list for the current session.
 function _collectActivityEntries() {
   const sync = _syncToolEntries();
@@ -552,7 +634,8 @@ function _collectActivityEntries() {
   // spawning call too double-lists every fan-out (the call rows AND the resulting
   // task group).
   const syncedReal = synced.filter(e => e.type !== 'run_background_task');
-  return syncedReal.concat(_bgEntries()).sort(_bgSortNewestFirst);
+  return syncedReal.concat(_bgEntries()).concat(_turnControlEntries())
+    .sort(_bgSortNewestFirst);
 }
 
 // One capped, expandable card for a synchronous tool-call entry. Reuses
@@ -620,10 +703,11 @@ function _bgGroupCard(e) {
     </details>`;
 }
 
-// Render one activity entry (group, background task, OR synchronous tool call)
-// using the matching card builder.
+// Render one activity entry (group, background task, turn-control event, OR
+// synchronous tool call) using the matching card builder.
 function _activityCard(e) {
   if (e.kind === 'bggroup') return _bgGroupCard(e);
+  if (e.kind === 'tc') return _tcActivityCard(e);
   return e.kind === 'bgtask' ? _bgCard(e.raw) : _toolEntryCard(e);
 }
 

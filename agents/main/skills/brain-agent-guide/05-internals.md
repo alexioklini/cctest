@@ -1249,7 +1249,10 @@ against, auto-continuing until fulfilled — like Claude Code's `/goal`.
   (`metadata.goal_continue/goal_iteration/goal_reasoning`) and re-enters the
   loop. Exactly ONE terminal `done` (carries `goal {status,iteration,max,
   reasoning}`); boundaries are SSE `goal_judge_start` / `goal_verdict` /
-  `goal_continue`. Invariants: `_msg_count_before` is re-snapshotted before
+  `goal_continue`. The web client mirrors these into `chat.turnActivity`
+  (chat_turncontrol.js) and renders them as cards in the right panel's
+  Aktivität tab (planned/running judge, verdict, extra iterations) next to
+  the tool calls; injections render there too. Invariants: `_msg_count_before` is re-snapshotted before
   each continue message (cancel/error in iteration N rolls back ONLY N);
   per-iteration callback state (`_partial_*`, created_files,
   `_turn_created_files`, streaming_text) is cleared at the boundary; the

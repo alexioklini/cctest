@@ -154,6 +154,7 @@ function refreshRightPanelContent() {
   else if (tab === 'references') renderReferencesPane();
   else if (tab === 'artifacts' && !state.activeArtifactId) showArtifactList();
   else if (tab === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
+  else if (tab === 'btw' && typeof ChatTurnControl !== 'undefined') ChatTurnControl.renderBtwPane();
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
 }
 
@@ -183,6 +184,7 @@ function switchRightTab(tabName) {
     if (typeof _bgLiveReconcile === 'function') _bgLiveReconcile();
     renderBackgroundTasksPane();
   }
+  if (tabName === 'btw' && typeof ChatTurnControl !== 'undefined') ChatTurnControl.renderBtwPane();
   updateRightPanelBadges();
   // Re-apply the active-turn focus to the freshly rendered pane.
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);
@@ -293,6 +295,11 @@ function updateRightPanelBadges() {
   const bgCount = (typeof backgroundActivityCount === 'function') ? backgroundActivityCount() : 0;
   const bgBadge = document.getElementById('tab-badge-bgtasks');
   if (bgBadge) bgBadge.textContent = bgCount || '0';
+  // Zwischenfragen (btw) thread length
+  const btwBadge = document.getElementById('tab-badge-btw');
+  if (btwBadge) {
+    btwBadge.textContent = (chat && Array.isArray(chat.btwThread) ? chat.btwThread.length : 0) || '0';
+  }
 }
 
 /* ───────────────────────────────────────────────────────────

@@ -169,9 +169,11 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST /v1/chat/resume` — `{session_id}` resume a paused turn. Emits `resumed`.
 - `POST /v1/chat/inject` — `{session_id, message}` splice a clarification into
   the RUNNING turn; the model sees it next round (emits `injected_pending` then
-  `injected_message`). Distinct from the message queue.
+  `injected_message {round,text}`). Distinct from the message queue. The web UI
+  renders the lifecycle as cards in the right panel's Aktivität tab.
 - `POST /v1/chat/btw` — `{session_id, message}` ask a side question answered in a
-  SEPARATE bubble without touching the running turn. Grounded in live turn state
+  SEPARATE thread (web UI: the right panel's "Zwischenfragen" tab) without
+  touching the running turn. Grounded in live turn state
   (current round, active tool + elapsed, completed steps). Runs as an independent
   background call; emits `btw_start` then `btw_done {btw_id, answer}`.
 - Message queue persists per session (`sessions.message_queue`, manage action

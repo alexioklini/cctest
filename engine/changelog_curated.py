@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.258.0",
+        "date": "2026-07-02",
+        "title": "Zwischenfragen-Tab und sichtbare Turn-Aktivität",
+        "body": "Nebenfragen (btw) haben jetzt einen eigenen Tab „Zwischenfragen“ "
+                "im rechten Panel — mit eigenem Eingabefeld und Frage-Antwort-"
+                "Verlauf, ohne die laufende Antwort zu stören und ohne den "
+                "Chat-Verlauf zu verändern. Eingefügte Klarstellungen und der "
+                "Goal-Modus zeigen ihre Aktivität jetzt als Karten im "
+                "Aktivität-Tab: Sie sehen dort, ob eine Klarstellung noch wartet "
+                "oder schon übernommen wurde, und beim Ziel die geplante "
+                "Prüfung, das Prüfergebnis und jede zusätzliche Iteration.",
+        "audience": "user",
+        "versions": ["9.258.0"],
+    },
+    {
         "version": "9.257.0",
         "date": "2026-07-02",
         "title": "Klarere Kosten- und Fortschrittsanzeigen",

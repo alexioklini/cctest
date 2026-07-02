@@ -56,8 +56,13 @@ Panel wird beim Verlassen geschlossen. Tabs mit Inhalt:
 - **Dateien** — Artifacts, die das Modell in diesem Turn erzeugt hat
 - **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten);
   jede markierte Quelle wird beim Senden frisch + vollständig geladen
-- **Aktivität** — alle Tool-Aufrufe dieses Chats (synchrone + Hintergrund­aufgaben),
-  chronologisch (neueste oben) in „Laufend" / „Abgeschlossen" (siehe unten)
+- **Aktivität** — alle Tool-Aufrufe dieses Chats (synchrone + Hintergrund­aufgaben)
+  sowie Karten für **eingefügte Klarstellungen** und **Goal-Modus-Aktivität**
+  (geplante/laufende Ziel-Prüfungen, zusätzliche Iterationen), chronologisch
+  (neueste oben) in „Laufend" / „Abgeschlossen" (siehe unten)
+- **Zwischenfragen (btw)** — Nebenfragen an den Assistenten mit eigenem
+  Eingabefeld und Frage-Antwort-Verlauf; stört die laufende Antwort nicht
+  (siehe unten)
 
 Neben dem **Panel**-Knopf erscheint zusätzlich eine kleine **Uhren-Pille mit
 Zähler**, sobald es Hintergrundaufgaben gibt — ein Klick öffnet direkt den
@@ -191,18 +196,23 @@ Slash-Befehle und Tastenkürzel):
   `Strg-Z`) hält die Antwort am nächsten Schritt an; die aktuelle Runde und ein
   gerade laufendes Werkzeug werden noch fertig, es geht nichts verloren.
   Fortsetzen über denselben Knopf (bzw. `/resume`, `Strg-Q`).
-- **btw-Zwischenfrage** — Der **btw-Knopf** öffnet eine kleine **Sprechblase**,
-  die vom Knopf ausgeht (im Terminal-Chat: `/btw <Frage>`); die Nebenfrage wird
-  dort beantwortet, ohne die laufende Antwort zu stören. Sie ist jederzeit
-  verfügbar. Der btw-Assistent weiß, *was der Assistent gerade tut* — Sie können
-  also
-  „Was machst du gerade?“ oder „Wie lange dauert das noch?“ fragen und eine
-  sachliche Auskunft zum aktuellen Schritt und zur bisher verstrichenen Zeit
-  bekommen (eine Angabe zur Restdauer ist ausdrücklich eine grobe Schätzung).
+- **btw-Zwischenfrage** — Nebenfragen haben ihren eigenen Tab
+  **„Zwischenfragen“ im rechten Panel** (Sprechblasen-Symbol; im
+  Terminal-Chat: `/btw <Frage>`): ein kleiner Frage-Antwort-Bereich mit
+  eigenem Eingabefeld, in dem die Nebenfrage beantwortet wird, ohne die
+  laufende Antwort zu stören und ohne den Chat-Verlauf zu verändern. Er ist
+  jederzeit verfügbar. Der btw-Assistent weiß, *was der Assistent gerade
+  tut* — Sie können also „Was machst du gerade?“ oder „Wie lange dauert das
+  noch?“ fragen und eine sachliche Auskunft zum aktuellen Schritt und zur
+  bisher verstrichenen Zeit bekommen (eine Angabe zur Restdauer ist
+  ausdrücklich eine grobe Schätzung).
 - **Klarstellung einfügen** — Schieben Sie mitten in die laufende Antwort einen
   Hinweis nach, den das Modell im nächsten Schritt berücksichtigt (im
   Terminal-Chat `/inject <Text>`, Alias `/clarify`). Anders als die
   Warteschlange startet dies keinen neuen Turn, sondern ergänzt den laufenden.
+  Den Status sehen Sie als **Karte im Aktivität-Tab** des rechten Panels —
+  erst „Wartet auf das nächste Rundenende“, dann „In Runde N übernommen“
+  (wie ein Tool-Aufruf).
 
 Im Terminal-Chat bricht `Esc` (oder `/cancel`) die Antwort weiterhin ab.
 
@@ -218,7 +228,10 @@ erfüllt ist:
   Anweisung, was noch fehlt (im Verlauf sichtbar als gedämpfte Notiz
   „🎯 Automatische Fortsetzung (Iteration n)“), und arbeitet weiter — bis zum
   Ziel oder bis zur Obergrenze. Die Statusleiste zeigt dabei
-  „Ziel: Iteration 2/5“.
+  „Ziel: Iteration 2/5“. Zusätzlich zeigt der **Aktivität-Tab** im rechten
+  Panel die Goal-Aktivität als Karten: die **geplante Ziel-Prüfung** (läuft
+  nach Abschluss der Antwort), die **laufende Prüfung**, ihr **Ergebnis**
+  und jede **zusätzliche Iteration** samt Judge-Anweisung.
 - **Erfüllt** → der Durchlauf endet, der Knopf wird grün („Ziel erreicht“),
   und weitere Nachrichten werden nicht mehr geprüft, bis Sie ein neues Ziel
   setzen oder das alte löschen.
@@ -1205,6 +1218,13 @@ einem Ort — sowohl die synchronen (während eines normalen Turns, z.B. `web_fe
 sortiert (neueste oben), in zwei Bereichen **Laufend** / **Abgeschlossen**. Jeder
 Eintrag trägt seinen Typ (Tool-Name oder „Hintergrundaufgabe") und asynchrone
 Einträge zusätzlich ein **Hintergrund**-Badge.
+
+Außerdem erscheinen hier — im selben Karten-Stil — die **Turn-Steuerungs-Ereignisse**
+des Chats: eine **eingefügte Klarstellung** (erst „Wartet auf das nächste
+Rundenende“, nach dem Einfügen „In Runde N übernommen“) und die
+**Goal-Modus-Aktivität** (bei aktivem Ziel während einer Antwort die *geplante*
+Ziel-Prüfung als zukünftige Aufgabe, dann die laufende Prüfung, ihr Ergebnis und
+jede zusätzliche Iteration mit der Judge-Anweisung).
 
 **Vollansicht, Kopieren und Herunterladen** eines Tool-Ergebnisses passieren hier
 im Panel. Im Chat selbst steht pro Tool-Aufruf nur noch eine **kompakte Zeile**

@@ -5,13 +5,18 @@
 //   • Pause      — soft-hold the turn at the next round boundary; resume later.
 //   • Inject     — splice a clarification into the RUNNING turn (model sees it
 //                  next round). Distinct from the queue (which starts new turns).
-//   • btw        — ask a side question answered in a SEPARATE bubble, grounded in
-//                  what the agent is doing right now (round, current tool, elapsed).
+//                  Lifecycle (pending → übernommen) renders as CARDS in the
+//                  right panel's Aktivität tab (chat.turnActivity), not in the
+//                  message flow.
+//   • btw        — ask a side question answered in the right panel's OWN
+//                  "Zwischenfragen" tab (thread + composer, chat.btwThread),
+//                  grounded in what the agent is doing right now.
+//   • Goal       — judge/iteration activity is mirrored into chat.turnActivity
+//                  so the Aktivität tab shows planned/running/finished goal work.
 //
-// Single global (net-globals invariant). All DOM is mounted transiently:
-//   - the queue panel + pending-inject chip go ABOVE the active composer,
-//   - btw bubbles + the "injected" note go into #messages-container,
-// so renderMessages()/the message model stay untouched. Backend endpoints:
+// Single global (net-globals invariant). The queue panel mounts ABOVE the
+// active composer; btw + activity render into static right-panel panes, so
+// renderMessages()/the message model stay untouched. Backend endpoints:
 //   POST /v1/chat/{pause,resume,inject,btw}; queue persists via manage action
 //   'message_queue' (mirrors the Websuche basket).
 const ChatTurnControl = {
@@ -189,227 +194,210 @@ const ChatTurnControl = {
     API.injectChat(chat.sessionId, text).catch(() => {});
   },
 
+  // ── Turn activity (Aktivität-tab cards: injections + goal judge/rounds) ──
+  // chat.turnActivity = [{id,kind,status,text,iteration,max,verdict,round,ts}]
+  // In-memory per session (like the old pending chips were). The Aktivität
+  // pane renders these as cards next to tool calls (_turnControlEntries in
+  // panels_background.js); entries still open when the turn ends are shown as
+  // finished/stale by the collector — no teardown hook needed here.
+  _activityArr(chat) {
+    chat = chat || state.activeChat;
+    if (!chat) return [];
+    if (!Array.isArray(chat.turnActivity)) chat.turnActivity = [];
+    return chat.turnActivity;
+  },
+
+  _activityRefresh() {
+    if (typeof refreshBackgroundTasksPill === 'function') refreshBackgroundTasksPill();
+    if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
+    if (state.rightPanelOpen && state.rightPanelTab === 'bgtasks'
+        && typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
+  },
+
   notePendingInjection(chat, text) {
     chat = chat || state.activeChat;
     if (!chat) return;
-    chat._pendingInjections = chat._pendingInjections || [];
-    chat._pendingInjections.push(text);
-    this.render(chat);
+    this._activityArr(chat).push({ id: this._mkId(), kind: 'inject', status: 'pending',
+                                   text: text || '', ts: Date.now() });
+    this._activityRefresh();
   },
 
-  commitInjection(chat, text) {
+  commitInjection(chat, text, round) {
     chat = chat || state.activeChat;
     if (!chat) return;
-    // Drop it from pending (first match) and drop a small note row into the flow.
-    if (Array.isArray(chat._pendingInjections)) {
-      const i = chat._pendingInjections.indexOf(text);
-      if (i >= 0) chat._pendingInjections.splice(i, 1);
-    }
-    this._mountInjectedNote(text);
-    this.render(chat);
+    const arr = this._activityArr(chat);
+    const e = arr.find(x => x.kind === 'inject' && x.status === 'pending' && x.text === (text || ''))
+           || arr.find(x => x.kind === 'inject' && x.status === 'pending');
+    if (e) { e.status = 'done'; e.round = round || null; }
+    this._activityRefresh();
   },
 
-  _mountInjectedNote(text) {
-    const container = document.getElementById('messages-container');
-    if (!container) return;
-    const row = document.createElement('div');
-    row.className = 'tc-injected-note';
-    row.innerHTML =
-      '<span class="tc-injected-arrow">↳</span> ' +
-      '<span class="tc-injected-label">Eingefügt (wird in dieser Runde berücksichtigt):</span> ' +
-      '<span class="tc-injected-text"></span>';
-    row.querySelector('.tc-injected-text').textContent = text;
-    container.appendChild(row);
-    if (typeof scrollToBottom === 'function') scrollToBottom();
+  // Goal-mode mirrors (called from the SSE handlers in chat_send.js).
+  goalJudgeStart(chat, iteration, max) {
+    chat = chat || state.activeChat;
+    if (!chat) return;
+    const arr = this._activityArr(chat);
+    // The iteration that was running is over — close its card before judging.
+    for (const e of arr) if (e.kind === 'goal_round' && e.status === 'running') e.status = 'done';
+    arr.push({ id: this._mkId(), kind: 'goal_judge', status: 'running',
+               iteration: iteration || 1, max: max || 0, ts: Date.now() });
+    this._activityRefresh();
   },
 
-  // ── btw: side question in a dedicated centered modal overlay ─────────────
-  // The whole btw exchange lives in its own modal, NOT in the message flow —
-  // so it's clearly separate from the running answer and survives re-renders.
-  // Always available: while a turn streams the answer is grounded in live state
-  // (round / current tool / elapsed); when idle it answers from context.
-  _btwActiveId: null,   // the btw_id we're currently waiting on
-
-  // Find the visible btw button for the current composer view (the one that
-  // was clicked) so the bubble can point at it.
-  _btwButtonEl() {
-    for (const id of ['chat-btn-btw', 'project-btn-btw', 'welcome-btn-btw']) {
-      const el = document.getElementById(id);
-      if (el && el.offsetParent !== null) return el;   // visible
-    }
-    return document.getElementById('chat-btn-btw');
+  goalVerdict(chat, status, iteration) {
+    chat = chat || state.activeChat;
+    if (!chat) return;
+    const e = this._activityArr(chat).slice().reverse()
+      .find(x => x.kind === 'goal_judge' && x.status === 'running');
+    if (e) { e.status = 'done'; e.verdict = status || ''; if (iteration) e.iteration = iteration; }
+    this._activityRefresh();
   },
 
+  goalRoundStart(chat, iteration, max, text) {
+    chat = chat || state.activeChat;
+    if (!chat) return;
+    this._activityArr(chat).push({ id: this._mkId(), kind: 'goal_round', status: 'running',
+                                   iteration: iteration || 0, max: max || 0,
+                                   text: text || '', ts: Date.now() });
+    this._activityRefresh();
+  },
+
+  // ── btw: side questions in the right panel's own "Zwischenfragen" tab ────
+  // The whole btw exchange lives in #tab-pane-btw (thread + its own composer)
+  // — clearly separate from the running answer and from the chat composer.
+  // Always available: while a turn streams the answer is grounded in live
+  // state (round / current tool / elapsed); when idle it answers from context.
+  // Thread state: chat.btwThread = [{q, a, error, pending}], in-memory per
+  // session (btw exchanges are deliberately not part of the chat history).
+  _btwActiveId: null,   // the btw_id we're currently waiting on (SSE mirror)
+
+  _btwThread(chat) {
+    chat = chat || state.activeChat;
+    if (!chat) return [];
+    if (!Array.isArray(chat.btwThread)) chat.btwThread = [];
+    return chat.btwThread;
+  },
+
+  // Open the right panel on the btw tab (also the back-compat entry point).
   openBtw() {
     const chat = state.activeChat;
     if (!chat || !chat.sessionId) {
       if (typeof showToast === 'function') showToast('Kein aktiver Chat.', true);
       return;
     }
-    if (document.getElementById('btw-pop')) { this.closeBtw(); return; }  // toggle
-    const streaming = !!chat.streaming;
-    const hint = streaming
-      ? 'Unterbricht die laufende Antwort nicht. Z. B. „Was machst du gerade?“ / „Wie lange noch?“.'
-      : 'Gerade läuft keine Antwort — wird aus dem bisherigen Gespräch beantwortet.';
-
-    // Light click-catcher (no dim) so a click outside closes the bubble.
-    const scrim = document.createElement('div');
-    scrim.className = 'btw-scrim';
-    scrim.id = 'btw-scrim';
-    scrim.onclick = () => ChatTurnControl.closeBtw();
-    document.body.appendChild(scrim);
-
-    // The speech bubble itself, as a popover anchored to the button.
-    const pop = document.createElement('div');
-    pop.className = 'btw-pop';
-    pop.id = 'btw-pop';
-    pop.innerHTML =
-      '<div class="btw-pop-head">' +
-        '<span class="tc-btw-tag">btw</span>' +
-        '<span class="btw-pop-title">Zwischenfrage</span>' +
-        '<button class="btw-pop-close" onclick="ChatTurnControl.closeBtw()" title="Schließen">&times;</button>' +
-      '</div>' +
-      '<div class="btw-pop-hint">' + esc(hint) + '</div>' +
-      '<div class="btw-pop-thread" id="btw-modal-thread"></div>' +
-      '<div class="btw-pop-composer">' +
-        '<textarea id="btw-modal-input" class="btw-pop-input" rows="2" ' +
-          'placeholder="Nebenfrage stellen…"></textarea>' +
-        '<button class="btw-pop-send" id="btw-modal-send" ' +
-          'onclick="ChatTurnControl.sendBtw()">Fragen</button>' +
-      '</div>' +
-      '<div class="btw-pop-tail"></div>';
-    document.body.appendChild(pop);
-    this._positionBtwPop(pop);
-    // Reposition on resize/scroll while open.
-    this._btwReposition = () => { const p = document.getElementById('btw-pop'); if (p) ChatTurnControl._positionBtwPop(p); };
-    window.addEventListener('resize', this._btwReposition);
-    window.addEventListener('scroll', this._btwReposition, true);
-
-    const inp = document.getElementById('btw-modal-input');
-    if (inp) {
-      const comp = _composerInputEl();
-      if (comp && comp.value && comp.value.trim()) inp.value = comp.value.trim();
-      inp.focus();
-      inp.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); ChatTurnControl.sendBtw(); }
-        if (e.key === 'Escape') { e.preventDefault(); ChatTurnControl.closeBtw(); }
-      });
-    }
+    if (typeof openRightPanel === 'function') openRightPanel('btw');
+    const inp = document.getElementById('btw-tab-input');
+    if (inp) inp.focus();
   },
 
-  // Anchor the bubble above the btw button, with the tail pointing down at it.
-  // Clamps horizontally to the viewport; flips below the button if there's no
-  // room above.
-  _positionBtwPop(pop) {
-    const btn = this._btwButtonEl();
-    if (!btn) return;
-    const b = btn.getBoundingClientRect();
-    const pw = pop.offsetWidth || 360, ph = pop.offsetHeight || 260;
-    const gap = 12, margin = 8;
-    // Horizontal: center on the button, clamp to viewport.
-    let left = b.left + b.width / 2 - pw / 2;
-    left = Math.max(margin, Math.min(left, window.innerWidth - pw - margin));
-    // Vertical: prefer above; flip below if it wouldn't fit.
-    let top = b.top - ph - gap;
-    let below = false;
-    if (top < margin) { top = b.bottom + gap; below = true; }
-    pop.style.left = left + 'px';
-    pop.style.top = top + 'px';
-    pop.classList.toggle('btw-pop-below', below);
-    // Point the tail at the button centre (relative to the bubble's left edge).
-    const tailX = Math.max(16, Math.min(b.left + b.width / 2 - left, pw - 16));
-    pop.style.setProperty('--btw-tail-x', tailX + 'px');
-  },
-
-  // Back-compat name (composer button + terminal call this).
   promptBtw() { this.openBtw(); },
 
-  closeBtw() {
-    const p = document.getElementById('btw-pop'); if (p) p.remove();
-    const s = document.getElementById('btw-scrim'); if (s) s.remove();
-    if (this._btwReposition) {
-      window.removeEventListener('resize', this._btwReposition);
-      window.removeEventListener('scroll', this._btwReposition, true);
-      this._btwReposition = null;
+  // Render the btw pane (hint + thread) for the active chat. Called by the
+  // right-panel tab switch and after every thread mutation.
+  renderBtwPane() {
+    const chat = state.activeChat;
+    const thread = document.getElementById('btw-tab-thread');
+    if (!thread) return;
+    const hintEl = document.getElementById('btw-tab-hint');
+    if (hintEl) {
+      hintEl.textContent = (chat && chat.streaming)
+        ? 'Zwischenfrage zur laufenden Antwort — unterbricht sie nicht. Z. B. „Was machst du gerade?“ / „Wie lange noch?“.'
+        : 'Nebenfrage zum Gespräch — wird separat beantwortet, ohne den Chat-Verlauf zu verändern.';
     }
-    this._btwActiveId = null;
+    const items = this._btwThread(chat);
+    thread.innerHTML = '';
+    for (const it of items) {
+      const q = document.createElement('div');
+      q.className = 'btw-msg btw-msg-q';
+      q.textContent = it.q;
+      thread.appendChild(q);
+      const a = document.createElement('div');
+      a.className = 'btw-msg btw-msg-a' + (it.pending ? ' btw-pending' : '');
+      if (it.pending) {
+        a.innerHTML = '<span class="tc-btw-spinner"></span> antwortet…';
+      } else if (it.error) {
+        a.innerHTML = '<span class="tc-btw-err"></span>';
+        a.querySelector('.tc-btw-err').textContent = 'Fehler: ' + it.error;
+      } else if (typeof renderMarkdown === 'function') {
+        try { a.innerHTML = renderMarkdown(it.a || ''); } catch (e) { a.textContent = it.a || ''; }
+      } else {
+        a.textContent = it.a || '';
+      }
+      thread.appendChild(a);
+    }
+    thread.scrollTop = thread.scrollHeight;
+    const sendBtn = document.getElementById('btw-tab-send');
+    if (sendBtn) sendBtn.disabled = items.some(it => it.pending);
   },
 
   sendBtw() {
     const chat = state.activeChat;
-    if (!chat || !chat.sessionId) return;
-    const inp = document.getElementById('btw-modal-input');
+    if (!chat || !chat.sessionId) {
+      if (typeof showToast === 'function') showToast('Kein aktiver Chat.', true);
+      return;
+    }
+    const inp = document.getElementById('btw-tab-input');
     const q = inp ? inp.value.trim() : '';
     if (!q) return;
-    // Render the question + a pending answer bubble in the thread immediately.
-    const thread = document.getElementById('btw-modal-thread');
-    if (thread) {
-      thread.innerHTML =
-        '<div class="btw-msg btw-msg-q"></div>' +
-        '<div class="btw-msg btw-msg-a btw-pending" id="btw-modal-answer">' +
-          '<span class="tc-btw-spinner"></span> antwortet…</div>';
-      thread.querySelector('.btw-msg-q').textContent = q;
-    }
+    const items = this._btwThread(chat);
+    if (items.some(it => it.pending)) return;   // one question at a time
+    items.push({ q, a: '', error: '', pending: true });
     if (inp) { inp.value = ''; inp.focus(); }
-    const sendBtn = document.getElementById('btw-modal-send');
-    if (sendBtn) sendBtn.disabled = true;
-    const _pop = document.getElementById('btw-pop');
-    if (_pop) this._positionBtwPop(_pop);   // thread grew → re-anchor
+    this.renderBtwPane();
+    if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
     // The endpoint runs the btw call synchronously and returns the answer in the
     // response (works idle OR while streaming — no dependency on an SSE stream,
     // which doesn't exist when the chat is idle). This response IS the primary
-    // render path; the btw_done SSE event is only a mirror for other tabs.
+    // render path; the btw_start/btw_done SSE events mirror it to other tabs.
     this._btwActiveId = null;
     API.btwChat(chat.sessionId, q).then((r) => {
-      this._btwAnswer((r && r.answer) || '', (r && r.error) || '');
+      this._btwAnswer(chat, (r && r.answer) || '', (r && r.error) || '');
     }).catch(() => {
-      this._btwAnswer('', 'Anfrage fehlgeschlagen.');
+      this._btwAnswer(chat, '', 'Anfrage fehlgeschlagen.');
     });
   },
 
-  // Called from the SSE handlers. The modal is the single render target; we
-  // ignore btw_start (the pending bubble is already shown by sendBtw) and fill
-  // the answer on btw_done. Match on the active id when we have it.
-  btwStart(chat, btwId, question) { this._btwActiveId = btwId || this._btwActiveId; },
+  // SSE mirrors. A tab that did NOT initiate the question learns about it via
+  // btw_start (adds the pending Q to its thread) and btw_done (fills it). On
+  // the initiating tab the HTTP response usually lands first; whoever fills
+  // first flips the pending flag, so the second caller is a no-op.
+  btwStart(chat, btwId, question) {
+    this._btwActiveId = btwId || this._btwActiveId;
+    const items = this._btwThread(chat);
+    if (question && !items.some(it => it.pending)) {
+      items.push({ q: question, a: '', error: '', pending: true });
+      if (state.activeChat === chat) this.renderBtwPane();
+      if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
+    }
+  },
 
   btwDone(chat, btwId, answer, error) {
-    if (this._btwActiveId && btwId && btwId !== this._btwActiveId) return;
-    this._btwAnswer(answer || '', error || '');
+    this._btwAnswer(chat, answer || '', error || '');
     this._btwActiveId = null;
   },
 
-  _btwAnswer(answer, error) {
-    const el = document.getElementById('btw-modal-answer');
-    const sendBtn = document.getElementById('btw-modal-send');
-    if (sendBtn) sendBtn.disabled = false;
-    if (!el) return;
-    el.classList.remove('btw-pending');
-    if (error) { el.innerHTML = '<span class="tc-btw-err"></span>';
-                 el.querySelector('.tc-btw-err').textContent = 'Fehler: ' + error; return; }
-    if (typeof renderMarkdown === 'function') {
-      try { el.innerHTML = renderMarkdown(answer); } catch (e) { el.textContent = answer; }
-    } else {
-      el.textContent = answer;
-    }
-    const pop = document.getElementById('btw-pop');
-    if (pop) this._positionBtwPop(pop);   // answer grew the bubble → re-anchor
+  _btwAnswer(chat, answer, error) {
+    chat = chat || state.activeChat;
+    const items = this._btwThread(chat);
+    const e = items.find(it => it.pending);
+    if (!e) return;   // already filled (HTTP response vs SSE mirror race)
+    e.pending = false;
+    e.a = answer || '';
+    e.error = error || '';
+    if (state.activeChat === chat) this.renderBtwPane();
+    if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
   },
 
   // ── Rendering ────────────────────────────────────────────────────────────
-  // Toggle the composer's btw/pause buttons + repaint the queue panel + chips.
+  // Toggle the composer's pause button + repaint the queue panel.
   renderControls(chat) {
     chat = chat || state.activeChat;
     const streaming = !!(chat && chat.streaming);
-    // The two composer buttons live in whichever composer is mounted for the
-    // current view; query by their per-view id set in init.js.
+    // The pause button lives in whichever composer is mounted for the current
+    // view; query by its per-view id set in init.js. Pause is streaming-only.
     const ids = ['chat', 'welcome', 'project'];
     for (const p of ids) {
-      const btw = document.getElementById(p + '-btn-btw') ||
-                  (p === 'chat' ? document.getElementById('chat-btn-btw') : null);
       const pause = document.getElementById(p + '-btn-pause');
-      // btw is ALWAYS available (grounded in live state while streaming, in
-      // conversation context when idle) → never hidden. Pause is streaming-only.
-      if (btw) btw.classList.remove('hidden');
       if (pause) {
         pause.classList.toggle('hidden', !streaming);
         pause.classList.toggle('tc-active', streaming && !!chat._turnPaused);
@@ -428,7 +416,8 @@ const ChatTurnControl = {
     this.render(chat);
   },
 
-  // Mount / update the queue panel + pending-inject chip above the composer.
+  // Mount / update the queue panel above the composer. (Pending injections no
+  // longer render here — they live as cards in the Aktivität tab.)
   render(chat) {
     chat = chat || state.activeChat;
     if (!chat || state.activeChat !== chat) return;
@@ -438,10 +427,8 @@ const ChatTurnControl = {
 
     let panel = box.querySelector('.tc-panel');
     const arr = this._arr(chat);
-    const pending = (chat._pendingInjections || []);
-    const nothing = !arr.length && !pending.length;
 
-    if (nothing) { if (panel) panel.remove(); return; }
+    if (!arr.length) { if (panel) panel.remove(); return; }
     if (!panel) {
       panel = document.createElement('div');
       panel.className = 'tc-panel';
@@ -449,12 +436,6 @@ const ChatTurnControl = {
     }
 
     let html = '';
-    if (pending.length) {
-      html += '<div class="tc-pending">' +
-        pending.map(t => '<span class="tc-pending-chip">↳ ' +
-          esc(t) + ' <span class="tc-pending-hint">(nächste Runde)</span></span>').join('') +
-        '</div>';
-    }
     if (arr.length) {
       html += '<div class="tc-queue-head">' +
         '<span class="tc-queue-title">Warteschlange (' + arr.length + ')</span>' +

@@ -644,24 +644,22 @@ function buildStreamCallbacks(chat, isActive) {
         if (isActive()) { try { ChatTurnControl.renderControls(chat); } catch(e){} renderStreamingMessage(chat); }
       },
       injected_pending: (d) => {
-        // The user injected a clarification; it will be seen next round. Show a
-        // transient chip so they know it registered.
+        // The user injected a clarification; it will be seen next round. Shows
+        // up as a pending card in the Aktivität tab so they know it registered.
         try { ChatTurnControl.notePendingInjection(chat, d.text || ''); } catch(e){}
-        if (isActive()) renderStreamingMessage(chat);
       },
       injected_message: (d) => {
-        // The loop actually spliced it in this round — promote to a real
-        // "injected" row in the flow and clear the pending chip.
-        try { ChatTurnControl.commitInjection(chat, d.text || ''); } catch(e){}
-        if (isActive()) { renderMessages(); renderStreamingMessage(chat); }
+        // The loop actually spliced it in this round — the Aktivität card
+        // flips from pending to "übernommen (Runde N)".
+        try { ChatTurnControl.commitInjection(chat, d.text || '', d.round); } catch(e){}
       },
       btw_start: (d) => {
+        // Mirror for tabs that didn't initiate: the question appears pending
+        // in their Zwischenfragen tab.
         try { ChatTurnControl.btwStart(chat, d.btw_id, d.question || ''); } catch(e){}
-        if (isActive()) renderMessages();
       },
       btw_done: (d) => {
         try { ChatTurnControl.btwDone(chat, d.btw_id, d.answer || '', d.error || ''); } catch(e){}
-        if (isActive()) { renderMessages(); scrollToBottom(); }
       },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
@@ -1150,6 +1148,8 @@ function buildStreamCallbacks(chat, isActive) {
       goal_judge_start: (d) => {
         chat._goalIteration = d.iteration || 1;
         chat._goalMax = d.max || 0;
+        // Aktivität tab: the planned-judge card becomes a running one.
+        try { ChatTurnControl.goalJudgeStart(chat, d.iteration || 1, d.max || 0); } catch(e){}
         if (!isActive()) return;
         setStreamStatus(chat, 'label', `Ziel wird geprüft (Iteration ${d.iteration}/${d.max})…`);
         updateStatusBar();
@@ -1157,6 +1157,7 @@ function buildStreamCallbacks(chat, isActive) {
       goal_verdict: (d) => {
         chat.goalStatus = d.status || chat.goalStatus;
         chat._goalIteration = d.iteration || chat._goalIteration;
+        try { ChatTurnControl.goalVerdict(chat, d.status || '', d.iteration || 0); } catch(e){}
         if (!isActive()) return;
         setStreamStatus(chat, 'label', '');
         if (d.status === 'fulfilled' && typeof showToast === 'function') {
@@ -1203,6 +1204,9 @@ function buildStreamCallbacks(chat, isActive) {
         chat.files = [];
         chat._goalIteration = d.iteration || chat._goalIteration;
         chat._goalMax = d.max || chat._goalMax;
+        // Aktivität tab: a running "zusätzliche Iteration" card with the
+        // judge's continue-instruction.
+        try { ChatTurnControl.goalRoundStart(chat, d.iteration || 0, d.max || 0, d.text || ''); } catch(e){}
         if (isActive()) {
           setStreamStatus(chat, 'label', `🎯 Iteration ${d.iteration}/${d.max}…`);
           try { renderMessages(); } catch (_) {}
