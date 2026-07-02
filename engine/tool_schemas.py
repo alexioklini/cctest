@@ -1015,7 +1015,11 @@ TOOL_DEFINITIONS = [
             "for corporate report templates). source.file also accepts "
             "'result:<name>' from xlsx_query save_as. recalc:true computes "
             "formula values right away (LibreOffice) so a follow-up "
-            "xlsx_query can read them. Example minimal spec: "
+            "xlsx_query can read them. Sheets beyond 100k rows switch the "
+            "workbook to a STREAMING writer automatically (constant memory; "
+            "header style/freeze/widths/totals kept, banded rows/number "
+            "formats/charts/conditional skipped — noted in the result). "
+            "Example minimal spec: "
             "{\"sheets\":[{\"name\":\"Daten\",\"source\":{\"file\":\"in.xlsx\","
             "\"sql\":\"SELECT * FROM orders WHERE stueck > 0\"}}]}."
         ),
@@ -1073,7 +1077,11 @@ TOOL_DEFINITIONS = [
             "comment, added rows green, removed rows red at the bottom) — the "
             "best deliverable for review; out='diff.csv' saves the flat "
             "change list instead. compare='formulas' diffs the formula "
-            "strings instead of values (finds edited/broken formulas). "
+            "strings instead of values (finds edited/broken formulas); "
+            "compare='formats' diffs the cell FORMATTING (number format, "
+            "bold/italic, font/fill colour) while still matching rows by "
+            "value key — finds re-coloured/re-formatted cells with identical "
+            "values. "
             "Accepts 'result:<name>' stored results as either side. Use this "
             "for 'vergleiche Datei A mit B / was hat sich geändert' instead "
             "of reading both files into chat."
@@ -1086,7 +1094,7 @@ TOOL_DEFINITIONS = [
                 "key": {"type": "string", "description": "ID column on both sides (comma-separated for composite keys) — enables the keyed row compare"},
                 "sheet": {"type": "string", "description": "Compare only this sheet"},
                 "out": {"type": "string", "description": "Optional relative filename — .xlsx = highlighted diff workbook, .csv = flat change list"},
-                "compare": {"type": "string", "description": "'formulas' to diff formula strings instead of values"},
+                "compare": {"type": "string", "description": "'formulas' = diff formula strings; 'formats' = diff cell formatting (rows still matched by value key)"},
             },
             "required": ["path_a", "path_b"],
         },

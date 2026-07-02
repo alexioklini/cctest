@@ -859,6 +859,85 @@ class TestV3LegacyAndRecalc(_ToolFixture):
         self.assertIn("| 2 |", out["result"])
 
 
+# ---------------------------------------------------------------------------
+# v4 features
+# ---------------------------------------------------------------------------
+
+class TestV4StreamingWriter(_ToolFixture):
+    def test_huge_sheet_streams(self):
+        # Lower the threshold so the test doesn't need 100k real rows — the
+        # MODE SWITCH is what's under test, not openpyxl's serializer.
+        orig = xlsx_tools.WRITE_ONLY_ROWS
+        xlsx_tools.WRITE_ONLY_ROWS = 10
+        try:
+            rows = [["Kopf", "Wert"]] + [[f"r{i}", i] for i in range(25)]
+            out = json.loads(xlsx_tools.tool_xlsx_create({
+                "path": "big.xlsx",
+                "spec": {"sheets": [{"name": "Groß", "rows": rows,
+                                     "totals": ["Wert"]}]}}))
+            self.assertEqual(out.get("mode"), "streaming")
+            self.assertIn("streaming", out.get("note", ""))
+            wb = openpyxl.load_workbook(out["path"])
+            ws = wb["Groß"]
+            self.assertEqual(ws["A1"].value, "Kopf")
+            self.assertTrue(ws["A1"].font.bold)          # header style kept
+            self.assertEqual(ws.freeze_panes, "A2")
+            self.assertEqual(ws["B2"].value, 0)
+            self.assertEqual(ws.max_row, 27)             # header + 25 + totals
+            self.assertEqual(ws["B27"].value, "=SUM(B2:B26)")
+        finally:
+            xlsx_tools.WRITE_ONLY_ROWS = orig
+
+    def test_huge_plus_complex_sheet_is_error(self):
+        orig = xlsx_tools.WRITE_ONLY_ROWS
+        xlsx_tools.WRITE_ONLY_ROWS = 5
+        try:
+            rows = [["A", "B"]] + [[i, i] for i in range(10)]
+            out = json.loads(xlsx_tools.tool_xlsx_create({
+                "path": "mix.xlsx",
+                "spec": {"sheets": [
+                    {"name": "T", "rows": rows},
+                    {"name": "P", "rows": [["K", "V"], ["x", 1]],
+                     "pivot": {"rows": "K", "values": "V"}},
+                ]}}))
+            self.assertIn("error", out)
+            self.assertIn("stream", out["error"])
+        finally:
+            xlsx_tools.WRITE_ONLY_ROWS = orig
+
+
+class TestV4FormatDiff(_ToolFixture):
+    def _styled_pair(self):
+        pa = os.path.join(self._tmp, "fmt_a.xlsx")
+        pb = os.path.join(self._tmp, "fmt_b.xlsx")
+        for p, styled in ((pa, False), (pb, True)):
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "S"
+            ws.append(["ID", "Betrag"])
+            ws.append(["k1", 10])
+            ws.append(["k2", 20])
+            if styled:  # SAME values — only B3's look changes
+                ws["B3"].font = openpyxl.styles.Font(bold=True)
+                ws["B3"].fill = openpyxl.styles.PatternFill(
+                    "solid", start_color="FFFF00", end_color="FFFF00")
+            wb.save(p)
+        return pa, pb
+
+    def test_format_change_detected_values_identical(self):
+        pa, pb = self._styled_pair()
+        vals = json.loads(xlsx_tools.tool_xlsx_diff(
+            {"path_a": pa, "path_b": pb, "key": "ID"}))
+        self.assertEqual(vals["differences"], 0)         # values identical
+        fmts = json.loads(xlsx_tools.tool_xlsx_diff(
+            {"path_a": pa, "path_b": pb, "key": "ID",
+             "compare": "formats"}))
+        self.assertEqual(fmts["differences"], 1)
+        self.assertIn("Formatierungs-Vergleich", fmts["report"])
+        self.assertIn("fett", fmts["report"])
+        self.assertIn("füllung:FFFF00", fmts["report"])
+
+
 class TestVbaModules(_XlsxFixture):
     """list_vba_modules (doc_convert) — the structured twin of _extract_vba
     feeding the UI VBA viewer. Graceful [] on macro-free/invalid files."""

@@ -1673,8 +1673,24 @@ function _xlsxGridMount(container, grid, opts) {
     return;
   }
   const st = { idx: Math.min(opts.initialSheet || 0, sheets.length - 1),
-               sortCol: -1, sortDir: 1, filter: '', vbaIdx: null };
+               sortCol: -1, sortDir: 1, filter: '', vbaIdx: null,
+               undoStack: [] };  // v4: {sheetIdx, ri, ci, old} per saved edit
   const vbaMods = opts.vba || [];
+
+  const saveCell = async (sheet, ri, ci, rawValue) => {
+    // shared by the inline edit and undo — writes ONE cell, updates the
+    // local grid state + mtime on success. Throws on failure.
+    const absRow = (sheet.row_nums || [])[ri];
+    if (!absRow) throw new Error('Zeile nicht adressierbar');
+    const resp = await API.post('/v1/files/xlsx-cell', {
+      path: opts.path, sheet: sheet.sheet_title, row: absRow,
+      col: ci + 1, value: rawValue, mtime: grid.mtime || 0,
+    });
+    if (resp && resp.error) throw new Error(resp.error);
+    grid.mtime = (resp && resp.mtime) || grid.mtime;
+    if (opts.onCellSaved) opts.onCellSaved(resp);
+    return resp;
+  };
 
   const coerce = (t) => {
     // mirror the server's cell coercion so the local grid state matches what
@@ -1749,8 +1765,11 @@ function _xlsxGridMount(container, grid, opts) {
         return String(va).localeCompare(String(vb), 'de', { numeric: true }) * st.sortDir;
       });
     }
+    const undoBtn = canEdit
+      ? `<button class="xgrid-sheet-btn" data-act="undo" title="Letzte Zellen-Änderung rückgängig machen"${st.undoStack.length ? '' : ' disabled'}>↩ Rückgängig${st.undoStack.length ? ` (${st.undoStack.length})` : ''}</button>`
+      : '';
     const bar = `<div class="xgrid-bar"><div class="xgrid-tabs-inline">${sheetTabs}${vbaTabs}</div>`
-      + `<span style="flex:1"></span>`
+      + `<span style="flex:1"></span>${undoBtn}`
       + `<input class="xgrid-search" type="search" placeholder="Suchen…" value="${esc(st.filter)}">`
       + `</div>`;
     const head = '<tr><th class="xgrid-rownum">#</th>'
@@ -1800,6 +1819,24 @@ function _xlsxGridMount(container, grid, opts) {
         const s2 = container.querySelector('.xgrid-search');
         if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } };
     }
+    const undoEl = container.querySelector('[data-act="undo"]');
+    if (undoEl) {
+      undoEl.onclick = async () => {
+        const e = st.undoStack[st.undoStack.length - 1];
+        if (!e) return;
+        const sheet = sheets[e.sheetIdx];
+        try {
+          await saveCell(sheet, e.ri, e.ci, e.old);
+          sheet.rows[e.ri][e.ci] = coerce(e.old);
+          st.undoStack.pop();
+          if (typeof showToast === 'function') showToast('Änderung rückgängig gemacht');
+        } catch (err) {
+          if (typeof showToast === 'function') showToast('Rückgängig fehlgeschlagen: ' + (err.message || err), true);
+        }
+        st.idx = e.sheetIdx;  // show the restored cell's sheet
+        paint();
+      };
+    }
     if (canEdit) {
       container.querySelectorAll('td[data-ri]').forEach(td => {
         td.ondblclick = () => {
@@ -1824,14 +1861,12 @@ function _xlsxGridMount(container, grid, opts) {
               return;
             }
             try {
-              const resp = await API.post('/v1/files/xlsx-cell', {
-                path: opts.path, sheet: s.sheet_title, row: absRow,
-                col: ci + 1, value: input.value, mtime: grid.mtime || 0,
-              });
-              if (resp && resp.error) throw new Error(resp.error);
+              await saveCell(s, ri, ci, input.value);
               s.rows[ri][ci] = coerce(input.value);
-              grid.mtime = (resp && resp.mtime) || grid.mtime;
-              if (opts.onCellSaved) opts.onCellSaved(resp);
+              // v4 undo stack: remember what to write back (old value as the
+              // string the endpoint's coercion round-trips: '' = leer).
+              st.undoStack.push({ sheetIdx: st.idx, ri, ci,
+                                  old: cur === null || cur === undefined ? '' : String(cur) });
             } catch (e) {
               if (typeof showToast === 'function') showToast('Zelle speichern fehlgeschlagen: ' + (e.message || e), true);
             }

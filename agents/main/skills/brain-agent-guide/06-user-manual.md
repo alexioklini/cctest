@@ -1711,6 +1711,19 @@ Blatt, verbundene zweizeilige Überschriften).
   ⚙-Reiter — Quellcode mit Syntax-Hervorhebung, exportierbar als `.bas`.
   Nur lesend: Makros werden nie ausgeführt, und VBA zurückzuschreiben
   erfordert prinzipbedingt Excel (Rechtsklick → „extern öffnen").
+
+**Neu in v9.266.0:**
+- **Rückgängig beim Zellen-Bearbeiten**: Jede gespeicherte Zellen-Änderung
+  lässt sich über den „↩ Rückgängig"-Knopf in der Tabellen-Leiste
+  zurücknehmen (mehrere Schritte, neueste zuerst).
+- **Sehr große Exporte**: Tabellen mit mehr als 100.000 Zeilen schreibt der
+  Agent jetzt in einem speicherschonenden Streaming-Verfahren — auch
+  500.000+ Zeilen sind kein Problem (formatierte Kopfzeile, fixierte
+  Titelzeile und Summenzeile bleiben; Zebra-Streifen und Zahlenformate
+  entfallen in diesem Modus, was im Ergebnis vermerkt wird).
+- **Formatierungs-Vergleich**: Der Datei-Vergleich findet auf Wunsch auch
+  reine Format-Änderungen — Zellen, deren Wert gleich blieb, aber deren
+  Fettung, Farbe oder Zahlenformat sich geändert hat.
 - Für wiederkehrende Excel-Reports und tägliche Bestandsabgleiche gibt es
   fertige Rezepte (geplante Aufgaben) — fragen Sie Brainy nach
   „wiederkehrender Excel-Report".

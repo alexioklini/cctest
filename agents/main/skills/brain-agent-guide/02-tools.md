@@ -247,6 +247,23 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
   (`GET /v1/files/xlsm-vba`, oletools, read-only + .bas export; macros never
   execute — writing VBA back into vbaProject.bin needs Excel, so there is
   deliberately NO save).
+
+**v4 additions (v9.266.0):**
+- **Streaming writer**: table sheets beyond 100k rows switch the WHOLE
+  workbook to openpyxl write_only mode (constant memory instead of GBs) —
+  styled header/freeze/widths/totals kept, banded rows/number formats/
+  charts/conditional skipped (result carries `mode:"streaming"` + note).
+  Create sources may load up to 750k rows (query display stays capped 200k).
+  master_detail/pivot sheets can't stream — mixing one with a huge table
+  errors with a fix hint.
+- **`compare='formats'` in xlsx_diff**: diffs per-cell FORMAT signatures
+  (number format, bold/italic/underline, font/fill colour) while rows are
+  still matched by their VALUE key — finds re-coloured/re-formatted cells
+  with identical values. Works with out='diff.xlsx' (old signature in the
+  cell comment).
+- **Undo im Edit-Grid**: every saved cell edit lands on an undo stack; the
+  ↩-Rückgängig button (with count) writes the previous value back via the
+  same /v1/files/xlsx-cell path. Per grid view, newest first.
 - **Project profiles**: project-sync files one structure profile per project
   spreadsheet (`<pdir>/xlsx-profiles/xlsxprofile-<hash>.md`, mtime-gated,
   stale-pruned, mined into the wing, NO KG pass) — "welche Datei hat Spalte

@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.266.0",
+        "date": "2026-07-02",
+        "title": "Riesige Excel-Exporte, Format-Vergleich, Rückgängig",
+        "body": "Excel-Exporte mit hunderttausenden Zeilen schreibt der Agent "
+                "jetzt in einem speicherschonenden Streaming-Verfahren — auch "
+                "500.000+ Zeilen sind kein Problem (Kopfzeile, fixierte "
+                "Titelzeile und Summenzeile bleiben erhalten). Der "
+                "Datei-Vergleich findet auf Wunsch auch reine "
+                "Formatierungs-Änderungen: Zellen, deren Wert gleich blieb, "
+                "deren Fettung, Farbe oder Zahlenformat sich aber geändert "
+                "hat. Und beim Bearbeiten von Zellen in der Tabellen-Vorschau "
+                "gibt es jetzt einen Rückgängig-Knopf, der die letzten "
+                "Änderungen Schritt für Schritt zurücknimmt.",
+        "audience": "user",
+        "versions": ["9.266.0"],
+    },
+    {
         "version": "9.265.0",
         "date": "2026-07-02",
         "title": "VBA-Ansicht und Zellen-Bearbeitung im Panel",

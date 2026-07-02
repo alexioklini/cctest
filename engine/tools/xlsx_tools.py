@@ -43,6 +43,9 @@ _LEGACY_EXTS = {".xls", ".ods"}  # converted to .xlsx via LibreOffice (v3)
 # SQLite session.
 QUERY_DISPLAY_ROWS = 50
 QUERY_MAX_TOTAL_ROWS = 200_000
+# xlsx_create sources may exceed the query cap — the streaming writer (v4)
+# handles the output side, and the read side streams via read_only.
+CREATE_MAX_SOURCE_ROWS = 750_000
 QUERY_MAX_FILE_MB = 30
 CREATE_INLINE_MAX_CELLS = 5_000
 INSPECT_SAMPLE_VALUES = 3
@@ -490,7 +493,8 @@ def _to_sql_value(v):
     return v
 
 
-def _build_sqlite(paths: list[str], sheet: str | None = None):
+def _build_sqlite(paths: list[str], sheet: str | None = None,
+                  max_rows: int = QUERY_MAX_TOTAL_ROWS):
     """Load every sheet of every file into ONE in-memory SQLite DB.
     Returns (conn, tables) — tables = [{table, file, sheet, columns:
     [(sql_name, orig_name)], rows}]. With >1 file, table names are prefixed
@@ -516,9 +520,9 @@ def _build_sqlite(paths: list[str], sheet: str | None = None):
                 f"Pass sheet='<name>' to load a single sheet, or split the file.")
         for g in _load_grids(rp, sheet=sheet):
             total_rows += len(g["rows"])
-            if total_rows > QUERY_MAX_TOTAL_ROWS:
+            if total_rows > max_rows:
                 raise ValueError(
-                    f"More than {QUERY_MAX_TOTAL_ROWS:,} rows across the loaded "
+                    f"More than {max_rows:,} rows across the loaded "
                     f"sheets. Pass sheet='<name>' to load a single sheet.")
             loaded.append((rp, g))
 
@@ -1049,7 +1053,8 @@ def _resolve_source(source: dict) -> tuple[list[str], list[list]]:
         sel_err = _check_select_only(sql)
         if sel_err:
             raise ValueError(f"source.sql: {sel_err}")
-        conn, tables = _build_sqlite([fpath], sheet=source.get("sheet"))
+        conn, tables = _build_sqlite([fpath], sheet=source.get("sheet"),
+                                     max_rows=CREATE_MAX_SOURCE_ROWS)
         try:
             try:
                 cur = conn.execute(sql.rstrip(";"))
@@ -1318,10 +1323,79 @@ def _apply_print_setup(ws, sheet_spec):
 
 
 HUGE_SHEET_ROWS = 50_000
+# v4: past this row count the WHOLE workbook is written in openpyxl's
+# write_only streaming mode (constant memory) instead of the in-memory model.
+WRITE_ONLY_ROWS = 100_000
 
 
-def _render_table_sheet(ws, sheet_spec, kit) -> int:
-    header, rows = _sheet_data(sheet_spec)
+def _render_spec_write_only(path: str, resolved: list, kit) -> dict:
+    """v4 streaming writer for 100k+-row exports: openpyxl write_only keeps
+    memory flat by serializing rows as they're appended (the regular model
+    holds every cell object — GBs at 500k rows). Trade (documented in the
+    result): styled header/freeze/column widths/totals survive; banded rows,
+    per-cell number formats, charts, conditional formatting and validation
+    don't exist in this mode. Only plain table sheets stream — master_detail/
+    pivot are structural layouts and are rejected upstream."""
+    import openpyxl
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.utils import get_column_letter
+    from engine.context import report_tool_progress
+    wb = openpyxl.Workbook(write_only=True)
+    used_names: set = set()
+    out_sheets = []
+    for sheet_spec, header, rows in resolved:
+        name = _clean_sheet_name(sheet_spec.get("name"), used_names)
+        ws = wb.create_sheet(name)
+        # Widths + freeze must be set BEFORE the first append in write_only.
+        widths = {}
+        for ci, h in enumerate(header):
+            w = len(str(h))
+            for r in rows[:200]:
+                if ci < len(r) and r[ci] is not None:
+                    w = max(w, len(str(r[ci])))
+            widths[ci] = min(60, max(8, w + 2))
+        for cs_i, cs in enumerate(sheet_spec.get("columns") or []):
+            if isinstance(cs, dict) and cs.get("width"):
+                widths[cs_i] = cs["width"]
+        for ci, w in widths.items():
+            ws.column_dimensions[get_column_letter(ci + 1)].width = w
+        if sheet_spec.get("freeze_header", True):
+            ws.freeze_panes = "A2"
+        hdr_cells = []
+        for h in header:
+            c = WriteOnlyCell(ws, value=str(h))
+            c.font = kit["header_font"]
+            c.fill = kit["header_fill"]
+            c.alignment = kit["header_align"]
+            hdr_cells.append(c)
+        ws.append(hdr_cells)
+        n_cols = len(header)
+        for ri, row in enumerate(rows):
+            if ri % 50_000 == 0:
+                report_tool_progress(phase="xlsx_create:stream", current=ri,
+                                     total=len(rows), note=name)
+            ws.append([row[ci] if ci < len(row) else None
+                       for ci in range(n_cols)])
+        totals = sheet_spec.get("totals") or []
+        if totals and rows:
+            t_idx = _column_indices(header, totals)
+            trow = [None] * n_cols
+            if 0 not in t_idx:
+                trow[0] = "Summe"
+            for ci in t_idx:
+                letter = get_column_letter(ci + 1)
+                trow[ci] = f"=SUM({letter}2:{letter}{len(rows) + 1})"
+            ws.append(trow)
+        out_sheets.append({"name": name, "rows": len(rows)})
+    wb.save(path)
+    return {"sheets": out_sheets, "mode": "streaming",
+            "note": ("streaming mode (>100k rows): styled header/freeze/"
+                     "widths/totals kept; banded rows, number formats, "
+                     "charts, conditional formatting skipped")}
+
+
+def _render_table_sheet(ws, sheet_spec, kit, data=None) -> int:
+    header, rows = data if data is not None else _sheet_data(sheet_spec)
     if not header:
         return 0  # intentionally empty sheet
     col_specs = sheet_spec.get("columns") or []
@@ -1621,13 +1695,34 @@ def render_spec(path: str, spec: dict, style_name: str = "",
         style = _load_doc_style(_resolve_default_style(
             style_name or spec.get("style") or ""))
     kit = _style_kit(style)
+    # v4: pre-resolve plain-table data so we can pick the engine. Any sheet
+    # past WRITE_ONLY_ROWS switches the WHOLE workbook to the streaming
+    # writer (openpyxl can't mix write_only and regular sheets).
+    prepared = []  # (sheet_spec, kind, data)
+    huge = False
+    for sheet_spec in spec["sheets"]:
+        if not isinstance(sheet_spec, dict):
+            raise ValueError("each sheet must be an object")
+        if sheet_spec.get("master_detail") or sheet_spec.get("pivot"):
+            prepared.append((sheet_spec, "complex", None))
+            continue
+        header, rows = _sheet_data(sheet_spec)
+        if len(rows) > WRITE_ONLY_ROWS:
+            huge = True
+        prepared.append((sheet_spec, "table", (header, rows)))
+    if huge:
+        if any(kind == "complex" for _, kind, _ in prepared):
+            raise ValueError(
+                f"a sheet exceeds {WRITE_ONLY_ROWS:,} rows (streaming mode), "
+                f"but master_detail/pivot sheets can't stream — put the huge "
+                f"table in its own file, or aggregate it first via source.sql")
+        return _render_spec_write_only(
+            path, [(s, d[0], d[1]) for s, _, d in prepared], kit)
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     used_names: set = set()
     out_sheets = []
-    for sheet_spec in spec["sheets"]:
-        if not isinstance(sheet_spec, dict):
-            raise ValueError("each sheet must be an object")
+    for sheet_spec, kind, data in prepared:
         name = _clean_sheet_name(sheet_spec.get("name"), used_names)
         ws = wb.create_sheet(name)
         if sheet_spec.get("master_detail"):
@@ -1635,7 +1730,7 @@ def render_spec(path: str, spec: dict, style_name: str = "",
         elif sheet_spec.get("pivot"):
             n = _render_pivot_sheet(ws, sheet_spec, kit)
         else:
-            n = _render_table_sheet(ws, sheet_spec, kit)
+            n = _render_table_sheet(ws, sheet_spec, kit, data=data)
         out_sheets.append({"name": name, "rows": n})
     wb.save(path)
     return {"sheets": out_sheets}
@@ -1675,8 +1770,14 @@ def tool_xlsx_create(args: dict) -> str:
     size = os.path.getsize(path)
     res = {"path": path, "size": size, "sheets": info["sheets"],
            "status": "written"}
+    notes = []
+    if info.get("mode"):
+        res["mode"] = info["mode"]
+        notes.append(info.get("note") or "")
     if size > 5 * 1024 * 1024:
-        res["note"] = "file exceeds the 5MB artifact-version snapshot cap"
+        notes.append("file exceeds the 5MB artifact-version snapshot cap")
+    if any(notes):
+        res["note"] = "; ".join(n for n in notes if n)
     return _ok(res)
 
 
@@ -1687,8 +1788,76 @@ def tool_xlsx_create(args: dict) -> str:
 DIFF_DETAIL_CAP = 50
 
 
+def _format_signature(cell) -> str:
+    """Compact, human-readable per-cell format signature for
+    compare='formats': number format · bold/italic/underline · font colour ·
+    solid fill colour. Deterministic — two cells with the same look yield the
+    same string."""
+    try:
+        parts = [cell.number_format or "General"]
+        f = cell.font
+        flags = ""
+        if f is not None:
+            if f.bold:
+                flags += "fett"
+            if f.italic:
+                flags += ("+" if flags else "") + "kursiv"
+            if f.underline and f.underline != "none":
+                flags += ("+" if flags else "") + "unterstrichen"
+            col = getattr(getattr(f, "color", None), "rgb", None)
+            if isinstance(col, str) and col not in ("FF000000",):
+                parts.append(f"schrift:{col[-6:]}")
+        if flags:
+            parts.insert(1, flags)
+        fill = cell.fill
+        if fill is not None and fill.fill_type == "solid":
+            fc = getattr(getattr(fill, "start_color", None), "rgb", None)
+            if isinstance(fc, str) and fc not in ("00000000", "FFFFFFFF"):
+                parts.append(f"füllung:{fc[-6:]}")
+        return " · ".join(parts)
+    except Exception:
+        return "?"
+
+
+def _sig_matrices(path: str, sheet: str | None = None) -> dict:
+    """{sheet_title: [[signature, ...], ...]} — the full per-cell format map
+    of a workbook (read_only pass; styles are parsed lazily). Aligned back to
+    value grids via grid.row_nums (absolute rows) + 1:1 column mapping."""
+    import openpyxl
+    wb = openpyxl.load_workbook(path, read_only=True)
+    out = {}
+    try:
+        for ws in wb.worksheets:
+            if sheet and ws.title != sheet:
+                continue
+            out[ws.title] = [[_format_signature(c) for c in row]
+                             for row in ws.iter_rows()]
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+    return out
+
+
+def _fmt_rows_for_grid(g: dict, sigs: dict) -> list | None:
+    """Format rows aligned to a value grid: same row order (row_nums) and the
+    same trimmed column count. None when the grid has no row mapping."""
+    mat = sigs.get(g.get("sheet_title") or g["name"])
+    row_nums = g.get("row_nums") or []
+    if mat is None or not row_nums:
+        return None
+    n = len(g["header"])
+    out = []
+    for rn in row_nums:
+        src = mat[rn - 1] if 0 <= rn - 1 < len(mat) else []
+        out.append(list(src[:n]) + [""] * (n - len(src)))
+    return out
+
+
 def _diff_grids(ga: dict, gb: dict, keys: list | None,
-                label_a: str, label_b: str):
+                label_a: str, label_b: str,
+                fmt_a: list | None = None, fmt_b: list | None = None):
     """Compare two grids. With `keys` (v3: composite keys supported): keyed
     row diff (added/removed/changed). Without: positional. Returns
     (summary_lines, detail_rows, marks) — detail_rows = [(key, column,
@@ -1740,12 +1909,12 @@ def _diff_grids(ga: dict, gb: dict, keys: list | None,
         def _kb(r):
             return " | ".join(norm(r[i]) if i < len(r) else "" for i in ibs)
 
-        rows_a = {_ka(r): r for r in ga["rows"]}
+        rows_a = {_ka(r): (i, r) for i, r in enumerate(ga["rows"])}
         rows_b = {_kb(r): (i, r) for i, r in enumerate(gb["rows"])}
         added = [k for k in rows_b if k not in rows_a]
         removed = [k for k in rows_a if k not in rows_b]
         changed = []
-        for k, ra in rows_a.items():
+        for k, (ai, ra) in rows_a.items():
             hit = rows_b.get(k)
             if hit is None:
                 continue
@@ -1753,8 +1922,14 @@ def _diff_grids(ga: dict, gb: dict, keys: list | None,
             diff_cols = []
             for c in common:
                 cl = c.strip().lower()
-                va = ra[la[cl]] if la[cl] < len(ra) else None
-                vb = rb[lb[cl]] if lb[cl] < len(rb) else None
+                # compare='formats': the compared payload per cell is the
+                # FORMAT signature; row matching stays on the value key.
+                if fmt_a is not None and fmt_b is not None:
+                    va = fmt_a[ai][la[cl]] if la[cl] < len(fmt_a[ai]) else ""
+                    vb = fmt_b[bi][lb[cl]] if lb[cl] < len(fmt_b[bi]) else ""
+                else:
+                    va = ra[la[cl]] if la[cl] < len(ra) else None
+                    vb = rb[lb[cl]] if lb[cl] < len(rb) else None
                 if norm(va) != norm(vb):
                     diff_cols.append((c, va, vb))
                     details.append((k, c, va, vb))
@@ -1766,7 +1941,7 @@ def _diff_grids(ga: dict, gb: dict, keys: list | None,
             marks["added"].add(rows_b[k][0])
         for k in removed:
             details.append((k, "(row removed)", "present", ""))
-            marks["removed_rows"].append(_a_row_in_b_order(rows_a[k]))
+            marks["removed_rows"].append(_a_row_in_b_order(rows_a[k][1]))
         key_label = " + ".join(str(k) for k in keys)
         lines.append(f"- keyed on `{key_label}`: {len(added)} added, "
                      f"{len(removed)} removed, {len(changed)} changed row(s)")
@@ -1807,8 +1982,12 @@ def _diff_grids(ga: dict, gb: dict, keys: list | None,
                 continue
             for c in common:
                 cl = c.strip().lower()
-                va = ra[la[cl]] if la[cl] < len(ra) else None
-                vb = rb[lb[cl]] if lb[cl] < len(rb) else None
+                if fmt_a is not None and fmt_b is not None:
+                    va = fmt_a[i][la[cl]] if la[cl] < len(fmt_a[i]) else ""
+                    vb = fmt_b[i][lb[cl]] if lb[cl] < len(fmt_b[i]) else ""
+                else:
+                    va = ra[la[cl]] if la[cl] < len(ra) else None
+                    vb = rb[lb[cl]] if lb[cl] < len(rb) else None
                 if norm(va) != norm(vb):
                     details.append((f"row {i + 2}", c, va, vb))
                     marks["changed"][(i, lb[cl])] = va
@@ -1882,26 +2061,36 @@ def tool_xlsx_diff(args: dict) -> str:
         keys = [k.strip() for k in str(raw_key or "").split(",")
                 if k.strip()] or None
     sheet = args.get("sheet")
-    # compare='formulas' (v3): diff the formula STRINGS instead of values —
-    # finds a broken/edited formula even when today's cached values match.
-    formulas = (args.get("compare") or "").strip().lower() == "formulas"
+    # compare='formulas' (v3): diff the formula STRINGS instead of values.
+    # compare='formats' (v4): diff the per-cell FORMAT signatures (number
+    # format, bold/italic/underline, font/fill colour) — rows still matched
+    # by their VALUE key, so a re-coloured cell surfaces even when values
+    # are identical.
+    mode = (args.get("compare") or "").strip().lower()
+    formulas = mode == "formulas"
+    formats = mode == "formats"
     try:
         def _load_side(p):
             if _is_handle(p):
-                if formulas:
+                if formulas or formats:
                     raise ValueError(
-                        "compare='formulas' works on files, not stored results")
+                        f"compare='{mode}' works on files, not stored results")
                 return [_grid_from_handle(p)]
             return _load_grids(_resolve_input_path(p), sheet=sheet,
                                formulas=formulas)
 
         grids_a = _load_side(pa)
         grids_b = _load_side(pb)
+        fmt_sigs_a = fmt_sigs_b = None
+        if formats:
+            fmt_sigs_a = _sig_matrices(_resolve_input_path(pa), sheet=sheet)
+            fmt_sigs_b = _sig_matrices(_resolve_input_path(pb), sheet=sheet)
         la, lb = os.path.basename(pa), os.path.basename(pb)
         by_name_a = {g["name"]: g for g in grids_a}
         by_name_b = {g["name"]: g for g in grids_b}
         parts = [f"# Diff: {la} ↔ {lb}"
-                 + (" (Formel-Vergleich)" if formulas else "")]
+                 + (" (Formel-Vergleich)" if formulas else "")
+                 + (" (Formatierungs-Vergleich)" if formats else "")]
         all_details = []
         per_sheet = []
         only_a = [n for n in by_name_a if n not in by_name_b]
@@ -1911,19 +2100,29 @@ def tool_xlsx_diff(args: dict) -> str:
         if only_b:
             parts.append(f"- sheets only in {lb}: {', '.join(only_b)}")
         common = [n for n in by_name_a if n in by_name_b]
+        def _fmt_pair(gpa, gpb):
+            if not formats:
+                return None, None
+            return (_fmt_rows_for_grid(gpa, fmt_sigs_a),
+                    _fmt_rows_for_grid(gpb, fmt_sigs_b))
+
         if not common and len(grids_a) == 1 and len(grids_b) == 1:
             # single-sheet workbooks with different sheet names still compare
             parts.append(f"\n## {grids_a[0]['name']} ↔ {grids_b[0]['name']}")
+            fa, fb = _fmt_pair(grids_a[0], grids_b[0])
             lines, details, marks = _diff_grids(grids_a[0], grids_b[0],
-                                                keys, la, lb)
+                                                keys, la, lb,
+                                                fmt_a=fa, fmt_b=fb)
             parts.extend(lines)
             all_details.extend(details)
             per_sheet.append((grids_b[0]["name"], grids_b[0], marks))
         else:
             for n in common:
                 parts.append(f"\n## Sheet: {n}")
+                fa, fb = _fmt_pair(by_name_a[n], by_name_b[n])
                 lines, details, marks = _diff_grids(by_name_a[n], by_name_b[n],
-                                                    keys, la, lb)
+                                                    keys, la, lb,
+                                                    fmt_a=fa, fmt_b=fb)
                 parts.extend(lines)
                 all_details.extend(details)
                 per_sheet.append((n, by_name_b[n], marks))
