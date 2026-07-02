@@ -1203,6 +1203,20 @@ function _terminalLoadCursor(absPath) {
 // re-fetch content. If the tab has UNSAVED edits we don't clobber — we mark the
 // tab and toast once so the user decides.
 async function _terminalReloadEditorContent(tab) {
+  // xlsx grid tabs have no text content — refresh the grid payload instead.
+  if (tab.gridOnly) {
+    try {
+      const g = await API.get(`/v1/files/xlsx-grid?path=${encodeURIComponent(tab.path)}`);
+      if (g && !g.error) {
+        tab.grid = g;
+        tab.size = g.size || tab.size;
+        tab.mtime = g.mtime || tab.mtime;
+        _terminalEditorShowGrid(tab, tab.gridSheet || 0);
+        _terminalEditorStats(tab);
+      }
+    } catch (_) { /* transient */ }
+    return;
+  }
   try {
     const d = await API.get(`/v1/files/preview?path=${encodeURIComponent(tab.path)}&lines=100000`);
     if (d.error) return;
@@ -1423,6 +1437,31 @@ async function terminalOpenFile(absPath) {
   _term.tabs.push(tab);
   _terminalRenderTabs();
   _terminalActivate(id);
+  // xlsx/xlsm → structured grid preview (no text content to edit; the grid
+  // endpoint reuses the agent's xlsx-toolset loader, so the preview shows
+  // exactly what the tools see: header detection, multi-table split, merged
+  // headers). Editing binary workbooks stays with the agent / open-external.
+  if (ext === 'xlsx' || ext === 'xlsm') {
+    tab.gridOnly = true;
+    el.querySelector('.editor-cm').style.display = 'none';
+    el.querySelector('.ed-mode[data-mode="raw"]').style.display = 'none';
+    el.querySelector('.ed-save').style.display = 'none';
+    try {
+      const g = await API.get(`/v1/files/xlsx-grid?path=${encodeURIComponent(absPath)}`);
+      const renderEl = el.querySelector('.editor-render');
+      renderEl.style.display = 'block';
+      if (g.error) { renderEl.innerHTML = `<div class="pt-empty">${esc(g.error)}</div>`; return; }
+      tab.grid = g;
+      tab.size = g.size || 0;
+      tab.mtime = g.mtime || 0;
+      tab.loaded = true;
+      _terminalEditorShowGrid(tab, 0);
+      _terminalEditorStats(tab);
+    } catch (e) {
+      el.querySelector('.editor-render').innerHTML = '<div class="pt-empty">Tabellen-Vorschau fehlgeschlagen.</div>';
+    }
+    return;
+  }
   // load content
   try {
     const d = await API.get(`/v1/files/preview?path=${encodeURIComponent(absPath)}&lines=100000`);
@@ -1493,7 +1532,8 @@ function terminalEditorMode(id, mode) {
 // (html/md/svg), where read-only "Ansicht" shows the RENDERED output and edit
 // shows the CodeMirror source.
 const _ED_RENDERABLE = { html: 1, htm: 1, md: 1, markdown: 1, svg: 1,
-                         json: 1, jsonl: 1, geojson: 1, xml: 1 };
+                         json: 1, jsonl: 1, geojson: 1, xml: 1,
+                         csv: 1, tsv: 1 };
 function _terminalIsRenderable(ext) { return !!_ED_RENDERABLE[(ext || '').toLowerCase()]; }
 
 // ── ShowCase .dbq handling ───────────────────────────────────────────────────
@@ -1609,12 +1649,69 @@ function _terminalPaintTree(renderEl, txt, treeKind) {
   renderEl.appendChild(host);
 }
 
+// ── Spreadsheet grid preview (xlsx/xlsm/csv/tsv, v9.263.0) ───────────────────
+// Shared table renderer for the /v1/files/xlsx-grid payload — used by the
+// bottom-panel editor (here) and the artifacts fullview (panels_artifacts.js).
+function _xlsxGridHtml(grid, activeIdx) {
+  const sheets = (grid && grid.sheets) || [];
+  if (!sheets.length) return '<div class="pt-empty">Keine Tabellendaten gefunden.</div>';
+  const idx = Math.min(activeIdx || 0, sheets.length - 1);
+  const s = sheets[idx];
+  const tabsHtml = sheets.length > 1
+    ? '<div class="xgrid-tabs">' + sheets.map((sh, i) =>
+        `<button class="xgrid-sheet-btn${i === idx ? ' active' : ''}" data-idx="${i}">${esc(sh.name)}</button>`).join('')
+      + '</div>'
+    : '';
+  const head = '<tr><th class="xgrid-rownum">#</th>'
+    + s.header.map(h => `<th>${esc(String(h))}</th>`).join('') + '</tr>';
+  const body = s.rows.map((r, ri) => {
+    const cells = s.header.map((_, ci) => {
+      const v = r[ci];
+      const cls = (typeof v === 'number') ? ' class="xgrid-num"' : '';
+      return `<td${cls}>${v === null || v === undefined ? '' : esc(String(v))}</td>`;
+    }).join('');
+    return `<tr><td class="xgrid-rownum">${ri + 1}</td>${cells}</tr>`;
+  }).join('');
+  const note = s.truncated
+    ? `<div class="xgrid-note">Vorschau: ${s.rows.length} von ${s.total_rows} Zeilen</div>` : '';
+  return `${tabsHtml}<div class="xgrid-wrap"><table class="xgrid-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>${note}`;
+}
+
+function _terminalEditorShowGrid(tab, sheetIdx) {
+  const renderEl = tab.el.querySelector('.editor-render');
+  if (!renderEl || !tab.grid) return;
+  tab.gridSheet = sheetIdx || 0;
+  renderEl.style.display = 'block';
+  renderEl.innerHTML = _xlsxGridHtml(tab.grid, tab.gridSheet);
+  renderEl.querySelectorAll('.xgrid-sheet-btn').forEach(b => {
+    b.onclick = () => _terminalEditorShowGrid(tab, parseInt(b.dataset.idx, 10));
+  });
+}
+
 // Render a renderable file's content into the .editor-render pane (Ansicht mode).
 function _terminalEditorRender(tab) {
   const renderEl = tab.el.querySelector('.editor-render');
   if (!renderEl) return;
   const txt = (tab.cm && tab.dirty) ? tab.cm.getValue() : tab.raw;
   const ext = (tab.ext || '').toLowerCase();
+  if (ext === 'csv' || ext === 'tsv') {
+    // CSV/TSV Ansicht = the same server-parsed grid the xlsx preview uses
+    // (proper delimiter sniffing + typing). Reflects the SAVED file — after
+    // edits, save first, then the view re-fetches.
+    renderEl.innerHTML = '<div class="pt-empty">Lade Tabelle…</div>';
+    API.get(`/v1/files/xlsx-grid?path=${encodeURIComponent(tab.path)}`).then(g => {
+      if (g.error) { renderEl.innerHTML = `<div class="pt-empty">${esc(g.error)}</div>`; return; }
+      tab.grid = g;
+      _terminalEditorShowGrid(tab, tab.gridSheet || 0);
+      if (tab.dirty) {
+        const note = document.createElement('div');
+        note.className = 'xgrid-note';
+        note.textContent = 'Ansicht zeigt den gespeicherten Stand — ungespeicherte Änderungen unter „Bearbeiten".';
+        renderEl.appendChild(note);
+      }
+    }).catch(() => { renderEl.innerHTML = '<div class="pt-empty">Tabellen-Vorschau fehlgeschlagen.</div>'; });
+    return;
+  }
   if (_terminalHasTreeView(ext)) {
     // JSON / XML → a collapsible data tree (read-only). Editing happens in the
     // 'Bearbeiten' view (CodeMirror source, with fold arrows in the gutter).

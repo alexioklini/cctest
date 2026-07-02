@@ -471,5 +471,239 @@ class TestXlsxEdit(_ToolFixture):
         self.assertIn("not found", out["error"])
 
 
+# ---------------------------------------------------------------------------
+# v2 features
+# ---------------------------------------------------------------------------
+
+def _build_multitable_workbook(path):
+    """Two stacked tables on ONE sheet, separated by ≥2 blank rows — the
+    report-sheet shape that used to flatten into one mis-typed grid."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Report"
+    ws.append(["Monat", "Umsatz"])
+    ws.append(["Jan", 100])
+    ws.append(["Feb", 200])
+    ws.append([])
+    ws.append([])
+    ws.append(["Region", "Anteil"])
+    ws.append(["Nord", 0.6])
+    ws.append(["Sued", 0.4])
+    wb.save(path)
+
+
+def _build_merged_header_workbook(path):
+    """Two-row hierarchical header: merged 'Q1'/'Q2' bands over Umsatz|Marge."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Quartale"
+    ws["A1"] = "Land"
+    ws["B1"] = "Q1"
+    ws.merge_cells("B1:C1")
+    ws["D1"] = "Q2"
+    ws.merge_cells("D1:E1")
+    ws["A2"] = "Land"
+    ws["B2"] = "Umsatz"
+    ws["C2"] = "Marge"
+    ws["D2"] = "Umsatz"
+    ws["E2"] = "Marge"
+    ws.append(["AT", 10, 1, 20, 2])
+    ws.append(["DE", 30, 3, 40, 4])
+    wb.save(path)
+
+
+class TestV2GridReading(_ToolFixture):
+    def test_multi_table_split(self):
+        p = os.path.join(self._tmp, "multi.xlsx")
+        _build_multitable_workbook(p)
+        out = json.loads(xlsx_tools.tool_xlsx_inspect({"path": p}))
+        rep = out["report"]
+        self.assertIn("Sheet: Report", rep)
+        self.assertIn("Sheet: Report_2", rep)   # second block = own table
+        self.assertIn("report_2(region, anteil)", rep)
+        q = json.loads(xlsx_tools.tool_xlsx_query(
+            {"path": p, "sql": "SELECT SUM(umsatz) FROM report"}))
+        self.assertIn("| 300 |", q["result"])
+
+    def test_merged_two_row_header_composes(self):
+        p = os.path.join(self._tmp, "merged.xlsx")
+        _build_merged_header_workbook(p)
+        out = json.loads(xlsx_tools.tool_xlsx_inspect({"path": p}))
+        rep = out["report"]
+        self.assertIn("Q1 / Umsatz", rep)
+        self.assertIn("Q2 / Marge", rep)
+        q = json.loads(xlsx_tools.tool_xlsx_query(
+            {"path": p, "sql": "SELECT SUM(q1_umsatz) FROM quartale"}))
+        self.assertIn("| 40 |", q["result"])
+
+
+class TestV2DeepInspect(_ToolFixture):
+    def test_deep_orphans_duplicates_outliers(self):
+        p = os.path.join(self._tmp, "deep.xlsx")
+        wb = openpyxl.Workbook()
+        ws1 = wb.active
+        ws1.title = "Master"
+        ws1.append(["KEY", "WERT"])
+        for k, v in [("A", 1), ("B", 2), ("C", 3), ("D", 4), ("E", 5),
+                     ("F", 6), ("G", 7), ("H", 8), ("I", 9), ("X", 9999)]:
+            ws1.append([k, v])
+        ws1.append(["A", 1])  # duplicate row
+        ws2 = wb.create_sheet("Detail")
+        ws2.append(["KEY", "MENGE"])
+        for k in ["A", "B", "C", "D", "E", "F", "G", "H", "ORPHAN"]:
+            ws2.append([k, 1])
+        wb.save(p)
+        out = json.loads(xlsx_tools.tool_xlsx_inspect({"path": p, "deep": True}))
+        rep = out["report"]
+        self.assertIn("Data quality:", rep)
+        self.assertIn("fully duplicated row", rep)
+        self.assertIn("outlier", rep)              # 9999 beyond 3×IQR
+        self.assertIn("Referential findings", rep)
+        self.assertIn("ORPHAN", rep)               # orphan detail key surfaced
+
+    def test_deep_formula_map(self):
+        p = os.path.join(self._tmp, "form.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Calc"
+        ws.append(["A", "B"])
+        ws.append([1, "=Daten!A1*2"])
+        ws.append([2, "=Daten!A2*2"])
+        wb.create_sheet("Daten").append([10])
+        wb.save(p)
+        out = json.loads(xlsx_tools.tool_xlsx_inspect({"path": p, "deep": True}))
+        rep = out["report"]
+        self.assertIn("Formula map (deep)", rep)
+        self.assertIn("references sheet `Daten` in 2 formula(s)", rep)
+
+
+class TestV2QueryHandles(_ToolFixture):
+    def test_save_as_and_reuse(self):
+        out = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": self.orders_path,
+            "sql": ("SELECT marktordernummer, SUM(stueck) AS summe FROM "
+                    "ausfuehrungen GROUP BY marktordernummer"),
+            "save_as": "summen"}))
+        self.assertEqual(out["saved_as"], "summen")
+        # query FROM the handle
+        q2 = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": "result:summen",
+            "sql": "SELECT COUNT(*) FROM summen"}))
+        self.assertIn("| 2 |", q2["result"])
+        # create a sheet FROM the handle
+        c = json.loads(xlsx_tools.tool_xlsx_create({
+            "path": "aus_handle.xlsx",
+            "spec": {"sheets": [{"name": "S",
+                                 "source": {"file": "result:summen"}}]}}))
+        self.assertEqual(c["sheets"][0]["rows"], 2)
+
+    def test_missing_handle_is_error(self):
+        out = json.loads(xlsx_tools.tool_xlsx_query(
+            {"path": "result:nope", "sql": "SELECT 1"}))
+        self.assertIn("no stored result named", out["error"])
+
+
+class TestV2CreateExtensions(_ToolFixture):
+    def test_template_fill(self):
+        tpl = os.path.join(self._tmp, "template.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Bericht"
+        ws["A1"] = "Firmenbericht"          # template content must survive
+        ws["A1"].font = openpyxl.styles.Font(bold=True, size=16)
+        wb.save(tpl)
+        out = json.loads(xlsx_tools.tool_xlsx_create({
+            "path": "gefuellt.xlsx",
+            "spec": {"template": {"file": tpl},
+                     "sheets": [{"name": "Bericht", "anchor": "A3",
+                                 "rows": [["x", 1], ["y", 2]]}]}}))
+        self.assertEqual(out["sheets"][0]["rows"], 2)
+        wb2 = openpyxl.load_workbook(out["path"])
+        ws2 = wb2["Bericht"]
+        self.assertEqual(ws2["A1"].value, "Firmenbericht")
+        self.assertTrue(ws2["A1"].font.bold)        # template style intact
+        self.assertEqual(ws2["A3"].value, "x")
+        self.assertEqual(ws2["B4"].value, 2)
+
+    def test_subtotals_autofilter_validation_print(self):
+        out = json.loads(xlsx_tools.tool_xlsx_create({
+            "path": "extras.xlsx",
+            "spec": {"sheets": [
+                {
+                    "name": "MD",
+                    "master_detail": {
+                        "key": "MARKTORDERNUMMER",
+                        "master": {"source": {"file": self.orders_path,
+                                              "sheet": "Orders"}},
+                        "detail": {"source": {"file": self.orders_path,
+                                              "sheet": "Ausfuehrungen"}},
+                        "subtotals": ["STUECK"],
+                    },
+                },
+                {
+                    "name": "Flach",
+                    "columns": [{"name": "Status",
+                                 "choices": ["offen", "erledigt"]},
+                                {"name": "Wert"}],
+                    "rows": [["offen", 1], ["erledigt", 2]],
+                    "autofilter": True,
+                    "print": {"orientation": "landscape", "fit_width": True,
+                              "repeat_header": True},
+                },
+            ]}}))
+        wb = openpyxl.load_workbook(out["path"])
+        md = wb["MD"]
+        formulas = [c.value for row in md.iter_rows() for c in row
+                    if isinstance(c.value, str) and c.value.startswith("=SUM(")]
+        self.assertEqual(len(formulas), 2)          # one subtotal per MO group
+        labels = [c.value for row in md.iter_rows() for c in row
+                  if c.value == "Zwischensumme"]
+        self.assertEqual(len(labels), 2)
+        flach = wb["Flach"]
+        self.assertEqual(str(flach.auto_filter.ref), "A1:B3")
+        self.assertEqual(len(flach.data_validations.dataValidation), 1)
+        self.assertEqual(flach.page_setup.orientation, "landscape")
+        self.assertEqual(flach.print_title_rows, "$1:$1")
+
+
+class TestV2Diff(_ToolFixture):
+    def test_keyed_diff(self):
+        pa = os.path.join(self._tmp, "alt.xlsx")
+        pb = os.path.join(self._tmp, "neu.xlsx")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Daten"
+        ws.append(["ID", "Betrag"])
+        ws.append(["k1", 10])
+        ws.append(["k2", 20])
+        ws.append(["k3", 30])
+        wb.save(pa)
+        wb2 = openpyxl.Workbook()
+        ws2 = wb2.active
+        ws2.title = "Daten"
+        ws2.append(["ID", "Betrag"])
+        ws2.append(["k1", 10])       # unchanged
+        ws2.append(["k2", 99])       # changed
+        ws2.append(["k4", 40])       # added (k3 removed)
+        wb2.save(pb)
+        out = json.loads(xlsx_tools.tool_xlsx_diff({
+            "path_a": pa, "path_b": pb, "key": "ID", "out": "diff.csv"}))
+        rep = out["report"]
+        self.assertIn("1 added, 1 removed, 1 changed", rep)
+        self.assertIn("k2", rep)
+        self.assertIn("'20' → '99'", rep)
+        self.assertEqual(out["differences"], 3)
+        with open(out["saved"]["path"], encoding="utf-8") as f:
+            csv_text = f.read()
+        self.assertIn("k2;Betrag;20;99", csv_text)
+
+    def test_missing_key_is_error(self):
+        out = json.loads(xlsx_tools.tool_xlsx_diff({
+            "path_a": self.orders_path, "path_b": self.orders_path,
+            "key": "GIBTSNICHT"}))
+        self.assertIn("error", out)
+        self.assertIn("must exist on both sides", out["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

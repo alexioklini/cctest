@@ -27,6 +27,7 @@ import datetime
 import json
 import os
 import re
+import shutil
 import sqlite3
 
 from engine.context import get_request_context
@@ -94,6 +95,80 @@ def _coerce_csv_value(s):
         return s
 
 
+def _is_headerish(row) -> bool:
+    """Does this row look like a header (≥2 labels, mostly strings)?"""
+    vals = [v for v in row if v is not None and str(v).strip() != ""]
+    if len(vals) < 2:
+        return False
+    return sum(isinstance(v, str) for v in vals) / len(vals) >= 0.6
+
+
+def _split_table_blocks(raw_rows: list) -> list[tuple[int, list]]:
+    """Split a sheet into table BLOCKS (v2 multi-table detection). Real-world
+    report sheets often stack several tables with titles/blank gaps between
+    them; flattening them into one grid mis-detects the header and garbles
+    types. Split rule (conservative — a legit sparse table must NOT split):
+    ≥2 consecutive fully-blank rows AND the next non-blank row looks like a
+    header. Returns [(start_row_idx, rows), ...] (start index is absolute in
+    the sheet, needed to map merged-cell ranges)."""
+    blocks: list[tuple[int, list]] = []
+    cur_start, cur, blank_run = 0, [], 0
+    for i, r in enumerate(raw_rows):
+        if all(_cell_str(c) == "" for c in r):
+            blank_run += 1
+            cur.append(r)
+            continue
+        if (blank_run >= 2 and _is_headerish(r)
+                and any(any(_cell_str(c) for c in rr) for rr in cur)):
+            blocks.append((cur_start, cur))
+            cur_start, cur = i, []
+        blank_run = 0
+        cur.append(r)
+    if any(any(_cell_str(c) for c in rr) for rr in cur):
+        blocks.append((cur_start, cur))
+    return blocks or [(0, raw_rows)]
+
+
+def _read_merges(path: str) -> dict:
+    """{sheet_name: [(r1, c1, r2, c2), ...]} straight from the xlsx zip.
+    read_only workbooks don't expose merged_cells and a full openpyxl load is
+    too slow for the read path, so parse the <mergeCell> refs out of each
+    sheet's XML directly. Best-effort — {} on any surprise."""
+    import zipfile
+    from xml.etree import ElementTree as ET
+    from openpyxl.utils import range_boundaries
+    out: dict = {}
+    try:
+        with zipfile.ZipFile(path) as z:
+            wbxml = ET.fromstring(z.read("xl/workbook.xml"))
+            rels = ET.fromstring(z.read("xl/_rels/workbook.xml.rels"))
+            rid_target = {rel.get("Id"): rel.get("Target") for rel in rels}
+            main = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+            rns = ("{http://schemas.openxmlformats.org/officeDocument/2006/"
+                   "relationships}")
+            for sh in wbxml.iter(f"{main}sheet"):
+                name = sh.get("name")
+                target = rid_target.get(sh.get(f"{rns}id")) or ""
+                if target.startswith("/"):
+                    target = target[1:]
+                elif not target.startswith("xl/"):
+                    target = "xl/" + target
+                try:
+                    sxml = z.read(target)
+                except KeyError:
+                    continue
+                merges = []
+                for m in re.finditer(rb'<mergeCell ref="([A-Z0-9:$]+)"', sxml):
+                    c1, r1, c2, r2 = range_boundaries(
+                        m.group(1).decode().replace("$", ""))
+                    merges.append((r1, c1, r2, c2))
+                if merges:
+                    out[name] = merges
+    except Exception:
+        return {}
+    return out
+
+
 def _detect_header_row(rows, scan: int = 10) -> int:
     """Index of the header row within the first `scan` rows: the first row
     whose non-empty cells are ≥60% strings (labels, not data). Falls back to
@@ -131,7 +206,9 @@ def _load_grids(path: str, sheet: str | None = None) -> list[dict]:
     """Load a workbook/CSV into plain grids:
     [{name, header:[str], rows:[[...]], header_row_idx}].
     Header row is detected, placeholder columns trimmed (the v9.261.0 logic,
-    shared with doc_convert), empty header cells named col<N>."""
+    shared with doc_convert), empty header cells named col<N>. v2: a sheet
+    with several table blocks yields several grids (`<sheet>`, `<sheet>_2`,
+    …), and a merged two-row header composes into "Top / Sub" column names."""
     ext = os.path.splitext(path)[1].lower()
     grids = []
     if ext in _CSV_EXTS:
@@ -146,20 +223,20 @@ def _load_grids(path: str, sheet: str | None = None) -> list[dict]:
                     delim = ";" if sample.count(";") > sample.count(",") else ","
             raw_rows = [[_coerce_csv_value(c) for c in row]
                         for row in csv.reader(f, delimiter=delim)]
-        grids.append(_finish_grid(os.path.splitext(os.path.basename(path))[0],
-                                  raw_rows))
+        grids.extend(_grids_from_rows(
+            os.path.splitext(os.path.basename(path))[0], raw_rows, []))
         return grids
 
     import openpyxl
+    merges = _read_merges(path)
     wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     try:
         for ws in wb.worksheets:
             if sheet and ws.title != sheet:
                 continue
             raw_rows = [list(r) for r in ws.iter_rows(values_only=True)]
-            g = _finish_grid(ws.title, raw_rows)
-            if g is not None:
-                grids.append(g)
+            grids.extend(_grids_from_rows(ws.title, raw_rows,
+                                          merges.get(ws.title) or []))
     finally:
         try:
             wb.close()
@@ -170,12 +247,62 @@ def _load_grids(path: str, sheet: str | None = None) -> list[dict]:
     return grids
 
 
-def _finish_grid(name: str, raw_rows: list) -> dict | None:
+def _grids_from_rows(name: str, raw_rows: list, merges: list) -> list[dict]:
+    out = []
+    for bi, (start, rows) in enumerate(_split_table_blocks(raw_rows)):
+        g = _finish_grid(name if bi == 0 else f"{name}_{bi + 1}", rows,
+                         merges=merges, row_offset=start)
+        if g is not None:
+            out.append(g)
+    return out
+
+
+def _compose_merged_header(raw_rows, hdr_idx, merges, row_offset):
+    """v2: two-row hierarchical headers. When the detected header row carries
+    multi-column MERGES (e.g. a "Q1" band over Umsatz|Marge) and the next row
+    is also label-like, compose per-column names "Q1 / Umsatz" and start data
+    one row later. Returns (header, data_start_idx) or None (normal path)."""
+    abs_hdr_row = row_offset + hdr_idx + 1  # merges are 1-based absolute
+    row_merges = [m for m in merges
+                  if m[0] == abs_hdr_row and m[2] == abs_hdr_row
+                  and m[3] > m[1]]
+    if not row_merges:
+        return None
+    if hdr_idx + 2 >= len(raw_rows):
+        return None  # no room for sub-header + data
+    sub_row = raw_rows[hdr_idx + 1]
+    if not _is_headerish(sub_row):
+        return None
+    top_row = raw_rows[hdr_idx]
+    ncols = max(len(top_row), len(sub_row))
+    header = []
+    for ci in range(ncols):
+        col1 = ci + 1
+        top = None
+        for (r1, c1, r2, c2) in row_merges:
+            if c1 <= col1 <= c2:
+                top = top_row[c1 - 1] if c1 - 1 < len(top_row) else None
+                break
+        if top is None:
+            top = top_row[ci] if ci < len(top_row) else None
+        sub = sub_row[ci] if ci < len(sub_row) else None
+        ts, ss = _cell_str(top), _cell_str(sub)
+        header.append(f"{ts} / {ss}" if ts and ss else (ss or ts))
+    return header, hdr_idx + 2
+
+
+def _finish_grid(name: str, raw_rows: list, merges: list | None = None,
+                 row_offset: int = 0) -> dict | None:
     if not any(any(_cell_str(c) for c in r) for r in raw_rows):
         return None
     hdr_idx = _detect_header_row(raw_rows)
-    header = list(raw_rows[hdr_idx])
-    data_rows = raw_rows[hdr_idx + 1:]
+    composed = _compose_merged_header(raw_rows, hdr_idx, merges or [],
+                                      row_offset)
+    if composed:
+        header, data_start = composed
+    else:
+        header, data_start = list(raw_rows[hdr_idx]), hdr_idx + 1
+    data_rows = raw_rows[data_start:]
     header, data_rows = doc_convert._trim_placeholder_columns(
         header, data_rows, _cell_str)
     names = []
@@ -191,6 +318,55 @@ def _finish_grid(name: str, raw_rows: list) -> dict | None:
         norm_rows.append(row)
     return {"name": name, "header": names, "rows": norm_rows,
             "header_row_idx": hdr_idx}
+
+
+# ---------------------------------------------------------------------------
+# Named query results (v2 pipeline handles)
+# ---------------------------------------------------------------------------
+# xlsx_query save_as='x' stores its full result per SESSION; later calls
+# reference it as path/file "result:x" (query FROM it, create a sheet from it)
+# — multi-step pipelines without re-querying or re-reading the source files.
+# In-memory only (dies with the server — handles are cheap to regenerate).
+
+_RESULT_HANDLES: dict[str, dict] = {}
+HANDLE_MAX_PER_SESSION = 8
+HANDLE_MAX_CELLS = 500_000
+_HANDLE_PREFIX = "result:"
+
+
+def _handles_bucket() -> dict:
+    sid = get_request_context().current_session_id or "global"
+    return _RESULT_HANDLES.setdefault(sid, {})
+
+
+def _store_handle(name: str, headers: list, rows: list) -> str:
+    name = _sanitize_name(name, set())
+    n_cells = len(headers) * max(1, len(rows))
+    if n_cells > HANDLE_MAX_CELLS:
+        raise ValueError(
+            f"result too large to store ({n_cells:,} cells > "
+            f"{HANDLE_MAX_CELLS:,}) — narrow the SELECT or use out='name.csv'")
+    bucket = _handles_bucket()
+    bucket[name] = {"header": headers, "rows": rows}
+    while len(bucket) > HANDLE_MAX_PER_SESSION:
+        bucket.pop(next(iter(bucket)))  # evict oldest
+    return name
+
+
+def _grid_from_handle(token: str) -> dict:
+    name = token[len(_HANDLE_PREFIX):].strip()
+    h = _handles_bucket().get(_sanitize_name(name, set()))
+    if h is None:
+        stored = ", ".join(_handles_bucket().keys()) or "(none)"
+        raise FileNotFoundError(
+            f"no stored result named '{name}' in this session — stored: "
+            f"{stored}. Save one first with xlsx_query save_as='{name}'.")
+    return {"name": _sanitize_name(name, set()), "header": h["header"],
+            "rows": h["rows"], "header_row_idx": 0}
+
+
+def _is_handle(p) -> bool:
+    return isinstance(p, str) and p.startswith(_HANDLE_PREFIX)
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +407,13 @@ def _build_sqlite(paths: list[str], sheet: str | None = None):
     with the file stem so same-named sheets don't collide (and cross-file
     joins read naturally: orders_alt vs orders_neu)."""
     total_rows = 0
-    loaded = []  # (file, grid)
+    loaded = []  # (file_or_handle, grid)
     for p in paths:
+        if _is_handle(p):
+            g = _grid_from_handle(p)
+            total_rows += len(g["rows"])
+            loaded.append((p, g))
+            continue
         rp = _resolve_input_path(p)
         if not os.path.isfile(rp):
             raise FileNotFoundError(f"File not found: {p}")
@@ -254,8 +435,12 @@ def _build_sqlite(paths: list[str], sheet: str | None = None):
     multi = len(paths) > 1
     tables = []
     for rp, g in loaded:
-        stem = os.path.splitext(os.path.basename(rp))[0]
-        raw_name = f"{stem}_{g['name']}" if multi else g["name"]
+        if _is_handle(rp):
+            # A stored result IS its own identity — never file-stem-prefixed.
+            raw_name = g["name"]
+        else:
+            stem = os.path.splitext(os.path.basename(rp))[0]
+            raw_name = f"{stem}_{g['name']}" if multi else g["name"]
         tname = _sanitize_name(raw_name, used_tables)
         used_cols: set = set()
         cols = [(_sanitize_name(h, used_cols), h) for h in g["header"]]
@@ -348,12 +533,15 @@ def _fmt_sample(v) -> str:
     return s[:40] + "…" if len(s) > 40 else s
 
 
-def _workbook_extras(path: str) -> dict:
+def _workbook_extras(path: str, deep: bool = False) -> dict:
     """Merged ranges, named ranges and formula count need extra passes that
     the values-grid can't provide (data_only=True hides formulas; read_only
-    hides merges). Best-effort — inspection must not fail on exotic files."""
+    hides merges). `deep` also collects the formula STRINGS (capped) for the
+    v2 pattern/dependency analysis. Best-effort — inspection must not fail on
+    exotic files."""
     ext = os.path.splitext(path)[1].lower()
-    out = {"merged": {}, "named_ranges": [], "formulas": {}}
+    out = {"merged": {}, "named_ranges": [], "formulas": {},
+           "formula_list": {}}
     if ext not in _XLSX_EXTS:
         return out
     import openpyxl
@@ -361,10 +549,16 @@ def _workbook_extras(path: str) -> dict:
         wb = openpyxl.load_workbook(path, read_only=True, data_only=False)
         for ws in wb.worksheets:
             n = 0
+            flist = []
             for row in ws.iter_rows(values_only=True):
-                n += sum(1 for c in row
-                         if isinstance(c, str) and c.startswith("="))
+                for c in row:
+                    if isinstance(c, str) and c.startswith("="):
+                        n += 1
+                        if deep and len(flist) < 2000:
+                            flist.append(c)
             out["formulas"][ws.title] = n
+            if deep:
+                out["formula_list"][ws.title] = flist
         try:
             out["named_ranges"] = list(wb.defined_names.keys())
         except Exception:
@@ -372,14 +566,96 @@ def _workbook_extras(path: str) -> dict:
         wb.close()
     except Exception:
         pass
-    try:
-        wb2 = openpyxl.load_workbook(path, data_only=True)
-        for ws in wb2.worksheets:
-            out["merged"][ws.title] = len(ws.merged_cells.ranges)
-        wb2.close()
-    except Exception:
-        pass
+    out["merged"] = {s: len(v) for s, v in _read_merges(path).items()}
     return out
+
+
+def _deep_grid_checks(g: dict) -> list[str]:
+    """v2 deep-mode data-quality findings for one grid: fully-duplicated
+    rows + numeric outliers (3×IQR fence). Deterministic, no LLM."""
+    lines = []
+    rows = g["rows"]
+    if not rows:
+        return lines
+    keys = [tuple(_cell_str(_to_sql_value(v)) for v in r) for r in rows]
+    n_dup = len(keys) - len(set(keys))
+    if n_dup:
+        lines.append(f"- {n_dup} fully duplicated row(s)")
+    for ci, name in enumerate(g["header"]):
+        vals = sorted(v for r in rows if ci < len(r)
+                      for v in [r[ci]]
+                      if isinstance(v, (int, float)) and not isinstance(v, bool))
+        if len(vals) < 8:
+            continue
+        q1 = vals[len(vals) // 4]
+        q3 = vals[(3 * len(vals)) // 4]
+        iqr = q3 - q1
+        if iqr <= 0:
+            continue
+        lo, hi = q1 - 3 * iqr, q3 + 3 * iqr
+        outliers = [v for v in vals if v < lo or v > hi]
+        if outliers:
+            ex = ", ".join(str(v) for v in outliers[:3])
+            lines.append(f"- `{name}`: {len(outliers)} outlier value(s) "
+                         f"beyond 3×IQR (e.g. {ex})")
+    return lines
+
+
+def _deep_orphan_checks(sheet_infos: list[dict]) -> list[str]:
+    """v2 deep-mode referential check on join-key candidates: keys present on
+    one side but not the other (the master-without-details / orphan-detail
+    finding — 'Summe stimmt nicht' usually starts here)."""
+    lines = []
+    for i in range(len(sheet_infos)):
+        for j in range(i + 1, len(sheet_infos)):
+            a, b = sheet_infos[i], sheet_infos[j]
+            cols_b = {c["sql"]: c for c in b["cols"]}
+            for ca in a["cols"]:
+                cb = cols_b.get(ca["sql"])
+                if cb is None:
+                    continue
+                va = ca.get("value_full") or ca["value_sample"]
+                vb = cb.get("value_full") or cb["value_sample"]
+                if not va or not vb:
+                    continue
+                overlap = len(va & vb) / min(len(va), len(vb))
+                if overlap < JOIN_KEY_MIN_OVERLAP:
+                    continue
+                only_a, only_b = va - vb, vb - va
+                if only_a:
+                    ex = ", ".join(str(x) for x in list(only_a)[:3])
+                    lines.append(
+                        f"- `{ca['name']}`: {len(only_a)} value(s) in "
+                        f"{a['table']} missing from {b['table']} (e.g. {ex})")
+                if only_b:
+                    ex = ", ".join(str(x) for x in list(only_b)[:3])
+                    lines.append(
+                        f"- `{ca['name']}`: {len(only_b)} value(s) in "
+                        f"{b['table']} missing from {a['table']} (e.g. {ex})")
+    return lines
+
+
+def _formula_analysis(formula_list: dict) -> list[str]:
+    """v2 formula view: per sheet the dominant formula patterns (digits
+    normalised to N) + which OTHER sheets its formulas reference — a compact
+    dependency map of what the workbook computes."""
+    from collections import Counter
+    lines = []
+    for sheet, flist in formula_list.items():
+        if not flist:
+            continue
+        pats = Counter(re.sub(r"\d+", "N", f)[:80] for f in flist)
+        top = "; ".join(f"`{p}` ×{c}" for p, c in pats.most_common(3))
+        lines.append(f"- {sheet}: {len(flist)} formulas — top patterns: {top}")
+        refs: Counter = Counter()
+        for f in flist:
+            for m in re.finditer(r"(?:'([^']+)'|([A-Za-z_][\w .]*))!", f):
+                tgt = (m.group(1) or m.group(2)).strip()
+                if tgt and tgt != sheet:
+                    refs[tgt] += 1
+        for tgt, c in refs.most_common(5):
+            lines.append(f"  - references sheet `{tgt}` in {c} formula(s)")
+    return lines
 
 
 def _join_key_candidates(sheet_infos: list[dict]) -> list[str]:
@@ -412,17 +688,28 @@ def tool_xlsx_inspect(args: dict) -> str:
     if not paths:
         return _err("xlsx_inspect: 'path' (or 'paths') is required")
     sheet = args.get("sheet")
+    deep = bool(args.get("deep"))
     try:
         parts = []
         sheet_infos = []
         used_tables: set = set()
         multi = len(paths) > 1
+        formula_lists: dict = {}
         for p in paths:
-            rp = _resolve_input_path(p)
-            if not os.path.isfile(rp):
-                return _err(f"File not found: {p}")
-            extras = _workbook_extras(rp)
-            grids = _load_grids(rp, sheet=sheet)
+            if _is_handle(p):
+                rp = p
+                extras = {"merged": {}, "named_ranges": [], "formulas": {},
+                          "formula_list": {}}
+                grids = [_grid_from_handle(p)]
+            else:
+                rp = _resolve_input_path(p)
+                if not os.path.isfile(rp):
+                    return _err(f"File not found: {p}")
+                extras = _workbook_extras(rp, deep=deep)
+                grids = _load_grids(rp, sheet=sheet)
+            if deep:
+                for sname, flist in (extras.get("formula_list") or {}).items():
+                    formula_lists[f"{os.path.basename(rp)} / {sname}"] = flist
             if not grids:
                 parts.append(f"# {os.path.basename(rp)}\n\n(no data found)")
                 continue
@@ -478,14 +765,22 @@ def tool_xlsx_inspect(args: dict) -> str:
                         get_column_letter(ci + 1), h, sql_name, ctype,
                         len(values) - len(non_null), distinct_str, minmax,
                         ", ".join(samples)])
-                    cols_info.append({
+                    ci_info = {
                         "name": h, "sql": sql_name,
                         "value_sample": set(
                             _to_sql_value(v) for v in
-                            non_null[:JOIN_KEY_OVERLAP_SAMPLE])})
+                            non_null[:JOIN_KEY_OVERLAP_SAMPLE])}
+                    if deep:
+                        ci_info["value_full"] = set(
+                            _to_sql_value(v) for v in non_null)
+                    cols_info.append(ci_info)
                 parts.append(_markdown_table(
                     ["Col", "Name", "SQL name", "Type", "Nulls", "Distinct",
                      "Min–Max", "Samples"], col_rows))
+                if deep:
+                    checks = _deep_grid_checks(g)
+                    if checks:
+                        parts.append("\n**Data quality:**\n" + "\n".join(checks))
                 sheet_infos.append({"table": tname, "cols": cols_info,
                                     "file": os.path.basename(rp),
                                     "sheet": g["name"], "rows": n_rows,
@@ -497,6 +792,14 @@ def tool_xlsx_inspect(args: dict) -> str:
         joins = _join_key_candidates(sheet_infos)
         if joins:
             parts.append("\n## Join-key candidates\n" + "\n".join(joins))
+        if deep:
+            orphans = _deep_orphan_checks(sheet_infos)
+            if orphans:
+                parts.append("\n## Referential findings (deep)\n"
+                             + "\n".join(orphans))
+            formulas = _formula_analysis(formula_lists)
+            if formulas:
+                parts.append("\n## Formula map (deep)\n" + "\n".join(formulas))
         parts.append("\n## " + _schema_echo(sheet_infos))
         report = "\n".join(parts)
         src = "xlsx:" + ",".join(os.path.basename(_resolve_input_path(p))
@@ -565,6 +868,13 @@ def tool_xlsx_query(args: dict) -> str:
         res = {"row_count": row_count, "result": md}
         if out_info:
             res["saved"] = out_info
+        save_as = (args.get("save_as") or "").strip()
+        if save_as:
+            hname = _store_handle(save_as, headers, [list(r) for r in rows])
+            res["saved_as"] = hname
+            res["note"] = (f"full result stored for this session — reference "
+                           f"it as 'result:{hname}' in xlsx_query paths or an "
+                           f"xlsx_create/xlsx_edit source.file")
         return _ok(res)
     except Exception as e:
         return _err(f"xlsx_query: {type(e).__name__}: {e}")
@@ -642,6 +952,9 @@ def _resolve_source(source: dict) -> tuple[list[str], list[list]]:
             return headers, [list(r) for r in cur.fetchall()]
         finally:
             conn.close()
+    if _is_handle(fpath):
+        g = _grid_from_handle(fpath)
+        return g["header"], g["rows"]
     rp = _resolve_input_path(fpath)
     if not os.path.isfile(rp):
         raise FileNotFoundError(f"File not found: {fpath}")
@@ -819,6 +1132,47 @@ def _render_conditional(ws, sheet_spec, header, n_data_rows, header_row=1):
                     f"\"fill\": \"red|green|yellow\"}}")
 
 
+def _apply_data_validation(ws, header, col_specs, first_row, last_row):
+    """v2: column spec `choices: [...]` → an Excel list dropdown on that
+    column's data range."""
+    if not col_specs or last_row < first_row:
+        return
+    from openpyxl.worksheet.datavalidation import DataValidation
+    from openpyxl.utils import get_column_letter
+    by_name = {str(c.get("name", "")).strip().lower(): c
+               for c in col_specs if isinstance(c, dict)}
+    for ci, h in enumerate(header, 1):
+        cs = by_name.get(str(h).strip().lower())
+        choices = (cs or {}).get("choices")
+        if not choices:
+            continue
+        formula = '"' + ",".join(str(c) for c in choices) + '"'
+        if len(formula) > 255:
+            raise ValueError(
+                f"choices for '{h}' exceed Excel's 255-char list limit — "
+                f"use fewer/shorter options")
+        dv = DataValidation(type="list", formula1=formula, allow_blank=True)
+        ws.add_data_validation(dv)
+        letter = get_column_letter(ci)
+        dv.add(f"{letter}{first_row}:{letter}{last_row}")
+
+
+def _apply_print_setup(ws, sheet_spec):
+    """v2: sheet spec `print: {orientation?, fit_width?, repeat_header?}`."""
+    p = sheet_spec.get("print")
+    if not isinstance(p, dict):
+        return
+    orient = (p.get("orientation") or "").lower()
+    if orient in ("landscape", "portrait"):
+        ws.page_setup.orientation = orient
+    if p.get("fit_width"):
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.page_setup.fitToWidth = 1
+        ws.page_setup.fitToHeight = 0
+    if p.get("repeat_header"):
+        ws.print_title_rows = "1:1"
+
+
 def _render_table_sheet(ws, sheet_spec, kit) -> int:
     header, rows = _sheet_data(sheet_spec)
     if not header:
@@ -855,7 +1209,12 @@ def _render_table_sheet(ws, sheet_spec, kit) -> int:
         _apply_number_formats(ws, header, col_specs, trow, trow)
     if sheet_spec.get("freeze_header", True):
         ws.freeze_panes = "A2"
+    if sheet_spec.get("autofilter") and n:
+        from openpyxl.utils import get_column_letter
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(header))}{n + 1}"
     _auto_widths(ws, header, rows, col_specs)
+    _apply_data_validation(ws, header, col_specs, 2, n + 1)
+    _apply_print_setup(ws, sheet_spec)
     _render_charts(ws, sheet_spec, header, n)
     _render_conditional(ws, sheet_spec, header, n)
     return n + (1 if totals and n else 0)
@@ -889,10 +1248,16 @@ def _render_master_detail_sheet(ws, sheet_spec, kit) -> int:
     combined = [m_header[i] for i in m_idx] + [d_header[i] for i in d_idx]
     _apply_header_row(ws, combined, kit)
     from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
     bold = Font(bold=True)
     n_m = len(m_idx)
     row_no = 2
     key_out_idx = m_idx.index(m_key) if m_key in m_idx else None
+    # v2 group subtotals: detail column names → output column positions.
+    sub_out_cols = []
+    for sname in md.get("subtotals") or []:
+        di = _column_indices([d_header[i] for i in d_idx], [sname])[0]
+        sub_out_cols.append(n_m + di + 1)
     for mr in m_rows:
         for ci, si in enumerate(m_idx):
             c = ws.cell(row=row_no, column=ci + 1,
@@ -906,6 +1271,7 @@ def _render_master_detail_sheet(ws, sheet_spec, kit) -> int:
             c.fill = kit["master_fill"]
             c.border = kit["border"]
         row_no += 1
+        detail_start = row_no
         for dr in detail_by_key.get(_cell_str(_to_sql_value(mr[m_key])), []):
             for ci, si in enumerate(d_idx):
                 c = ws.cell(row=row_no, column=n_m + ci + 1,
@@ -914,8 +1280,24 @@ def _render_master_detail_sheet(ws, sheet_spec, kit) -> int:
                 c.border = kit["border"]
             ws.row_dimensions[row_no].outline_level = 1
             row_no += 1
+        if sub_out_cols and row_no > detail_start:
+            label = ws.cell(row=row_no, column=1, value="Zwischensumme")
+            label.font = bold
+            for col in sub_out_cols:
+                letter = get_column_letter(col)
+                c = ws.cell(row=row_no, column=col,
+                            value=f"=SUM({letter}{detail_start}:"
+                                  f"{letter}{row_no - 1})")
+                c.font = bold
+            for ci in range(len(combined)):
+                cc = ws.cell(row=row_no, column=ci + 1)
+                cc.fill = kit["master_fill"]
+                cc.border = kit["border"]
+            ws.row_dimensions[row_no].outline_level = 1
+            row_no += 1
     if sheet_spec.get("freeze_header", True):
         ws.freeze_panes = "A2"
+    _apply_print_setup(ws, sheet_spec)
     sample_rows = [[None] * len(combined)]
     _auto_widths(ws, combined, sample_rows)
     n_data = row_no - 2
@@ -924,6 +1306,62 @@ def _render_master_detail_sheet(ws, sheet_spec, kit) -> int:
     _render_charts(ws, sheet_spec, combined, n_data)
     _render_conditional(ws, sheet_spec, combined, n_data)
     return n_data
+
+
+def _fill_template(out_path: str, spec: dict) -> dict:
+    """v2 template fill: copy an existing (corporate) workbook and write DATA
+    into it — values only, the template's styling/formulas/charts stay
+    untouched. Analog of write_document's style='reference' for docx. Per
+    sheet: target an existing sheet by name, place rows at `anchor` (default
+    A1) or at a workbook `named_range`."""
+    import openpyxl
+    from openpyxl.utils.cell import coordinate_to_tuple
+    tpl = spec["template"]
+    if isinstance(tpl, str):
+        tpl = {"file": tpl}
+    src = _resolve_input_path(tpl.get("file") or "")
+    if not os.path.isfile(src):
+        raise FileNotFoundError(f"template file not found: {tpl.get('file')}")
+    shutil.copy(src, out_path)
+    wb = openpyxl.load_workbook(
+        out_path, keep_vba=out_path.lower().endswith(".xlsm"))
+    out_sheets = []
+    for sh in spec.get("sheets") or []:
+        target = sh.get("name")
+        if target not in wb.sheetnames:
+            raise ValueError(
+                f"sheet '{target}' not in template — sheets: {wb.sheetnames}")
+        ws = wb[target]
+        # Inline rows in template mode are pure DATA (placed at the anchor —
+        # the template already has its own headers); source keeps its header
+        # for optional include_header.
+        if sh.get("rows") is not None:
+            header, rows = [], [list(r) for r in sh["rows"]]
+        elif sh.get("source"):
+            header, rows = _resolve_source(sh["source"])
+        else:
+            raise ValueError("template sheet needs rows or source")
+        anchor = sh.get("anchor") or "A1"
+        nr = sh.get("named_range")
+        if nr:
+            try:
+                dests = list(wb.defined_names[nr].destinations)
+                sheet_name, ref = dests[0]
+                anchor = ref.replace("$", "").split(":")[0]
+                ws = wb[sheet_name]
+            except Exception:
+                raise ValueError(
+                    f"named_range '{nr}' not found — available: "
+                    f"{list(wb.defined_names.keys())}")
+        r0, c0 = coordinate_to_tuple(anchor)
+        write_rows = ([header] + rows) if (sh.get("include_header")
+                                           and header) else rows
+        for ri, row in enumerate(write_rows):
+            for ci, v in enumerate(row):
+                ws.cell(row=r0 + ri, column=c0 + ci, value=v)
+        out_sheets.append({"name": ws.title, "rows": len(write_rows)})
+    wb.save(out_path)
+    return {"sheets": out_sheets, "template": os.path.basename(src)}
 
 
 def render_spec(path: str, spec: dict, style_name: str = "",
@@ -977,7 +1415,10 @@ def tool_xlsx_create(args: dict) -> str:
     if perr:
         return perr
     try:
-        info = render_spec(path, spec or {})
+        if isinstance(spec, dict) and spec.get("template"):
+            info = _fill_template(path, spec)
+        else:
+            info = render_spec(path, spec or {})
     except (ValueError, FileNotFoundError) as e:
         return _err(f"xlsx_create: {e}")
     except Exception as e:
@@ -991,6 +1432,188 @@ def tool_xlsx_create(args: dict) -> str:
     if size > 5 * 1024 * 1024:
         res["note"] = "file exceeds the 5MB artifact-version snapshot cap"
     return _ok(res)
+
+
+# ---------------------------------------------------------------------------
+# xlsx_diff — deterministic workbook comparison (v2)
+# ---------------------------------------------------------------------------
+
+DIFF_DETAIL_CAP = 50
+
+
+def _diff_grids(ga: dict, gb: dict, key: str | None,
+                label_a: str, label_b: str):
+    """Compare two grids. With `key`: keyed row diff (added/removed/changed).
+    Without: positional. Returns (summary_lines, detail_rows) where
+    detail_rows = [(key, column, value_a, value_b), ...] for the CSV export."""
+    lines = []
+    details = []
+    cols_a = [str(h) for h in ga["header"]]
+    cols_b = [str(h) for h in gb["header"]]
+    la = {c.strip().lower(): i for i, c in enumerate(cols_a)}
+    lb = {c.strip().lower(): i for i, c in enumerate(cols_b)}
+    only_a = [c for c in cols_a if c.strip().lower() not in lb]
+    only_b = [c for c in cols_b if c.strip().lower() not in la]
+    if only_a:
+        lines.append(f"- columns only in {label_a}: {', '.join(only_a)}")
+    if only_b:
+        lines.append(f"- columns only in {label_b}: {', '.join(only_b)}")
+    common = [c for c in cols_a if c.strip().lower() in lb]
+    lines.append(f"- rows: {label_a} {len(ga['rows'])} / "
+                 f"{label_b} {len(gb['rows'])}")
+
+    def norm(v):
+        return _cell_str(_to_sql_value(v))
+
+    if key:
+        kl = str(key).strip().lower()
+        if kl not in la or kl not in lb:
+            raise ValueError(
+                f"key '{key}' must exist on both sides — {label_a}: "
+                f"{cols_a}; {label_b}: {cols_b}")
+        ia, ib = la[kl], lb[kl]
+        rows_a = {norm(r[ia]): r for r in ga["rows"] if ia < len(r)}
+        rows_b = {norm(r[ib]): r for r in gb["rows"] if ib < len(r)}
+        added = [k for k in rows_b if k not in rows_a]
+        removed = [k for k in rows_a if k not in rows_b]
+        changed = []
+        for k, ra in rows_a.items():
+            rb = rows_b.get(k)
+            if rb is None:
+                continue
+            diff_cols = []
+            for c in common:
+                cl = c.strip().lower()
+                va = ra[la[cl]] if la[cl] < len(ra) else None
+                vb = rb[lb[cl]] if lb[cl] < len(rb) else None
+                if norm(va) != norm(vb):
+                    diff_cols.append((c, va, vb))
+                    details.append((k, c, va, vb))
+            if diff_cols:
+                changed.append((k, diff_cols))
+        for k in added:
+            details.append((k, "(row added)", "", "present"))
+        for k in removed:
+            details.append((k, "(row removed)", "present", ""))
+        lines.append(f"- keyed on `{key}`: {len(added)} added, "
+                     f"{len(removed)} removed, {len(changed)} changed row(s)")
+        if len(rows_a) < len(ga["rows"]) or len(rows_b) < len(gb["rows"]):
+            lines.append("- note: duplicate key values collapsed "
+                         "(last occurrence wins) — key is not unique")
+        shown = 0
+        for k, diff_cols in changed:
+            if shown >= DIFF_DETAIL_CAP:
+                lines.append(f"- … {len(changed) - shown} more changed rows "
+                             f"(pass out='diff.csv' for the full list)")
+                break
+            cells = "; ".join(f"{c}: {norm(va)!r} → {norm(vb)!r}"
+                              for c, va, vb in diff_cols[:6])
+            lines.append(f"  - `{k}`: {cells}")
+            shown += 1
+        if added[:10]:
+            lines.append("  - added keys: "
+                         + ", ".join(added[:10])
+                         + (" …" if len(added) > 10 else ""))
+        if removed[:10]:
+            lines.append("  - removed keys: "
+                         + ", ".join(removed[:10])
+                         + (" …" if len(removed) > 10 else ""))
+    else:
+        n = max(len(ga["rows"]), len(gb["rows"]))
+        shown = 0
+        for i in range(n):
+            ra = ga["rows"][i] if i < len(ga["rows"]) else None
+            rb = gb["rows"][i] if i < len(gb["rows"]) else None
+            if ra is None or rb is None:
+                details.append((f"row {i + 2}", "(row added)" if ra is None
+                                else "(row removed)", "", ""))
+                continue
+            for c in common:
+                cl = c.strip().lower()
+                va = ra[la[cl]] if la[cl] < len(ra) else None
+                vb = rb[lb[cl]] if lb[cl] < len(rb) else None
+                if norm(va) != norm(vb):
+                    details.append((f"row {i + 2}", c, va, vb))
+                    if shown < DIFF_DETAIL_CAP:
+                        lines.append(f"  - row {i + 2} `{c}`: "
+                                     f"{norm(va)!r} → {norm(vb)!r}")
+                        shown += 1
+        if len(details) > shown:
+            lines.append(f"- … {len(details) - shown} more cell differences "
+                         f"(pass out='diff.csv' for the full list)")
+        lines.append(f"- positional compare (no key given): "
+                     f"{len(details)} differing cell(s)/row(s) — pass "
+                     f"key='<column>' for a keyed compare")
+    return lines, details
+
+
+def tool_xlsx_diff(args: dict) -> str:
+    import brain as _brain
+    pa, pb = args.get("path_a") or "", args.get("path_b") or ""
+    if not pa or not pb:
+        return _err("xlsx_diff: 'path_a' and 'path_b' are required")
+    key = (args.get("key") or "").strip() or None
+    sheet = args.get("sheet")
+    try:
+        grids_a = ([_grid_from_handle(pa)] if _is_handle(pa)
+                   else _load_grids(_resolve_input_path(pa), sheet=sheet))
+        grids_b = ([_grid_from_handle(pb)] if _is_handle(pb)
+                   else _load_grids(_resolve_input_path(pb), sheet=sheet))
+        la, lb = os.path.basename(pa), os.path.basename(pb)
+        by_name_a = {g["name"]: g for g in grids_a}
+        by_name_b = {g["name"]: g for g in grids_b}
+        parts = [f"# Diff: {la} ↔ {lb}"]
+        all_details = []
+        only_a = [n for n in by_name_a if n not in by_name_b]
+        only_b = [n for n in by_name_b if n not in by_name_a]
+        if only_a:
+            parts.append(f"- sheets only in {la}: {', '.join(only_a)}")
+        if only_b:
+            parts.append(f"- sheets only in {lb}: {', '.join(only_b)}")
+        common = [n for n in by_name_a if n in by_name_b]
+        if not common and len(grids_a) == 1 and len(grids_b) == 1:
+            # single-sheet workbooks with different sheet names still compare
+            common = None
+            parts.append(f"\n## {grids_a[0]['name']} ↔ {grids_b[0]['name']}")
+            lines, details = _diff_grids(grids_a[0], grids_b[0], key, la, lb)
+            parts.extend(lines)
+            all_details.extend(details)
+        else:
+            for n in (common or []):
+                parts.append(f"\n## Sheet: {n}")
+                lines, details = _diff_grids(by_name_a[n], by_name_b[n],
+                                             key, la, lb)
+                parts.extend(lines)
+                all_details.extend(details)
+        out_info = None
+        out_name = (args.get("out") or "").strip()
+        if out_name and all_details:
+            from engine.tools.file_tools import _enforce_artifact_path
+            if not out_name.lower().endswith(".csv"):
+                out_name += ".csv"
+            out_path, perr = _enforce_artifact_path(out_name, "xlsx_diff")
+            if perr:
+                return perr
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f, delimiter=";")
+                w.writerow(["key", "column", "value_a", "value_b"])
+                for k, c, va, vb in all_details:
+                    w.writerow([k, c, _cell_str(_to_sql_value(va)),
+                                _cell_str(_to_sql_value(vb))])
+            agent = get_request_context().current_agent
+            _brain._after_file_write(
+                out_path, "created", agent.agent_id if agent else "main")
+            out_info = {"path": out_path, "rows": len(all_details)}
+        report = "\n".join(parts)
+        report = _brain._gdpr_anon_tool_text(report, f"xlsx_diff:{la},{lb}")
+        res = {"differences": len(all_details), "report": report}
+        if out_info:
+            res["saved"] = out_info
+        return _ok(res)
+    except (ValueError, FileNotFoundError) as e:
+        return _err(f"xlsx_diff: {e}")
+    except Exception as e:
+        return _err(f"xlsx_diff: {type(e).__name__}: {e}")
 
 
 # ---------------------------------------------------------------------------

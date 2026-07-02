@@ -449,9 +449,11 @@ function wdToggleDir(rowEl, absPath) {
 }
 
 // File types that aren't usefully editable/viewable inline → open in the host's
-// external app (Word/Excel/PowerPoint/Acrobat/…) on click.
+// external app (Word/Excel/PowerPoint/Acrobat/…) on click. xlsx/xlsm are NOT
+// here (since v9.263.0): they open as an in-app grid preview in the bottom
+// panel — the right-click menu still offers "extern öffnen".
 const _WD_EXTERNAL_EXT = new Set([
-  'docx', 'doc', 'xlsx', 'xls', 'pptx', 'ppt', 'pdf',
+  'docx', 'doc', 'xls', 'pptx', 'ppt', 'pdf',
   'odt', 'ods', 'odp', 'rtf', 'pages', 'numbers', 'key',
   'zip', 'mp4', 'mov', 'avi', 'mp3', 'wav', 'm4a',
 ]);

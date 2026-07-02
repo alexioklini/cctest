@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.263.0",
+        "date": "2026-07-02",
+        "title": "Excel-Vorschau, -Vergleich und -Tiefenprüfung",
+        "body": "Excel-Dateien öffnen sich jetzt direkt in der Oberfläche als "
+                "Tabelle — mit Reitern pro Tabellenblatt, im Datei-Baum wie im "
+                "Dateien-Panel; auch CSV-Dateien zeigen diese Ansicht. Der "
+                "Agent kann außerdem zwei Dateien vergleichen (was wurde "
+                "hinzugefügt, entfernt, geändert — auf Wunsch als komplette "
+                "Änderungsliste), eine Tiefenprüfung durchführen (Duplikate, "
+                "Ausreißer, verwaiste Verknüpfungen, Formel-Abhängigkeiten) "
+                "und Daten in bestehende, fertig formatierte Excel-Vorlagen "
+                "einfüllen, ohne deren Layout anzutasten. Komplexe Blätter "
+                "mit mehreren Tabellen oder verbundenen Überschriften werden "
+                "dabei korrekt erkannt, und Zwischenergebnisse lassen sich "
+                "über mehrere Schritte hinweg weiterverwenden.",
+        "audience": "user",
+        "versions": ["9.263.0"],
+    },
+    {
         "version": "9.262.0",
         "date": "2026-07-02",
         "title": "Excel zuverlässig analysieren und erstellen",

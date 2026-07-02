@@ -375,7 +375,35 @@ async function _renderAttachmentFullview() {
     return;
   }
 
-  // Fallback — non-previewable binary (docx/xlsx/pptx/…): file card placeholder
+  // Spreadsheet grid preview (xlsx/xlsm, v9.263.0) — server-parsed sheets as a
+  // real table with sheet tabs (shared renderer _xlsxGridHtml from
+  // panels_terminal.js). Needs a disk path; data-URL-only attachments fall
+  // through to the file card.
+  if ((ext === 'xlsx' || ext === 'xlsm') && a.path && typeof _xlsxGridHtml === 'function') {
+    renderShell(`<div style="color:var(--text-400);font-size:12px">Wird geladen …</div>`);
+    try {
+      const g = await API.get(`/v1/files/xlsx-grid?path=${encodeURIComponent(a.path)}`);
+      const slot = document.getElementById('attach-fullview-body');
+      if (!slot) return;
+      if (g.error) {
+        slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Vorschau nicht verfügbar: ${esc(g.error)}</div>`;
+        return;
+      }
+      const paint = (idx) => {
+        slot.innerHTML = `<div class="xgrid-fullview">${_xlsxGridHtml(g, idx)}</div>`;
+        slot.querySelectorAll('.xgrid-sheet-btn').forEach(b => {
+          b.onclick = () => paint(parseInt(b.dataset.idx, 10));
+        });
+      };
+      paint(0);
+    } catch (e) {
+      const slot = document.getElementById('attach-fullview-body');
+      if (slot) slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Vorschau nicht verfügbar: ${esc(e.message || e)}</div>`;
+    }
+    return;
+  }
+
+  // Fallback — non-previewable binary (docx/pptx/…): file card placeholder
   const extLabel = (a.name?.split('.').pop() || 'FILE').toUpperCase();
   renderShell(`
     <div class="attach-fullview-file-card">

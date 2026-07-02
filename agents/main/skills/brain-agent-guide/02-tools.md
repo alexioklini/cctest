@@ -171,7 +171,7 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
 - `edit_document(path, ...)` — structural edit (single XLSX cell/row, DOCX
   replace_text, PPTX slides). For anything bigger on spreadsheets → `xlsx_edit`.
 
-## Spreadsheets — deterministic XLSX toolset (v9.262.0)
+## Spreadsheets — deterministic XLSX toolset (v9.262.0, extended v9.263.0)
 
 WHY: spreadsheet quality used to depend on the chat model writing pandas/
 openpyxl code via python_exec — strong models managed, weak/local ones churned
@@ -215,6 +215,31 @@ markdown and code renders the file. Impl: `engine/tools/xlsx_tools.py`.
 
 `write_document` .xlsx also renders through the same engine now (markdown
 tables → styled sheets), so ALL xlsx output shares one renderer.
+
+**v2 additions (v9.263.0):**
+- **Reading robustness**: multi-table sheets split into one table per block
+  (`Report`, `Report_2`, …; split on ≥2 blank rows + header-ish next row);
+  merged two-row headers compose to `Q1 / Umsatz` column names (merges parsed
+  straight from the xlsx zip — `_read_merges`, read_only can't see them).
+- **`xlsx_inspect deep=true`**: data-quality audit — duplicated rows, numeric
+  outliers (3×IQR), orphan join-key values (present on one side only), and a
+  formula map (top formula patterns per sheet + which sheets reference which).
+- **Pipeline handles**: `xlsx_query save_as='x'` stores the full result
+  per session; `result:x` is then a valid path/source.file in xlsx_query,
+  xlsx_diff, xlsx_create and xlsx_edit (in-memory, max 8/session, 500k cells).
+- **`xlsx_diff(path_a, path_b, key?, sheet?, out?)`** — 5th tool: deterministic
+  workbook compare; with `key` a keyed row diff (added/removed/changed with
+  per-cell old→new), without positional; detail capped at 50 lines,
+  `out='diff.csv'` saves the full change list.
+- **xlsx_create extras**: `spec.template={file}` copies a styled corporate
+  workbook and writes ONLY data at `anchor`/`named_range` (template styling/
+  formulas untouched); `master_detail.subtotals:[col]` (=SUM row per group);
+  `autofilter`; column `choices:[...]` (dropdown data validation); `print:
+  {orientation, fit_width, repeat_header}`.
+- **UI grid preview**: xlsx/xlsm click in the file tree opens an in-app table
+  grid (bottom panel, sheet tabs; right-click still offers extern öffnen);
+  csv/tsv "Ansicht" mode renders the same grid; artifacts fullview previews
+  xlsx instead of the download-only card. Endpoint `GET /v1/files/xlsx-grid`.
 
 ## Memory (MemPalace, direct — not MCP)
 

@@ -1878,6 +1878,57 @@ class AdminArtifactsHandlers:
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
 
+    def _handle_file_xlsx_grid(self):
+        """GET /v1/files/xlsx-grid?path=<abs>&sheet=&rows=500 — a spreadsheet
+        as STRUCTURED grid JSON for the UI table preview (bottom-panel editor
+        + artifacts fullview): {sheets: [{name, header, rows, total_rows,
+        truncated}]}. Reuses the xlsx-toolset grid loader (header detection,
+        placeholder trim, multi-table split, merged-header composition) so the
+        preview shows exactly what the agent's xlsx tools see — unlike
+        /v1/files/preview, which flattens to markdown text."""
+        from urllib.parse import urlparse, parse_qs
+        from engine.tools.xlsx_tools import _load_grids, _to_sql_value
+        qs = parse_qs(urlparse(self.path).query)
+        resolved = self._validate_file_path(qs.get("path", [""])[0])
+        max_rows = min(2000, int(qs.get("rows", ["500"])[0] or 500))
+        sheet = (qs.get("sheet", [""])[0] or None)
+        if not resolved:
+            self._send_json({"error": "Invalid or disallowed file path"}, 403)
+            return
+        if not os.path.isfile(resolved):
+            self._send_json({"error": "File not found"}, 404)
+            return
+        ext = resolved.rsplit(".", 1)[-1].lower() if "." in resolved else ""
+        if ext not in ("xlsx", "xlsm", "csv", "tsv"):
+            self._send_json({"error": f"Not a spreadsheet: .{ext}"}, 400)
+            return
+        try:
+            if os.path.getsize(resolved) > 30 * 1024 * 1024:
+                self._send_json({"error": "Datei zu groß für die Vorschau (>30 MB)"}, 413)
+                return
+            def _js(v):
+                v = _to_sql_value(v)
+                return v if isinstance(v, (int, float, str)) or v is None else str(v)
+            sheets = []
+            for g in _load_grids(resolved, sheet=sheet):
+                header = [str(h) for h in g["header"][:100]]
+                rows = [[_js(v) for v in r[:100]]
+                        for r in g["rows"][:max_rows]]
+                sheets.append({
+                    "name": g["name"], "header": header, "rows": rows,
+                    "total_rows": len(g["rows"]),
+                    "truncated": len(g["rows"]) > max_rows
+                                 or len(g["header"]) > 100,
+                })
+            st = os.stat(resolved)
+            self._send_json({"path": resolved,
+                             "name": os.path.basename(resolved),
+                             "size": int(st.st_size),
+                             "mtime": int(st.st_mtime),
+                             "sheets": sheets})
+        except Exception as e:
+            self._send_json({"error": f"Grid-Parse fehlgeschlagen: {e}"}, 500)
+
     # ── Code Mode Endpoints ──
 
     def _handle_file_tree(self):

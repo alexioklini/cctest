@@ -933,7 +933,12 @@ TOOL_DEFINITIONS = [
             "identifiers. Do NOT write pandas/openpyxl code via python_exec "
             "for spreadsheets — use xlsx_inspect → xlsx_query → xlsx_create/"
             "xlsx_edit instead; the data stays server-side. Pass paths=[...] "
-            "to profile several files in one call (e.g. to compare exports)."
+            "to profile several files in one call (e.g. to compare exports). "
+            "Multi-table sheets are split into one table per block; merged "
+            "two-row headers compose to 'Q1 / Umsatz' names. Pass deep=true "
+            "for a data-quality audit: duplicate rows, numeric outliers, "
+            "orphan join keys (values missing on one side), and a formula/"
+            "dependency map of what the workbook computes."
         ),
         "input_schema": {
             "type": "object",
@@ -941,6 +946,7 @@ TOOL_DEFINITIONS = [
                 "path": {"type": "string", "description": "Path to the .xlsx/.xlsm/.csv file"},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Several files at once (alternative to path)"},
                 "sheet": {"type": "string", "description": "Restrict to one sheet (default: all)"},
+                "deep": {"type": "boolean", "description": "Add data-quality checks (duplicates, outliers, orphan keys) + formula map"},
             },
         },
     },
@@ -956,17 +962,21 @@ TOOL_DEFINITIONS = [
             "artifact the user can download. Pass paths=[fileA, fileB] to "
             "query several files in one session (tables are then prefixed "
             "with the file stem — xlsx_inspect with the same paths shows the "
-            "names). Only SELECT/WITH is allowed. Example: "
-            "sql=\"SELECT o.nr, SUM(t.stueck) FROM orders o JOIN teilausf t "
-            "ON t.nr = o.nr GROUP BY o.nr\"."
+            "names). Only SELECT/WITH is allowed. PIPELINES: pass "
+            "save_as='name' to store the FULL result for this session and "
+            "reference it later as path 'result:name' (in xlsx_query, "
+            "xlsx_diff, or an xlsx_create/xlsx_edit source.file) — no "
+            "re-query needed. Example: sql=\"SELECT o.nr, SUM(t.stueck) FROM "
+            "orders o JOIN teilausf t ON t.nr = o.nr GROUP BY o.nr\"."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Path to the .xlsx/.csv file"},
+                "path": {"type": "string", "description": "Path to the .xlsx/.csv file (or 'result:<name>' for a stored result)"},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Several files in one SQL session (alternative to path)"},
                 "sql": {"type": "string", "description": "One SELECT statement. Use table/column names from xlsx_inspect verbatim."},
                 "out": {"type": "string", "description": "Optional relative .csv filename — writes the full result to your artifact folder"},
+                "save_as": {"type": "string", "description": "Store the full result under this name for later 'result:<name>' references"},
                 "sheet": {"type": "string", "description": "Load only this sheet (for very large workbooks)"},
             },
             "required": ["sql"],
@@ -986,14 +996,21 @@ TOOL_DEFINITIONS = [
             "columns?:[{name, format?: text|int|number|eur|percent|date, "
             "width?}], rows?:[[...]] | source:{file, sheet?, sql?} | "
             "master_detail:{key, master:{source, columns?}, detail:{source, "
-            "columns?}}, totals?:[col], banded?, charts?:[{type: bar|line|pie, "
-            "labels, series:[col], title?}], conditional?:[{columns:[col], "
-            "rule: 'color_scale'|'data_bars'|{lt|gt|eq, fill}}]}], style?}. "
-            "master_detail builds a grouped master→detail sheet from "
-            "two sources + a join key (e.g. orders with their executions "
-            "beneath each order). Example minimal spec: {\"sheets\":[{\"name\":"
-            "\"Daten\",\"source\":{\"file\":\"in.xlsx\",\"sql\":\"SELECT * FROM "
-            "orders WHERE stueck > 0\"}}]}."
+            "columns?}}, totals?:[col], banded?, autofilter?, charts?:[{type: "
+            "bar|line|pie, labels, series:[col], title?}], conditional?:"
+            "[{columns:[col], rule: 'color_scale'|'data_bars'|{lt|gt|eq, "
+            "fill}}], print?:{orientation?, fit_width?, repeat_header?}}], "
+            "style?}. Column spec also takes choices:[...] for a dropdown "
+            "(data validation). master_detail builds a grouped master→detail "
+            "sheet from two sources + a join key (subtotals?:[detail col] adds "
+            "a =SUM row per group). TEMPLATE FILL: spec.template={file} copies "
+            "an existing styled workbook and writes ONLY data into it — per "
+            "sheet {name (existing sheet), anchor: 'B5' or named_range, "
+            "rows|source}; the template's styling/formulas stay untouched (use "
+            "for corporate report templates). source.file also accepts "
+            "'result:<name>' from xlsx_query save_as. Example minimal spec: "
+            "{\"sheets\":[{\"name\":\"Daten\",\"source\":{\"file\":\"in.xlsx\","
+            "\"sql\":\"SELECT * FROM orders WHERE stueck > 0\"}}]}."
         ),
         "input_schema": {
             "type": "object",
@@ -1029,6 +1046,32 @@ TOOL_DEFINITIONS = [
                 "spec": {"type": "object", "description": "{ops: [{op, ...}]} — see tool description for the op grammar"},
             },
             "required": ["path", "spec"],
+        },
+    },
+    {
+        "name": "xlsx_diff",
+        "description": (
+            "Compare two spreadsheets deterministically and report what "
+            "changed — sheets/columns present on one side only, and per sheet "
+            "the changed rows. ALWAYS pass key='<column>' when the rows have "
+            "an ID column (keyed compare: added/removed/changed rows with "
+            "per-cell old → new values); without a key the compare is "
+            "positional. Returns a summary (detail capped at 50 rows); pass "
+            "out='diff.csv' to save the complete change list as an artifact. "
+            "Accepts 'result:<name>' stored results as either side. Use this "
+            "for 'vergleiche Datei A mit B / was hat sich geändert' instead "
+            "of reading both files into chat."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path_a": {"type": "string", "description": "Old/left file (.xlsx/.csv or result:<name>)"},
+                "path_b": {"type": "string", "description": "New/right file (.xlsx/.csv or result:<name>)"},
+                "key": {"type": "string", "description": "ID column present on both sides — enables the keyed row compare"},
+                "sheet": {"type": "string", "description": "Compare only this sheet"},
+                "out": {"type": "string", "description": "Optional relative .csv filename for the full change list"},
+            },
+            "required": ["path_a", "path_b"],
         },
     },
     {

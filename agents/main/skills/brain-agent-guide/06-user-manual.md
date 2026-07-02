@@ -1624,7 +1624,7 @@ konvertiert, dann übersetzt. Die Ausgabe ist `.docx`, nicht `.pdf`.
 
 ---
 
-## Excel-Dateien analysieren, bearbeiten und erstellen (v9.262.0)
+## Excel-Dateien analysieren, bearbeiten und erstellen (v9.262.0/v9.263.0)
 
 Excel-Aufgaben funktionieren jetzt mit **jedem** Modell zuverlässig — auch mit
 kleinen lokalen. Der Agent schreibt dafür keinen Python-Code mehr, sondern
@@ -1649,6 +1649,26 @@ Was Sie einfach im Chat anfordern können (Datei per 📎 anhängen):
 - **Bearbeiten**: Zeilen anhängen, berechnete Spalten (echte Excel-Formeln),
   Werte per Bedingung ändern, Blätter verwalten — die bestehende Formatierung
   bleibt erhalten.
+- **Vergleichen** (v9.263.0): „Was hat sich zwischen Datei A und Datei B
+  geändert?" — der Agent liefert einen Änderungsbericht (neue/entfernte/
+  geänderte Zeilen mit Alt→Neu-Werten) und auf Wunsch die vollständige
+  Änderungsliste als CSV.
+- **Prüfen** (v9.263.0): eine Tiefenprüfung findet Duplikate, statistische
+  Ausreißer, verwaiste Verknüpfungswerte (z. B. Buchungen ohne zugehörige
+  Order) und zeigt, welche Blätter per Formel auf welche verweisen.
+- **Vorlagen füllen** (v9.263.0): der Agent schreibt Daten in eine bestehende,
+  fertig formatierte Excel-Vorlage (Corporate-Template) — nur die Daten ändern
+  sich, Layout und Formeln der Vorlage bleiben unangetastet.
+
+**Tabellen-Vorschau in der Oberfläche** (v9.263.0): Ein Klick auf eine
+`.xlsx`-Datei im Datei-Baum (unterer Bereich, Code-Modus) öffnet jetzt eine
+Tabellen-Ansicht direkt in der App — mit Reitern pro Tabellenblatt, fixierter
+Kopfzeile und Zeilennummern (Rechtsklick → „extern öffnen" startet weiterhin
+Excel). CSV-Dateien zeigen die gleiche Tabellen-Ansicht im „Ansicht"-Modus des
+Editors. Auch im rechten Panel unter **Dateien** werden Excel-Artefakte jetzt
+als Tabelle voranzeigt statt nur als Download-Karte. Komplexe Blätter werden
+dabei genauso interpretiert wie vom Agenten selbst (mehrere Tabellenblöcke pro
+Blatt, verbundene zweizeilige Überschriften).
 
 **Tipp**: Für einen wiederkehrenden Abgleich daraus eine geplante Aufgabe
 machen — Dateien anhängen, Prompt wie oben, Zeitplan `0 7 * * *`,
