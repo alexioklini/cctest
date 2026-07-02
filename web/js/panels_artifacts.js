@@ -357,6 +357,17 @@ async function _renderAttachmentFullview() {
       slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Vorschau nicht verfügbar: ${esc(body.error)}</div>`;
       return;
     }
+    // JSON/XML → the same collapsible data tree the bottom-panel editor uses
+    // (v9.264.0; _terminalPaintTree from panels_terminal.js). The Code-Ansicht
+    // toggle (_attachmentSourceMode) still shows the highlighted source.
+    const _treeKinds = { json: 1, jsonl: 1, geojson: 1, xml: 1 };
+    if (_treeKinds[ext] && typeof _terminalPaintTree === 'function') {
+      slot.innerHTML = '<div style="width:100%;height:100%;overflow:auto;background:var(--bg-000);border-radius:8px"></div>';
+      try {
+        _terminalPaintTree(slot.firstChild, body.text, ext === 'xml' ? 'xml' : ext);
+        return;
+      } catch (_) { /* parse failure → fall through to highlighted source */ }
+    }
     if (ext === 'md' || ext === 'markdown') {
       slot.innerHTML = `<div class="artifact-markdown msg-content" style="width:100%;height:100%;overflow:auto;padding:8px">${renderMarkdown(body.text)}</div>`;
       slot.querySelectorAll('pre code').forEach(el => { try { hljs.highlightElement(el); } catch(_) {} });
@@ -376,10 +387,10 @@ async function _renderAttachmentFullview() {
   }
 
   // Spreadsheet grid preview (xlsx/xlsm, v9.263.0) — server-parsed sheets as a
-  // real table with sheet tabs (shared renderer _xlsxGridHtml from
+  // real table with sheet tabs (shared renderer _xlsxGridMount from
   // panels_terminal.js). Needs a disk path; data-URL-only attachments fall
   // through to the file card.
-  if ((ext === 'xlsx' || ext === 'xlsm') && a.path && typeof _xlsxGridHtml === 'function') {
+  if ((ext === 'xlsx' || ext === 'xlsm') && a.path && typeof _xlsxGridMount === 'function') {
     renderShell(`<div style="color:var(--text-400);font-size:12px">Wird geladen …</div>`);
     try {
       const g = await API.get(`/v1/files/xlsx-grid?path=${encodeURIComponent(a.path)}`);
@@ -389,13 +400,8 @@ async function _renderAttachmentFullview() {
         slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Vorschau nicht verfügbar: ${esc(g.error)}</div>`;
         return;
       }
-      const paint = (idx) => {
-        slot.innerHTML = `<div class="xgrid-fullview">${_xlsxGridHtml(g, idx)}</div>`;
-        slot.querySelectorAll('.xgrid-sheet-btn').forEach(b => {
-          b.onclick = () => paint(parseInt(b.dataset.idx, 10));
-        });
-      };
-      paint(0);
+      slot.innerHTML = '<div class="xgrid-fullview"></div>';
+      _xlsxGridMount(slot.firstChild, g, {});
     } catch (e) {
       const slot = document.getElementById('attach-fullview-body');
       if (slot) slot.innerHTML = `<div style="color:var(--text-400);font-size:12px">Vorschau nicht verfügbar: ${esc(e.message || e)}</div>`;
@@ -584,11 +590,11 @@ async function loadArtifactVersion(version) {
   // auth'd blob iframe; Office (docx/xlsx/pptx/…) → a clean file card, since
   // browsers can't render those inline.
   // Spreadsheets (v9.263.0): render the LATEST version as an in-panel grid
-  // (sheet tabs, shared _xlsxGridHtml renderer) from the disk file. Older
+  // (sheet tabs, shared _xlsxGridMount renderer) from the disk file. Older
   // versions have no disk copy → they keep the file card below.
   if ((regExt === 'xlsx' || regExt === 'xlsm') && reg?.path
       && Number(version) === Number(reg?.latest_version || version)
-      && typeof _xlsxGridHtml === 'function') {
+      && typeof _xlsxGridMount === 'function') {
     await renderArtifactXlsxGrid(reg.path, artifactId, version,
                                  reg?.name || 'workbook', regExt);
     return;
@@ -624,7 +630,7 @@ const _DOC_EXT_COLOR = {
 
 // Spreadsheet artifact → in-panel table grid (v9.263.0). Fetches the parsed
 // grid from /v1/files/xlsx-grid (same loader the agent's xlsx tools use) and
-// renders it with the shared _xlsxGridHtml (panels_terminal.js). Any failure
+// renders it with the shared _xlsxGridMount (panels_terminal.js). Any failure
 // falls back to the office file card.
 async function renderArtifactXlsxGrid(path, artifactId, version, name, ext) {
   const container = document.getElementById('artifact-content');
@@ -632,13 +638,8 @@ async function renderArtifactXlsxGrid(path, artifactId, version, name, ext) {
   try {
     const g = await API.get(`/v1/files/xlsx-grid?path=${encodeURIComponent(path)}`);
     if (!g || g.error) throw new Error((g && g.error) || 'leere Antwort');
-    const paint = (idx) => {
-      container.innerHTML = `<div class="xgrid-fullview">${_xlsxGridHtml(g, idx)}</div>`;
-      container.querySelectorAll('.xgrid-sheet-btn').forEach(b => {
-        b.onclick = () => paint(parseInt(b.dataset.idx, 10));
-      });
-    };
-    paint(0);
+    container.innerHTML = '<div class="xgrid-fullview"></div>';
+    _xlsxGridMount(container.firstChild, g, {});
   } catch (e) {
     await renderArtifactDocument(artifactId, version, name, ext);
   }
@@ -769,6 +770,18 @@ function renderArtifactContent(content, type, name, encoding) {
       break;
     case 'code':
     default: {
+      // JSON/XML artifacts → the collapsible data tree from the bottom-panel
+      // editor (v9.264.0). The Quelltext-Toggle (state.artifactSourceMode,
+      // handled above) still shows the raw text.
+      const _treeKinds = { json: 1, jsonl: 1, geojson: 1, xml: 1 };
+      if (_treeKinds[ext] && typeof _terminalPaintTree === 'function'
+          && typeof content === 'string') {
+        container.innerHTML = '<div style="width:100%;height:100%;overflow:auto"></div>';
+        try {
+          _terminalPaintTree(container.firstChild, content, ext === 'xml' ? 'xml' : ext);
+          break;
+        } catch (_) { /* parse failure → highlighted source below */ }
+      }
       const lang = (typeof hljs !== 'undefined' && hljs.getLanguage(ext)) ? ext : 'plaintext';
       let highlighted;
       try {

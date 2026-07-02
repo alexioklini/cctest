@@ -1919,6 +1919,11 @@ class AdminArtifactsHandlers:
                     "total_rows": len(g["rows"]),
                     "truncated": len(g["rows"]) > max_rows
                                  or len(g["header"]) > 100,
+                    # v3 editable grid: the REAL worksheet title (block grids
+                    # are named <sheet>_2 …) + per-row absolute sheet rows so
+                    # the client can address cells for /v1/files/xlsx-cell.
+                    "sheet_title": g.get("sheet_title", g["name"]),
+                    "row_nums": (g.get("row_nums") or [])[:max_rows],
                 })
             st = os.stat(resolved)
             self._send_json({"path": resolved,
@@ -1928,6 +1933,70 @@ class AdminArtifactsHandlers:
                              "sheets": sheets})
         except Exception as e:
             self._send_json({"error": f"Grid-Parse fehlgeschlagen: {e}"}, 500)
+
+    def _handle_file_xlsx_cell(self):
+        """POST /v1/files/xlsx-cell {path, sheet, row, col, value, mtime?} —
+        write ONE cell of an existing workbook (the UI grid's inline edit,
+        v9.264.0). row/col are 1-based absolute sheet coordinates (the grid
+        endpoint returns row_nums for the mapping). `mtime` (as returned by
+        xlsx-grid) enables a conflict check: 409 when the file changed since
+        the grid was loaded. Formatting elsewhere is untouched (openpyxl
+        in-place edit, keep_vba for .xlsm). No artifact-version churn — same
+        policy as /v1/files/save."""
+        body = self._read_json() or {}
+        resolved = self._validate_file_path((body.get("path") or "").strip())
+        if not resolved or not os.path.isfile(resolved):
+            self._send_json({"error": "Ungültiger oder nicht erlaubter Pfad"}, 403)
+            return
+        if not resolved.lower().endswith((".xlsx", ".xlsm")):
+            self._send_json({"error": "Nur .xlsx/.xlsm sind editierbar"}, 400)
+            return
+        sheet = body.get("sheet") or ""
+        try:
+            row = int(body.get("row"))
+            col = int(body.get("col"))
+        except (TypeError, ValueError):
+            self._send_json({"error": "row/col (1-basiert) erforderlich"}, 400)
+            return
+        if row < 1 or col < 1:
+            self._send_json({"error": "row/col müssen ≥ 1 sein"}, 400)
+            return
+        known_mtime = body.get("mtime")
+        if known_mtime and int(os.stat(resolved).st_mtime) > int(known_mtime):
+            self._send_json({"error": "Datei wurde zwischenzeitlich geändert — "
+                                      "Ansicht neu laden"}, 409)
+            return
+        raw_val = body.get("value")
+        # Coercion mirrors the grid's typing: empty → None, numbers typed,
+        # '=' prefix stays a formula string, everything else text.
+        value = raw_val
+        if isinstance(raw_val, str):
+            t = raw_val.strip()
+            if t == "":
+                value = None
+            elif not t.startswith("="):
+                try:
+                    value = int(t)
+                except ValueError:
+                    try:
+                        value = float(t)
+                    except ValueError:
+                        value = raw_val
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(
+                resolved, keep_vba=resolved.lower().endswith(".xlsm"))
+            if sheet not in wb.sheetnames:
+                self._send_json({"error": f"Blatt '{sheet}' nicht gefunden — "
+                                          f"vorhanden: {wb.sheetnames}"}, 404)
+                return
+            wb[sheet].cell(row=row, column=col, value=value)
+            wb.save(resolved)
+            st = os.stat(resolved)
+            self._send_json({"ok": True, "mtime": int(st.st_mtime),
+                             "size": int(st.st_size)})
+        except Exception as e:
+            self._send_json({"error": f"Zelle konnte nicht geschrieben werden: {e}"}, 500)
 
     # ── Code Mode Endpoints ──
 

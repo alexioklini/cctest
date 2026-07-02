@@ -216,6 +216,36 @@ markdown and code renders the file. Impl: `engine/tools/xlsx_tools.py`.
 `write_document` .xlsx also renders through the same engine now (markdown
 tables → styled sheets), so ALL xlsx output shares one renderer.
 
+**v3 additions (v9.264.0):**
+- **xlsx_diff v2**: composite keys (`key='KUNDE,DATUM'`), `compare='formulas'`
+  (diffs formula strings — finds edited/broken formulas even when values
+  match), and `out='diff.xlsx'` = a HIGHLIGHTED workbook (changed cells
+  yellow + old value as cell comment, added rows green, removed rows red
+  appended at the bottom).
+- **Pivot layout**: sheet with `pivot:{rows, cols?, values, agg: sum|count|
+  avg|min|max}` + source → deterministic cross-tab with Gesamt row.
+- **Charts v2**: types + `area`/`scatter` (labels = X values), `stacked:true`
+  (bar/area/line), `secondary:[col]` → combo chart with right-hand Y axis.
+- **Recalc**: `recalc:true` on xlsx_create/xlsx_edit runs a headless
+  LibreOffice round-trip so formula VALUES are computed immediately (openpyxl
+  writes formulas but never calculates; without recalc a follow-up xlsx_query
+  sees NULLs). Needs soffice (auto-detected; config `xlsx.soffice_path`).
+- **Legacy formats**: `.xls`/`.ods` are readable everywhere (inspect/query/
+  diff/create-source) via a cached soffice conversion (`/tmp/brain-xlsx-convert`,
+  mtime-keyed).
+- **Big files**: >30MB workbooks load when `sheet=` is given (streaming);
+  sheets >50k rows render on a fast path (styled header/freeze/widths, no
+  per-cell styling) with `tool_progress` events.
+- **UI**: the grid preview got client-side SORT (header click), SEARCH,
+  column resize, and INLINE EDITING (dblclick a cell in a bottom-panel
+  xlsx tab → writes via `POST /v1/files/xlsx-cell`, mtime conflict check);
+  JSON/XML render as the collapsible data tree in the right panel too
+  (attachments + artifacts; the Quelltext toggle keeps the raw view).
+- **Project profiles**: project-sync files one structure profile per project
+  spreadsheet (`<pdir>/xlsx-profiles/xlsxprofile-<hash>.md`, mtime-gated,
+  stale-pruned, mined into the wing, NO KG pass) — "welche Datei hat Spalte
+  X?" answers from mempalace_query without a live inspect.
+
 **v2 additions (v9.263.0):**
 - **Reading robustness**: multi-table sheets split into one table per block
   (`Report`, `Report_2`, …; split on ≥2 blank rows + header-ish next row);

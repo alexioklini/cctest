@@ -720,7 +720,7 @@
     "_workdirActiveProject": "writable",
     "_workdirIsCodeChat": "writable",
     "_workdirProjectCache": "writable",
-    "_xlsxGridHtml": "writable",
+    "_xlsxGridMount": "writable",
     "_xmlToNode": "writable",
     "abortWorkerFromQuestion": "writable",
     "addChatReference": "writable",

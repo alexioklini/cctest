@@ -705,5 +705,159 @@ class TestV2Diff(_ToolFixture):
         self.assertIn("must exist on both sides", out["error"])
 
 
+# ---------------------------------------------------------------------------
+# v3 features
+# ---------------------------------------------------------------------------
+
+class TestV3Pivot(_ToolFixture):
+    def test_cross_tab_sum(self):
+        out = json.loads(xlsx_tools.tool_xlsx_create({
+            "path": "pivot.xlsx",
+            "spec": {"sheets": [{
+                "name": "Pivot",
+                "rows": [["Region", "Monat", "Umsatz"],
+                         ["Nord", "Jan", 10], ["Nord", "Feb", 20],
+                         ["Sued", "Jan", 5], ["Sued", "Jan", 7]],
+                "pivot": {"rows": "Region", "cols": "Monat",
+                          "values": "Umsatz", "agg": "sum"},
+            }]}}))
+        wb = openpyxl.load_workbook(out["path"])
+        ws = wb["Pivot"]
+        self.assertEqual(ws["A1"].value, "Region")
+        self.assertEqual([ws.cell(1, c).value for c in (2, 3)], ["Feb", "Jan"])
+        # Nord: Feb 20, Jan 10 · Sued: Jan 5+7=12
+        self.assertEqual(ws["B2"].value, 20)
+        self.assertEqual(ws["C2"].value, 10)
+        self.assertEqual(ws["C3"].value, 12)
+        self.assertEqual(ws["A4"].value, "Gesamt")
+        self.assertEqual(ws["B4"].value, "=SUM(B2:B3)")
+
+    def test_bad_agg_is_error(self):
+        out = json.loads(xlsx_tools.tool_xlsx_create({
+            "path": "p2.xlsx",
+            "spec": {"sheets": [{
+                "name": "P", "rows": [["A", "B"], ["x", 1]],
+                "pivot": {"rows": "A", "values": "B", "agg": "median"}}]}}))
+        self.assertIn("error", out)
+
+
+class TestV3ChartsV2(_ToolFixture):
+    def test_scatter_stacked_secondary(self):
+        out = json.loads(xlsx_tools.tool_xlsx_create({
+            "path": "charts2.xlsx",
+            "spec": {"sheets": [{
+                "name": "C",
+                "columns": [{"name": "X"}, {"name": "A"}, {"name": "B"},
+                            {"name": "Quote"}],
+                "rows": [[1, 5, 2, 0.5], [2, 6, 3, 0.6], [3, 7, 4, 0.7]],
+                "charts": [
+                    {"type": "scatter", "labels": "X", "series": ["A"]},
+                    {"type": "bar", "labels": "X", "series": ["A", "B"],
+                     "stacked": True},
+                    {"type": "bar", "labels": "X",
+                     "series": ["A", "Quote"], "secondary": ["Quote"]},
+                ],
+            }]}}))
+        wb = openpyxl.load_workbook(out["path"])
+        charts = wb["C"]._charts
+        self.assertEqual(len(charts), 3)
+        types = {type(c).__name__ for c in charts}
+        self.assertIn("ScatterChart", types)
+        stacked = [c for c in charts
+                   if getattr(c, "grouping", "") == "stacked"]
+        self.assertEqual(len(stacked), 1)
+        self.assertEqual(stacked[0].overlap, 100)
+
+
+class TestV3DiffV2(_ToolFixture):
+    def _two_files(self):
+        pa = os.path.join(self._tmp, "a.xlsx")
+        pb = os.path.join(self._tmp, "b.xlsx")
+        for p, rows in ((pa, [["k1", "x", 10], ["k1", "y", 20]]),
+                        (pb, [["k1", "x", 10], ["k1", "y", 99]])):
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "D"
+            ws.append(["KUNDE", "TYP", "WERT"])
+            for r in rows:
+                ws.append(r)
+            wb.save(p)
+        return pa, pb
+
+    def test_composite_key(self):
+        pa, pb = self._two_files()
+        out = json.loads(xlsx_tools.tool_xlsx_diff({
+            "path_a": pa, "path_b": pb, "key": "KUNDE,TYP"}))
+        self.assertIn("keyed on `KUNDE + TYP`", out["report"])
+        self.assertIn("1 changed", out["report"])
+        self.assertEqual(out["differences"], 1)
+
+    def test_highlighted_xlsx_output(self):
+        pa, pb = self._two_files()
+        out = json.loads(xlsx_tools.tool_xlsx_diff({
+            "path_a": pa, "path_b": pb, "key": "KUNDE,TYP",
+            "out": "diff.xlsx"}))
+        wb = openpyxl.load_workbook(out["saved"]["path"])
+        ws = wb.active
+        # changed cell C3 (WERT of k1|y) is yellow + carries the old value
+        cell = ws["C3"]
+        self.assertEqual(cell.value, 99)
+        self.assertEqual(cell.fill.start_color.rgb[-6:], "FFF2AB")
+        self.assertIn("vorher: 20", cell.comment.text)
+
+    def test_formula_compare(self):
+        pa = os.path.join(self._tmp, "fa.xlsx")
+        pb = os.path.join(self._tmp, "fb.xlsx")
+        for p, formula in ((pa, "=A2*2"), (pb, "=A2*3")):
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "F"
+            ws.append(["ID", "CALC"])
+            ws.append([1, formula])
+            wb.save(p)
+        out = json.loads(xlsx_tools.tool_xlsx_diff({
+            "path_a": pa, "path_b": pb, "key": "ID",
+            "compare": "formulas"}))
+        self.assertIn("'=A2*2' → '=A2*3'", out["report"])
+
+
+class TestV3LegacyAndRecalc(_ToolFixture):
+    def test_recalc_computes_formula_values(self):
+        if xlsx_tools._find_soffice() is None:
+            self.skipTest("soffice not installed")
+        created = json.loads(xlsx_tools.tool_xlsx_create({
+            "path": "calc.xlsx",
+            "spec": {"sheets": [{
+                "name": "T",
+                "columns": [{"name": "A"}, {"name": "B"}],
+                "rows": [[2, 3], [4, 5]],
+            }]}}))
+        edited = json.loads(xlsx_tools.tool_xlsx_edit({
+            "path": created["path"],
+            "recalc": True,
+            "spec": {"ops": [{"op": "add_column", "sheet": "T",
+                              "name": "Summe", "formula": "=A{row}+B{row}"}]}}))
+        self.assertEqual(edited["status"], "edited")
+        # after recalc the formula VALUES are queryable
+        q = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": created["path"], "sql": "SELECT SUM(summe) FROM t"}))
+        self.assertIn("| 14 |", q["result"])
+
+    def test_ods_readable(self):
+        if xlsx_tools._find_soffice() is None:
+            self.skipTest("soffice not installed")
+        # build an ods by converting an xlsx via soffice (round-trip test)
+        import subprocess
+        soffice = xlsx_tools._find_soffice()
+        subprocess.run([soffice, "--headless", "--convert-to", "ods",
+                        "--outdir", self._tmp, self.orders_path],
+                       capture_output=True, timeout=120, check=True)
+        ods = os.path.join(self._tmp, "orders.ods")
+        self.assertTrue(os.path.isfile(ods))
+        out = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": ods, "sql": "SELECT COUNT(*) FROM orders"}))
+        self.assertIn("| 2 |", out["result"])
+
+
 if __name__ == "__main__":
     unittest.main()

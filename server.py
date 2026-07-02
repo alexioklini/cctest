@@ -1912,6 +1912,9 @@ class BrainAgentHandler(
         elif path == "/v1/files/save":
             self._handle_file_save()
             return
+        elif path == "/v1/files/xlsx-cell":
+            self._handle_file_xlsx_cell()
+            return
         elif path == "/v1/files/rename":
             self._handle_file_rename()
             return

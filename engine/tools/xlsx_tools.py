@@ -36,6 +36,7 @@ from engine import doc_convert
 
 _XLSX_EXTS = {".xlsx", ".xlsm"}
 _CSV_EXTS = {".csv", ".tsv"}
+_LEGACY_EXTS = {".xls", ".ods"}  # converted to .xlsx via LibreOffice (v3)
 
 # Caps: keep tool results small (the model only ever needs a preview — full
 # results go to CSV artifacts) and refuse workbooks too big for an in-memory
@@ -64,6 +65,85 @@ _COND_FILLS = {"red": "F8696B", "green": "63BE7B", "yellow": "FFEB84"}
 _UMLAUT_MAP = str.maketrans(
     {"ä": "ae", "ö": "oe", "ü": "ue", "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
      "ß": "ss"})
+
+
+# ---------------------------------------------------------------------------
+# LibreOffice bridge (v3): legacy-format conversion + formula recalc
+# ---------------------------------------------------------------------------
+# openpyxl can neither read .xls/.ods nor COMPUTE formulas (it writes them;
+# Excel calculates on open). A headless LibreOffice round-trip covers both:
+# convert-to-xlsx re-saves with freshly calculated cached values. Config
+# override: config.json → xlsx.soffice_path; else auto-detect.
+
+_SOFFICE_CANDIDATES = (
+    "/opt/homebrew/bin/soffice",
+    "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+    "/usr/bin/soffice",
+)
+
+
+def _find_soffice() -> str | None:
+    import brain as _brain
+    try:
+        cfg = (_brain._server_config().get("xlsx") or {}).get("soffice_path")
+        if cfg and os.path.isfile(cfg):
+            return cfg
+    except Exception:
+        pass
+    for c in _SOFFICE_CANDIDATES:
+        if os.path.isfile(c):
+            return c
+    return shutil.which("soffice")
+
+
+def _soffice_convert(src: str, out_dir: str, timeout: int = 120) -> str:
+    """`soffice --headless --convert-to xlsx` into out_dir; returns the
+    produced path. LibreOffice recalculates formulas on load/save, so the
+    output carries fresh cached values (the recalc mechanism)."""
+    import subprocess
+    soffice = _find_soffice()
+    if not soffice:
+        raise ValueError(
+            "LibreOffice (soffice) not found — needed for .xls/.ods reading "
+            "and recalc. Install it or set config.json → xlsx.soffice_path.")
+    os.makedirs(out_dir, exist_ok=True)
+    proc = subprocess.run(
+        [soffice, "--headless", "--convert-to", "xlsx", "--outdir", out_dir,
+         src],
+        capture_output=True, timeout=timeout)
+    produced = os.path.join(
+        out_dir, os.path.splitext(os.path.basename(src))[0] + ".xlsx")
+    if proc.returncode != 0 or not os.path.isfile(produced):
+        tail = (proc.stderr or proc.stdout or b"")[-300:].decode(
+            "utf-8", "replace")
+        raise ValueError(f"LibreOffice conversion failed: {tail}")
+    return produced
+
+
+def _legacy_to_xlsx(path: str) -> str:
+    """Convert a .xls/.ods to .xlsx once per (path, mtime) in a tmp cache so
+    repeated reads don't pay the soffice round-trip."""
+    st = os.stat(path)
+    cache_dir = os.path.join("/tmp", "brain-xlsx-convert")
+    key = re.sub(r"[^0-9a-zA-Z]+", "_", os.path.abspath(path)) \
+        + f"_{int(st.st_mtime)}"
+    out_dir = os.path.join(cache_dir, key)
+    produced = os.path.join(
+        out_dir, os.path.splitext(os.path.basename(path))[0] + ".xlsx")
+    if os.path.isfile(produced):
+        return produced
+    return _soffice_convert(path, out_dir)
+
+
+def recalc_workbook(path: str) -> None:
+    """Recalculate a workbook's formulas in place (LibreOffice round-trip) —
+    used by xlsx_create/xlsx_edit `recalc: true` so a follow-up xlsx_query
+    sees computed values instead of NULL formula cells."""
+    import tempfile
+    out_dir = tempfile.mkdtemp(prefix="xlsx-recalc-", dir="/tmp")
+    produced = _soffice_convert(path, out_dir)
+    shutil.move(produced, path)
+    shutil.rmtree(out_dir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +282,8 @@ def _resolve_input_path(raw: str) -> str:
     return os.path.abspath(p)
 
 
-def _load_grids(path: str, sheet: str | None = None) -> list[dict]:
+def _load_grids(path: str, sheet: str | None = None,
+                formulas: bool = False) -> list[dict]:
     """Load a workbook/CSV into plain grids:
     [{name, header:[str], rows:[[...]], header_row_idx}].
     Header row is detected, placeholder columns trimmed (the v9.261.0 logic,
@@ -210,6 +291,10 @@ def _load_grids(path: str, sheet: str | None = None) -> list[dict]:
     with several table blocks yields several grids (`<sheet>`, `<sheet>_2`,
     …), and a merged two-row header composes into "Top / Sub" column names."""
     ext = os.path.splitext(path)[1].lower()
+    if ext in _LEGACY_EXTS:
+        # .xls/.ods → cached LibreOffice conversion, then the normal path.
+        path = _legacy_to_xlsx(path)
+        ext = ".xlsx"
     grids = []
     if ext in _CSV_EXTS:
         delim = "\t" if ext == ".tsv" else None
@@ -229,7 +314,9 @@ def _load_grids(path: str, sheet: str | None = None) -> list[dict]:
 
     import openpyxl
     merges = _read_merges(path)
-    wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    # formulas=True (diff compare='formulas'): formula CELLS yield their
+    # formula string instead of the cached value.
+    wb = openpyxl.load_workbook(path, read_only=True, data_only=not formulas)
     try:
         for ws in wb.worksheets:
             if sheet and ws.title != sheet:
@@ -253,6 +340,7 @@ def _grids_from_rows(name: str, raw_rows: list, merges: list) -> list[dict]:
         g = _finish_grid(name if bi == 0 else f"{name}_{bi + 1}", rows,
                          merges=merges, row_offset=start)
         if g is not None:
+            g["sheet_title"] = name  # real worksheet name (block grids differ)
             out.append(g)
     return out
 
@@ -311,13 +399,15 @@ def _finish_grid(name: str, raw_rows: list, merges: list | None = None,
         names.append(hs if hs else f"col{i + 1}")
     n = len(names)
     norm_rows = []
-    for r in data_rows:
+    row_nums = []  # absolute 1-based sheet row per kept data row (grid edit)
+    for ri, r in enumerate(data_rows):
         row = list(r[:n]) + [None] * (n - len(r))
         if all(_cell_str(c) == "" for c in row):
             continue  # skip blank rows
         norm_rows.append(row)
+        row_nums.append(row_offset + data_start + ri + 1)
     return {"name": name, "header": names, "rows": norm_rows,
-            "header_row_idx": hdr_idx}
+            "header_row_idx": hdr_idx, "row_nums": row_nums}
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +508,9 @@ def _build_sqlite(paths: list[str], sheet: str | None = None):
         if not os.path.isfile(rp):
             raise FileNotFoundError(f"File not found: {p}")
         size_mb = os.path.getsize(rp) / (1024 * 1024)
-        if size_mb > QUERY_MAX_FILE_MB:
+        # v3: big files ARE loadable when scoped to one sheet (read_only
+        # streaming + the row cap bound the memory); unscoped stays refused.
+        if size_mb > QUERY_MAX_FILE_MB and not sheet:
             raise ValueError(
                 f"{os.path.basename(rp)} is {size_mb:.0f} MB (> {QUERY_MAX_FILE_MB} MB). "
                 f"Pass sheet='<name>' to load a single sheet, or split the file.")
@@ -434,7 +526,11 @@ def _build_sqlite(paths: list[str], sheet: str | None = None):
     used_tables: set = set()
     multi = len(paths) > 1
     tables = []
-    for rp, g in loaded:
+    from engine.context import report_tool_progress
+    for ti, (rp, g) in enumerate(loaded):
+        if total_rows > HUGE_SHEET_ROWS:
+            report_tool_progress(phase="xlsx_query:load", current=ti,
+                                 total=len(loaded), note=g["name"])
         if _is_handle(rp):
             # A stored result IS its own identity — never file-stem-prefixed.
             raw_name = g["name"]
@@ -682,14 +778,13 @@ def _join_key_candidates(sheet_infos: list[dict]) -> list[str]:
     return hits
 
 
-def tool_xlsx_inspect(args: dict) -> str:
-    import brain as _brain
-    paths = args.get("paths") or ([args["path"]] if args.get("path") else [])
-    if not paths:
-        return _err("xlsx_inspect: 'path' (or 'paths') is required")
-    sheet = args.get("sheet")
-    deep = bool(args.get("deep"))
-    try:
+def _inspect_report(paths: list, sheet: str | None = None,
+                    deep: bool = False) -> str:
+    """The xlsx_inspect report body (raw, no GDPR wrap / envelope) — shared by
+    tool_xlsx_inspect and the project-sync profile miner (v9.264.0), which
+    files one profile per project spreadsheet into the MemPalace wing so
+    structure questions answer from retrieval without a live inspect call."""
+    if True:  # keep the original body's indentation
         parts = []
         sheet_infos = []
         used_tables: set = set()
@@ -704,7 +799,7 @@ def tool_xlsx_inspect(args: dict) -> str:
             else:
                 rp = _resolve_input_path(p)
                 if not os.path.isfile(rp):
-                    return _err(f"File not found: {p}")
+                    raise FileNotFoundError(f"File not found: {p}")
                 extras = _workbook_extras(rp, deep=deep)
                 grids = _load_grids(rp, sheet=sheet)
             if deep:
@@ -801,11 +896,23 @@ def tool_xlsx_inspect(args: dict) -> str:
             if formulas:
                 parts.append("\n## Formula map (deep)\n" + "\n".join(formulas))
         parts.append("\n## " + _schema_echo(sheet_infos))
-        report = "\n".join(parts)
+        return "\n".join(parts)
+
+
+def tool_xlsx_inspect(args: dict) -> str:
+    import brain as _brain
+    paths = args.get("paths") or ([args["path"]] if args.get("path") else [])
+    if not paths:
+        return _err("xlsx_inspect: 'path' (or 'paths') is required")
+    try:
+        report = _inspect_report(paths, sheet=args.get("sheet"),
+                                 deep=bool(args.get("deep")))
         src = "xlsx:" + ",".join(os.path.basename(_resolve_input_path(p))
                                  for p in paths)
         report = _brain._gdpr_anon_tool_text(report, src)
         return _ok({"paths": paths, "report": report})
+    except FileNotFoundError as e:
+        return _err(str(e))
     except Exception as e:
         return _err(f"xlsx_inspect: {type(e).__name__}: {e}")
 
@@ -1048,36 +1155,73 @@ def _apply_number_formats(ws, header, col_specs, first_row, last_row):
 
 
 def _render_charts(ws, sheet_spec, header, n_data_rows, header_row=1):
+    """Charts v1: bar|line|pie. v2 (v9.264.0): + scatter (labels column = X
+    values) and area; `stacked: true` (bar/area/line); `secondary: [col]`
+    puts those series on a right-hand Y axis (combo chart via the openpyxl
+    second-axis recipe: axId 200 + crosses='max' + chart addition)."""
     charts = sheet_spec.get("charts") or []
     if not charts or n_data_rows == 0:
         return
-    from openpyxl.chart import BarChart, LineChart, PieChart, Reference
+    from openpyxl.chart import (BarChart, LineChart, PieChart, AreaChart,
+                                ScatterChart, Reference, Series)
     from openpyxl.utils import get_column_letter
-    kinds = {"bar": BarChart, "line": LineChart, "pie": PieChart}
+    kinds = {"bar": BarChart, "line": LineChart, "pie": PieChart,
+             "area": AreaChart, "scatter": ScatterChart}
     anchor_col = len(header) + 2
     anchor_row = 2
     for ch in charts:
         if not isinstance(ch, dict):
             continue
-        cls = kinds.get((ch.get("type") or "bar").lower())
+        ctype = (ch.get("type") or "bar").lower()
+        cls = kinds.get(ctype)
         if cls is None:
-            raise ValueError(f"chart type '{ch.get('type')}' — use bar|line|pie")
+            raise ValueError(
+                f"chart type '{ch.get('type')}' — use bar|line|pie|area|scatter")
         series_names = ch.get("series") or []
         label_name = ch.get("labels")
         if not series_names:
             raise ValueError("chart needs series: ['<column>', …]")
-        s_idx = _column_indices(header, series_names)
+        secondary = {str(s).strip().lower() for s in (ch.get("secondary") or [])}
+        prim = [s for s in series_names
+                if str(s).strip().lower() not in secondary]
+        sec = [s for s in series_names if str(s).strip().lower() in secondary]
+        first, last = header_row + 1, header_row + n_data_rows
         chart = cls()
         chart.title = ch.get("title") or None
-        first, last = header_row + 1, header_row + n_data_rows
-        for si in s_idx:
-            ref = Reference(ws, min_col=si + 1, min_row=header_row,
-                            max_row=last)
-            chart.add_data(ref, titles_from_data=True)
-        if label_name:
-            li = _column_indices(header, [label_name])[0]
-            chart.set_categories(
-                Reference(ws, min_col=li + 1, min_row=first, max_row=last))
+        if ctype == "scatter":
+            if not label_name:
+                raise ValueError("scatter needs labels: '<x column>'")
+            xi = _column_indices(header, [label_name])[0]
+            xref = Reference(ws, min_col=xi + 1, min_row=first, max_row=last)
+            for sname in (prim or series_names):
+                si = _column_indices(header, [sname])[0]
+                yref = Reference(ws, min_col=si + 1, min_row=header_row,
+                                 max_row=last)
+                chart.series.append(Series(yref, xref, title_from_data=True))
+        else:
+            for sname in (prim or series_names):
+                si = _column_indices(header, [sname])[0]
+                chart.add_data(Reference(ws, min_col=si + 1,
+                                         min_row=header_row, max_row=last),
+                               titles_from_data=True)
+            if label_name:
+                li = _column_indices(header, [label_name])[0]
+                chart.set_categories(
+                    Reference(ws, min_col=li + 1, min_row=first, max_row=last))
+            if ch.get("stacked") and ctype in ("bar", "area", "line"):
+                chart.grouping = "stacked"
+                if ctype == "bar":
+                    chart.overlap = 100
+            if sec and ctype != "pie":
+                c2 = LineChart()
+                for sname in sec:
+                    si = _column_indices(header, [sname])[0]
+                    c2.add_data(Reference(ws, min_col=si + 1,
+                                          min_row=header_row, max_row=last),
+                                titles_from_data=True)
+                c2.y_axis.axId = 200
+                chart.y_axis.crosses = "max"
+                chart += c2
         pos = ch.get("position") or f"{get_column_letter(anchor_col)}{anchor_row}"
         ws.add_chart(chart, pos)
         anchor_row += 16  # stack subsequent charts below each other
@@ -1173,6 +1317,9 @@ def _apply_print_setup(ws, sheet_spec):
         ws.print_title_rows = "1:1"
 
 
+HUGE_SHEET_ROWS = 50_000
+
+
 def _render_table_sheet(ws, sheet_spec, kit) -> int:
     header, rows = _sheet_data(sheet_spec)
     if not header:
@@ -1180,15 +1327,25 @@ def _render_table_sheet(ws, sheet_spec, kit) -> int:
     col_specs = sheet_spec.get("columns") or []
     _apply_header_row(ws, header, kit)
     banded = sheet_spec.get("banded", True)
+    # v3 huge-sheet fast path: per-cell border/fill objects are the render
+    # cost. Past the threshold, write bare values (styled header/freeze/
+    # widths stay) — a 500k-row export must not take minutes.
+    huge = len(rows) > HUGE_SHEET_ROWS
+    from engine.context import report_tool_progress
     for ri, row in enumerate(rows):
+        if huge and ri % 50_000 == 0:
+            report_tool_progress(phase="xlsx_create", current=ri,
+                                 total=len(rows), note=ws.title)
         for ci in range(len(header)):
             v = row[ci] if ci < len(row) else None
             c = ws.cell(row=ri + 2, column=ci + 1, value=v)
-            c.border = kit["border"]
-            if banded and ri % 2 == 1:
-                c.fill = kit["zebra_fill"]
+            if not huge:
+                c.border = kit["border"]
+                if banded and ri % 2 == 1:
+                    c.fill = kit["zebra_fill"]
     n = len(rows)
-    _apply_number_formats(ws, header, col_specs, 2, n + 1)
+    if not huge:  # per-cell number formats are part of the fast-path trade
+        _apply_number_formats(ws, header, col_specs, 2, n + 1)
     totals = sheet_spec.get("totals") or []
     if totals and n:
         from openpyxl.utils import get_column_letter
@@ -1218,6 +1375,91 @@ def _render_table_sheet(ws, sheet_spec, kit) -> int:
     _render_charts(ws, sheet_spec, header, n)
     _render_conditional(ws, sheet_spec, header, n)
     return n + (1 if totals and n else 0)
+
+
+_PIVOT_AGGS = {"sum", "count", "avg", "min", "max"}
+
+
+def _render_pivot_sheet(ws, sheet_spec, kit) -> int:
+    """v3 pivot layout: a deterministic cross-tab — distinct `rows` values
+    down, distinct `cols` values across, `values` aggregated per cell.
+    pivot: {rows, cols?, values, agg?: sum|count|avg|min|max, source|rows}.
+    Without `cols` it degrades to a grouped summary (one value column)."""
+    pv = sheet_spec["pivot"]
+    agg = (pv.get("agg") or "sum").lower()
+    if agg not in _PIVOT_AGGS:
+        raise ValueError(f"pivot.agg must be one of {sorted(_PIVOT_AGGS)}")
+    if not pv.get("rows") or not pv.get("values"):
+        raise ValueError("pivot needs rows: '<col>' and values: '<col>'")
+    header, data = _sheet_data({"rows": pv.get("data"),
+                                "source": pv.get("source")}
+                               if pv.get("source") or pv.get("data") is not None
+                               else sheet_spec)
+    ri_ = _column_indices(header, [pv["rows"]])[0]
+    vi_ = _column_indices(header, [pv["values"]])[0]
+    ci_ = _column_indices(header, [pv["cols"]])[0] if pv.get("cols") else None
+
+    def _key(v):
+        return _cell_str(_to_sql_value(v)) or "(leer)"
+
+    buckets: dict = {}
+    col_keys: list = []
+    row_keys: list = []
+    for r in data:
+        rk = _key(r[ri_] if ri_ < len(r) else None)
+        ck = _key(r[ci_] if ci_ is not None and ci_ < len(r) else None) \
+            if ci_ is not None else pv["values"]
+        v = r[vi_] if vi_ < len(r) else None
+        if rk not in row_keys:
+            row_keys.append(rk)
+        if ck not in col_keys:
+            col_keys.append(ck)
+        buckets.setdefault((rk, ck), []).append(v)
+    row_keys.sort()
+    col_keys.sort()
+
+    def _aggregate(vals):
+        nums = [v for v in vals
+                if isinstance(v, (int, float)) and not isinstance(v, bool)]
+        if agg == "count":
+            return len([v for v in vals if _cell_str(v) != ""])
+        if not nums:
+            return None
+        if agg == "sum":
+            return sum(nums)
+        if agg == "avg":
+            return round(sum(nums) / len(nums), 6)
+        return min(nums) if agg == "min" else max(nums)
+
+    out_header = [pv["rows"]] + col_keys
+    _apply_header_row(ws, out_header, kit)
+    from openpyxl.styles import Font
+    bold = Font(bold=True)
+    for r_i, rk in enumerate(row_keys):
+        c = ws.cell(row=r_i + 2, column=1, value=rk)
+        c.border = kit["border"]
+        c.font = bold
+        for c_i, ck in enumerate(col_keys):
+            cell = ws.cell(row=r_i + 2, column=c_i + 2,
+                           value=_aggregate(buckets.get((rk, ck), [])))
+            cell.border = kit["border"]
+    n = len(row_keys)
+    if pv.get("totals", True) and n and agg in ("sum", "count"):
+        from openpyxl.utils import get_column_letter
+        trow = n + 2
+        ws.cell(row=trow, column=1, value="Gesamt").font = bold
+        for c_i in range(len(col_keys)):
+            letter = get_column_letter(c_i + 2)
+            tc = ws.cell(row=trow, column=c_i + 2,
+                         value=f"=SUM({letter}2:{letter}{n + 1})")
+            tc.font = bold
+        for c_i in range(len(out_header)):
+            ws.cell(row=trow, column=c_i + 1).border = kit["border"]
+    if sheet_spec.get("freeze_header", True):
+        ws.freeze_panes = "B2"
+    _auto_widths(ws, out_header, [[rk] for rk in row_keys])
+    _apply_print_setup(ws, sheet_spec)
+    return n
 
 
 def _render_master_detail_sheet(ws, sheet_spec, kit) -> int:
@@ -1390,6 +1632,8 @@ def render_spec(path: str, spec: dict, style_name: str = "",
         ws = wb.create_sheet(name)
         if sheet_spec.get("master_detail"):
             n = _render_master_detail_sheet(ws, sheet_spec, kit)
+        elif sheet_spec.get("pivot"):
+            n = _render_pivot_sheet(ws, sheet_spec, kit)
         else:
             n = _render_table_sheet(ws, sheet_spec, kit)
         out_sheets.append({"name": name, "rows": n})
@@ -1419,6 +1663,8 @@ def tool_xlsx_create(args: dict) -> str:
             info = _fill_template(path, spec)
         else:
             info = render_spec(path, spec or {})
+        if args.get("recalc") or (isinstance(spec, dict) and spec.get("recalc")):
+            recalc_workbook(path)
     except (ValueError, FileNotFoundError) as e:
         return _err(f"xlsx_create: {e}")
     except Exception as e:
@@ -1441,13 +1687,18 @@ def tool_xlsx_create(args: dict) -> str:
 DIFF_DETAIL_CAP = 50
 
 
-def _diff_grids(ga: dict, gb: dict, key: str | None,
+def _diff_grids(ga: dict, gb: dict, keys: list | None,
                 label_a: str, label_b: str):
-    """Compare two grids. With `key`: keyed row diff (added/removed/changed).
-    Without: positional. Returns (summary_lines, detail_rows) where
-    detail_rows = [(key, column, value_a, value_b), ...] for the CSV export."""
+    """Compare two grids. With `keys` (v3: composite keys supported): keyed
+    row diff (added/removed/changed). Without: positional. Returns
+    (summary_lines, detail_rows, marks) — detail_rows = [(key, column,
+    value_a, value_b), ...] for the CSV export; marks = the cell/row
+    coordinates on the B side for the highlighted-xlsx export:
+    {changed: {(b_row_idx, b_col_idx): old_value}, added: {b_row_idx},
+    removed_rows: [A-row values in B column order]}."""
     lines = []
     details = []
+    marks = {"changed": {}, "added": set(), "removed_rows": []}
     cols_a = [str(h) for h in ga["header"]]
     cols_b = [str(h) for h in gb["header"]]
     la = {c.strip().lower(): i for i, c in enumerate(cols_a)}
@@ -1465,22 +1716,40 @@ def _diff_grids(ga: dict, gb: dict, key: str | None,
     def norm(v):
         return _cell_str(_to_sql_value(v))
 
-    if key:
-        kl = str(key).strip().lower()
-        if kl not in la or kl not in lb:
-            raise ValueError(
-                f"key '{key}' must exist on both sides — {label_a}: "
-                f"{cols_a}; {label_b}: {cols_b}")
-        ia, ib = la[kl], lb[kl]
-        rows_a = {norm(r[ia]): r for r in ga["rows"] if ia < len(r)}
-        rows_b = {norm(r[ib]): r for r in gb["rows"] if ib < len(r)}
+    def _a_row_in_b_order(ra):
+        out = [None] * len(cols_b)
+        for c in common:
+            cl = c.strip().lower()
+            if la[cl] < len(ra):
+                out[lb[cl]] = ra[la[cl]]
+        return out
+
+    if keys:
+        kls = [str(k).strip().lower() for k in keys]
+        for kl, korig in zip(kls, keys):
+            if kl not in la or kl not in lb:
+                raise ValueError(
+                    f"key '{korig}' must exist on both sides — {label_a}: "
+                    f"{cols_a}; {label_b}: {cols_b}")
+        ias = [la[kl] for kl in kls]
+        ibs = [lb[kl] for kl in kls]
+
+        def _ka(r):
+            return " | ".join(norm(r[i]) if i < len(r) else "" for i in ias)
+
+        def _kb(r):
+            return " | ".join(norm(r[i]) if i < len(r) else "" for i in ibs)
+
+        rows_a = {_ka(r): r for r in ga["rows"]}
+        rows_b = {_kb(r): (i, r) for i, r in enumerate(gb["rows"])}
         added = [k for k in rows_b if k not in rows_a]
         removed = [k for k in rows_a if k not in rows_b]
         changed = []
         for k, ra in rows_a.items():
-            rb = rows_b.get(k)
-            if rb is None:
+            hit = rows_b.get(k)
+            if hit is None:
                 continue
+            bi, rb = hit
             diff_cols = []
             for c in common:
                 cl = c.strip().lower()
@@ -1489,13 +1758,17 @@ def _diff_grids(ga: dict, gb: dict, key: str | None,
                 if norm(va) != norm(vb):
                     diff_cols.append((c, va, vb))
                     details.append((k, c, va, vb))
+                    marks["changed"][(bi, lb[cl])] = va
             if diff_cols:
                 changed.append((k, diff_cols))
         for k in added:
             details.append((k, "(row added)", "", "present"))
+            marks["added"].add(rows_b[k][0])
         for k in removed:
             details.append((k, "(row removed)", "present", ""))
-        lines.append(f"- keyed on `{key}`: {len(added)} added, "
+            marks["removed_rows"].append(_a_row_in_b_order(rows_a[k]))
+        key_label = " + ".join(str(k) for k in keys)
+        lines.append(f"- keyed on `{key_label}`: {len(added)} added, "
                      f"{len(removed)} removed, {len(changed)} changed row(s)")
         if len(rows_a) < len(ga["rows"]) or len(rows_b) < len(gb["rows"]):
             lines.append("- note: duplicate key values collapsed "
@@ -1524,9 +1797,13 @@ def _diff_grids(ga: dict, gb: dict, key: str | None,
         for i in range(n):
             ra = ga["rows"][i] if i < len(ga["rows"]) else None
             rb = gb["rows"][i] if i < len(gb["rows"]) else None
-            if ra is None or rb is None:
-                details.append((f"row {i + 2}", "(row added)" if ra is None
-                                else "(row removed)", "", ""))
+            if ra is None:
+                details.append((f"row {i + 2}", "(row added)", "", ""))
+                marks["added"].add(i)
+                continue
+            if rb is None:
+                details.append((f"row {i + 2}", "(row removed)", "", ""))
+                marks["removed_rows"].append(_a_row_in_b_order(ra))
                 continue
             for c in common:
                 cl = c.strip().lower()
@@ -1534,6 +1811,7 @@ def _diff_grids(ga: dict, gb: dict, key: str | None,
                 vb = rb[lb[cl]] if lb[cl] < len(rb) else None
                 if norm(va) != norm(vb):
                     details.append((f"row {i + 2}", c, va, vb))
+                    marks["changed"][(i, lb[cl])] = va
                     if shown < DIFF_DETAIL_CAP:
                         lines.append(f"  - row {i + 2} `{c}`: "
                                      f"{norm(va)!r} → {norm(vb)!r}")
@@ -1544,7 +1822,52 @@ def _diff_grids(ga: dict, gb: dict, key: str | None,
         lines.append(f"- positional compare (no key given): "
                      f"{len(details)} differing cell(s)/row(s) — pass "
                      f"key='<column>' for a keyed compare")
-    return lines, details
+    return lines, details, marks
+
+
+def _write_diff_xlsx(out_path: str, per_sheet: list, kit):
+    """v3: the diff as a HIGHLIGHTED workbook — per compared sheet the B side
+    rendered with changed cells yellow (+ comment 'vorher: <alt>'), added rows
+    green, and the removed A rows appended red under a marker row."""
+    import openpyxl
+    from openpyxl.styles import PatternFill, Font
+    from openpyxl.comments import Comment
+    yellow = PatternFill("solid", start_color="FFF2AB", end_color="FFF2AB")
+    green = PatternFill("solid", start_color="C9EFC9", end_color="C9EFC9")
+    red = PatternFill("solid", start_color="F5C1C1", end_color="F5C1C1")
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    used: set = set()
+    for sheet_name, gb, marks in per_sheet:
+        ws = wb.create_sheet(_clean_sheet_name(sheet_name, used))
+        _apply_header_row(ws, gb["header"], kit)
+        for ri, row in enumerate(gb["rows"]):
+            for ci in range(len(gb["header"])):
+                v = row[ci] if ci < len(row) else None
+                c = ws.cell(row=ri + 2, column=ci + 1, value=v)
+                c.border = kit["border"]
+                if (ri, ci) in marks["changed"]:
+                    c.fill = yellow
+                    old = _cell_str(_to_sql_value(marks["changed"][(ri, ci)]))
+                    c.comment = Comment(f"vorher: {old}", "xlsx_diff")
+                elif ri in marks["added"]:
+                    c.fill = green
+        row_no = len(gb["rows"]) + 2
+        if marks["removed_rows"]:
+            mark = ws.cell(row=row_no, column=1,
+                           value="— Entfernte Zeilen (nur in der alten Datei) —")
+            mark.font = Font(bold=True, italic=True)
+            row_no += 1
+            for rr in marks["removed_rows"]:
+                for ci in range(len(gb["header"])):
+                    v = rr[ci] if ci < len(rr) else None
+                    c = ws.cell(row=row_no, column=ci + 1, value=v)
+                    c.fill = red
+                    c.border = kit["border"]
+                row_no += 1
+        ws.freeze_panes = "A2"
+        _auto_widths(ws, gb["header"], gb["rows"])
+    wb.save(out_path)
 
 
 def tool_xlsx_diff(args: dict) -> str:
@@ -1552,18 +1875,35 @@ def tool_xlsx_diff(args: dict) -> str:
     pa, pb = args.get("path_a") or "", args.get("path_b") or ""
     if not pa or not pb:
         return _err("xlsx_diff: 'path_a' and 'path_b' are required")
-    key = (args.get("key") or "").strip() or None
+    raw_key = args.get("key")
+    if isinstance(raw_key, (list, tuple)):
+        keys = [str(k).strip() for k in raw_key if str(k).strip()] or None
+    else:
+        keys = [k.strip() for k in str(raw_key or "").split(",")
+                if k.strip()] or None
     sheet = args.get("sheet")
+    # compare='formulas' (v3): diff the formula STRINGS instead of values —
+    # finds a broken/edited formula even when today's cached values match.
+    formulas = (args.get("compare") or "").strip().lower() == "formulas"
     try:
-        grids_a = ([_grid_from_handle(pa)] if _is_handle(pa)
-                   else _load_grids(_resolve_input_path(pa), sheet=sheet))
-        grids_b = ([_grid_from_handle(pb)] if _is_handle(pb)
-                   else _load_grids(_resolve_input_path(pb), sheet=sheet))
+        def _load_side(p):
+            if _is_handle(p):
+                if formulas:
+                    raise ValueError(
+                        "compare='formulas' works on files, not stored results")
+                return [_grid_from_handle(p)]
+            return _load_grids(_resolve_input_path(p), sheet=sheet,
+                               formulas=formulas)
+
+        grids_a = _load_side(pa)
+        grids_b = _load_side(pb)
         la, lb = os.path.basename(pa), os.path.basename(pb)
         by_name_a = {g["name"]: g for g in grids_a}
         by_name_b = {g["name"]: g for g in grids_b}
-        parts = [f"# Diff: {la} ↔ {lb}"]
+        parts = [f"# Diff: {la} ↔ {lb}"
+                 + (" (Formel-Vergleich)" if formulas else "")]
         all_details = []
+        per_sheet = []
         only_a = [n for n in by_name_a if n not in by_name_b]
         only_b = [n for n in by_name_b if n not in by_name_a]
         if only_a:
@@ -1573,33 +1913,41 @@ def tool_xlsx_diff(args: dict) -> str:
         common = [n for n in by_name_a if n in by_name_b]
         if not common and len(grids_a) == 1 and len(grids_b) == 1:
             # single-sheet workbooks with different sheet names still compare
-            common = None
             parts.append(f"\n## {grids_a[0]['name']} ↔ {grids_b[0]['name']}")
-            lines, details = _diff_grids(grids_a[0], grids_b[0], key, la, lb)
+            lines, details, marks = _diff_grids(grids_a[0], grids_b[0],
+                                                keys, la, lb)
             parts.extend(lines)
             all_details.extend(details)
+            per_sheet.append((grids_b[0]["name"], grids_b[0], marks))
         else:
-            for n in (common or []):
+            for n in common:
                 parts.append(f"\n## Sheet: {n}")
-                lines, details = _diff_grids(by_name_a[n], by_name_b[n],
-                                             key, la, lb)
+                lines, details, marks = _diff_grids(by_name_a[n], by_name_b[n],
+                                                    keys, la, lb)
                 parts.extend(lines)
                 all_details.extend(details)
+                per_sheet.append((n, by_name_b[n], marks))
         out_info = None
         out_name = (args.get("out") or "").strip()
         if out_name and all_details:
-            from engine.tools.file_tools import _enforce_artifact_path
-            if not out_name.lower().endswith(".csv"):
-                out_name += ".csv"
+            from engine.tools.file_tools import (_enforce_artifact_path,
+                                                 _resolve_default_style,
+                                                 _load_doc_style)
+            if not out_name.lower().endswith((".csv", ".xlsx")):
+                out_name += ".xlsx"
             out_path, perr = _enforce_artifact_path(out_name, "xlsx_diff")
             if perr:
                 return perr
-            with open(out_path, "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f, delimiter=";")
-                w.writerow(["key", "column", "value_a", "value_b"])
-                for k, c, va, vb in all_details:
-                    w.writerow([k, c, _cell_str(_to_sql_value(va)),
-                                _cell_str(_to_sql_value(vb))])
+            if out_path.lower().endswith(".xlsx"):
+                kit = _style_kit(_load_doc_style(_resolve_default_style("")))
+                _write_diff_xlsx(out_path, per_sheet, kit)
+            else:
+                with open(out_path, "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f, delimiter=";")
+                    w.writerow(["key", "column", "value_a", "value_b"])
+                    for k, c, va, vb in all_details:
+                        w.writerow([k, c, _cell_str(_to_sql_value(va)),
+                                    _cell_str(_to_sql_value(vb))])
             agent = get_request_context().current_agent
             _brain._after_file_write(
                 out_path, "created", agent.agent_id if agent else "main")
@@ -1656,6 +2004,8 @@ def _apply_edit_ops(wb, ops: list, kit) -> list[dict]:
             ws = wb.create_sheet(name)
             if op.get("master_detail"):
                 n = _render_master_detail_sheet(ws, op, kit)
+            elif op.get("pivot"):
+                n = _render_pivot_sheet(ws, op, kit)
             else:
                 n = _render_table_sheet(ws, op, kit)
             applied.append({"op": kind, "sheet": name, "rows_affected": n})
@@ -1833,6 +2183,10 @@ def tool_xlsx_edit(args: dict) -> str:
         kit = _style_kit(_load_doc_style(_resolve_default_style("")))
         applied = _apply_edit_ops(wb, ops, kit)
         wb.save(path)
+        if args.get("recalc") or (spec or {}).get("recalc"):
+            # LibreOffice round-trip: computed formula values land in the
+            # file, so a follow-up xlsx_query sees numbers, not NULLs.
+            recalc_workbook(path)
     except (ValueError, FileNotFoundError) as e:
         return _err(f"xlsx_edit: {e}")
     except Exception as e:

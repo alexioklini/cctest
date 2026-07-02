@@ -1649,32 +1649,153 @@ function _terminalPaintTree(renderEl, txt, treeKind) {
   renderEl.appendChild(host);
 }
 
-// ── Spreadsheet grid preview (xlsx/xlsm/csv/tsv, v9.263.0) ───────────────────
-// Shared table renderer for the /v1/files/xlsx-grid payload — used by the
-// bottom-panel editor (here) and the artifacts fullview (panels_artifacts.js).
-function _xlsxGridHtml(grid, activeIdx) {
+// ── Spreadsheet grid preview (xlsx/xlsm/csv/tsv, v9.263.0; v9.264.0 stateful:
+// sort/search/inline-edit) ────────────────────────────────────────────────────
+// Shared, self-wiring table renderer for the /v1/files/xlsx-grid payload —
+// used by the bottom-panel editor (here), the artifacts panel and the
+// attachments fullview (panels_artifacts.js).
+//   opts: { editable? (dblclick-edit via POST /v1/files/xlsx-cell — needs
+//           path + the grid's row_nums/sheet_title), path?, initialSheet?,
+//           onSheetChange?(i) }
+function _xlsxGridMount(container, grid, opts) {
+  opts = opts || {};
   const sheets = (grid && grid.sheets) || [];
-  if (!sheets.length) return '<div class="pt-empty">Keine Tabellendaten gefunden.</div>';
-  const idx = Math.min(activeIdx || 0, sheets.length - 1);
-  const s = sheets[idx];
-  const tabsHtml = sheets.length > 1
-    ? '<div class="xgrid-tabs">' + sheets.map((sh, i) =>
-        `<button class="xgrid-sheet-btn${i === idx ? ' active' : ''}" data-idx="${i}">${esc(sh.name)}</button>`).join('')
-      + '</div>'
-    : '';
-  const head = '<tr><th class="xgrid-rownum">#</th>'
-    + s.header.map(h => `<th>${esc(String(h))}</th>`).join('') + '</tr>';
-  const body = s.rows.map((r, ri) => {
-    const cells = s.header.map((_, ci) => {
-      const v = r[ci];
-      const cls = (typeof v === 'number') ? ' class="xgrid-num"' : '';
-      return `<td${cls}>${v === null || v === undefined ? '' : esc(String(v))}</td>`;
+  if (!sheets.length) {
+    container.innerHTML = '<div class="pt-empty">Keine Tabellendaten gefunden.</div>';
+    return;
+  }
+  const st = { idx: Math.min(opts.initialSheet || 0, sheets.length - 1),
+               sortCol: -1, sortDir: 1, filter: '' };
+
+  const coerce = (t) => {
+    // mirror the server's cell coercion so the local grid state matches what
+    // was written (empty → null, numbers typed, '=' stays formula text)
+    const s = String(t).trim();
+    if (s === '') return null;
+    if (s.startsWith('=')) return t;
+    if (/^-?\d+$/.test(s)) return parseInt(s, 10);
+    if (/^-?\d*\.\d+$/.test(s)) return parseFloat(s);
+    return t;
+  };
+
+  const paint = () => {
+    const s = sheets[st.idx];
+    const canEdit = !!(opts.editable && opts.path && s.sheet_title
+                       && (s.row_nums || []).length);
+    let view = s.rows.map((r, i) => ({ r, i }));
+    if (st.filter) {
+      const q = st.filter.toLowerCase();
+      view = view.filter(x => x.r.some(
+        v => v !== null && v !== undefined && String(v).toLowerCase().includes(q)));
+    }
+    if (st.sortCol >= 0) {
+      view = view.slice().sort((a, b) => {
+        const va = a.r[st.sortCol], vb = b.r[st.sortCol];
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * st.sortDir;
+        return String(va).localeCompare(String(vb), 'de', { numeric: true }) * st.sortDir;
+      });
+    }
+    const tabsHtml = sheets.length > 1
+      ? sheets.map((sh, i) =>
+          `<button class="xgrid-sheet-btn${i === st.idx ? ' active' : ''}" data-idx="${i}">${esc(sh.name)}</button>`).join('')
+      : '';
+    const bar = `<div class="xgrid-bar"><div class="xgrid-tabs-inline">${tabsHtml}</div>`
+      + `<span style="flex:1"></span>`
+      + `<input class="xgrid-search" type="search" placeholder="Suchen…" value="${esc(st.filter)}">`
+      + `</div>`;
+    const head = '<tr><th class="xgrid-rownum">#</th>'
+      + s.header.map((h, ci) => `<th class="xgrid-th" data-ci="${ci}" title="Klick: sortieren">${esc(String(h))}${
+          st.sortCol === ci ? (st.sortDir > 0 ? ' ▲' : ' ▼') : ''}</th>`).join('') + '</tr>';
+    const body = view.map(({ r, i }) => {
+      const rowLabel = (s.row_nums && s.row_nums[i]) ? s.row_nums[i] : (i + 1);
+      const cells = s.header.map((_, ci) => {
+        const v = r[ci];
+        const cls = (typeof v === 'number') ? ' class="xgrid-num"' : '';
+        return `<td${cls} data-ri="${i}" data-ci="${ci}">${v === null || v === undefined ? '' : esc(String(v))}</td>`;
+      }).join('');
+      return `<tr><td class="xgrid-rownum">${rowLabel}</td>${cells}</tr>`;
     }).join('');
-    return `<tr><td class="xgrid-rownum">${ri + 1}</td>${cells}</tr>`;
-  }).join('');
-  const note = s.truncated
-    ? `<div class="xgrid-note">Vorschau: ${s.rows.length} von ${s.total_rows} Zeilen</div>` : '';
-  return `${tabsHtml}<div class="xgrid-wrap"><table class="xgrid-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>${note}`;
+    const bits = [];
+    if (st.filter) bits.push(`${view.length} von ${s.rows.length} Zeilen (Filter)`);
+    if (s.truncated) bits.push(`Vorschau: ${s.rows.length} von ${s.total_rows} Zeilen`);
+    if (canEdit) bits.push('Doppelklick auf eine Zelle zum Bearbeiten');
+    const note = bits.length ? `<div class="xgrid-note">${esc(bits.join(' · '))}</div>` : '';
+    container.innerHTML = `${bar}<div class="xgrid-wrap"><table class="xgrid-table"><thead>${head}</thead><tbody>${body}</tbody></table></div>${note}`;
+
+    container.querySelectorAll('.xgrid-sheet-btn').forEach(b => {
+      b.onclick = () => {
+        st.idx = parseInt(b.dataset.idx, 10);
+        st.sortCol = -1; st.filter = '';
+        if (opts.onSheetChange) opts.onSheetChange(st.idx);
+        paint();
+      };
+    });
+    container.querySelectorAll('.xgrid-th').forEach(th => {
+      th.onclick = () => {
+        const ci = parseInt(th.dataset.ci, 10);
+        if (st.sortCol === ci) {
+          if (st.sortDir === 1) st.sortDir = -1;
+          else { st.sortCol = -1; st.sortDir = 1; }  // 3rd click = original order
+        } else { st.sortCol = ci; st.sortDir = 1; }
+        paint();
+      };
+    });
+    const search = container.querySelector('.xgrid-search');
+    if (search) {
+      search.oninput = () => { st.filter = search.value; paint();
+        const s2 = container.querySelector('.xgrid-search');
+        if (s2) { s2.focus(); s2.setSelectionRange(s2.value.length, s2.value.length); } };
+    }
+    if (canEdit) {
+      container.querySelectorAll('td[data-ri]').forEach(td => {
+        td.ondblclick = () => {
+          const ri = parseInt(td.dataset.ri, 10);
+          const ci = parseInt(td.dataset.ci, 10);
+          const absRow = s.row_nums[ri];
+          if (!absRow) return;
+          const cur = s.rows[ri][ci];
+          const input = document.createElement('input');
+          input.className = 'xgrid-cell-input';
+          input.value = cur === null || cur === undefined ? '' : String(cur);
+          td.innerHTML = '';
+          td.appendChild(input);
+          input.focus();
+          input.select();
+          let done = false;
+          const finish = async (save) => {
+            if (done) return;
+            done = true;
+            if (!save || input.value === (cur === null || cur === undefined ? '' : String(cur))) {
+              paint();
+              return;
+            }
+            try {
+              const resp = await API.post('/v1/files/xlsx-cell', {
+                path: opts.path, sheet: s.sheet_title, row: absRow,
+                col: ci + 1, value: input.value, mtime: grid.mtime || 0,
+              });
+              if (resp && resp.error) throw new Error(resp.error);
+              s.rows[ri][ci] = coerce(input.value);
+              grid.mtime = (resp && resp.mtime) || grid.mtime;
+              if (opts.onCellSaved) opts.onCellSaved(resp);
+            } catch (e) {
+              if (typeof showToast === 'function') showToast('Zelle speichern fehlgeschlagen: ' + (e.message || e), true);
+            }
+            paint();
+          };
+          input.onkeydown = (ev) => {
+            if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+            else if (ev.key === 'Escape') { ev.preventDefault(); finish(false); }
+          };
+          input.onblur = () => finish(true);
+        };
+      });
+    }
+  };
+  paint();
 }
 
 function _terminalEditorShowGrid(tab, sheetIdx) {
@@ -1682,9 +1803,14 @@ function _terminalEditorShowGrid(tab, sheetIdx) {
   if (!renderEl || !tab.grid) return;
   tab.gridSheet = sheetIdx || 0;
   renderEl.style.display = 'block';
-  renderEl.innerHTML = _xlsxGridHtml(tab.grid, tab.gridSheet);
-  renderEl.querySelectorAll('.xgrid-sheet-btn').forEach(b => {
-    b.onclick = () => _terminalEditorShowGrid(tab, parseInt(b.dataset.idx, 10));
+  _xlsxGridMount(renderEl, tab.grid, {
+    // xlsx/xlsm grid tabs are editable in place (dblclick); the csv Ansicht
+    // stays read-only — csv text is edited in the Bearbeiten mode.
+    editable: !!tab.gridOnly,
+    path: tab.path,
+    initialSheet: tab.gridSheet,
+    onSheetChange: (i) => { tab.gridSheet = i; },
+    onCellSaved: (resp) => { if (resp && resp.mtime) tab.mtime = resp.mtime; },
   });
 }
 

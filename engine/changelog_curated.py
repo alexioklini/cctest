@@ -29,6 +29,27 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.264.0",
+        "date": "2026-07-02",
+        "title": "Excel-Vollausbau: bearbeiten, vergleichen, auswerten",
+        "body": "Die Excel-Tabellenansicht in der App kann jetzt sortieren, "
+                "suchen und — im unteren Arbeitsbereich — Zellen per "
+                "Doppelklick direkt bearbeiten. Der Datei-Vergleich liefert "
+                "auf Wunsch eine markierte Excel (geänderte Zellen gelb mit "
+                "altem Wert als Kommentar, Neues grün, Entferntes rot), auch "
+                "mit zusammengesetzten Schlüsseln und Formel-Vergleich. Der "
+                "Agent erstellt echte Pivot-Auswertungen und bessere "
+                "Diagramme (gestapelt, Punkt/Fläche, zweite Y-Achse), rechnet "
+                "Formeln auf Wunsch sofort durch und liest auch alte .xls- "
+                "und .ods-Dateien. In Projekten merkt sich Brain die Struktur "
+                "jeder Excel automatisch — Fragen wie „welche Datei hat die "
+                "Spalte Kundennummer?“ beantwortet es aus dem Gedächtnis. "
+                "JSON- und XML-Dateien erscheinen im rechten Panel jetzt als "
+                "aufklappbarer Datenbaum.",
+        "audience": "user",
+        "versions": ["9.264.0"],
+    },
+    {
         "version": "9.263.0",
         "date": "2026-07-02",
         "title": "Excel-Vorschau, -Vergleich und -Tiefenprüfung",

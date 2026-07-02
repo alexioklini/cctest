@@ -1670,6 +1670,39 @@ als Tabelle voranzeigt statt nur als Download-Karte. Komplexe Blätter werden
 dabei genauso interpretiert wie vom Agenten selbst (mehrere Tabellenblöcke pro
 Blatt, verbundene zweizeilige Überschriften).
 
+**Neu in v9.264.0:**
+- **In der Tabellen-Vorschau arbeiten**: Klick auf eine Spaltenüberschrift
+  sortiert (nochmal: absteigend, drittes Mal: Originalreihenfolge), das
+  Suchfeld filtert Zeilen, Spaltenbreiten lassen sich am Rand ziehen. Im
+  unteren Bereich (Datei-Baum) sind Excel-Zellen per **Doppelklick direkt
+  editierbar** — Enter speichert, Esc bricht ab; wurde die Datei
+  zwischenzeitlich extern geändert, warnt die App statt zu überschreiben.
+- **Pivot-Auswertungen**: „Erstelle eine Kreuztabelle Umsatz je Region und
+  Monat" — der Agent baut echte Pivot-Blätter (Summe/Anzahl/Durchschnitt/
+  Min/Max, mit Gesamtzeile).
+- **Bessere Diagramme**: auch Flächen- und Punktdiagramme, gestapelte Balken
+  und Kombi-Diagramme mit zweiter Y-Achse (z. B. Umsatz als Balken, Quote als
+  Linie rechts).
+- **Vergleich als markierte Excel**: der Datei-Vergleich liefert auf Wunsch
+  eine Excel, in der geänderte Zellen gelb markiert sind (alter Wert als
+  Kommentar), neue Zeilen grün und entfernte rot — ideal zum Durchsehen.
+  Zusammengesetzte Schlüssel („Kunde + Datum") und Formel-Vergleich sind
+  möglich.
+- **Formeln sofort gerechnet**: neue oder geänderte Formeln können direkt
+  beim Erstellen/Bearbeiten berechnet werden (nicht erst beim Öffnen in
+  Excel), sodass Folgeauswertungen die Werte sehen.
+- **Alte Formate**: `.xls`- und `.ods`-Dateien werden überall gelesen.
+- **Projekt-Wissen**: für jede Excel in einem Projekt wird automatisch ein
+  Struktur-Profil hinterlegt — Fragen wie „welche Datei hat die Spalte
+  Kundennummer?" beantwortet der Agent aus dem Projektgedächtnis, ohne die
+  Datei erst öffnen zu müssen.
+- **JSON/XML übersichtlich**: JSON- und XML-Dateien erscheinen im rechten
+  Panel (Anhänge und Dateien) als aufklappbarer Datenbaum — wie im unteren
+  Editor-Bereich; der Quelltext bleibt über den Code-Umschalter erreichbar.
+- Für wiederkehrende Excel-Reports und tägliche Bestandsabgleiche gibt es
+  fertige Rezepte (geplante Aufgaben) — fragen Sie Brainy nach
+  „wiederkehrender Excel-Report".
+
 **Tipp**: Für einen wiederkehrenden Abgleich daraus eine geplante Aufgabe
 machen — Dateien anhängen, Prompt wie oben, Zeitplan `0 7 * * *`,
 Tool-Profil `interactive`.

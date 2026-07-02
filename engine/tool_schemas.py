@@ -938,7 +938,8 @@ TOOL_DEFINITIONS = [
             "two-row headers compose to 'Q1 / Umsatz' names. Pass deep=true "
             "for a data-quality audit: duplicate rows, numeric outliers, "
             "orphan join keys (values missing on one side), and a formula/"
-            "dependency map of what the workbook computes."
+            "dependency map of what the workbook computes. Legacy .xls/.ods "
+            "files are read too (converted transparently)."
         ),
         "input_schema": {
             "type": "object",
@@ -977,7 +978,7 @@ TOOL_DEFINITIONS = [
                 "sql": {"type": "string", "description": "One SELECT statement. Use table/column names from xlsx_inspect verbatim."},
                 "out": {"type": "string", "description": "Optional relative .csv filename — writes the full result to your artifact folder"},
                 "save_as": {"type": "string", "description": "Store the full result under this name for later 'result:<name>' references"},
-                "sheet": {"type": "string", "description": "Load only this sheet (for very large workbooks)"},
+                "sheet": {"type": "string", "description": "Load only this sheet — required for files over 30 MB, and .xls/.ods work too"},
             },
             "required": ["sql"],
         },
@@ -1001,14 +1002,20 @@ TOOL_DEFINITIONS = [
             "[{columns:[col], rule: 'color_scale'|'data_bars'|{lt|gt|eq, "
             "fill}}], print?:{orientation?, fit_width?, repeat_header?}}], "
             "style?}. Column spec also takes choices:[...] for a dropdown "
-            "(data validation). master_detail builds a grouped master→detail "
+            "(data validation). Chart types: bar|line|pie|area|scatter, plus "
+            "stacked:true and secondary:[col] (right-hand Y axis). "
+            "master_detail builds a grouped master→detail "
             "sheet from two sources + a join key (subtotals?:[detail col] adds "
-            "a =SUM row per group). TEMPLATE FILL: spec.template={file} copies "
-            "an existing styled workbook and writes ONLY data into it — per "
-            "sheet {name (existing sheet), anchor: 'B5' or named_range, "
+            "a =SUM row per group). PIVOT: a sheet with pivot:{rows:'<col>', "
+            "cols?:'<col>', values:'<col>', agg?: sum|count|avg|min|max} + "
+            "source builds a cross-tab. TEMPLATE FILL: spec.template={file} "
+            "copies an existing styled workbook and writes ONLY data into it "
+            "— per sheet {name (existing sheet), anchor: 'B5' or named_range, "
             "rows|source}; the template's styling/formulas stay untouched (use "
             "for corporate report templates). source.file also accepts "
-            "'result:<name>' from xlsx_query save_as. Example minimal spec: "
+            "'result:<name>' from xlsx_query save_as. recalc:true computes "
+            "formula values right away (LibreOffice) so a follow-up "
+            "xlsx_query can read them. Example minimal spec: "
             "{\"sheets\":[{\"name\":\"Daten\",\"source\":{\"file\":\"in.xlsx\","
             "\"sql\":\"SELECT * FROM orders WHERE stueck > 0\"}}]}."
         ),
@@ -1017,6 +1024,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "path": {"type": "string", "description": "Relative output filename, e.g. `orders_combined.xlsx` (lands in your artifact folder)"},
                 "spec": {"type": "object", "description": "The workbook spec (see tool description for the grammar)"},
+                "recalc": {"type": "boolean", "description": "Compute formula values immediately after writing (needs LibreOffice)"},
             },
             "required": ["path", "spec"],
         },
@@ -1035,15 +1043,18 @@ TOOL_DEFINITIONS = [
             "sheet) · rename_sheet {from, to} · delete_sheet {name} · "
             "set_format {sheet, columns, format}. Use edit_document only for "
             "single-cell tweaks; use xlsx_create (with source) to derive a "
-            "NEW file from an attachment. Example: {\"ops\":[{\"op\":"
-            "\"add_column\",\"sheet\":\"Daten\",\"name\":\"Wert\",\"formula\":"
-            "\"=B{row}*C{row}\",\"format\":\"eur\"}]}."
+            "NEW file from an attachment. Pass recalc:true (top level of "
+            "spec or args) to compute formula values immediately "
+            "(LibreOffice) so xlsx_query can read them. Example: {\"ops\":[{"
+            "\"op\":\"add_column\",\"sheet\":\"Daten\",\"name\":\"Wert\","
+            "\"formula\":\"=B{row}*C{row}\",\"format\":\"eur\"}]}."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Workbook in your artifact folder to modify"},
                 "spec": {"type": "object", "description": "{ops: [{op, ...}]} — see tool description for the op grammar"},
+                "recalc": {"type": "boolean", "description": "Compute formula values immediately after the edit (needs LibreOffice)"},
             },
             "required": ["path", "spec"],
         },
@@ -1055,9 +1066,14 @@ TOOL_DEFINITIONS = [
             "changed — sheets/columns present on one side only, and per sheet "
             "the changed rows. ALWAYS pass key='<column>' when the rows have "
             "an ID column (keyed compare: added/removed/changed rows with "
-            "per-cell old → new values); without a key the compare is "
-            "positional. Returns a summary (detail capped at 50 rows); pass "
-            "out='diff.csv' to save the complete change list as an artifact. "
+            "per-cell old → new values); composite keys as comma-separated "
+            "'KUNDE,DATUM'; without a key the compare is positional. Returns "
+            "a summary (detail capped at 50 rows). out='diff.xlsx' saves a "
+            "HIGHLIGHTED workbook (changed cells yellow with the old value as "
+            "comment, added rows green, removed rows red at the bottom) — the "
+            "best deliverable for review; out='diff.csv' saves the flat "
+            "change list instead. compare='formulas' diffs the formula "
+            "strings instead of values (finds edited/broken formulas). "
             "Accepts 'result:<name>' stored results as either side. Use this "
             "for 'vergleiche Datei A mit B / was hat sich geändert' instead "
             "of reading both files into chat."
@@ -1065,11 +1081,12 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path_a": {"type": "string", "description": "Old/left file (.xlsx/.csv or result:<name>)"},
-                "path_b": {"type": "string", "description": "New/right file (.xlsx/.csv or result:<name>)"},
-                "key": {"type": "string", "description": "ID column present on both sides — enables the keyed row compare"},
+                "path_a": {"type": "string", "description": "Old/left file (.xlsx/.xls/.ods/.csv or result:<name>)"},
+                "path_b": {"type": "string", "description": "New/right file (.xlsx/.xls/.ods/.csv or result:<name>)"},
+                "key": {"type": "string", "description": "ID column on both sides (comma-separated for composite keys) — enables the keyed row compare"},
                 "sheet": {"type": "string", "description": "Compare only this sheet"},
-                "out": {"type": "string", "description": "Optional relative .csv filename for the full change list"},
+                "out": {"type": "string", "description": "Optional relative filename — .xlsx = highlighted diff workbook, .csv = flat change list"},
+                "compare": {"type": "string", "description": "'formulas' to diff formula strings instead of values"},
             },
             "required": ["path_a", "path_b"],
         },

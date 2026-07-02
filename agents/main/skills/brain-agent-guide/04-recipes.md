@@ -362,6 +362,39 @@ streaming state — everything needed for debug.
 
 ---
 
+## "Wiederkehrender Excel-Report" (Scheduler + xlsx toolset, v9.264.0)
+
+Recurring styled workbook from live data — a scheduled task whose prompt
+drives the deterministic xlsx tools (no code, works on any model):
+
+1. Geplante Aufgaben → ＋ neu, Zeitplan z. B. `0 7 * * 1` (montags 07:00).
+2. Attach the corporate TEMPLATE .xlsx (and/or the data source file) to the
+   task, or point the prompt at a stable path the task can read.
+3. Prompt pattern:
+   > Lies `bestand.xlsx` (xlsx_inspect), fasse per xlsx_query die Bestände
+   > je Region zusammen und erzeuge mit xlsx_create daraus
+   > `wochenreport.xlsx` — Vorlage `template.xlsx` (spec.template), Daten ab
+   > Anker B5. Nutze recalc, damit die Formeln der Vorlage aktualisiert sind.
+4. The run's artifacts land under the `sched-<run_id>` session (Artifacts
+   panel / `/v1/artifacts?session_id=sched-<run_id>`).
+
+## "Täglicher Bestandsabgleich" (xlsx_diff als geplante Aufgabe, v9.264.0)
+
+Daily what-changed report between two exports:
+
+1. Geplante Aufgabe, Zeitplan `0 7 * * *`, working_dir auf den Ordner mit den
+   Tagesexporten (oder Pfade im Prompt).
+2. Prompt pattern:
+   > Vergleiche `export_gestern.xlsx` mit `export_heute.xlsx`
+   > (Schlüssel: KUNDENNUMMER) per xlsx_diff und speichere das Ergebnis als
+   > `abgleich.xlsx` (hervorgehobene Änderungen). Fasse die wichtigsten
+   > Änderungen in 3 Sätzen zusammen.
+3. The highlighted diff workbook (changed cells yellow + old value as
+   comment, added green, removed red) is the run artifact; the summary is the
+   run result (optional per E-Mail via gmail_send im selben Prompt).
+
+---
+
 ## When the user describes a task in natural language
 
 Pattern:

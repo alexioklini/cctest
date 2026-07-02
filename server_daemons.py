@@ -98,7 +98,8 @@ def _file_change_watcher(srv):
             pass
 
 
-def _project_source_fingerprint(pdir: str, project: dict, weburl_folder: str) -> str:
+def _project_source_fingerprint(pdir: str, project: dict, weburl_folder: str,
+                                profile_folder: str = "") -> str:
     """Cheap fingerprint of ALL of a project's source files — ingested uploads,
     input folders, and fetched web-URL files. Pure os.scandir walk over (path,
     mtime_ns, size); NO Qdrant / DB / network. Used to skip the ENTIRE per-project
@@ -121,6 +122,8 @@ def _project_source_fingerprint(pdir: str, project: dict, weburl_folder: str) ->
             roots.append(os.path.expanduser(p))
     if weburl_folder:
         roots.append(weburl_folder)
+    if profile_folder:
+        roots.append(profile_folder)  # xlsx-profiles (v9.264.0)
 
     entries = []
     for root in roots:
@@ -1186,6 +1189,98 @@ def weburl_states(pdir: str, web_urls, indexed_source_files) -> dict:
     return out
 
 
+def _sync_project_xlsx_profiles(pdir, project):
+    """v9.264.0: file one STRUCTURE PROFILE per project spreadsheet into
+    `<pdir>/xlsx-profiles/` as a mined .md — the xlsx_inspect report (sheets,
+    columns/types, join-key candidates, SQL identifiers) lands in the project
+    wing, so 'welche Datei hat Spalte X / wie hängen die Blätter zusammen'
+    answers from retrieval WITHOUT a live inspect call. Mirrors the web-urls
+    pattern: mtime/size-gated per source (regenerate only on change), profiles
+    of vanished sources are pruned (the loop's stale-path purge then drops
+    their drawers). Returns the folder path or '' when no spreadsheets exist.
+
+    NOTE the mining companion `.md` (doc_convert, byte-stable invariant) is
+    NOT touched — the profile is an ADDITIONAL, separately-mined file."""
+    import hashlib as _hl
+    exts = (".xlsx", ".xlsm", ".xls", ".ods")
+    folder = os.path.join(pdir, "xlsx-profiles")
+
+    sources = []
+    roots = [os.path.join(pdir, "ingested")]
+    for fe in (project.get("input_folders") or []):
+        p = (fe.get("path") or "").strip()
+        if p:
+            roots.append(os.path.expanduser(p))
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+            for fn in sorted(filenames):
+                if fn.lower().endswith(exts):
+                    sources.append(os.path.join(dirpath, fn))
+
+    if not sources:
+        if os.path.isdir(folder):
+            for fn in os.listdir(folder):
+                if fn.startswith("xlsxprofile-") and fn.endswith(".md"):
+                    try:
+                        os.remove(os.path.join(folder, fn))
+                    except OSError:
+                        pass
+        return folder if os.path.isdir(folder) else ""
+
+    os.makedirs(folder, exist_ok=True)
+    kept = set()
+    for src in sources:
+        try:
+            st = os.stat(src)
+        except OSError:
+            continue
+        slug = ("xlsxprofile-"
+                + _hl.sha1(os.path.realpath(src).encode()).hexdigest()[:12])
+        out_fn = f"{slug}.md"
+        out_path = os.path.join(folder, out_fn)
+        stamp = f"<!-- brain-profile-state: {int(st.st_mtime)}|{st.st_size} -->"
+        if os.path.isfile(out_path):
+            try:
+                with open(out_path, encoding="utf-8") as f:
+                    head = f.read(400)
+                if stamp in head:
+                    kept.add(out_fn)   # source unchanged → keep as-is
+                    continue
+            except OSError:
+                pass
+        try:
+            from engine.tools.xlsx_tools import _inspect_report
+            report = _inspect_report([src])
+        except Exception as e:
+            print(f"[project-sync.xlsxprofile] {os.path.basename(src)}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+            continue
+        body = (f"<!-- brain-source: {os.path.realpath(src)} -->\n"
+                f"{stamp}\n"
+                f"# Struktur-Profil: {os.path.basename(src)}\n\n"
+                f"Automatisch erzeugtes Tabellen-Profil (xlsx_inspect) der "
+                f"Projekt-Datei `{os.path.basename(src)}`.\n\n"
+                + report + "\n")
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(body)
+            kept.add(out_fn)
+        except OSError as e:
+            print(f"[project-sync.xlsxprofile] write {out_fn}: {e}", flush=True)
+    # prune profiles whose source vanished
+    for fn in os.listdir(folder):
+        if (fn.startswith("xlsxprofile-") and fn.endswith(".md")
+                and fn not in kept):
+            try:
+                os.remove(os.path.join(folder, fn))
+            except OSError:
+                pass
+    return folder
+
+
 def _sync_project_web_urls(pdir, web_urls):
     """Fetch the project's configured web URLs into a `web-urls/` subfolder as
     hash-gated `.md` companion files, so the existing project-sync mine + KG
@@ -2218,6 +2313,18 @@ def _project_sync_loop(srv):
                         print(f"[project-sync.weburl] {agent_id}/{proj_name}: "
                               f"{type(_e_wu).__name__}: {_e_wu}", flush=True)
 
+                    # Spreadsheet structure profiles (v9.264.0) → one mined
+                    # .md per project xlsx/xlsm/xls/ods (mtime-gated, stale-
+                    # pruned) so structure questions answer from the wing.
+                    _xlsxprof_folder = ""
+                    try:
+                        _xlsxprof_folder = _sync_project_xlsx_profiles(
+                            pdir, project)
+                    except Exception as _e_xp:
+                        print(f"[project-sync.xlsxprofile] {agent_id}/"
+                              f"{proj_name}: {type(_e_xp).__name__}: {_e_xp}",
+                              flush=True)
+
                     # ── FAST no-change gate ──────────────────────────────────
                     # Fingerprint every source file (ingested + input folders +
                     # web-urls) via a pure os.stat walk. If it matches the last
@@ -2233,7 +2340,7 @@ def _project_sync_loop(srv):
                     _prev_state = _prev_sync.get("state") or ""
                     try:
                         _cur_fp = _project_source_fingerprint(
-                            pdir, project, _weburl_folder)
+                            pdir, project, _weburl_folder, _xlsxprof_folder)
                     except Exception as _e_fp:
                         _cur_fp = ""  # fingerprint failed → don't skip, do full sync
                         print(f"[project-sync] fingerprint failed "
@@ -2754,6 +2861,36 @@ def _project_sync_loop(srv):
                                     item_set_fn=_set_item,
                                     item_kind="weburls", item_id="web-urls")
 
+                    # 1c. Spreadsheet structure profiles (v9.264.0) — generated
+                    #     into pdir/xlsx-profiles/ above (mtime-gated). Already
+                    #     markdown; mine the folder like web-urls so structure
+                    #     questions ("welche Datei hat Spalte X?") answer from
+                    #     the wing. No KG pass — profiles are metadata, not
+                    #     facts; triples would only duplicate the source doc's.
+                    if _xlsxprof_folder and os.path.isdir(_xlsxprof_folder):
+                        _xp_files = [fn for fn in os.listdir(_xlsxprof_folder)
+                                     if fn.startswith("xlsxprofile-")
+                                     and fn.endswith(".md")]
+                        if _xp_files and _ensure_mempalace_yaml(
+                                _xlsxprof_folder, wing):
+                            folders_seen += 1
+                            _xp_err = ""
+                            _xp_filed = 0
+                            try:
+                                _xp_filed = _mine_batched(
+                                    _xlsxprof_folder, wing,
+                                    "brain-project-sync",
+                                    respect_gitignore=False)
+                            except SystemExit:
+                                pass
+                            except Exception as e:
+                                _xp_err = f"{type(e).__name__}: {e}"
+                                last_error = _xp_err
+                                print(f"[project-sync] {agent_id}/{proj_name} "
+                                      f"xlsx-profiles: {_xp_err}", flush=True)
+                            files_filed += _xp_filed
+                            _bump_processed(len(_xp_files))
+
                     # 2. User-specified input folders — each entry has its own
                     #    mempalace.yaml, scanned recursively or top-level only.
                     for entry in (project.get("input_folders") or []):
@@ -3083,7 +3220,9 @@ def _project_sync_loop(srv):
                         # immediately. On a successful run only; a failed/cancelled
                         # run keeps _cur_fp so it doesn't accidentally skip next time.
                         "source_fingerprint": (
-                            _project_source_fingerprint(pdir, project, _weburl_folder)
+                            _project_source_fingerprint(pdir, project,
+                                                        _weburl_folder,
+                                                        _xlsxprof_folder)
                             if final_state == "idle" else _cur_fp),
                     }
                     try:
