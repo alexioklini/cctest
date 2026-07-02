@@ -1624,24 +1624,52 @@ konvertiert, dann übersetzt. Die Ausgabe ist `.docx`, nicht `.pdf`.
 
 ---
 
+## Excel-Dateien analysieren, bearbeiten und erstellen (v9.262.0)
+
+Excel-Aufgaben funktionieren jetzt mit **jedem** Modell zuverlässig — auch mit
+kleinen lokalen. Der Agent schreibt dafür keinen Python-Code mehr, sondern
+nutzt eingebaute Tabellen-Werkzeuge; die Daten selbst laufen dabei nie durch
+das Sprachmodell (wichtig bei großen oder sensiblen Tabellen).
+
+Was Sie einfach im Chat anfordern können (Datei per 📎 anhängen):
+
+- **Verstehen**: „Was steht in dieser Excel?" — der Agent liefert eine
+  Strukturübersicht (Blätter, Spalten, Datentypen, auffällige Verknüpfungen
+  zwischen Blättern), ohne die Rohdaten in den Chat zu kippen.
+- **Analysieren**: Filtern, Gruppieren, Summen, Verknüpfen mehrerer Blätter
+  oder mehrerer Dateien („Vergleiche Datei A mit Datei B") — das Ergebnis
+  erscheint als Tabelle im Chat; vollständige Ergebnisse werden auf Wunsch
+  als CSV-Artifact gespeichert.
+- **Erstellen**: „Erzeuge daraus eine kombinierte Excel" — die neue
+  Arbeitsmappe kommt automatisch professionell formatiert (farbige
+  Kopfzeile, fixierte Titelzeile, passende Spaltenbreiten, Zahlen-/
+  Euro-/Datumsformate, optional Summenzeile, Diagramme und farbige
+  Bedingungsregeln). Auch Master-Detail-Layouts (z. B. jede Order mit ihren
+  Teilausführungen gruppiert darunter) sind ein Standardfall.
+- **Bearbeiten**: Zeilen anhängen, berechnete Spalten (echte Excel-Formeln),
+  Werte per Bedingung ändern, Blätter verwalten — die bestehende Formatierung
+  bleibt erhalten.
+
+**Tipp**: Für einen wiederkehrenden Abgleich daraus eine geplante Aufgabe
+machen — Dateien anhängen, Prompt wie oben, Zeitplan `0 7 * * *`,
+Tool-Profil `interactive`.
+
+---
+
 ## Rezept: zwei Excel-Dateien vergleichen
 
-Das ist eine Chat-Aufgabe, keine Übersetzungs-Funktion:
-
-1. Neuen Chat öffnen. Ein Modell wählen, das gut mit Code umgeht.
+1. Neuen Chat öffnen (jedes Modell geeignet — die Tabellen-Werkzeuge arbeiten
+   deterministisch, siehe oben).
 2. 📎 Beide `.xlsx`-Dateien anhängen.
 3. Prompt:
    > Vergleiche `datei_a.xlsx` und `datei_b.xlsx`. Beide haben eine Spalte
    > `customer_id`. Liste die Zeilen, in denen sich der Wert von `amount`
    > zwischen den Dateien bei gleicher `customer_id` unterscheidet. Gib eine
    > CSV mit den Spalten `customer_id, amount_a, amount_b, delta` aus.
-4. Der Agent liest beide mit `read_document` (oder `python_exec` + pandas),
-   erzeugt den Vergleich und speichert die CSV als Artifact, herunterladbar
+4. Der Agent verschafft sich per `xlsx_inspect` einen Überblick, verknüpft
+   beide Dateien per `xlsx_query` (SQL-JOIN über beide Dateien in einem
+   Aufruf) und speichert das volle Ergebnis als CSV-Artifact, herunterladbar
    im **Dateien**-Tab des rechten Panels.
-
-**Tipp**: Für einen wiederkehrenden Vergleich daraus eine geplante Aufgabe
-machen — beide Dateien anhängen, Prompt wie oben, Zeitplan `0 7 * * *`,
-Tool-Profil `interactive`.
 
 ---
 

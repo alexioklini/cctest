@@ -816,7 +816,10 @@ TOOL_DEFINITIONS = [
             "Returns structured content: PDF pages, DOCX paragraphs/tables, XLSX sheets as markdown tables, "
             "PPTX slides with notes, CSV as markdown table, image metadata + vision description, "
             "EML headers+body, EPUB metadata+prose, ZIP recursive file listing with contents. "
-            "For unknown extensions, falls back to plain text read."
+            "For unknown extensions, falls back to plain text read. "
+            "For XLSX/CSV ANALYSIS (filtering, joining, aggregating, building "
+            "a new workbook) prefer xlsx_inspect + xlsx_query instead of "
+            "reading the raw rows into chat."
         ),
         "input_schema": {
             "type": "object",
@@ -868,7 +871,11 @@ TOOL_DEFINITIONS = [
             "to highlight 2–4 headline metrics as a coloured box-strip, emit consecutive lines "
             "`::kpi VALUE | LABEL | risk` (e.g. `::kpi 1,34 | Residualrisiko | gering`); the third "
             "field colours the box by the same risk scale. This is the one polish feature you "
-            "trigger explicitly — everything else is automatic from plain markdown."
+            "trigger explicitly — everything else is automatic from plain markdown. "
+            "SPREADSHEETS: for an .xlsx built from EXISTING file data, or one that "
+            "needs number formats/charts/master-detail grouping, use xlsx_create "
+            "instead (server-side data flow); .xlsx here is only for small tables "
+            "you author inline as markdown."
         ),
         "input_schema": {
             "type": "object",
@@ -886,7 +893,9 @@ TOOL_DEFINITIONS = [
             "Targeted edits to existing documents. Actions by format: "
             "DOCX: replace_text (find/replace in paragraphs). "
             "XLSX: update_cell (sheet, cell, value), add_row (sheet, values). "
-            "PPTX: update_slide (slide_index, title, body), add_slide (title, body)."
+            "PPTX: update_slide (slide_index, title, body), add_slide (title, body). "
+            "For anything beyond a single XLSX cell/row (bulk rows, computed "
+            "columns, conditional updates, sheet management) use xlsx_edit."
         ),
         "input_schema": {
             "type": "object",
@@ -910,6 +919,116 @@ TOOL_DEFINITIONS = [
                 },
             },
             "required": ["path", "action", "params"],
+        },
+    },
+    {
+        "name": "xlsx_inspect",
+        "description": (
+            "Understand an Excel/CSV file WITHOUT reading its data into chat: "
+            "sheets, dimensions, per-column name/type/nulls/distinct/samples, "
+            "merged cells, formula count, and JOIN-KEY CANDIDATES across "
+            "sheets (columns that link tables, with value overlap). ALWAYS "
+            "call this FIRST for any spreadsheet task — it prints the exact "
+            "table and column names to use in xlsx_query, so never guess "
+            "identifiers. Do NOT write pandas/openpyxl code via python_exec "
+            "for spreadsheets — use xlsx_inspect → xlsx_query → xlsx_create/"
+            "xlsx_edit instead; the data stays server-side. Pass paths=[...] "
+            "to profile several files in one call (e.g. to compare exports)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the .xlsx/.xlsm/.csv file"},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Several files at once (alternative to path)"},
+                "sheet": {"type": "string", "description": "Restrict to one sheet (default: all)"},
+            },
+        },
+    },
+    {
+        "name": "xlsx_query",
+        "description": (
+            "Run ONE read-only SQL SELECT against spreadsheet data. Each sheet "
+            "becomes a SQLite table — use the table/column names EXACTLY as "
+            "xlsx_inspect printed them. Filtering, JOINs across sheets, GROUP "
+            "BY, aggregates — all without writing code; the data never enters "
+            "the chat. Returns up to 50 result rows as a table plus the total "
+            "row count; pass out='name.csv' to save the FULL result as an "
+            "artifact the user can download. Pass paths=[fileA, fileB] to "
+            "query several files in one session (tables are then prefixed "
+            "with the file stem — xlsx_inspect with the same paths shows the "
+            "names). Only SELECT/WITH is allowed. Example: "
+            "sql=\"SELECT o.nr, SUM(t.stueck) FROM orders o JOIN teilausf t "
+            "ON t.nr = o.nr GROUP BY o.nr\"."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the .xlsx/.csv file"},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Several files in one SQL session (alternative to path)"},
+                "sql": {"type": "string", "description": "One SELECT statement. Use table/column names from xlsx_inspect verbatim."},
+                "out": {"type": "string", "description": "Optional relative .csv filename — writes the full result to your artifact folder"},
+                "sheet": {"type": "string", "description": "Load only this sheet (for very large workbooks)"},
+            },
+            "required": ["sql"],
+        },
+    },
+    {
+        "name": "xlsx_create",
+        "description": (
+            "Create a professionally styled Excel workbook from a compact JSON "
+            "spec — styled header row, freeze panes, column widths, number "
+            "formats, banded rows are applied automatically (house style "
+            "preset). CRITICAL: for data that exists in a file, do NOT copy "
+            "rows into the spec — point the sheet at source:{file, sheet?, "
+            "sql?} and the server moves the data itself (sql may reshape it "
+            "first). Inline rows are ONLY for small, newly-authored tables. "
+            "Never write openpyxl/pandas code for this. Spec: {sheets:[{name, "
+            "columns?:[{name, format?: text|int|number|eur|percent|date, "
+            "width?}], rows?:[[...]] | source:{file, sheet?, sql?} | "
+            "master_detail:{key, master:{source, columns?}, detail:{source, "
+            "columns?}}, totals?:[col], banded?, charts?:[{type: bar|line|pie, "
+            "labels, series:[col], title?}], conditional?:[{columns:[col], "
+            "rule: 'color_scale'|'data_bars'|{lt|gt|eq, fill}}]}], style?}. "
+            "master_detail builds a grouped master→detail sheet from "
+            "two sources + a join key (e.g. orders with their executions "
+            "beneath each order). Example minimal spec: {\"sheets\":[{\"name\":"
+            "\"Daten\",\"source\":{\"file\":\"in.xlsx\",\"sql\":\"SELECT * FROM "
+            "orders WHERE stueck > 0\"}}]}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Relative output filename, e.g. `orders_combined.xlsx` (lands in your artifact folder)"},
+                "spec": {"type": "object", "description": "The workbook spec (see tool description for the grammar)"},
+            },
+            "required": ["path", "spec"],
+        },
+    },
+    {
+        "name": "xlsx_edit",
+        "description": (
+            "Change an EXISTING workbook in your artifact folder while "
+            "preserving its formatting and formulas (assumes headers in row "
+            "1). Ops: append_rows {sheet, rows|source} (new rows inherit the "
+            "last row's style; source:{file, sheet?, sql?} pulls rows "
+            "server-side) · add_column {sheet, name, formula?|values?, "
+            "format?} — formula like '=B{row}*C{row}' is filled down per row "
+            "· update_cells {sheet, where:{column, equals|contains|lt|gt}, "
+            "set:{column: value}} · add_sheet (same shape as an xlsx_create "
+            "sheet) · rename_sheet {from, to} · delete_sheet {name} · "
+            "set_format {sheet, columns, format}. Use edit_document only for "
+            "single-cell tweaks; use xlsx_create (with source) to derive a "
+            "NEW file from an attachment. Example: {\"ops\":[{\"op\":"
+            "\"add_column\",\"sheet\":\"Daten\",\"name\":\"Wert\",\"formula\":"
+            "\"=B{row}*C{row}\",\"format\":\"eur\"}]}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Workbook in your artifact folder to modify"},
+                "spec": {"type": "object", "description": "{ops: [{op, ...}]} — see tool description for the op grammar"},
+            },
+            "required": ["path", "spec"],
         },
     },
     {

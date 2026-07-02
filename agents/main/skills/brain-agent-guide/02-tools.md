@@ -168,7 +168,53 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   renderer (not the lib) still owns the look. The `document-markdown` skill tells
   the model how to write converter-friendly markdown; regression-guarded by
   `eval/doc_render_eval.py` (docx + pdf + pptx asserts).
-- `edit_document(path, ...)` — structural edit
+- `edit_document(path, ...)` — structural edit (single XLSX cell/row, DOCX
+  replace_text, PPTX slides). For anything bigger on spreadsheets → `xlsx_edit`.
+
+## Spreadsheets — deterministic XLSX toolset (v9.262.0)
+
+WHY: spreadsheet quality used to depend on the chat model writing pandas/
+openpyxl code via python_exec — strong models managed, weak/local ones churned
+and delivered CSV instead of styled workbooks (chats 2cb94154 vs 98cceac2).
+These four tools make the model supply only INTENT (a SQL SELECT, a small JSON
+spec); the server moves the data deterministically. **Bulk data never flows
+through the model** — like the docx/html pipeline where the model writes
+markdown and code renders the file. Impl: `engine/tools/xlsx_tools.py`.
+
+- `xlsx_inspect(path|paths, sheet?)` — workbook profile WITHOUT reading data
+  into chat: sheets, real dimensions (dead "Spalte<N>" placeholder columns
+  trimmed), detected header row, per-column name/type/nulls/distinct/min-max/
+  samples, merged cells, formula count, named ranges, **join-key candidates**
+  across sheets (same-named columns with value overlap → "likely JOIN key"),
+  and a copy-paste `Tables for xlsx_query:` block with the exact sanitized
+  table/column names. ALWAYS the first call of any spreadsheet task.
+- `xlsx_query(path|paths, sql, out?, sheet?)` — ONE read-only SQL SELECT over
+  the sheets, each loaded as a SQLite table (in-memory, per call). JOINs across
+  sheets, GROUP BY, filters — no code. Returns first 50 rows + total count;
+  `out='name.csv'` writes the FULL result to the artifact folder. With
+  `paths=[a, b]` tables get file-stem prefixes (`orders_alt_orders` …) for
+  cross-FILE comparisons. SELECT-only is triple-enforced (prefix check,
+  sqlite3 authorizer, `query_only=ON`); SQL errors echo the full schema so the
+  model self-corrects in one round.
+- `xlsx_create(path, spec)` — declarative JSON spec → styled workbook (header
+  fill/bold from the doc-style preset, freeze panes, auto column widths,
+  number formats `text|int|number|eur|percent|date`, banded rows, `totals`
+  as real `=SUM()`). Data per sheet: inline `rows` (small only, ~5k-cell cap),
+  `source:{file, sheet?, sql?}` (server-side flow — the model transcribes
+  ZERO rows), or `master_detail:{key, master:{source, columns?}, detail:{…}}`
+  (grouped master→detail layout: tinted master row with bold key, detail rows
+  beneath with outline grouping — the marktorder case). Plus `charts:[{type:
+  bar|line|pie, labels, series, title?}]` and `conditional:[{columns, rule:
+  color_scale|data_bars|{lt|gt|eq, fill}}]`.
+- `xlsx_edit(path, spec)` — change an EXISTING workbook (artifact folder only)
+  preserving formatting/formulas; header assumed in row 1. Ops: `append_rows`
+  (inherits last row's style; `source` pulls rows server-side), `add_column`
+  (`formula:"=B{row}*C{row}"` filled down), `update_cells` (where equals/
+  contains/lt/gt → set), `add_sheet` / `rename_sheet` / `delete_sheet`,
+  `set_format`. `.xlsm` keeps VBA (`keep_vba`).
+
+`write_document` .xlsx also renders through the same engine now (markdown
+tables → styled sheets), so ALL xlsx output shares one renderer.
 
 ## Memory (MemPalace, direct — not MCP)
 
@@ -464,6 +510,7 @@ write/exec tool is deliberately excluded.
 core          read_file write_file edit_file list_directory search_files
               execute_command tool_search ask_user
 documents     read_document write_document edit_document render_diagram
+              xlsx_inspect xlsx_query xlsx_create xlsx_edit
 memory        mempalace_query save_chat_to_memory
               mempalace_kg_query mempalace_kg_search mempalace_kg_neighbors
 wiki          wiki_write wiki_read wiki_delete wiki_structure

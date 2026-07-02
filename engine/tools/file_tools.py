@@ -2564,27 +2564,27 @@ def tool_write_document(args: dict) -> str:
             doc.save(path)
 
         elif ext == ".xlsx":
-            try:
-                import openpyxl
-            except ImportError:
-                return _err("Install openpyxl: pip3 install openpyxl")
-            wb = openpyxl.Workbook()
-            wb.remove(wb.active)
+            # Same markdown contract as ever (`## <sheet>` sections + pipe
+            # tables, numeric coercion), but rendered through the shared
+            # deterministic renderer (engine/tools/xlsx_tools.render_spec) so
+            # the output gets the house styling (header row, freeze panes,
+            # column widths) like xlsx_create. Lazy import — xlsx_tools
+            # imports from THIS module inside its functions.
+            from engine.tools.xlsx_tools import render_spec as _xlsx_render_spec
             sections = re.split(r'^##\s+(.+)$', content, flags=re.MULTILINE)
+            sheets = []
             if len(sections) < 3:
-                ws = wb.create_sheet("Sheet1")
-                _write_md_table_to_sheet(ws, content)
+                sheets.append({"name": "Sheet1",
+                               "rows": _parse_md_table_rows(content)})
             else:
                 for si in range(1, len(sections), 2):
                     sheet_name = sections[si].strip()
                     if sheet_name.lower().startswith("sheet:"):
                         sheet_name = sheet_name[6:].strip()
                     sheet_content = sections[si + 1] if si + 1 < len(sections) else ""
-                    ws = wb.create_sheet(sheet_name[:31])
-                    _write_md_table_to_sheet(ws, sheet_content)
-            if not wb.sheetnames:
-                wb.create_sheet("Sheet1")
-            wb.save(path)
+                    sheets.append({"name": sheet_name,
+                                   "rows": _parse_md_table_rows(sheet_content)})
+            _xlsx_render_spec(path, {"sheets": sheets}, style=_style)
 
         elif ext == ".pptx":
             try:
@@ -3228,9 +3228,11 @@ def tool_write_document(args: dict) -> str:
         return _err(f"write_document: {e}")
 
 
-def _write_md_table_to_sheet(ws, md_text: str) -> None:
-    """Helper: parse markdown table text and write rows to an openpyxl worksheet."""
-    row_idx = 1
+def _parse_md_table_rows(md_text: str) -> list:
+    """Parse markdown pipe-table text into rows of coerced cell values (the
+    write_document .xlsx contract: first table row = header, numbers become
+    int/float). The rows feed xlsx_tools.render_spec."""
+    rows = []
     for line in md_text.split("\n"):
         line = line.strip()
         if not line or not line.startswith("|"):
@@ -3238,12 +3240,14 @@ def _write_md_table_to_sheet(ws, md_text: str) -> None:
         if re.match(r'^\|[\s\-:|]+\|$', line):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
-        for ci, val in enumerate(cells, 1):
+        row = []
+        for val in cells:
             try:
-                ws.cell(row=row_idx, column=ci, value=float(val) if "." in val else int(val))
+                row.append(float(val) if "." in val else int(val))
             except (ValueError, TypeError):
-                ws.cell(row=row_idx, column=ci, value=val)
-        row_idx += 1
+                row.append(val)
+        rows.append(row)
+    return rows
 
 
 def tool_edit_document(args: dict) -> str:

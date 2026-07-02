@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.262.0",
+        "date": "2026-07-02",
+        "title": "Excel zuverlässig analysieren und erstellen",
+        "body": "Excel-Aufgaben funktionieren jetzt mit jedem Modell zuverlässig — "
+                "auch mit den kleinen lokalen. Der Agent versteht die Struktur "
+                "einer angehängten Arbeitsmappe, verknüpft und wertet "
+                "Tabellenblätter oder mehrere Dateien aus und erstellt daraus "
+                "fertig formatierte neue Excel-Dateien (farbige Kopfzeile, "
+                "fixierte Titelzeile, Zahlen- und Euro-Formate, Summenzeilen, "
+                "Diagramme, auch gruppierte Master-Detail-Ansichten). Bestehende "
+                "Dateien lassen sich gezielt erweitern, ohne dass ihre "
+                "Formatierung verloren geht. Die Tabellendaten selbst bleiben "
+                "dabei im System und laufen nicht durch das Sprachmodell — das "
+                "macht die Ergebnisse reproduzierbar und schont bei großen "
+                "Dateien die Kosten.",
+        "audience": "user",
+        "versions": ["9.262.0"],
+    },
+    {
         "version": "9.260.0",
         "date": "2026-07-02",
         "title": "HTML-Berichte automatisch im Magazin-Layout",

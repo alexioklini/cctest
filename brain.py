@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.261.0"
+VERSION = "9.262.0"
 VERSION_DATE = "2026-07-02"
 CHANGELOG = [
+    ("9.262.0", "2026-07-02", "feat(xlsx toolset): deterministisches Spreadsheet-Toolset — 4 neue Tools xlsx_inspect / xlsx_query / xlsx_create / xlsx_edit (engine/tools/xlsx_tools.py NEU, documents-Gruppe), damit auch einfache/lokale Modelle komplexe Excel-Aufgaben zuverlässig lösen. ANLASS (Chats 2cb94154 mistral-medium vs 98cceac2 deepseek-v4-flash, gleiche Aufgabe 'Marktorders + Teilausführungen über MARKTORDERNUMMER kombinieren'): Qualität hing bisher komplett daran, dass das Chat-Modell selbst pandas/openpyxl-Code via python_exec schreibt — mistral churnte durch 6 Skript-Iterationen und lieferte nur CSV, deepseek löste es im ersten Wurf. Prinzip wie beim docx/html-Pfad: das Modell liefert nur INTENT (ein SQL-SELECT, eine kleine JSON-Spec), der Server bewegt die Daten deterministisch — MASSENDATEN FLIESSEN NIE DURCHS MODELL. (1) xlsx_inspect(path|paths, sheet?): Workbook-Profil ohne Rohdaten im Chat — Blätter, echte Dimensionen (nutzt den v9.261.0-Platzhalter-Trim, dafür aus _extract_xlsx als doc_convert._trim_placeholder_columns herausfaktoriert, byte-identisch + Pin-Test), erkannte Header-Zeile, pro Spalte Name/SQL-Name/Typ/Nulls/Distinct/Min-Max/Samples, Merged/Formeln/Named-Ranges, JOIN-KEY-KANDIDATEN über Blätter (namensgleiche Spalten + Wert-Overlap ≥50%) und ein copy-paste-Block 'Tables for xlsx_query' mit den EXAKTEN sanitized Bezeichnern (das ist der 7B-Reliability-Hebel: nie Bezeichner raten). (2) xlsx_query(path|paths, sql, out?, sheet?): EIN read-only SELECT über die Blätter als In-Memory-SQLite-Tabellen — JOINs/GROUP BY/Filter ohne Code; SELECT-only dreischichtig erzwungen (Prefix-Check SELECT/WITH + Multi-Statement-Reject, sqlite3-Authorizer nur SELECT/READ/FUNCTION/RECURSIVE, PRAGMA query_only=ON); SQL-Fehler echoen das komplette Schema (Selbstkorrektur in einer Runde); Anzeige gekappt bei 50 Zeilen + row_count, out='name.csv' schreibt das VOLLE Ergebnis als Artifact (_enforce_artifact_path + _after_file_write); paths=[a,b] lädt mehrere Dateien in EINE Session (Tabellennamen mit Datei-Stem-Prefix → Datei-A-vs-B-Abgleich per Cross-File-JOIN); Guardrails 200k Zeilen/30MB; Datumszellen → ISO (Mitternacht → reines Datum). CSV/TSV werden mitgeladen (Delimiter-Sniff + Zahlen-Koerzierung). (3) xlsx_create(path, spec): deklarative Spec → openpyxl-Renderer mit House-Styling aus dem doc-style-Preset (_resolve_default_style/_load_doc_style wiederverwendet — Header-Fill/Bold aus colors.table_header_bg, Freeze A2, Auto-Spaltenbreiten, Zahlenformate text|int|number|eur|percent|date, banded rows, totals als echte =SUM()-Zeile); Datenquellen pro Blatt: rows inline (Cap ~5k Zellen → Fehler steuert auf source), source:{file,sheet?,sql?} (SERVERSEITIGER Datenfluss, Modell transkribiert null Zeilen) oder master_detail:{key,master,detail} (gruppiertes Master→Detail-Layout: getönte Master-Zeile mit bold Key, Detail-Zeilen darunter mit outline_level 1 — exakt der Marktorder-Fall); dazu charts:[{type:bar|line|pie,labels,series,title?}] (openpyxl.chart) und conditional:[{columns,rule:color_scale|data_bars|{lt|gt|eq,fill}}] (ColorScale/DataBar/CellIs). (4) xlsx_edit(path, spec{ops}): bestehendes Workbook im Artifact-Ordner formaterhaltend ändern (keep_vba für .xlsm, Header in Zeile 1 angenommen) — append_rows (Stil der letzten Datenzeile vererbt; source zieht Zeilen serverseitig), add_column (formula '=B{row}*C{row}' pro Zeile gefüllt), update_cells (where equals|contains|lt|gt → set), add_sheet/rename_sheet/delete_sheet, set_format. WIRING (4-Site-Regel): TOOL_DEFINITIONS (engine/tool_schemas.py, Descriptions mit Anti-code_exec-Steering 'Do NOT write pandas/openpyxl code' + Mini-Beispielen), TOOL_GROUPS documents +4, TOOL_DISPATCH direkte Fn-Refs, Impl im neuen Modul; dazu TOOL_ICONS/TOOL_VERBS-Badges, Verweis-Sätze in den read/write/edit_document-Descriptions und Classifier-Steering (_STRUCTURED_CLASSIFY_SYSTEM: Spreadsheet-Arbeit ist IMMER 'files', NICHT 'python' + neues Beispiel; sonst kriegt das Modell wieder code_exec und schreibt pandas). write_document-.xlsx-Branch rendert jetzt DURCH den neuen Renderer (Markdown-Vertrag identisch — ##-Sections + Pipe-Tables + Zahlen-Koerzierung via neuem _parse_md_table_rows, altes _write_md_table_to_sheet ersetzt — Output bekommt gratis Header-Styling/Freeze/Widths; Characterization pinnt binäre xlsx-Ausgabe explizit nicht). GDPR: inspect-Report + query-Ergebnis laufen durch _gdpr_anon_tool_text. Tests: tests/test_xlsx_tools.py NEU (27 Fälle — Byte-Stability-Pin für _extract_xlsx VOR dem Trim-Refactor geschrieben, inspect/query/create/edit-Roundtrips, SELECT-only-Rejections inkl. 'SELECT 1; DROP', CTE erlaubt, Multi-File-JOIN mit Prefix-Namen, master_detail-Struktur-Snapshot, Charts/CondFormat-Reopen-Asserts, write_document-Routing 2-Sheet-Markdown); test_file_tools_characterization + test_tool_optimize_gate weiter grün (58 gesamt). Schema-Änderung ⟶ Warmup-KV-Prefix re-primt einmalig (legitim). Skill 02/06 + SKILL.md 1.104.0 im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar: Excel-Aufgaben funktionieren jetzt mit jedem Modell)."),
     ("9.261.0", "2026-07-02", "fix(chat + xlsx): zwei Bugs aus Chat c8ff6c66 ('did not finish' — der Nutzer sah Antwort+Tool-Calls live, nach Reload waren sie weg). DIAGNOSE (via Log [inprocess-loop] turn=829a87d2 … reply=0c rounds=2 tools=2 error=None cancelled=False): der Turn lief SAUBER durch (kein Cancel/Crash/Restart), aber das Modell gab nach 2× read_document auf einer Excel-Anlage KEINEN finalen Text (reply=0 Zeichen) und schrieb kein Excel. (A) DATENVERLUST-BUG (handlers/chat.py Worker): bei leerer Antwort lief bisher IMMER _rollback_messages → verwarf ALLE Zwischennachrichten inkl. der live gezeigten Tool-Calls (darum 'nach Reload weg'). FIX: der Empty-Reply-Zweig rettet jetzt — wenn Tool-Calls gemacht wurden (_partial_tools) — eine partielle Assistant-Message mit Marker ('Keine Textantwort — das Modell hat die Werkzeuge ausgeführt, aber keine Antwort formuliert. Bitte erneut senden.') + tools-Metadaten + Usage, exakt wie die Cancel/Error-Zweige (das 1fa62d2d-Prinzip: nichts Sichtbares still fallenlassen). Nur ein WIRKLICH leerer Turn (kein Text UND keine Tools) rollt noch zurück. (B) URSACHE = XLSX-EXTRAKTION (engine/doc_convert._extract_xlsx): das erste Tabellenblatt meldete max_column=16384 (Excels Blattlimit) — nach ~37 echten Spalten (…GUELTIGKEITSDATUM) folgten 16000+ auto-benannte Platzhalter-Header 'Spalte41'…'Spalte16347' OHNE Daten. Der bestehende Trailing-EMPTY-Trim griff nicht (die Header sind benannt, nicht leer), also blähte die flache Tabelle auf 1,5 MB (~16k leere Spalten/Zeile) und JEDER Downstream-Pass (Footer-Group-Scan, Table-Render) kroch über 16k Spalten (~60 s) → überflutete das Modell, das dann leer abbrach. FIX: VOR allen per-Spalten-Schritten wird die letzte real genutzte Spalte bestimmt (max aus: letzte Spalte mit DATEN + letzter contiguous NICHT-'Spalte<N>'-Header) und Header+Zeilen darauf beschnitten — die Excel-Auto-Platzhalter fallen weg, echte Spalten (auch legit-trailing mit Daten) bleiben. Ergebnis auf der echten Datei: 60s/1.521.978 B → 0,30s/12.763 B, 37 Spalten, beide Sheets intakt. Regression geprüft (saubere + sparse-trailing Tabellen unverändert). HINWEIS: der vom Nutzer vorgeschlagene ks-xlsx-parser (MIT) wurde geprüft, aber NICHT übernommen — er baut selbst auf openpyxl, löst das 16k-Platzhalter-Problem nicht explizit und brächte neue Deps (pydantic/lxml/xxhash/tiktoken), was gegen die dependency-arme Server-Linie geht. py_compile beide. Server-Restart nötig. KEIN kuratierter Eintrag (interne Robustheit — kein neues Feature, aber Datenverlust behoben)."),
     ("9.260.0", "2026-07-02", "fix(write_document): style='report' ist jetzt der DEFAULT für JEDEN HTML-Report — nicht nur wenn der Nutzer das Wort 'schön/nice' sagt. ANLASS (Fortsetzung des 9.259.0-Falls): der Milo-Borissov-Due-Diligence-Report (Chat 1a830369) kam im biederen doc-styles-Preset-Look (Calibri, blaue Print-Tabellen) statt im schönen editorialen report_html-Layout (Hero, Aurora-Hintergrund, Dark-Mode, TOC-Sidebar, Drop-Cap), das der Diana-Report (Chat cb3b3a81) hatte. URSACHE: es gibt ZWEI HTML-Renderer — engine/report_html.render_report_html (schön, via style='report', seit 9.249.0/9.250.0) und _render_markdown_html in file_tools (schlichtes doc-styles-Preset). Die write_document-Tool-Anweisung koppelte den schönen Renderer an eine EXPLIZITE Bitte um ein 'schönes/nice HTML report'. Der Nutzer schrieb aber nur 'Erstelle einen html-report zum Onboarding …' (ohne 'schön') → das Modell setzte style='report' nicht → Preset-Pfad. FIX (rein engine/tool_schemas.py, zwei Stellen): (1) die style-Feldbeschreibung stellt style='report' als 'THE DEFAULT FOR ANY HTML REPORT' dar — explizit 'NOT only when they say the word schön/nice', mit Beispiel 'erstelle einen html-report'/'due diligence report als HTML'; der Calibri-Preset ist nur noch Fallback, wenn ausdrücklich ein On-Brand-Briefkopf verlangt wird. (2) die write_document-Hauptbeschreibung nennt bei '.html' direkt 'DEFAULT to style=report'. Verifiziert (Schema lädt, beide Texte aktualisiert). Zusätzlich der bereits erzeugte Milo-Report als Artefakt-Version v3 im report_html-Layout neu gerendert + registriert. HINWEIS: Schema-Änderung an einem Tool ⟶ Tool-Block ändert sich ⟶ Warm-Pool-KV-Prefix wird einmalig neu geprimed (legitim). Server-Restart nötig. KURATIERTER Eintrag (künftige HTML-Reports sehen automatisch professionell aus)."),
     ("9.259.0", "2026-07-02", "fix(document report HTML): roher Markdown leckte in generierte HTML-Report-Artefakte durch — vom Nutzer an einem Due-Diligence-Report gemeldet ('did create a report but was not formatted as report html'). URSACHE: engine/tools/file_tools.py _render_markdown_html rendert den Body über eine SIMPLE Zeilen-Schleife (nicht den markdown-it-Parser _markdown_to_blocks, den die docx/pdf-Zweige nutzen); die Schleife kannte nur Überschriften (#), Tabellen (|), Code-Fences und Bilder — JEDE andere Zeile fiel in den else-Zweig <p>…</p>. Dadurch erschienen VIER Markdown-Konstrukte wörtlich im Report: (1) eine vorangestellte YAML-Frontmatter '---\\nstyle: report\\n---' (das Modell setzt sie manchmal davor; im docx/pdf-Zweig peelt _extract_cover_and_body sie ab, im HTML-Zweig lief dieser Pre-Pass nie) → sichtbar als <p>---</p><p>style: report</p>; (2) Markdown-Trennlinien '---' → <p>---</p> statt <hr>; (3) Blockquotes '> …' → literales '&gt; …' in <p> statt <blockquote>; (4) Aufzählungen '- '/'* '/'1. ' → <p>- text</p> statt <ul>/<ol>. Zusätzlich blieb '**' im <title> stehen (der Titel-Regex zog die H1-Zeile, _html.escape strippt keine Inline-Marker). FIX (chirurgisch, nur der HTML-Zweig, kein Umbau auf markdown-it): (a) führenden ---…----Frontmatter-Block vor der Body-Schleife strippen; (b) in der Schleife VOR dem Bild-Zweig drei neue Konstrukte behandeln — hr (^-{3,}|\\*{3,}|_{3,}$ → <hr>), Blockquote (aufeinanderfolgende '> '-Zeilen → ein <blockquote> mit inneren <p>), Liste ('- '/'* '/'+ '/'N. ' → <ul>/<ol> mit <li>); (c) '*'/'`' aus dem <title> strippen. Neue CSS-Regeln für hr/blockquote/ul/ol/li im Report-Template (stilkonsistent, blockquote nutzt die Akzentfarbe). Tabellen-Erkennung läuft weiterhin VOR dem hr-Zweig, sodass '|---|'-Trennzeilen nicht fälschlich zu <hr> werden; Inline-Bindestriche ('Satz - mit Strich') bleiben Absätze. Verifiziert per direktem Funktionsaufruf mit exakt dem durchleckenden Markdown (14 Checks grün) + Edge-Cases (Tabellen-Separator ≠ hr, Inline-Dash bleibt <p>, echte Liste → <li>). Der bereits erzeugte Report des Nutzers (agents/main/artifacts/2026-07-02_1a830369e762/) wurde mit dem neuen Konverter neu gerendert und im selben Ordner abgelegt. Server-Restart nötig (Server-Code). KURATIERTER Eintrag (sichtbar sauberere Berichte)."),
@@ -1148,7 +1149,8 @@ TOOL_GROUPS = {
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search", "searxng_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
-    "documents": {"read_document", "write_document", "edit_document", "render_diagram"},
+    "documents": {"read_document", "write_document", "edit_document", "render_diagram",
+                  "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit"},
     "delegation": {"delegate_task", "task_status", "task_cancel"},
     "background": {"run_background_task"},
     "code_graph": {"code_search", "code_trace", "code_query", "code_snippet"},
@@ -2860,7 +2862,7 @@ def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: 
 
 # tool_read_document / tool_write_document / tool_edit_document /
 # tool_list_directory / tool_search_files / tool_execute_command /
-# tool_python_exec (+ private helpers _write_md_table_to_sheet,
+# tool_python_exec (+ private helpers _parse_md_table_rows,
 # _strip_ansi, _build_shell_command, _streaming_execute_command,
 # _register_new_artifacts, _ABS_PATH_RE, _stray_write_warning,
 # _append_to_tool_result) moved to engine/tools/file_tools.py
@@ -11063,10 +11065,15 @@ _STRUCTURED_CLASSIFY_SYSTEM = (
     "                internal/document/policy questions.\n"
     "  files       — WHEN the task names or attaches a specific file to read,\n"
     "                write, edit, or convert (a document, spreadsheet, PDF, etc.).\n"
+    "                Spreadsheet/Excel/CSV work (read, analyze, join, aggregate,\n"
+    "                build a new workbook) is ALWAYS files, NOT python — the\n"
+    "                dedicated xlsx tools live here and beat hand-written code.\n"
     "  web         — ONLY WHEN the task needs CURRENT or EXTERNAL public info not\n"
     "                in the assistant's own documents (news, live data, a public\n"
     "                website). Do NOT pick web for internal-policy/document lookups.\n"
-    "  python      — WHEN the task needs computation, data crunching, or code execution.\n"
+    "  python      — WHEN the task needs computation, data crunching, or code\n"
+    "                execution. NOT for Excel/CSV analysis or creation — that is\n"
+    "                files (dedicated spreadsheet tools).\n"
     "  bash        — WHEN the task needs shell commands / system operations.\n"
     "  git         — WHEN the task involves git / GitHub / version history.\n"
     "  code_graph  — WHEN the task asks about a codebase's structure / symbols.\n"
@@ -11092,6 +11099,7 @@ _STRUCTURED_CLASSIFY_SYSTEM = (
     '  "Summarize the attached contract.docx" → tools:["files","memory"]\n'
     '  "What is the latest EU AI Act news?" → tools:["web"]\n'
     '  "Refactor this function to be async" → tools:["files","code_graph"]\n'
+    '  "Kombiniere die zwei Tabellenblätter der Excel zu einer Datei" → tools:["files"]  // xlsx tools, NOT python\n'
     '  "Erstelle ein Bild einer Berglandschaft im Sonnenuntergang" → tools:["image_gen"]\n'
     '  "Erstelle ein Organigramm der Konzernstruktur aus den Unterlagen" → tools:["memory","diagram"]\n'
     '  "Erstelle die Diagramme nochmal neu, diesmal als PNG" → tools:["diagram"]  // chart file = render_diagram, NOT image_gen'
@@ -12198,6 +12206,7 @@ TOOL_ICONS = {
     "context_search": "c", "context_detail": "c", "context_recall": "c",
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
     "read_document": "D", "write_document": "D", "edit_document": "D",
+    "xlsx_inspect": "D", "xlsx_query": "D", "xlsx_create": "D", "xlsx_edit": "D",
     "code_search": "G", "code_trace": "G", "code_query": "G", "code_snippet": "G",
     "git_command": "g", "github_command": "g",
 }
@@ -12215,6 +12224,8 @@ TOOL_VERBS = {
     "context_search": "Searching Context", "context_detail": "Context Detail", "context_recall": "Recalling",
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
     "read_document": "Reading Document", "write_document": "Writing Document", "edit_document": "Editing Document",
+    "xlsx_inspect": "Inspecting Spreadsheet", "xlsx_query": "Querying Spreadsheet",
+    "xlsx_create": "Creating Spreadsheet", "xlsx_edit": "Editing Spreadsheet",
     "code_search": "Searching Code", "code_trace": "Tracing Calls", "code_query": "Querying Code", "code_snippet": "Reading Code",
     "git_command": "Git", "github_command": "GitHub",
 }
@@ -12704,6 +12715,14 @@ from engine.tools.file_tools import (  # noqa: E402
     tool_execute_command,
     tool_python_exec,
 )
+# Deterministic spreadsheet toolset (engine/tools/xlsx_tools.py) — same
+# import-before-TOOL_DISPATCH pattern as file_tools above.
+from engine.tools.xlsx_tools import (  # noqa: E402
+    tool_xlsx_inspect,
+    tool_xlsx_query,
+    tool_xlsx_create,
+    tool_xlsx_edit,
+)
 # MemPalace integration glue moved to engine/mempalace_glue.py (refactor C3).
 # Imported HERE (before TOOL_DISPATCH) so the `tool_mempalace_query` /
 # `tool_save_chat_to_memory` bare names bind in brain's namespace before the
@@ -12856,6 +12875,10 @@ TOOL_DISPATCH = {
     "read_document": tool_read_document,
     "write_document": tool_write_document,
     "edit_document": tool_edit_document,
+    "xlsx_inspect": tool_xlsx_inspect,
+    "xlsx_query": tool_xlsx_query,
+    "xlsx_create": tool_xlsx_create,
+    "xlsx_edit": tool_xlsx_edit,
     "mcp_connect": tool_mcp_connect,
     "mcp_disconnect": tool_mcp_disconnect,
     "mcp_servers": tool_mcp_servers,
