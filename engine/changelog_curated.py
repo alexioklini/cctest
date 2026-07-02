@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.260.0",
+        "date": "2026-07-02",
+        "title": "HTML-Berichte automatisch im Magazin-Layout",
+        "body": "Wenn Sie einen Bericht als HTML erstellen lassen, erhalten Sie "
+                "jetzt automatisch das hochwertige, redaktionelle Layout — mit "
+                "Titelkopf, Inhaltsverzeichnis am Rand, hell/dunkel-Umschaltung "
+                "und druckfertiger Gestaltung, so wie es die Tiefenrecherche "
+                "verwendet. Bisher entstand dieses schöne Layout nur, wenn Sie "
+                "ausdrücklich einen „schönen“ Bericht anforderten; eine einfache "
+                "Bitte wie „erstelle einen HTML-Report“ ergab noch das schlichtere "
+                "Dokumentformat. Das ist jetzt der Standard für jeden HTML-Bericht.",
+        "audience": "user",
+        "versions": ["9.260.0"],
+    },
+    {
         "version": "9.259.0",
         "date": "2026-07-02",
         "title": "Saubere HTML-Berichte",

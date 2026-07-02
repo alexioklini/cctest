@@ -117,15 +117,18 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   code and applies them, bypassing the brand preset. Use it when the user wants
   output "im Format von / wie die Referenz" (.docx output only; lifts named-style
   + margin definitions, not the full visual template/themes) (v9.190.0).
-  **Editorial report layout (.html only)**: pass `style='report'` (alias
-  `'editorial'`) to render an `.html` file with the SAME polished magazine-style
-  layout Deep Research uses — warm editorial palette, drop-cap intro, gradient-
-  underlined headings, sticky table-of-contents sidebar, collapsible sources,
-  light/dark + print-ready. Use it whenever the user asks for a "schönen/report/
-  nice HTML report" or a visually rich standalone HTML document; the model writes
-  plain markdown (the first `# Heading` becomes the report title) — do NOT
-  hand-write HTML for this (raw HTML can't be re-flowed into the layout, and falls
-  back to the normal preset) (v9.249.0).
+  **Editorial report layout (.html only) — the default for any HTML report**:
+  pass `style='report'` (alias `'editorial'`) to render an `.html` file with the
+  SAME polished magazine-style layout Deep Research uses — warm editorial palette,
+  drop-cap intro, gradient-underlined headings, sticky table-of-contents sidebar,
+  collapsible sources, light/dark + print-ready. As of v9.260.0 this is the RIGHT
+  DEFAULT for ANY HTML report request (e.g. "erstelle einen html-report", "due
+  diligence report als HTML") — not only when the user says the word "schön/nice";
+  the plain doc-styles preset (Calibri look) is the fallback only when a specific
+  on-brand letterhead is explicitly required. The model writes plain markdown (the
+  first `# Heading` becomes the report title) — do NOT hand-write HTML for this
+  (raw HTML can't be re-flowed into the layout, and falls back to the normal
+  preset) (v9.249.0, default-widened v9.260.0).
   Header/footer text supports `{page}`/`{date}` tokens; the logo + footer render
   on docx/pdf pages, pptx slides, and the html header/footer bands. **Automatic
   footer lines** (v9.208.0, each on its own line, in the footer font): a

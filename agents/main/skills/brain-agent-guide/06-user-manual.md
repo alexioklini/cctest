@@ -886,13 +886,16 @@ gesperrt). In der HTML-Ansicht erscheinen Quellenangaben als **kompakte
 nummerierte Zitat-Chips** im Text plus ein **Belege-Verzeichnis** am Ende (statt
 langer `[Quelle: …]`-Klammern).
 
-> **Schöner HTML-Report im Chat:** Man kann in **jedem** Chat einen „schönen
-> HTML-Report" verlangen — der Agent erzeugt dann dasselbe redaktionelle
+> **HTML-Report im Chat:** Verlangt man in **irgendeinem** Chat einen Report als
+> HTML (z. B. „erstelle einen HTML-Report", „Due-Diligence-Report als HTML"),
+> erzeugt der Agent seit v9.260.0 **automatisch** dasselbe redaktionelle
 > Magazin-Layout wie oben (warme Farbwelt, Titelbild, Inhaltsverzeichnis, farbige
-> Kennzahl-Kacheln, Zitat-Chips + Belege-Liste, hell/dunkel, druckfertig).
-> Textauszeichnungen (verschachtelte Listen, Zitate, Tabellen, durchgestrichener
-> Text, eingebettete Bilder) werden dabei vollständig umgesetzt — gleichwertig
-> zur Word- und PDF-Ausgabe.
+> Kennzahl-Kacheln, Zitat-Chips + Belege-Liste, hell/dunkel, druckfertig) — das
+> Wort „schön" muss man dafür nicht mehr sagen. Textauszeichnungen (verschachtelte
+> Listen, Zitate, Tabellen, durchgestrichener Text, eingebettete Bilder) werden
+> dabei vollständig umgesetzt — gleichwertig zur Word- und PDF-Ausgabe. Das
+> schlichtere Briefkopf-Layout (Word-artig, mit Logo) kommt nur, wenn man
+> ausdrücklich ein On-Brand-Dokument verlangt.
 
 **Neue Quellen finden** (Research-Tab 🔍): Auf der Projektseite gibt es den Tab
 **🔍 Research**, um neue Quellen für das Projekt zu finden. Thema eingeben, Modus
