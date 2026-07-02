@@ -206,6 +206,40 @@ Slash-Befehle und Tastenkürzel):
 
 Im Terminal-Chat bricht `Esc` (oder `/cancel`) die Antwort weiterhin ab.
 
+**🎯 Goal-Modus (Ziel setzen)**: Geben Sie dem Chat ein *Ziel*, und der
+Assistent arbeitet nach jeder Antwort selbstständig weiter, bis es erreicht
+ist. Klicken Sie auf den **Zielscheiben-Knopf** in der Eingabeleiste, tragen
+Sie das Ziel ein (z. B. „Der Bericht enthält alle fünf Abschnitte und jede
+Zahl ist belegt.“) und optional eine Obergrenze an Durchläufen, dann
+**Speichern**. Ab jetzt prüft nach jeder Antwort ein Prüf-Modell, ob das Ziel
+erfüllt ist:
+
+- **Nicht erfüllt** → der Assistent erhält automatisch eine konkrete
+  Anweisung, was noch fehlt (im Verlauf sichtbar als gedämpfte Notiz
+  „🎯 Automatische Fortsetzung (Iteration n)“), und arbeitet weiter — bis zum
+  Ziel oder bis zur Obergrenze. Die Statusleiste zeigt dabei
+  „Ziel: Iteration 2/5“.
+- **Erfüllt** → der Durchlauf endet, der Knopf wird grün („Ziel erreicht“),
+  und weitere Nachrichten werden nicht mehr geprüft, bis Sie ein neues Ziel
+  setzen oder das alte löschen.
+- **Unerreichbar / Obergrenze** → der Knopf wird rot; passen Sie das Ziel an
+  (erneutes Speichern aktiviert es wieder) oder löschen Sie es. Eine
+  berechtigte Ablehnung (z. B. fehlende Daten) wird respektiert und NICHT in
+  Wiederholungen gezwungen.
+
+Solange ein Ziel **aktiv** ist, gilt es für *jede* gesendete Nachricht der
+Sitzung (der Knopf ist eingefärbt; in der Chat-Liste links erscheint eine
+🎯-Markierung). Im **Terminal-Chat** heißt der Befehl `/goal <Text>`
+(`/goal status` zeigt das Ziel, `/goal off` löscht es). Auch **geplante
+Aufgaben** können ein Ziel bekommen — Feld „🎯 Ziel“ im Aufgaben-Editor; das
+Ergebnis vermerkt dann z. B. „Ziel: erreicht nach 2 Iterationen“. Admins
+wählen unter Einstellungen → Allgemein → **Service-Modelle** das Prüf-Modell
+(„Goal-Modus (Ziel-Prüfung)“) und unter **Eingabefeld-Standards** die
+Standard-Obergrenze — dort lässt sich der Goal-Modus auch komplett
+abschalten. Hinweis: Jede Iteration ist ein vollwertiger Durchlauf und
+kostet entsprechend Tokens; die Prüfungen erscheinen in der
+Kosten-Übersicht als eigener Posten.
+
 **Prompt-Vorschlag (Tab)**: Nach jeder Antwort schlägt das Modell eine
 mögliche nächste Frage vor — sie erscheint als ausgegrauter Platzhaltertext
 im Eingabefeld. Mit `Tab` (oder `→` bei leerem Feld) wird der Vorschlag
@@ -973,6 +1007,11 @@ sichtbar.
   - leer = research-minimal (weniger Tools, schneller, günstiger)
   - `interactive` = volle Toolbox (für „echte Arbeit"-Aufgaben)
 - **Thinking-Level** + **Caveman-Chat** — Pro-Aufgabe-Overrides bei Bedarf.
+- **🎯 Ziel** (optional, Goal-Modus) — Nach jedem Durchgang prüft ein
+  Prüf-Modell, ob das Ziel erreicht ist; wenn nicht, arbeitet die Aufgabe
+  automatisch weiter (bis zur einstellbaren Obergrenze „Max. Iterationen“
+  oder dem Timeout). Das Ergebnis vermerkt den Ausgang, z. B.
+  „Ziel: erreicht nach 2 Iterationen“.
 
 **Verwalten**: Filter-Tabs oben (Alle / Laufend). Pro-Zeile-Knöpfe:
 **Jetzt ausführen**, **Pausieren / Fortsetzen**, **Bearbeiten**,

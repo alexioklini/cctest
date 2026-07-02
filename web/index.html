@@ -1756,6 +1756,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="composer-btn" data-id="btn-caveman" data-composer-toggle="btn-caveman" onclick="toggleCavemanMode()" title="Caveman: aus (Raumschiff) — zum Durchschalten klicken">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2c3 3 5 7 5 12v3l-5-2-5 2v-3c0-5 2-9 5-12z" fill="currentColor" fill-opacity="0.15"/><circle cx="12" cy="10" r="1.5"/><path d="M7 15l-3 3v3l4-2M17 15l3 3v3l-4-2"/><path d="M10 19l2 3 2-3"/></svg>
         </button>
+        <!-- Goal-Modus: set a per-session goal; the server judges every reply
+             against it and auto-continues until fulfilled or the iteration cap.
+             Colored when active (updateStatusBar); opens the goal popover. -->
+        <button class="composer-btn" data-id="btn-goal" data-composer-toggle="btn-goal" onclick="openGoalPopover(event)" title="Ziel setzen (Goal-Modus) — der Assistent arbeitet weiter, bis das Ziel erreicht ist">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>
+        </button>
         <!-- Transparent-anonymisation sticky preference (step 6.3). Hidden by
              default; surfaced when chat.gdprActionPref is set so the user can
              see at a glance that PII handling is automatic for this chat, and

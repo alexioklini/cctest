@@ -325,6 +325,13 @@ async function loadAgentSessions(agentId) {
         chat.saveToMemory = memVal === 1;
         chat.memoryMode = memVal === 1 ? 'on' : memVal === 2 ? 'auto' : 'off';
         chat.cavemanMode = parseInt(sess.caveman_mode) || 0;
+        // Goal-Modus: only adopt server state while NOT streaming — during a
+        // goal loop the SSE events are the fresher source (avoids a poll race
+        // flapping the badge mid-iteration).
+        if (!chat.streaming) {
+          chat.goalText = sess.goal_text || '';
+          chat.goalStatus = sess.goal_status || '';
+        }
       }
     }
   } catch(e) { console.error('loadAgentSessions:', e); }
@@ -1354,9 +1361,17 @@ function renderSessionsList(container, sessions) {
     // no title (rare — pre-first-turn rows).
     const title = s.title || s.summary || `Chat ${sid?.substring(0,6)}`;  // "Chat" identical in German
     const tip = s.summary ? ` title="${esc(s.summary)}"` : '';
+    // Goal-Modus pill: active goal (🎯) or fulfilled (🎯✓) — mirrors the
+    // composer badge so goal chats are recognizable from the list.
+    const goalPill = s.goal_status === 'active'
+      ? `<span class="sb-stream-pill" style="background:var(--accent-500, #6366f1)" title="Goal-Modus aktiv: ${esc(s.goal_text || '')}">🎯</span>`
+      : (s.goal_status === 'fulfilled'
+        ? `<span class="sb-stream-pill" style="background:var(--success, #22c55e)" title="Ziel erreicht: ${esc(s.goal_text || '')}">🎯✓</span>`
+        : '');
     div.innerHTML = `
       <span class="sb-sess-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
       <span class="sb-session-title"${tip}>${esc(title)}</span>
+      ${goalPill}
       ${streaming ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>' : ''}
       <span class="sb-sess-actions">
         <button onclick="event.stopPropagation(); archiveSession('${sid}')" title="Archivieren">

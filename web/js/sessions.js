@@ -181,6 +181,13 @@ async function openSession(sessionId, agentId) {
       : !!data.research_mode_override;
     // Sticky 'allow further web search/fetch' escape hatch (Websuche tab).
     chat.allowFurtherWeb = !!data.allow_further_web;
+    // Goal-Modus state: goal text + status drive the composer 🎯 badge and
+    // the sidebar pill; edited via the goal popover / /goal (Terminal-Chat).
+    chat.goalText = data.goal_text || '';
+    chat.goalStatus = data.goal_status || '';
+    chat.goalIteration = parseInt(data.goal_iteration) || 0;
+    chat.goalMaxIterations = parseInt(data.goal_max_iterations) || 0;
+    chat._goalIteration = 0;
     // Sticky opt-in for the post-turn GDPR feedback modal.
     chat.gdprFeedbackAsk = !!data.gdpr_feedback_ask;
     // Per-finding PII decisions already made in this chat (9.196.0): keyed by

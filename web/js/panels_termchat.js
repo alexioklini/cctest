@@ -284,6 +284,7 @@ const _TC_COMMANDS = [
   { name: 'caveman', desc: 'Antwortstil', values: () => [
     { value: '0', label: '0', hint: 'aus' }, { value: '1', label: '1', hint: 'leicht' },
     { value: '2', label: '2', hint: 'stark' }, { value: '3', label: '3', hint: 'extrem' } ] },
+  { name: 'goal', desc: 'Ziel setzen — Agent arbeitet bis zur Erfüllung weiter [<text>|off|status]' },
   { name: 'clear', desc: 'neue Sitzung (leerer Kontext)' },
   { name: 'lcm', desc: 'Kontext komprimieren (LCM)' },
   { name: 'sync', desc: 'Projekt-Sync anstoßen' },
@@ -618,6 +619,29 @@ function _tcCallbacks(tab, live) {
     injected_message: (d) => {
       // Already surfaced as pending; this confirms the loop spliced it in.
     },
+    // ── Goal-Modus events ──
+    goal_judge_start: (d) => {
+      _tcSpinSet(tab, `Ziel wird geprüft (Iteration ${d.iteration}/${d.max})`);
+    },
+    goal_verdict: (d) => {
+      tab.goalStatus = d.status || tab.goalStatus;
+      if (d.status === 'fulfilled') {
+        tcPrint(tab, '🎯 <b>Ziel erreicht</b>' + (d.reasoning ? ' — ' + esc(d.reasoning) : ''), 'tc-sys');
+      } else if (d.status === 'capped') {
+        const why = d.impossible ? 'nicht erreichbar / legitime Ablehnung' : `Limit ${d.max} Iterationen`;
+        tcPrint(tab, `🎯 Ziel nicht erreicht (${esc(why)})` + (d.reasoning ? ' — ' + esc(d.reasoning) : ''), 'tc-err');
+      } else if (d.status === 'judge_error') {
+        tcPrint(tab, '🎯 Ziel-Prüfung fehlgeschlagen — Durchlauf beendet.', 'tc-err');
+      }
+      tcRenderStatus(tab);
+    },
+    goal_continue: (d) => {
+      // Iteration boundary: close the current answer segment so the next
+      // text_delta opens a fresh row AFTER the continue-instruction line.
+      live.curTextRow = null; live.lastWasTool = false; live.curSegText = '';
+      tcPrint(tab, `🎯 Iteration ${d.iteration}/${d.max} — automatische Fortsetzung: ${esc(d.text || '')}`, 'tc-inject');
+      _tcSpinSet(tab, 'Denkt nach');
+    },
     // btw is rendered inline by tcBtw() from the synchronous /v1/chat/btw
     // response (works idle OR mid-stream) — no SSE btw_start/btw_done handling
     // here, which would double-render the row on this same tab.
@@ -733,6 +757,9 @@ function tcRenderStatus(tab) {
   const dot = tab.streaming ? (tab._paused ? '' : '<span class="tc-live">●</span> ') : '';
   const qn = Array.isArray(tab._queue) ? tab._queue.length : 0;
   const queueBadge = qn ? ` · <span class="tc-queue-badge">⧉ ${qn} in Warteschlange</span>` : '';
+  const goalBadge = tab.goalStatus === 'active'
+    ? ` · <span class="tc-goal-badge" title="${esc(tab.goalText || '')}">🎯 Ziel aktiv</span>`
+    : (tab.goalStatus === 'fulfilled' ? ' · 🎯 ✓ Ziel erreicht' : '');
   const cancelHint = tab.streaming
     ? ' · <span class="tc-cancel-hint">Esc /cancel · Strg-Z pausieren · /btw · /inject</span>'
     : '';
@@ -740,7 +767,7 @@ function tcRenderStatus(tab) {
   // the chat has rows.
   const exportBtn = `<button class="tc-st-btn" title="Chatverlauf als Markdown herunterladen"
     onclick="tcExportMarkdown('${esc(tab.id)}')">⬇ .md</button>`;
-  el.innerHTML = `<span class="tc-st-info">${dot}${pausedBadge}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}${queueBadge}${cancelHint}</span>${exportBtn}`;
+  el.innerHTML = `<span class="tc-st-info">${dot}${pausedBadge}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}${queueBadge}${goalBadge}${cancelHint}</span>${exportBtn}`;
 }
 
 // Build a Markdown transcript of a terminal-chat from its in-DOM rows and
@@ -824,6 +851,7 @@ async function tcSlash(tab, raw) {
     case 'clear': return _tcCmdClear(tab);
     case 'lcm': case 'compact': return _tcCmdLcm(tab);
     case 'caveman': return _tcCmdCaveman(tab, arg);
+    case 'goal': return _tcCmdGoal(tab, arg);
     case 'init': return _tcCmdInit(tab);
     case 'sync': return _tcCmdSync(tab);
     case 'suggest': return _tcSuggest(tab, true);
@@ -844,6 +872,7 @@ function _tcHelp(tab) {
     '/think off|low|medium|high — Denktiefe',
     '/tools on|off          — Werkzeugaufrufe anzeigen',
     '/caveman 0-3           — Caveman-Stil',
+    '/goal &lt;text&gt;|off|status — Ziel setzen (Goal-Modus): nach jeder Antwort prüft ein Judge, ob das Ziel erreicht ist; wenn nicht, arbeitet der Agent automatisch weiter',
     '/clear                 — neue Sitzung (leerer Kontext)',
     '/lcm                   — Kontext komprimieren (LCM)',
     '/sync                  — Projekt-Sync anstoßen',
@@ -925,6 +954,45 @@ async function _tcCmdCaveman(tab, arg) {
     try { await API.post(`/v1/sessions/${tab.sessionId}/manage`, { action: 'caveman_mode', value: n }); } catch (_) {}
   }
   tcPrint(tab, `Caveman-Stil → <b>${n}</b>`, 'tc-sys');
+}
+
+// /goal — Goal-Modus: persist a per-session goal; the server judges every
+// turn against it and auto-continues until fulfilled / capped / cleared.
+async function _tcCmdGoal(tab, arg) {
+  const a = (arg || '').trim();
+  const low = a.toLowerCase();
+  if (!a || low === 'status') {
+    if (tab.goalText) {
+      const st = tab.goalStatus === 'fulfilled' ? 'erreicht'
+        : tab.goalStatus === 'capped' ? 'nicht erreicht (Limit/unerreichbar)'
+        : 'aktiv';
+      tcPrint(tab, `🎯 Ziel (<b>${esc(st)}</b>): ${esc(tab.goalText)}`, 'tc-sys');
+    } else {
+      tcPrint(tab, 'Kein Ziel gesetzt. Verwendung: /goal &lt;text&gt; | off | status', 'tc-sys');
+    }
+    return;
+  }
+  if (low === 'off' || low === 'clear') {
+    tab.goalText = ''; tab.goalStatus = '';
+    if (tab.sessionId) {
+      try { await API.post('/v1/sessions/manage', { action: 'goal', session_id: tab.sessionId, goal: '' }); } catch (_) {}
+    }
+    tcPrint(tab, '🎯 Ziel gelöscht.', 'tc-sys');
+    tcRenderStatus(tab);
+    return;
+  }
+  if (!tab.sessionId) {
+    const ok = await _tcEnsureSession(tab);
+    if (!ok) { tcPrint(tab, 'Sitzung konnte nicht erstellt werden.', 'tc-err'); return; }
+  }
+  try {
+    await API.post('/v1/sessions/manage', { action: 'goal', session_id: tab.sessionId, goal: a });
+    tab.goalText = a; tab.goalStatus = 'active';
+    tcPrint(tab, `🎯 Ziel gesetzt — der Agent arbeitet nach jeder Antwort weiter, bis es erreicht ist: <b>${esc(a)}</b>`, 'tc-sys');
+  } catch (e) {
+    tcPrint(tab, 'Ziel setzen fehlgeschlagen: ' + esc(e.message || String(e)), 'tc-err');
+  }
+  tcRenderStatus(tab);
 }
 
 // /init → run the Code-Mode BRAIN.md init: an agentic turn that explores the
@@ -1102,6 +1170,8 @@ async function tcLoadTranscript(tab) {
     if (d.thinking_level) tab.thinking = d.thinking_level;
     if (d.max_context) tab.maxContext = d.max_context;
     if (typeof d.caveman_mode === 'number') tab.caveman = d.caveman_mode;
+    tab.goalText = d.goal_text || '';
+    tab.goalStatus = d.goal_status || '';
     if (d.title) { tab.name = d.title; if (typeof _terminalRenderTabs === 'function') _terminalRenderTabs(); }
     // Restore the running token/cost totals + last-used model + last prompt size
     // from the per-message metadata so the status line reflects the conversation

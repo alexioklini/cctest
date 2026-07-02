@@ -211,6 +211,11 @@ class Scheduler:
                 # source_ref=schedule/<id>). Default 0 = off; the user can still
                 # file a run manually from the scheduled-chat view.
                 "ALTER TABLE schedules ADD COLUMN wiki_file INTEGER DEFAULT 0",
+                # Goal-Modus: optional goal the run is judged against after each
+                # turn; while unmet the runner appends a continue-instruction
+                # and re-runs, up to goal_max_iterations (0 = admin default).
+                "ALTER TABLE schedules ADD COLUMN goal TEXT DEFAULT ''",
+                "ALTER TABLE schedules ADD COLUMN goal_max_iterations INTEGER DEFAULT 0",
             ):
                 try:
                     conn.execute(_ddl)
@@ -243,6 +248,9 @@ class Scheduler:
                 "ALTER TABLE schedule_history ADD COLUMN visibility TEXT DEFAULT ''",
                 "ALTER TABLE schedule_history ADD COLUMN owner_user_id TEXT DEFAULT ''",
                 "ALTER TABLE schedule_history ADD COLUMN owner_team_id TEXT DEFAULT ''",
+                # Goal-Modus: how many judge iterations this run went through
+                # (0 = goal mode not active for the run).
+                "ALTER TABLE schedule_history ADD COLUMN goal_iterations INTEGER DEFAULT 0",
             ):
                 try:
                     conn.execute(_ddl)
@@ -264,7 +272,9 @@ class Scheduler:
             caveman_chat: int = 0,
             tool_profile: str = "",
             project_id: str = "",
-            wiki_file: int = 0) -> dict:
+            wiki_file: int = 0,
+            goal: str = "",
+            goal_max_iterations: int = 0) -> dict:
         """Add a scheduled task. timeout in seconds (default: 300 = 5 min).
 
         attachments: list of {name, path, mime, size} dicts. Files must already
@@ -280,6 +290,9 @@ class Scheduler:
         (uuid4 hex). When set, the fire-path runs the task inside that project's
         context. Caller (server endpoint) is responsible for validating the id +
         the user's access to the project.
+        goal: '' (off) | Goal-Modus goal text — the run is judged against it
+        after each turn and auto-continues while unmet.
+        goal_max_iterations: 0 (admin default) | per-task iteration cap.
         """
         next_run = self._calc_next_run(schedule)
         if next_run is None:
@@ -311,15 +324,23 @@ class Scheduler:
             wiki_file = 1 if int(wiki_file or 0) else 0
         except (TypeError, ValueError):
             wiki_file = 0
+        goal = (goal or "").strip()
+        try:
+            from engine.goal_judge import GOAL_ITER_HARD_CAP
+            goal_max_iterations = max(0, min(GOAL_ITER_HARD_CAP,
+                                             int(goal_max_iterations or 0)))
+        except (TypeError, ValueError):
+            goal_max_iterations = 0
         atts_json = json.dumps(attachments or [])
         try:
             with _sched_conn() as conn:
                 conn.execute("""
-                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat, tool_profile, project_id, wiki_file)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO schedules (name, task, schedule, agent, model, next_run, timeout, attachments, working_dir, user_id, thinking_level, caveman_chat, tool_profile, project_id, wiki_file, goal, goal_max_iterations)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (name, task, schedule, agent, model, next_run.isoformat(),
                       timeout, atts_json, working_dir, user_id or "",
-                      thinking_level, caveman_chat, tool_profile, project_id, wiki_file))
+                      thinking_level, caveman_chat, tool_profile, project_id, wiki_file,
+                      goal, goal_max_iterations))
                 conn.commit()
             return {"name": name, "schedule": schedule, "agent": agent,
                     "next_run": next_run.isoformat(), "timeout": timeout,
@@ -330,6 +351,8 @@ class Scheduler:
                     "tool_profile": tool_profile,
                     "project_id": project_id,
                     "wiki_file": wiki_file,
+                    "goal": goal,
+                    "goal_max_iterations": goal_max_iterations,
                     "status": "created"}
         except sqlite3.IntegrityError:
             return {"error": f"Schedule '{name}' already exists"}
@@ -577,7 +600,7 @@ class Scheduler:
         allowed = {"task", "schedule", "model", "timeout", "agent",
                    "attachments", "working_dir",
                    "thinking_level", "caveman_chat", "tool_profile",
-                   "project_id", "wiki_file"}
+                   "project_id", "wiki_file", "goal", "goal_max_iterations"}
         updates: dict = {}
         for k in allowed:
             if k not in fields:
@@ -612,6 +635,14 @@ class Scheduler:
                 updates[k] = tp
             elif k == "wiki_file":
                 updates[k] = 1 if (int(v) if str(v).strip().lstrip("-").isdigit() else bool(v)) else 0
+            elif k == "goal":
+                updates[k] = str(v or "").strip()
+            elif k == "goal_max_iterations":
+                from engine.goal_judge import GOAL_ITER_HARD_CAP
+                try:
+                    updates[k] = max(0, min(GOAL_ITER_HARD_CAP, int(v or 0)))
+                except (TypeError, ValueError):
+                    return {"error": "goal_max_iterations must be an integer"}
             else:
                 updates[k] = v
         new_name = fields.get("new_name")
@@ -861,7 +892,8 @@ class Scheduler:
                             result: str, started_at: str | None = None,
                             tool_calls: int = 0,
                             trace_id: str | None = None,
-                            artifact_folder: str | None = None):
+                            artifact_folder: str | None = None,
+                            goal_iterations: int = 0):
         """Finalize the running history row and update the schedule's next_run.
 
         Splits duration/tool_calls/trace/artifact into dedicated columns so the
@@ -887,12 +919,13 @@ class Scheduler:
                     duration_ms = ?,
                     tool_calls = ?,
                     trace_id = COALESCE(?, trace_id),
-                    artifact_folder = COALESCE(?, artifact_folder)
+                    artifact_folder = COALESCE(?, artifact_folder),
+                    goal_iterations = ?
                 WHERE id = ?
             """, (status,
                   f"[Duration: {duration:.0f}s | Tools: {tool_calls}]\n\n{result}",
                   now.isoformat(), duration_ms, tool_calls,
-                  trace_id, artifact_folder, run_id))
+                  trace_id, artifact_folder, int(goal_iterations or 0), run_id))
 
             row = conn.execute("SELECT schedule FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
             if row:
@@ -1306,122 +1339,192 @@ class Scheduler:
                     # sequential tool use sidesteps the issue.
                     _model_cfg = _brain._models_config.get(model, {}) or {}
                     _disable_parallel = _model_cfg.get("parallel_tool_calls", True) is False
-                    _result = _sidecar_proxy.run_turn(
-                        messages=messages,
-                        model=model,
-                        api_key=_prov["api_key"],
-                        base_url=_prov["base_url"],
-                        system_prompt=system_prompt,
-                        purpose=_sched_purpose,
-                        tool_context=_tool_context,
-                        sampling=_sampling,
-                        thinking_level=_thinking_level,
-                        max_tokens=_max_tokens,
-                        max_rounds=_max_rounds,
-                        event_callback=_sc_event,
-                        cancel_token=cancel_token,
-                        timeout_s=float(task_timeout) + 60.0,
-                        disable_parallel_tool_use=_disable_parallel,
-                    )
-                    _sc_err = _result.get("error")
-                    _sc_reply = _sched_deanon(_result.get("reply") or "")
-                    if _sc_err and not _sc_reply:
-                        result_text = f"[DELEGATION ERROR] sidecar: {str(_sc_err)[:300]}"
-                        status = "error"
-                    elif _sc_err and _sc_reply:
-                        result_text = _sc_reply + f"\n\n*(Sidecar error after partial: {str(_sc_err)[:200]})*"
-                    else:
-                        result_text = _sc_reply
-                    run_info["trace_id"] = _result.get("turn_id") or None
-                    # Sidecar's tool_calls_total is authoritative; on_event may have
-                    # missed start events if the worker died mid-turn.
-                    run_info["tool_calls"] = max(
-                        run_info["tool_calls"], int(_result.get("tool_calls_total") or 0))
+                    # ── Goal-Modus (scheduled runs) ──
+                    # When the task carries a goal, the turn below runs in a
+                    # bounded loop: turn → judge the raw (still-pseudonymised)
+                    # reply against the goal → on an unmet verdict append the
+                    # continue-instruction as the next user message and re-run
+                    # with the accumulated conversation. Judge failures / turn
+                    # errors / the timeout budget always stop the loop. Only
+                    # the FINAL result_text is de-anonymised + persisted.
+                    from engine.goal_judge import (
+                        goal_mode_enabled as _gj_enabled,
+                        resolve_max_iterations as _gj_max,
+                        judge as _gj_judge)
+                    _goal_text = (task_row.get("goal") or "").strip()
+                    _goal_on = bool(_goal_text) and _gj_enabled()
+                    _gmax = (_gj_max(task_row.get("goal_max_iterations") or 0)
+                             if _goal_on else 1)
+                    _goal_t0 = time.time()
+                    _goal_note = ""
+                    _goal_tools_sum = 0
+                    for _gi in range(1, _gmax + 1):
+                        run_info["goal_iterations"] = _gi if _goal_on else 0
+                        _result = _sidecar_proxy.run_turn(
+                            messages=messages,
+                            model=model,
+                            api_key=_prov["api_key"],
+                            base_url=_prov["base_url"],
+                            system_prompt=system_prompt,
+                            purpose=_sched_purpose,
+                            tool_context=_tool_context,
+                            sampling=_sampling,
+                            thinking_level=_thinking_level,
+                            max_tokens=_max_tokens,
+                            max_rounds=_max_rounds,
+                            event_callback=_sc_event,
+                            cancel_token=cancel_token,
+                            timeout_s=float(task_timeout) + 60.0,
+                            disable_parallel_tool_use=_disable_parallel,
+                        )
+                        _sc_err = _result.get("error")
+                        _sc_reply = _sched_deanon(_result.get("reply") or "")
+                        if _sc_err and not _sc_reply:
+                            result_text = f"[DELEGATION ERROR] sidecar: {str(_sc_err)[:300]}"
+                            status = "error"
+                        elif _sc_err and _sc_reply:
+                            result_text = _sc_reply + f"\n\n*(Sidecar error after partial: {str(_sc_err)[:200]})*"
+                        else:
+                            result_text = _sc_reply
+                        run_info["trace_id"] = _result.get("turn_id") or None
+                        # Sidecar's tool_calls_total is authoritative; on_event may have
+                        # missed start events if the worker died mid-turn. Summed
+                        # across goal iterations (on_event already counts them all).
+                        _goal_tools_sum += int(_result.get("tool_calls_total") or 0)
+                        run_info["tool_calls"] = max(
+                            run_info["tool_calls"], _goal_tools_sum)
 
-                    # ── Cost + trace logging for the run ──
-                    # The interactive chat worker logs token cost (chat.py) and
-                    # the run-detail view reads tool/LLM spans from traces.db.
-                    # The scheduler fire-path did NEITHER since the SDK
-                    # migration (v9.0.0 dropped the native loop that used to do
-                    # it), so a scheduled run showed only a tool COUNT — no
-                    # token in/out, no cost, no per-tool list in the inspector.
-                    # Reconstruct both from run_turn's return: usage_total
-                    # (token totals) + tool_events (which tools ran), keyed by
-                    # the synthetic sched session id + the turn's trace_id so
-                    # run_detail's get_trace(trace_id) picks them up.
-                    try:
-                        _usage = _result.get("usage_total") or {}
-                        _tok_in = (int(_usage.get("input_tokens", 0) or 0)
-                                   + int(_usage.get("cache_creation_input_tokens", 0) or 0)
-                                   + int(_usage.get("cache_read_input_tokens", 0) or 0))
-                        _tok_out = int(_usage.get("output_tokens", 0) or 0)
-                        _trace_id = _result.get("turn_id") or None
-                        # Cost ledger (cost_log) keyed by the sched session id.
-                        if _tok_in or _tok_out:
-                            _brain._log_call_cost(
-                                model, _tok_in, _tok_out,
-                                session_id=sched_session_id,
-                                api_key=_prov.get("api_key"))
-                        # Spans for the inspector. tool_events is the authoritative
-                        # per-tool list; fall back to the on_event tool_log strings.
-                        _tm = getattr(_brain, "_trace_manager", None)
-                        if _tm and _trace_id:
-                            _tool_events = _result.get("tool_events") or []
-                            if _tool_events:
-                                for _ev in _tool_events:
-                                    _nm = (_ev.get("name") if isinstance(_ev, dict) else str(_ev)) or "?"
-                                    _summ = ""
-                                    if isinstance(_ev, dict):
-                                        # Prefer the capped result text the sidecar
-                                        # now carries; fall back to a synthesized
-                                        # summary (args + size + error flag) so the
-                                        # inspector always shows *something* per tool.
-                                        _summ = str(_ev.get("result_text")
-                                                    or _ev.get("result")
-                                                    or _ev.get("result_summary") or "")
-                                        if not _summ:
-                                            _args = _ev.get("args")
-                                            _chars = _ev.get("result_chars")
-                                            _bits = []
-                                            if _args:
-                                                _bits.append(f"args: {str(_args)[:200]}")
-                                            if _chars is not None:
-                                                _bits.append(f"{_chars} Zeichen")
-                                            if _ev.get("is_error"):
-                                                _bits.append("FEHLER")
-                                            _summ = " · ".join(_bits)
-                                    _st = "error" if (isinstance(_ev, dict) and _ev.get("is_error")) else "ok"
-                                    _sp = _tm.start_span(
-                                        "tool_call", _nm, agent=agent_id,
-                                        model=model, trace_id=_trace_id,
-                                        session_id=sched_session_id)
-                                    # full_result = the complete tool output the
-                                    # model received (result_text, up to 100k);
-                                    # result_summary stays the short inline
-                                    # preview. Lets the inspector expand the full
-                                    # result like the chat view.
-                                    _full = ""
-                                    if isinstance(_ev, dict):
-                                        _full = str(_ev.get("result_text") or _ev.get("result") or "")
-                                    _tm.end_span(_sp, status=_st, result_summary=_summ,
-                                                 full_result=_full)
-                            else:
-                                for _entry in (run_info.get("tool_log") or []):
-                                    _nm = str(_entry).split("(", 1)[0] or "?"
-                                    _sp = _tm.start_span(
-                                        "tool_call", _nm, agent=agent_id,
-                                        model=model, trace_id=_trace_id,
-                                        session_id=sched_session_id)
-                                    _tm.end_span(_sp, status="ok")
-                            # One LLM span carrying the token totals so the
-                            # run-detail stats block shows tokens in/out.
-                            _llm = _tm.start_span(
-                                "llm_call", model, agent=agent_id, model=model,
-                                trace_id=_trace_id, session_id=sched_session_id)
-                            _tm.end_span(_llm, status="ok",
-                                         tokens_in=_tok_in, tokens_out=_tok_out)
-                    except Exception as _obs_e:
-                        print(f"  [WARN] sched observability log failed: {_obs_e}", flush=True)
+                        # ── Cost + trace logging for the run ──
+                        # The interactive chat worker logs token cost (chat.py) and
+                        # the run-detail view reads tool/LLM spans from traces.db.
+                        # The scheduler fire-path did NEITHER since the SDK
+                        # migration (v9.0.0 dropped the native loop that used to do
+                        # it), so a scheduled run showed only a tool COUNT — no
+                        # token in/out, no cost, no per-tool list in the inspector.
+                        # Reconstruct both from run_turn's return: usage_total
+                        # (token totals) + tool_events (which tools ran), keyed by
+                        # the synthetic sched session id + the turn's trace_id so
+                        # run_detail's get_trace(trace_id) picks them up.
+                        try:
+                            _usage = _result.get("usage_total") or {}
+                            _tok_in = (int(_usage.get("input_tokens", 0) or 0)
+                                       + int(_usage.get("cache_creation_input_tokens", 0) or 0)
+                                       + int(_usage.get("cache_read_input_tokens", 0) or 0))
+                            _tok_out = int(_usage.get("output_tokens", 0) or 0)
+                            _trace_id = _result.get("turn_id") or None
+                            # Cost ledger (cost_log) keyed by the sched session id.
+                            if _tok_in or _tok_out:
+                                _brain._log_call_cost(
+                                    model, _tok_in, _tok_out,
+                                    session_id=sched_session_id,
+                                    api_key=_prov.get("api_key"))
+                            # Spans for the inspector. tool_events is the authoritative
+                            # per-tool list; fall back to the on_event tool_log strings.
+                            _tm = getattr(_brain, "_trace_manager", None)
+                            if _tm and _trace_id:
+                                _tool_events = _result.get("tool_events") or []
+                                if _tool_events:
+                                    for _ev in _tool_events:
+                                        _nm = (_ev.get("name") if isinstance(_ev, dict) else str(_ev)) or "?"
+                                        _summ = ""
+                                        if isinstance(_ev, dict):
+                                            # Prefer the capped result text the sidecar
+                                            # now carries; fall back to a synthesized
+                                            # summary (args + size + error flag) so the
+                                            # inspector always shows *something* per tool.
+                                            _summ = str(_ev.get("result_text")
+                                                        or _ev.get("result")
+                                                        or _ev.get("result_summary") or "")
+                                            if not _summ:
+                                                _args = _ev.get("args")
+                                                _chars = _ev.get("result_chars")
+                                                _bits = []
+                                                if _args:
+                                                    _bits.append(f"args: {str(_args)[:200]}")
+                                                if _chars is not None:
+                                                    _bits.append(f"{_chars} Zeichen")
+                                                if _ev.get("is_error"):
+                                                    _bits.append("FEHLER")
+                                                _summ = " · ".join(_bits)
+                                        _st = "error" if (isinstance(_ev, dict) and _ev.get("is_error")) else "ok"
+                                        _sp = _tm.start_span(
+                                            "tool_call", _nm, agent=agent_id,
+                                            model=model, trace_id=_trace_id,
+                                            session_id=sched_session_id)
+                                        # full_result = the complete tool output the
+                                        # model received (result_text, up to 100k);
+                                        # result_summary stays the short inline
+                                        # preview. Lets the inspector expand the full
+                                        # result like the chat view.
+                                        _full = ""
+                                        if isinstance(_ev, dict):
+                                            _full = str(_ev.get("result_text") or _ev.get("result") or "")
+                                        _tm.end_span(_sp, status=_st, result_summary=_summ,
+                                                     full_result=_full)
+                                else:
+                                    for _entry in (run_info.get("tool_log") or []):
+                                        _nm = str(_entry).split("(", 1)[0] or "?"
+                                        _sp = _tm.start_span(
+                                            "tool_call", _nm, agent=agent_id,
+                                            model=model, trace_id=_trace_id,
+                                            session_id=sched_session_id)
+                                        _tm.end_span(_sp, status="ok")
+                                # One LLM span carrying the token totals so the
+                                # run-detail stats block shows tokens in/out.
+                                _llm = _tm.start_span(
+                                    "llm_call", model, agent=agent_id, model=model,
+                                    trace_id=_trace_id, session_id=sched_session_id)
+                                _tm.end_span(_llm, status="ok",
+                                             tokens_in=_tok_in, tokens_out=_tok_out)
+                        except Exception as _obs_e:
+                            print(f"  [WARN] sched observability log failed: {_obs_e}", flush=True)
+                        # ── Goal-Modus: judge + auto-continue ──
+                        if not _goal_on or _sc_err or status == "error":
+                            break
+                        _gv = _gj_judge(
+                            goal=_goal_text,
+                            reply=(_result.get("reply") or ""),
+                            iteration=_gi,
+                            max_iterations=_gmax,
+                            session_id=sched_session_id,
+                            agent_id=agent_id,
+                            user_id=(task_row.get("user_id") or None),
+                            last_user_msg=task,
+                        )
+                        if _gv.get("error"):
+                            _goal_note = "Ziel-Prüfung fehlgeschlagen — Lauf beendet"
+                            print(f"  [WARN] goal judge failed for '{name}': "
+                                  f"{_gv['error']}", flush=True)
+                            break
+                        if _gv.get("fulfilled"):
+                            _goal_note = f"Ziel: erreicht nach {_gi} Iteration(en)"
+                            break
+                        if _gv.get("impossible"):
+                            _goal_note = (f"Ziel: nicht erreichbar "
+                                          f"({(_gv.get('reasoning') or '')[:200]})")
+                            break
+                        if _gi >= _gmax:
+                            _goal_note = f"Ziel: nicht erreicht (Limit {_gmax} Iterationen)"
+                            break
+                        if cancel_token.cancelled:
+                            break
+                        # Leave ≥30s of the timeout budget for the next turn —
+                        # otherwise the watchdog would cut it off mid-flight.
+                        if time.time() - _goal_t0 > max(0.0, float(task_timeout) - 30.0):
+                            _goal_note = (f"Ziel: nicht erreicht "
+                                          f"(Zeitlimit nach {_gi} Iterationen)")
+                            break
+                        # Iterate: extend the conversation IN PSEUDONYMISED token
+                        # space (raw reply, not _sc_reply) — consistent with the
+                        # GDPR gate above; only the final result is de-anonymised.
+                        messages.append({"role": "assistant",
+                                         "content": _result.get("reply") or ""})
+                        messages.append({"role": "user",
+                                         "content": _gv["continue_instruction"]})
+                        print(f"  [goal] '{name}' iteration {_gi}/{_gmax} unmet → "
+                              f"continue", flush=True)
+                    if _goal_on and _goal_note:
+                        result_text = (result_text or "") + f"\n\n---\n{_goal_note}"
                 # Check if the loop returned an error string instead of raising.
                 # Strip the redundant 'Delegation error: ' prefix and the trailing
                 # colon-with-nothing-after that comes from bare-exception args, and
@@ -1513,6 +1616,7 @@ class Scheduler:
                 tool_calls=run_info.get("tool_calls", 0),
                 trace_id=run_info.get("trace_id"),
                 artifact_folder=_folder_for_row,
+                goal_iterations=run_info.get("goal_iterations", 0),
             )
         else:
             # begin_execution failed — fall back to insert-and-finalize in one

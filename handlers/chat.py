@@ -2800,764 +2800,925 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
                 _agent_cfg = session.agent.config or {}
                 _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
-                # Transparent anonymisation — DETERMINISTIC, ledger-driven.
-                # Prior turns' user messages + assistant replies are persisted
-                # de-anonymised (the chat UI shows real values), so without a
-                # rewrite they'd ship to the cloud LLM in clear. We rebuild the
-                # wire-history straight from the persisted PII decision ledger
-                # (pii_decisions): every value the session EVER anonymised is
-                # replaced by its stored fake on EVERY subsequent turn — no
-                # re-scan, no new mints, and crucially INDEPENDENT of whether a
-                # mapping is "live" this turn. This is the fix for the leak where
-                # a value anonymised early went out in clear from the turn the
-                # user first chose 'continue' for a NEW finding: the decision is
-                # read from the ledger, not re-derived from the per-turn action.
-                # Accepted / false-positive / local values stay in clear (the
-                # user's choice); attachment-anonymised values are covered too
-                # (their decisions are in the same ledger).
-                # A LOCAL model never sends data off the machine, so the
-                # wire-history pseudonymisation is pointless there — skip it so a
-                # local turn sees the REAL history (a chat that was cloud+anonymise
-                # then switched to a local model must not anonymise the local turn).
-                _wire_messages = session.messages
-                _wire_is_local = False
-                try:
-                    _wire_is_local = bool(engine.is_model_local(session.model))
-                except Exception:
-                    _wire_is_local = False
-                try:
-                    _pii_decisions = {} if _wire_is_local else ChatDB.get_session_pii_decisions(sid)
-                except Exception:
-                    _pii_decisions = {}
-                if _pii_decisions:
-                    _wire_messages, _hist_repl, _hist_counts = (
-                        _apply_pii_decisions_to_wire(
-                            session.messages, _pii_decisions))
-                    if _hist_repl > 0:
-                        try:
-                            _tuid = (f"anon_hist_{sid[:8]}_"
-                                     f"{int(time.time()*1000) % 1_000_000}")
-                            emit_gdpr_tool_event_for_session(
-                                sid,
-                                kind="anonymise_read",
-                                tool_use_id=_tuid,
-                                args={"source": "history"},
-                                result={
-                                    "findings": _hist_repl,
-                                    "tokens_minted": 0,
-                                    "categories": _hist_counts,
-                                    "source": "history",
-                                },
-                                status="ok",
-                                duration_ms=0,
-                            )
-                        except Exception:
-                            pass
-                # Manual web-search: fetch the curated URLs FRESH now and
-                # prepend their content to the wire copy of the last user
-                # message only — ephemeral, never persisted into history, so
-                # a re-send tomorrow re-fetches instead of replaying a stale
-                # page. The fetched text IS recorded on the assistant turn's
-                # metadata.web_sources (below) so the session inspector can
-                # show exactly which content each turn used — today's
-                # weather on today's turn, tomorrow's on tomorrow's —
-                # without that content ever re-entering the conversation
-                # (metadata is stripped before the wire by _ALLOWED_MSG_KEYS).
-                _web_sources_used = []
-                if web_urls:
-                    _web_pre, _web_sources_used = _build_web_sources(
-                        web_urls, web_locked)
-                    if _web_pre:
-                        _wire_messages = _inject_web_preamble_into_wire(
-                            _wire_messages, _web_pre)
-                # Detached background tasks: any that FINISHED since the last
-                # turn have their full output folded into THIS turn wire-only
-                # (same ephemeral seam as web sources — never persisted, so it
-                # drops out of context after this turn exactly like a tool
-                # result). pop_unconsumed marks them consumed in the same
-                # transaction, so each task's output reaches the model once.
-                _bg_pre = _build_background_task_preamble(sid)
-                if _bg_pre:
-                    _wire_messages = _inject_web_preamble_into_wire(
-                        _wire_messages, _bg_pre)
-                # Research-mode citation discipline — TWO mutually-exclusive paths,
-                # chosen by the auto-route classifier mode:
-                #  • LLM/hybrid mode → DYNAMIC: trigger on the EFFECTIVE active
-                #    tools (_active_tool_names). If any retrieval tool is live
-                #    (memory/web-search/web-fetch/doc-read/file-read) the answer
-                #    can ground on sources → attach the discipline. ANY chat,
-                #    project or not. The per-project research_mode flag is ignored
-                #    (disabled in the UI under LLM mode — dynamic covers it).
-                #    Keyed off the RESOLVED tool set, NOT the classifier's intent:
-                #    the classifier only reduces tools, so its guess could wrongly
-                #    suppress discipline on a turn that does retrieve.
-                #  • keyword mode → MANUAL only: no dynamic trigger; the explicit
-                #    project research_mode flag / session override is the control
-                #    (and renders the discipline in the SYSTEM PROMPT, prompt_build).
-                # Injected as a WIRE-ONLY preamble (not the system prompt) so the
-                # warm-pool KV prefix stays byte-stable (fires for warm/local too).
-                # Per-turn discipline record for the classification inspector:
-                # whether the research-mode discipline was injected this turn,
-                # HOW (wire preamble in LLM mode vs system prompt in keyword
-                # mode), and exactly WHICH sections (refusal/precision/citation,
-                # honouring admin per-section opt-out). Ground truth, not the
-                # static default set. Stashed on the request context; the
-                # metadata-build block folds it into auto_route.
-                # Code Mode: the project has NO project memory / curated sources
-                # — the model reads files in the working directory to DO work, not
-                # to ground a cited answer. The grounded-answer / citation
-                # discipline (and its validator) make no sense here and were
-                # wrongly flagging "N von M ohne Quellenangabe" (chat 4866f92e).
-                # working_dir is set on the context only for code-mode projects.
-                _code_mode_chat = bool(engine.get_request_context().working_dir)
-                _discipline_meta = None
-                if _code_mode_chat:
-                    session._citation_discipline_active = False
-                    _discipline_meta = {"active": False, "trigger": "code_mode"}
-                elif engine.classifier_is_llm():
-                    _grounding = engine.turn_has_retrieval_tools(_active_tool_names)
-                    session._citation_discipline_active = bool(_grounding)
-                    if _grounding:
-                        _disc = engine.render_research_mode_disciplines()
-                        if _disc:
-                            _disc_pre = ("GROUNDED-ANSWER DISCIPLINE (this answer draws on "
-                                         "retrieved sources — cite + refuse per below):\n" + _disc)
-                            _wire_messages = _inject_web_preamble_into_wire(_wire_messages, _disc_pre)
-                            _discipline_meta = {
-                                "active": True,
-                                "source": "wire_preamble",
-                                "trigger": "retrieval_tool_active",
-                                "sections": engine.active_research_discipline_sections(),
-                            }
-                    if _discipline_meta is None:
-                        _discipline_meta = {"active": False, "trigger": "no_retrieval_tool"}
-                else:
-                    # Keyword mode: the system-prompt path (prompt_build, gated on
-                    # research_mode) already injected the discipline when the flag
-                    # is on — record that so the validator runs to match.
-                    _rm_on = bool(getattr(session, "research_mode_override", None))
-                    if not _rm_on and engine.get_request_context().project:
-                        _pc = engine.ProjectManager.get_project(session.agent_id, engine.get_request_context().project)
-                        _rm_on = bool((_pc or {}).get("research_mode", False))
-                    session._citation_discipline_active = bool(_rm_on)
-                    if _rm_on:
-                        _discipline_meta = {
-                            "active": True,
-                            "source": "system_prompt",
-                            "trigger": "research_mode",
-                            "sections": engine.active_research_discipline_sections(),
-                        }
-                    else:
-                        _discipline_meta = {"active": False, "trigger": "research_mode_off"}
-                try:
-                    engine.get_request_context()._discipline_meta = _discipline_meta
-                except Exception:
-                    pass
-                # Session attachments (v9.138.0): wire-only reminder, EVERY turn,
-                # of the documents attached so far in this chat so a later turn
-                # can still read them via read_document — the upload-turn notice
-                # only fires on the turn the file arrived, so later turns
-                # 'forgot' the file and the model answered from stale context
-                # instead of re-reading it (chat 29ce67d2). Transient (never
-                # persisted). Also forces read_document in-prompt when the
-                # session has docs (read_document is otherwise classifier-
-                # deferred on a turn whose text doesn't mention files).
-                _att_suffix, _att_has_docs = _session_attachments_wire_suffix(sid)
-                if _att_suffix:
-                    _wire_messages = _append_to_wire_user(_wire_messages, _att_suffix)
-                # Caveman OUTPUT-STYLE (v9.121.0): injected as a trailing wire-only
-                # instruction on the last user message — NOT the system prompt and
-                # NOT tool descriptions (warm-pool KV prefix stays byte-stable;
-                # nothing caveman enters history). effective = session toggle, else
-                # the per-model default.
-                _cav_eff = (engine.get_request_context().caveman_chat
-                            or engine.get_request_context().caveman_system)
-                if _cav_eff and _cav_eff in engine.CAVEMAN_CHAT_PROMPTS:
-                    _wire_messages = _append_to_wire_user(
-                        _wire_messages, engine.CAVEMAN_CHAT_PROMPTS[_cav_eff])
-                if deep_research:
-                    # Deep Research turn (composer 🔬): run the bounded research
-                    # loop INSTEAD of the LLM chat turn. It writes the report as
-                    # .html + .md session artifacts and returns a card as the
-                    # assistant reply; all downstream persistence/done logic below
-                    # treats `_result` exactly like a normal run_turn() result.
-                    # Passes the turn's existing context (attachments + curated
-                    # web sources + chat history) into the research.
-                    _result = _run_deep_research_turn(
-                        session, sid, message, live,
-                        saved_paths=saved_paths, web_urls=web_urls,
-                        web_locked=web_locked)
-                    # Fold the research run's usage into the turn totals so the
-                    # status bar shows cost + tokens + context like a normal turn.
-                    _dr_meta = _result.pop("_dr_meta", None) or {}
-                    if _dr_meta:
-                        _usage_totals["tokens_in"] += int(_dr_meta.get("tokens_in", 0) or 0)
-                        _usage_totals["tokens_out"] += int(_dr_meta.get("tokens_out", 0) or 0)
-                        _usage_totals["last_tokens_in"] = int(_dr_meta.get("tokens_in", 0) or 0)
-                    # run_research_chat already logged each LLM call's cost to the
-                    # ledger KEYED BY THIS chat sid (background_call session_id=sid),
-                    # so get_session_cost(sid) below picks it up. Mark cost_logged
-                    # so the generic aggregate-log path doesn't double-count.
-                    _cb_state["cost_logged"] = True
-                    # Carry the registered report files into this turn's
-                    # created_files so they get msg_metadata['files'] → chat-view
-                    # badges (like write_file). Dedup by path.
-                    _dr_files = _result.pop("_dr_files", None) or []
-                    _seen = {f.get("path") for f in created_files if isinstance(f, dict)}
-                    for _f in _dr_files:
-                        if isinstance(_f, dict) and _f.get("path") not in _seen:
-                            created_files.append(_f)
-                            _seen.add(_f.get("path"))
-                else:
-                    _result = sidecar_proxy.run_turn(
-                        messages=_wire_messages,
-                        model=session.model,
-                        api_key=session.api_key,
-                        base_url=session.base_url,
-                        system_prompt=_system_prompt,
-                        purpose="interactive",
-                        tool_context=_tool_context,
-                        sampling=_sampling,
-                        thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),
-                        max_tokens=_max_tokens,
-                        max_rounds=_max_rounds,
-                        event_callback=event_callback,
-                        cancel_token=session.cancel_token,
-                    )
-                # On sidecar error: surface the message to the client AS PART
-                # of the assistant reply, but stay on the happy path so the
-                # downstream `done` event still fires. Raising here would
-                # leave HTTP clients that only listen for `done` blocked.
-                _se = _result.get("error")
-                _sr = _result.get("reply") or ""
-                if _se and not _sr:
-                    reply = f"*(Sidecar error: {str(_se)[:300]})*"
-                elif _se and _sr:
-                    reply = _sr + f"\n\n*(Sidecar error after partial: {str(_se)[:200]})*"
-                else:
-                    reply = _sr
-                if reply:
-                    # Log this turn's token usage to the cost ledger. The native
-                    # loop used to do this per-round; the SDK-sidecar migration
-                    # (v9.0.0) dropped the write path, so interactive chats logged
-                    # nothing and session cost read back as $0. Log once per turn
-                    # from the accumulated usage totals, keyed by the model that
-                    # actually answered (fallback model wins when one was used).
-                    _cost_model = (engine.get_request_context()._fallback_model_used
-                                   or session.model)
-                    # Per-round logging (in the `usage` handler) already wrote each
-                    # round's cost row. Only log the aggregate here if NO round
-                    # ever did (e.g. a provider that returns usage only in the
-                    # final message, so no per-round `usage` event fired) — guarded
-                    # so we never double-count.
-                    if not _cb_state.get("cost_logged"):
-                        try:
-                            engine._log_call_cost(
-                                _cost_model,
-                                _usage_totals["tokens_in"],
-                                _usage_totals["tokens_out"],
-                                session_id=sid,
-                                api_key=session.api_key,
-                                cache_read_tokens=_usage_totals.get("cache_read_tokens", 0),
-                            )
-                        except Exception as _ce:
-                            print(f"[chat] cost log failed: {_ce}")
-                    # Compute cost before saving
-                    session_cost = None
-                    if engine._cost_tracker:
-                        try:
-                            sc = engine._cost_tracker.get_session_cost(sid)
-                            session_cost = round(sc.get("cost", 0.0), 4)
-                        except Exception:
-                            pass
-                    # Build metadata: model, tokens, cost, files, tools, duration, usage
-                    _req_duration = round(time.time() - _req_start, 2)
-                    msg_metadata = {}
-                    msg_metadata["model"] = session.model
-                    msg_metadata["duration"] = _req_duration
-                    msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
-                    msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
-                    msg_metadata["last_tokens_in"] = _usage_totals["last_tokens_in"]
-                    msg_metadata["cache_read_tokens"] = _usage_totals.get("cache_read_tokens", 0)
-                    if _request_payloads:
-                        msg_metadata["request_payloads"] = _request_payloads
-                    fb_model = engine.get_request_context()._fallback_model_used
-                    if fb_model:
-                        msg_metadata["model"] = fb_model
-                        msg_metadata["original_model"] = session.model
-                    msg_metadata["tokens"] = engine._estimate_conversation_tokens(session.messages)
-                    if session_cost is not None:
-                        msg_metadata["cost"] = session_cost
-                    # Merge files recorded on the tool-DISPATCH thread (they fire
-                    # in _after_file_write off-worker, so the worker's own
-                    # `created_files` never saw them — the reload-badge bug).
-                    # Dedup by path; keep first occurrence. Mutates `created_files`
-                    # in place so the done-event persist (below) picks it up too.
+                # ── Goal-Modus ─────────────────────────────────────────────
+                # While the session carries an ACTIVE goal, the turn body below
+                # runs in a loop: run the turn → persist the assistant message
+                # → LLM-judge the reply against the goal → if unmet, append a
+                # visible continue-instruction user message and iterate.
+                # Exactly ONE terminal `done` fires (after the loop ends);
+                # iteration boundaries are signalled via goal_verdict +
+                # goal_continue events. Judge failures and turn errors always
+                # stop the loop — it can only spin on explicit continue
+                # verdicts, capped at _goal_max (ceiling GOAL_ITER_HARD_CAP).
+                from engine import goal_judge as _goal_judge
+                _goal_active = bool(
+                    not deep_research
+                    and (getattr(session, "goal_status", "") == "active")
+                    and (getattr(session, "goal_text", "") or "").strip()
+                    and _goal_judge.goal_mode_enabled())
+                _goal_max = (_goal_judge.resolve_max_iterations(
+                    getattr(session, "goal_max_iterations", 0))
+                    if _goal_active else 0)
+                _goal_iter = 0
+                _goal_done_meta = None   # → done_data["goal"]
+                _goal_web_cache = None   # curated-web fetch: once, reused per iteration
+
+                def _goal_set(status=None, iteration=None):
+                    """Mirror a goal-state change onto the live Session + DB."""
                     try:
                         with session.lock:
-                            _dispatch_files = list(getattr(session, "_turn_created_files", None) or [])
-                        if _dispatch_files:
-                            _seen_paths = {f.get("path") for f in created_files if isinstance(f, dict)}
-                            for _f in _dispatch_files:
-                                if isinstance(_f, dict) and _f.get("path") not in _seen_paths:
-                                    created_files.append(_f)
-                                    _seen_paths.add(_f.get("path"))
+                            if status is not None:
+                                session.goal_status = status
+                            if iteration is not None:
+                                session.goal_iteration = int(iteration)
+                        ChatDB.update_session_goal(sid, status=status,
+                                                   iteration=iteration)
                     except Exception:
                         pass
-                    if created_files:
-                        msg_metadata["files"] = created_files
-                    # Deep Research turn: flag it on the metadata so the chat view
-                    # marks the "Anfrage N" pill with a microscope icon (live + on
-                    # reload). Read back in sessions.js → msg._deepResearch.
-                    if deep_research:
-                        msg_metadata["deep_research"] = True
-                    # Manual web-search: record the exact fetched source text
-                    # this turn used (the freshly-fetched, ephemeral wire
-                    # preamble). Stored on the assistant turn's metadata so
-                    # the session inspector can show per-turn which content
-                    # was used; stripped before the wire so it never replays.
-                    if _web_sources_used:
-                        msg_metadata["web_sources"] = _web_sources_used
-                    # Auto-LCM: record this turn's compaction level (before/after
-                    # tokens + pct, turns compressed/total) on the turn metadata
-                    # so the status line + the in-chat compacted block can show
-                    # the compaction level after reload, not just live. Only when
-                    # auto-LCM actually compacted/expanded this turn.
-                    if _lcm_state and _lcm_state.get("ran"):
-                        msg_metadata["lcm_state"] = _lcm_state
-                    # Persist the auto-route classification + routing decision on
-                    # the turn (like web_sources) so the per-turn classification
-                    # modal works after reload, not just on the live turn. Only
-                    # present when the composer routed via ✨ Auto this turn.
-                    if auto_route:
-                        _ar_meta = dict(auto_route)
-                        if _gating_decision is not None:
-                            _ar_meta["tool_gating"] = _gating_decision
-                        # GROUND TRUTH: the exact tools resolve_active_tools put
-                        # on the wire this turn vs. deferred/excluded — captured
-                        # from build_first_turn_prefix, NOT reconstructed from
-                        # group tables. Computed per turn (classifier re-runs
-                        # every turn). May be unset if the turn errored before
-                        # the prefix build.
-                        try:
-                            if _tool_breakdown:
-                                _ar_meta["tool_resolution"] = _tool_breakdown
-                        except NameError:
-                            pass
-                        # Per-turn research-discipline record (active? which
-                        # sections? injected via wire-preamble or system prompt?)
-                        # for the inspector's discipline section.
-                        try:
-                            if _discipline_meta is not None:
-                                _ar_meta["discipline"] = _discipline_meta
-                        except NameError:
-                            pass
-                        msg_metadata["auto_route"] = _ar_meta
-                    if _partial_tools:
-                        msg_metadata["tools"] = _sanitize_partial_tools(_partial_tools)
-                    # Per-round answer-text split for chronological display:
-                    # when the model produced visible answer text across MULTIPLE
-                    # rounds (interleaved with tool calls), persist the per-round
-                    # segments {round, text} so the renderer can interleave them
-                    # with the tool cards (text → tool → text) instead of dumping
-                    # all tools above one monolithic answer. Display-only — the
-                    # canonical `reply` (joined whole) stays the message content,
-                    # so history/wire are unaffected and old clients still show
-                    # the full text. Only stored when there's a real split (>1
-                    # segment); a single-segment turn renders content as before.
+                # Aggregate-cost fallback watermark: when no per-round `usage`
+                # event ever logs cost, each iteration logs only the DELTA vs
+                # this snapshot (cumulative totals would double-count).
+                _agg_cost_logged = {"in": 0, "out": 0, "cache": 0}
+                while True:
+                    _goal_iter += 1
+                    # Transparent anonymisation — DETERMINISTIC, ledger-driven.
+                    # Prior turns' user messages + assistant replies are persisted
+                    # de-anonymised (the chat UI shows real values), so without a
+                    # rewrite they'd ship to the cloud LLM in clear. We rebuild the
+                    # wire-history straight from the persisted PII decision ledger
+                    # (pii_decisions): every value the session EVER anonymised is
+                    # replaced by its stored fake on EVERY subsequent turn — no
+                    # re-scan, no new mints, and crucially INDEPENDENT of whether a
+                    # mapping is "live" this turn. This is the fix for the leak where
+                    # a value anonymised early went out in clear from the turn the
+                    # user first chose 'continue' for a NEW finding: the decision is
+                    # read from the ledger, not re-derived from the per-turn action.
+                    # Accepted / false-positive / local values stay in clear (the
+                    # user's choice); attachment-anonymised values are covered too
+                    # (their decisions are in the same ledger).
+                    # A LOCAL model never sends data off the machine, so the
+                    # wire-history pseudonymisation is pointless there — skip it so a
+                    # local turn sees the REAL history (a chat that was cloud+anonymise
+                    # then switched to a local model must not anonymise the local turn).
+                    _wire_messages = session.messages
+                    _wire_is_local = False
                     try:
-                        _segs = _result.get("text_segments") or []
-                        if len(_segs) > 1:
-                            msg_metadata["text_rounds"] = [
-                                {"round": int(s.get("round", 0) or 0),
-                                 "text": s.get("text", "") or ""}
-                                for s in _segs if (s.get("text") or "").strip()
-                            ]
+                        _wire_is_local = bool(engine.is_model_local(session.model))
                     except Exception:
-                        pass
-                    # Leftover thinking deltas that never got a thinking_done (truncated
-                    # stream / error before flush). Persist as a fallback thinking row
-                    # rather than losing the content.
-                    thinking_leftover = "".join(_partial_thinking).strip()
-                    if thinking_leftover:
-                        try:
-                            session.add_message("thinking", thinking_leftover,
-                                                 metadata={"tool_round": None, "fallback": True})
-                        except Exception:
-                            msg_metadata["thinking"] = thinking_leftover  # legacy fallback
-                        _partial_thinking.clear()
-                    if _thinking_summary:
-                        msg_metadata["thinking_summary"] = _thinking_summary
-                    # Per-turn state snapshot: thinking level requested + caveman modes applied
-                    if thinking_level:
-                        msg_metadata["thinking_level"] = thinking_level
-                    _cav_chat = int(engine.get_request_context().caveman_chat or 0)
-                    _cav_sys = int(engine.get_request_context().caveman_system or 0)
-                    if _cav_chat:
-                        msg_metadata["caveman_chat"] = _cav_chat
-                    if _cav_sys:
-                        msg_metadata["caveman_system"] = _cav_sys
-                    # --- Citation validator ---
-                    # Scans the reply for [Quelle: X — "Y"] brackets, verifies each
-                    # quote against the files read this turn, counts uncited claims,
-                    # and appends a persistent fidelity warning when the reply
-                    # violates the threshold (>30% uncited OR ≥2 unverified quotes).
-                    #
-                    # The validator now runs whenever the citation discipline was
-                    # active this turn — the DYNAMIC grounding case (any chat) OR
-                    # the explicit research_mode toggle/project flag (computed +
-                    # stored as session._citation_discipline_active before the
-                    # run). validate_citations_in_response verifies quotes against
-                    # the files read this turn, so it's meaningful outside projects.
-                    _research_active = bool(getattr(session, "_citation_discipline_active", False))
-                    if _research_active and reply:
-                        try:
-                            _val = engine.validate_citations_in_response(reply, session_id=sid)
-                            _cv_meta = {
-                                "verified": _val.get("verified", 0),
-                                "unverified_count": len(_val.get("unverified", []) or []),
-                                "unverified_samples": [
-                                    {"basename": bn, "quote_excerpt": q[:120], "reason": r}
-                                    for (bn, q, r) in (_val.get("unverified") or [])[:5]
-                                ],
-                                "uncited_claims": _val.get("uncited_claims", 0),
-                                "claim_total": _val.get("claim_total", 0),
-                                "total_brackets": _val.get("total_brackets", 0),
-                            }
-
-                            # Citation-Warning: instead of re-rounding (which
-                            # turned correct refusals into hallucinated
-                            # citations on refusal-bucket questions), we flag
-                            # the message in metadata so the frontend can render
-                            # a compact "x von y" badge (full text in tooltip)
-                            # that survives reload. Same threshold the re-round
-                            # used (>30% uncited OR ≥2 unverified quotes). The
-                            # prose is no longer baked into `reply` — the badge
-                            # is built client-side from these fields.
-                            #
-                            # Only flag the message when a retrieval tool was
-                            # ACTUALLY CALLED this turn (not merely live): if the
-                            # model answered from its own knowledge without ever
-                            # reading a file / searching / fetching, there were
-                            # no sources to cite and "N von N ohne Quellenangabe"
-                            # would be misleading. _RETRIEVAL_TOOLS is the same
-                            # set turn_has_retrieval_tools uses.
-                            _called_tool_names = [
-                                (t or {}).get("name") for t in (_partial_tools or [])
-                            ]
-                            _retrieval_called = engine.turn_has_retrieval_tools(_called_tool_names)
-                            if _retrieval_called and engine.citation_reround_needed(_val):
-                                _uncited = int(_val.get("uncited_claims", 0) or 0)
-                                _ctotal = int(_val.get("claim_total", 0) or 0)
-                                _unver = len(_val.get("unverified", []) or [])
-                                _parts = []
-                                if _ctotal > 0 and _uncited > 0:
-                                    _parts.append(
-                                        f"{_uncited} von {_ctotal} Behauptungen "
-                                        f"ohne Quellenangabe"
-                                    )
-                                if _unver >= 2:
-                                    _parts.append(
-                                        f"{_unver} Zitat(e) konnten nicht "
-                                        f"in den Quelldateien verifiziert werden"
-                                    )
-                                if _parts:
-                                    _cv_meta["warning_appended"] = True
-                                    _cv_meta["warning_text"] = (
-                                        "Hinweis zur Quellentreue: "
-                                        + "; ".join(_parts)
-                                        + ". Möglich ist auch, dass zu dieser "
-                                          "Frage keine passenden Informationen "
-                                          "in den Quellen vorlagen und die "
-                                          "Antwort daher ohne Belege bleiben "
-                                          "musste. Bitte einzelne Aussagen vor "
-                                          "Weiterverwendung gegen die "
-                                          "Originalquellen prüfen."
-                                    )
-
-                            msg_metadata["citation_validation"] = _cv_meta
-                        except Exception as _e:
-                            # Validation must never crash the response; log and continue.
-                            try: print(f"[citation-validator] error: {_e}")
-                            except Exception: pass
-
-                    # Sidecar empty-round nudge marker — persistent so the
-                    # user sees it after reload too, not just live via SSE.
-                    # Triggered from attempt 1 (any nudge is unusual; the
-                    # model should have answered directly).
-                    _nudges = int(_nudge_count[0] or 0)
-                    if _nudges > 0:
-                        msg_metadata["nudge_count"] = _nudges
-                        _gave_up = (reply.strip() ==
-                                    "No response was returned. Please modify "
-                                    "your request or change the model.")
-                        if _gave_up:
-                            # Give-up text is already the visible reply — don't
-                            # double up with a hint, the message itself says it.
-                            pass
-                        else:
-                            _nudge_hint = (
-                                "\n\n---\n\n"
-                                f"> ℹ️ **Hinweis**: Das Modell hat {_nudges} "
-                                f"Mal neu angesetzt, bevor eine Antwort kam."
-                            )
-                            reply = reply + _nudge_hint
-                    # ── Transparent anonymisation: deanonymize final reply ──
-                    # The text_delta path already de-anonymised live deltas;
-                    # this pass covers the final assembled reply (which may
-                    # include text the streamer held back at flush time, plus
-                    # nudge/citation hints appended above). It's also the
-                    # canonical text persisted to the messages table.
-                    _gdpr_streamer = getattr(session, "_gdpr_streamer", None)
-                    _gdpr_mapping_id = getattr(session, "_gdpr_mapping_id", None)
-                    if _gdpr_mapping_id and _gdpr_streamer is not None:
-                        # Flush any held-back streamer tail to subscribers.
-                        _tail = _gdpr_streamer.flush()
-                        if _tail:
-                            live.emit("text_delta", {"text": _tail})
-                        _mapping = pseudonymizer.get_mapping(_gdpr_mapping_id)
-                        if _mapping is not None:
-                            _deanon_reply, _restored = pseudonymizer.deanonymize_text(
-                                reply, mapping=_mapping)
-                            _t1 = time.time()
-                            _deanon_tool_id = f"deanon_{_gdpr_mapping_id[:12]}"
-                            _emit_synthetic_tool_event(
-                                live=live, sid=sid, kind="deanonymise_text",
-                                tool_use_id=_deanon_tool_id, phase="dispatch",
-                                args={"target": "assistant_reply",
-                                      "mapping_id": _gdpr_mapping_id},
-                            )
-                            _emit_synthetic_tool_event(
-                                live=live, sid=sid, kind="deanonymise_text",
-                                tool_use_id=_deanon_tool_id, phase="done",
-                                result={"restored": int(_restored),
-                                        "mapping_id": _gdpr_mapping_id},
-                                status="ok",
-                                duration_ms=int((time.time() - _t1) * 1000),
-                            )
+                        _wire_is_local = False
+                    try:
+                        _pii_decisions = {} if _wire_is_local else ChatDB.get_session_pii_decisions(sid)
+                    except Exception:
+                        _pii_decisions = {}
+                    if _pii_decisions:
+                        _wire_messages, _hist_repl, _hist_counts = (
+                            _apply_pii_decisions_to_wire(
+                                session.messages, _pii_decisions))
+                        # Goal iterations rebuild the wire history each pass —
+                        # emit the audit event only once per turn, not per pass.
+                        if _hist_repl > 0 and _goal_iter == 1:
                             try:
-                                if engine._audit_log:
-                                    engine._audit_log.log_action(
-                                        agent=session.agent_id, session_id=sid,
-                                        action_type="pii_deanonymise_text",
-                                        tool_name="gdpr_scanner",
-                                        args_summary="assistant_reply",
-                                        result_summary=(
-                                            f"restored={_restored} "
-                                            f"mapping_id={_gdpr_mapping_id}"),
-                                        result_status="success",
-                                        duration_ms=0, source="chat",
-                                    )
+                                _tuid = (f"anon_hist_{sid[:8]}_"
+                                         f"{int(time.time()*1000) % 1_000_000}")
+                                emit_gdpr_tool_event_for_session(
+                                    sid,
+                                    kind="anonymise_read",
+                                    tool_use_id=_tuid,
+                                    args={"source": "history"},
+                                    result={
+                                        "findings": _hist_repl,
+                                        "tokens_minted": 0,
+                                        "categories": _hist_counts,
+                                        "source": "history",
+                                    },
+                                    status="ok",
+                                    duration_ms=0,
+                                )
                             except Exception:
                                 pass
-                            # Capture wire-truth before we mutate `reply`.
-                            # The session inspector reads this so an auditor
-                            # can see the raw LLM output (with pseudonymised
-                            # tokens still embedded) alongside the de-
-                            # anonymised text the user actually sees in chat.
-                            # Skip the metadata bloat when no tokens needed
-                            # restoring (pre/post are byte-identical).
-                            if _restored:
-                                msg_metadata["wire_content"] = reply
-                            reply = _deanon_reply
-                            msg_metadata["gdpr_mapping_id"] = _gdpr_mapping_id
-                            msg_metadata["gdpr_restored"] = int(_restored)
-                            # Per-span highlight payload so the UI can mark
-                            # each restored value in the assistant reply with
-                            # a tooltip ("email — alice@… was anonymised as
-                            # <EMAIL_1_7e77>"). Offsets are against `reply`
-                            # (the de-anonymised final text). Skipped when
-                            # no tokens were restored to keep metadata lean.
-                            if _restored:
-                                try:
-                                    _spans = pseudonymizer.find_restored_spans(
-                                        reply, mapping=_mapping)
-                                except Exception:
-                                    _spans = []
-                                if _spans:
-                                    msg_metadata["gdpr_restored_spans"] = _spans
-                    # ── Per-turn GDPR outcome (metadata.gdpr) ──
-                    # Data source for the post-turn feedback modal, for BOTH
-                    # occasions:
-                    #   anonymise            → N PII anonymised, M restored in reply
-                    #   anonymise_failed_local → anonymise failed, answered on local
-                    #   local_model          → PII found, answered on the local model
-                    # The `active` flag (set at the decision points) tells the
-                    # client whether to actually OFFER the feedback modal — only
-                    # when THIS turn's own input was anonymised/swapped, not when
-                    # anonymise merely re-pseudonymised prior history. Built here
-                    # so the de-anonymise `_restored` count (above) is known.
-                    _gdpr_outcome = getattr(
-                        engine.get_request_context(), "_gdpr_turn_outcome", None)
-                    if isinstance(_gdpr_outcome, dict):
-                        _gdpr_meta = dict(_gdpr_outcome)
-                        if _gdpr_meta.get("mode") == "anonymise":
-                            _gdpr_meta["restored"] = int(
-                                msg_metadata.get("gdpr_restored", 0) or 0)
-                            # Recompute tokens_minted from the LIVE mapping —
-                            # the early stash captured only the typed-text slice;
-                            # read-side tools (read_document/read_file) may have
-                            # added attachment PII to the same mapping mid-turn.
-                            try:
-                                _gmid = getattr(session, "_gdpr_mapping_id", None)
-                                _m_live = (pseudonymizer.get_mapping(_gmid)
-                                           if _gmid else None)
-                                if _m_live is not None:
-                                    _gdpr_meta["tokens_minted"] = len(_m_live.forward)
-                            except Exception:
-                                pass
-                        msg_metadata["gdpr"] = _gdpr_meta
+                    # Manual web-search: fetch the curated URLs FRESH now and
+                    # prepend their content to the wire copy of the last user
+                    # message only — ephemeral, never persisted into history, so
+                    # a re-send tomorrow re-fetches instead of replaying a stale
+                    # page. The fetched text IS recorded on the assistant turn's
+                    # metadata.web_sources (below) so the session inspector can
+                    # show exactly which content each turn used — today's
+                    # weather on today's turn, tomorrow's on tomorrow's —
+                    # without that content ever re-entering the conversation
+                    # (metadata is stripped before the wire by _ALLOWED_MSG_KEYS).
+                    _web_sources_used = []
+                    if web_urls:
+                        # Goal iterations reuse the first pass's fetch — the
+                        # sources stay available to every iteration without
+                        # paying (or waiting for) a re-fetch per pass.
+                        if _goal_web_cache is None:
+                            _goal_web_cache = _build_web_sources(
+                                web_urls, web_locked)
+                        _web_pre, _web_sources_used = _goal_web_cache
+                        if _web_pre:
+                            _wire_messages = _inject_web_preamble_into_wire(
+                                _wire_messages, _web_pre)
+                    # Detached background tasks: any that FINISHED since the last
+                    # turn have their full output folded into THIS turn wire-only
+                    # (same ephemeral seam as web sources — never persisted, so it
+                    # drops out of context after this turn exactly like a tool
+                    # result). pop_unconsumed marks them consumed in the same
+                    # transaction, so each task's output reaches the model once.
+                    _bg_pre = _build_background_task_preamble(sid)
+                    if _bg_pre:
+                        _wire_messages = _inject_web_preamble_into_wire(
+                            _wire_messages, _bg_pre)
+                    # Research-mode citation discipline — TWO mutually-exclusive paths,
+                    # chosen by the auto-route classifier mode:
+                    #  • LLM/hybrid mode → DYNAMIC: trigger on the EFFECTIVE active
+                    #    tools (_active_tool_names). If any retrieval tool is live
+                    #    (memory/web-search/web-fetch/doc-read/file-read) the answer
+                    #    can ground on sources → attach the discipline. ANY chat,
+                    #    project or not. The per-project research_mode flag is ignored
+                    #    (disabled in the UI under LLM mode — dynamic covers it).
+                    #    Keyed off the RESOLVED tool set, NOT the classifier's intent:
+                    #    the classifier only reduces tools, so its guess could wrongly
+                    #    suppress discipline on a turn that does retrieve.
+                    #  • keyword mode → MANUAL only: no dynamic trigger; the explicit
+                    #    project research_mode flag / session override is the control
+                    #    (and renders the discipline in the SYSTEM PROMPT, prompt_build).
+                    # Injected as a WIRE-ONLY preamble (not the system prompt) so the
+                    # warm-pool KV prefix stays byte-stable (fires for warm/local too).
+                    # Per-turn discipline record for the classification inspector:
+                    # whether the research-mode discipline was injected this turn,
+                    # HOW (wire preamble in LLM mode vs system prompt in keyword
+                    # mode), and exactly WHICH sections (refusal/precision/citation,
+                    # honouring admin per-section opt-out). Ground truth, not the
+                    # static default set. Stashed on the request context; the
+                    # metadata-build block folds it into auto_route.
+                    # Code Mode: the project has NO project memory / curated sources
+                    # — the model reads files in the working directory to DO work, not
+                    # to ground a cited answer. The grounded-answer / citation
+                    # discipline (and its validator) make no sense here and were
+                    # wrongly flagging "N von M ohne Quellenangabe" (chat 4866f92e).
+                    # working_dir is set on the context only for code-mode projects.
+                    _code_mode_chat = bool(engine.get_request_context().working_dir)
+                    _discipline_meta = None
+                    if _code_mode_chat:
+                        session._citation_discipline_active = False
+                        _discipline_meta = {"active": False, "trigger": "code_mode"}
+                    elif engine.classifier_is_llm():
+                        _grounding = engine.turn_has_retrieval_tools(_active_tool_names)
+                        session._citation_discipline_active = bool(_grounding)
+                        if _grounding:
+                            _disc = engine.render_research_mode_disciplines()
+                            if _disc:
+                                _disc_pre = ("GROUNDED-ANSWER DISCIPLINE (this answer draws on "
+                                             "retrieved sources — cite + refuse per below):\n" + _disc)
+                                _wire_messages = _inject_web_preamble_into_wire(_wire_messages, _disc_pre)
+                                _discipline_meta = {
+                                    "active": True,
+                                    "source": "wire_preamble",
+                                    "trigger": "retrieval_tool_active",
+                                    "sections": engine.active_research_discipline_sections(),
+                                }
+                        if _discipline_meta is None:
+                            _discipline_meta = {"active": False, "trigger": "no_retrieval_tool"}
                     else:
-                        _local_swap = getattr(session, "_gdpr_local_swap", "") or ""
-                        if _local_swap:
-                            # Always active — the user explicitly picked the
-                            # local model for this turn (pre-worker swap).
-                            msg_metadata["gdpr"] = {
-                                "mode": "local_model",
-                                "model": _local_swap,
+                        # Keyword mode: the system-prompt path (prompt_build, gated on
+                        # research_mode) already injected the discipline when the flag
+                        # is on — record that so the validator runs to match.
+                        _rm_on = bool(getattr(session, "research_mode_override", None))
+                        if not _rm_on and engine.get_request_context().project:
+                            _pc = engine.ProjectManager.get_project(session.agent_id, engine.get_request_context().project)
+                            _rm_on = bool((_pc or {}).get("research_mode", False))
+                        session._citation_discipline_active = bool(_rm_on)
+                        if _rm_on:
+                            _discipline_meta = {
                                 "active": True,
+                                "source": "system_prompt",
+                                "trigger": "research_mode",
+                                "sections": engine.active_research_discipline_sections(),
                             }
-                    session.add_message("assistant", reply, metadata=msg_metadata or None)
-                    done_data = {
-                        "text": reply,
-                        "tokens": engine._estimate_conversation_tokens(session.messages),
-                        "max_context": session.max_context,
-                        "model": session.model,
-                        "duration": _req_duration,
-                        "tokens_in": _usage_totals["tokens_in"],
-                        "tokens_out": _usage_totals["tokens_out"],
-                        "last_tokens_in": _usage_totals["last_tokens_in"],
-                        "cache_read_tokens": _usage_totals.get("cache_read_tokens", 0),
-                    }
-                    # Per-round answer-text split → client reconstructs the
-                    # chronological text↔tool interleave on reload (display-only).
-                    if msg_metadata.get("text_rounds"):
-                        done_data["text_rounds"] = msg_metadata["text_rounds"]
-                    if session_cost is not None:
-                        done_data["cost"] = session_cost
-                    # Auto-LCM compaction level → live status-line badge picks it
-                    # up here; reload reads the same dict from msg_metadata.
-                    if msg_metadata.get("lcm_state"):
-                        done_data["lcm_state"] = msg_metadata["lcm_state"]
-                    # GDPR highlight payload — UI marks each restored span
-                    # in the reply with a tooltip. Pulled from the metadata
-                    # we just attached to the persisted message; live path
-                    # picks it up here, reload reads it from msg_metadata.
-                    _gdpr_spans = msg_metadata.get("gdpr_restored_spans") if msg_metadata else None
-                    if _gdpr_spans:
-                        done_data["gdpr_restored_spans"] = _gdpr_spans
-                    # Per-turn GDPR outcome badge — live path picks it up here,
-                    # reload reads the same dict from msg_metadata["gdpr"].
-                    _gdpr_outcome_meta = msg_metadata.get("gdpr") if msg_metadata else None
-                    if _gdpr_outcome_meta:
-                        done_data["gdpr"] = _gdpr_outcome_meta
-                    # Include fallback model info if a fallback was used
-                    fb_model = engine.get_request_context()._fallback_model_used
-                    if fb_model:
-                        done_data["fallback_model"] = fb_model
-                        done_data["original_model"] = session.model
-                    # Auto-routing: tell the client which model Auto picked and
-                    # why, so the composer can show "Auto (Model)" + tooltip
-                    # without dropping the user's "auto" selection.
-                    if auto_route:
-                        # Match the persisted shape (incl. the tool-gating
-                        # decision) so the live turn's classification modal is
-                        # identical to a reloaded turn's.
-                        _ar_done = dict(auto_route)
-                        if _gating_decision is not None:
-                            _ar_done["tool_gating"] = _gating_decision
-                        try:
-                            if _tool_breakdown:
-                                _ar_done["tool_resolution"] = _tool_breakdown
-                        except NameError:
-                            pass
-                        try:
-                            if _discipline_meta is not None:
-                                _ar_done["discipline"] = _discipline_meta
-                        except NameError:
-                            pass
-                        done_data["auto_route"] = _ar_done
-                    # Include file attachments
-                    if created_files:
-                        done_data["files"] = created_files
-                    # Deep Research turn → live pill marker (reload reads metadata).
+                        else:
+                            _discipline_meta = {"active": False, "trigger": "research_mode_off"}
+                    try:
+                        engine.get_request_context()._discipline_meta = _discipline_meta
+                    except Exception:
+                        pass
+                    # Session attachments (v9.138.0): wire-only reminder, EVERY turn,
+                    # of the documents attached so far in this chat so a later turn
+                    # can still read them via read_document — the upload-turn notice
+                    # only fires on the turn the file arrived, so later turns
+                    # 'forgot' the file and the model answered from stale context
+                    # instead of re-reading it (chat 29ce67d2). Transient (never
+                    # persisted). Also forces read_document in-prompt when the
+                    # session has docs (read_document is otherwise classifier-
+                    # deferred on a turn whose text doesn't mention files).
+                    _att_suffix, _att_has_docs = _session_attachments_wire_suffix(sid)
+                    if _att_suffix:
+                        _wire_messages = _append_to_wire_user(_wire_messages, _att_suffix)
+                    # Caveman OUTPUT-STYLE (v9.121.0): injected as a trailing wire-only
+                    # instruction on the last user message — NOT the system prompt and
+                    # NOT tool descriptions (warm-pool KV prefix stays byte-stable;
+                    # nothing caveman enters history). effective = session toggle, else
+                    # the per-model default.
+                    _cav_eff = (engine.get_request_context().caveman_chat
+                                or engine.get_request_context().caveman_system)
+                    if _cav_eff and _cav_eff in engine.CAVEMAN_CHAT_PROMPTS:
+                        _wire_messages = _append_to_wire_user(
+                            _wire_messages, engine.CAVEMAN_CHAT_PROMPTS[_cav_eff])
                     if deep_research:
-                        done_data["deep_research"] = True
-                    live.emit("done", done_data)
+                        # Deep Research turn (composer 🔬): run the bounded research
+                        # loop INSTEAD of the LLM chat turn. It writes the report as
+                        # .html + .md session artifacts and returns a card as the
+                        # assistant reply; all downstream persistence/done logic below
+                        # treats `_result` exactly like a normal run_turn() result.
+                        # Passes the turn's existing context (attachments + curated
+                        # web sources + chat history) into the research.
+                        _result = _run_deep_research_turn(
+                            session, sid, message, live,
+                            saved_paths=saved_paths, web_urls=web_urls,
+                            web_locked=web_locked)
+                        # Fold the research run's usage into the turn totals so the
+                        # status bar shows cost + tokens + context like a normal turn.
+                        _dr_meta = _result.pop("_dr_meta", None) or {}
+                        if _dr_meta:
+                            _usage_totals["tokens_in"] += int(_dr_meta.get("tokens_in", 0) or 0)
+                            _usage_totals["tokens_out"] += int(_dr_meta.get("tokens_out", 0) or 0)
+                            _usage_totals["last_tokens_in"] = int(_dr_meta.get("tokens_in", 0) or 0)
+                        # run_research_chat already logged each LLM call's cost to the
+                        # ledger KEYED BY THIS chat sid (background_call session_id=sid),
+                        # so get_session_cost(sid) below picks it up. Mark cost_logged
+                        # so the generic aggregate-log path doesn't double-count.
+                        _cb_state["cost_logged"] = True
+                        # Carry the registered report files into this turn's
+                        # created_files so they get msg_metadata['files'] → chat-view
+                        # badges (like write_file). Dedup by path.
+                        _dr_files = _result.pop("_dr_files", None) or []
+                        _seen = {f.get("path") for f in created_files if isinstance(f, dict)}
+                        for _f in _dr_files:
+                            if isinstance(_f, dict) and _f.get("path") not in _seen:
+                                created_files.append(_f)
+                                _seen.add(_f.get("path"))
+                    else:
+                        _result = sidecar_proxy.run_turn(
+                            messages=_wire_messages,
+                            model=session.model,
+                            api_key=session.api_key,
+                            base_url=session.base_url,
+                            system_prompt=_system_prompt,
+                            purpose="interactive",
+                            tool_context=_tool_context,
+                            sampling=_sampling,
+                            thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),
+                            max_tokens=_max_tokens,
+                            max_rounds=_max_rounds,
+                            event_callback=event_callback,
+                            cancel_token=session.cancel_token,
+                        )
+                    # On sidecar error: surface the message to the client AS PART
+                    # of the assistant reply, but stay on the happy path so the
+                    # downstream `done` event still fires. Raising here would
+                    # leave HTTP clients that only listen for `done` blocked.
+                    _se = _result.get("error")
+                    _sr = _result.get("reply") or ""
+                    if _se and not _sr:
+                        reply = f"*(Sidecar error: {str(_se)[:300]})*"
+                    elif _se and _sr:
+                        reply = _sr + f"\n\n*(Sidecar error after partial: {str(_se)[:200]})*"
+                    else:
+                        reply = _sr
+                    if reply:
+                        # Log this turn's token usage to the cost ledger. The native
+                        # loop used to do this per-round; the SDK-sidecar migration
+                        # (v9.0.0) dropped the write path, so interactive chats logged
+                        # nothing and session cost read back as $0. Log once per turn
+                        # from the accumulated usage totals, keyed by the model that
+                        # actually answered (fallback model wins when one was used).
+                        _cost_model = (engine.get_request_context()._fallback_model_used
+                                       or session.model)
+                        # Per-round logging (in the `usage` handler) already wrote each
+                        # round's cost row. Only log the aggregate here if NO round
+                        # ever did (e.g. a provider that returns usage only in the
+                        # final message, so no per-round `usage` event fired) — guarded
+                        # so we never double-count.
+                        if not _cb_state.get("cost_logged"):
+                            try:
+                                # Goal iterations: log only the delta vs what the
+                                # aggregate fallback already logged this turn —
+                                # _usage_totals is cumulative across iterations.
+                                engine._log_call_cost(
+                                    _cost_model,
+                                    _usage_totals["tokens_in"] - _agg_cost_logged["in"],
+                                    _usage_totals["tokens_out"] - _agg_cost_logged["out"],
+                                    session_id=sid,
+                                    api_key=session.api_key,
+                                    cache_read_tokens=(_usage_totals.get("cache_read_tokens", 0)
+                                                       - _agg_cost_logged["cache"]),
+                                )
+                                _agg_cost_logged["in"] = _usage_totals["tokens_in"]
+                                _agg_cost_logged["out"] = _usage_totals["tokens_out"]
+                                _agg_cost_logged["cache"] = _usage_totals.get("cache_read_tokens", 0)
+                            except Exception as _ce:
+                                print(f"[chat] cost log failed: {_ce}")
+                        # Compute cost before saving
+                        session_cost = None
+                        if engine._cost_tracker:
+                            try:
+                                sc = engine._cost_tracker.get_session_cost(sid)
+                                session_cost = round(sc.get("cost", 0.0), 4)
+                            except Exception:
+                                pass
+                        # Build metadata: model, tokens, cost, files, tools, duration, usage
+                        _req_duration = round(time.time() - _req_start, 2)
+                        msg_metadata = {}
+                        msg_metadata["model"] = session.model
+                        msg_metadata["duration"] = _req_duration
+                        msg_metadata["tokens_in"] = _usage_totals["tokens_in"]
+                        msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
+                        msg_metadata["last_tokens_in"] = _usage_totals["last_tokens_in"]
+                        msg_metadata["cache_read_tokens"] = _usage_totals.get("cache_read_tokens", 0)
+                        if _request_payloads:
+                            msg_metadata["request_payloads"] = _request_payloads
+                        fb_model = engine.get_request_context()._fallback_model_used
+                        if fb_model:
+                            msg_metadata["model"] = fb_model
+                            msg_metadata["original_model"] = session.model
+                        msg_metadata["tokens"] = engine._estimate_conversation_tokens(session.messages)
+                        if session_cost is not None:
+                            msg_metadata["cost"] = session_cost
+                        # Merge files recorded on the tool-DISPATCH thread (they fire
+                        # in _after_file_write off-worker, so the worker's own
+                        # `created_files` never saw them — the reload-badge bug).
+                        # Dedup by path; keep first occurrence. Mutates `created_files`
+                        # in place so the done-event persist (below) picks it up too.
+                        try:
+                            with session.lock:
+                                _dispatch_files = list(getattr(session, "_turn_created_files", None) or [])
+                            if _dispatch_files:
+                                _seen_paths = {f.get("path") for f in created_files if isinstance(f, dict)}
+                                for _f in _dispatch_files:
+                                    if isinstance(_f, dict) and _f.get("path") not in _seen_paths:
+                                        created_files.append(_f)
+                                        _seen_paths.add(_f.get("path"))
+                        except Exception:
+                            pass
+                        if created_files:
+                            msg_metadata["files"] = created_files
+                        # Deep Research turn: flag it on the metadata so the chat view
+                        # marks the "Anfrage N" pill with a microscope icon (live + on
+                        # reload). Read back in sessions.js → msg._deepResearch.
+                        if deep_research:
+                            msg_metadata["deep_research"] = True
+                        # Manual web-search: record the exact fetched source text
+                        # this turn used (the freshly-fetched, ephemeral wire
+                        # preamble). Stored on the assistant turn's metadata so
+                        # the session inspector can show per-turn which content
+                        # was used; stripped before the wire so it never replays.
+                        if _web_sources_used:
+                            msg_metadata["web_sources"] = _web_sources_used
+                        # Auto-LCM: record this turn's compaction level (before/after
+                        # tokens + pct, turns compressed/total) on the turn metadata
+                        # so the status line + the in-chat compacted block can show
+                        # the compaction level after reload, not just live. Only when
+                        # auto-LCM actually compacted/expanded this turn.
+                        if _lcm_state and _lcm_state.get("ran"):
+                            msg_metadata["lcm_state"] = _lcm_state
+                        # Persist the auto-route classification + routing decision on
+                        # the turn (like web_sources) so the per-turn classification
+                        # modal works after reload, not just on the live turn. Only
+                        # present when the composer routed via ✨ Auto this turn.
+                        if auto_route:
+                            _ar_meta = dict(auto_route)
+                            if _gating_decision is not None:
+                                _ar_meta["tool_gating"] = _gating_decision
+                            # GROUND TRUTH: the exact tools resolve_active_tools put
+                            # on the wire this turn vs. deferred/excluded — captured
+                            # from build_first_turn_prefix, NOT reconstructed from
+                            # group tables. Computed per turn (classifier re-runs
+                            # every turn). May be unset if the turn errored before
+                            # the prefix build.
+                            try:
+                                if _tool_breakdown:
+                                    _ar_meta["tool_resolution"] = _tool_breakdown
+                            except NameError:
+                                pass
+                            # Per-turn research-discipline record (active? which
+                            # sections? injected via wire-preamble or system prompt?)
+                            # for the inspector's discipline section.
+                            try:
+                                if _discipline_meta is not None:
+                                    _ar_meta["discipline"] = _discipline_meta
+                            except NameError:
+                                pass
+                            msg_metadata["auto_route"] = _ar_meta
+                        if _partial_tools:
+                            msg_metadata["tools"] = _sanitize_partial_tools(_partial_tools)
+                        # Per-round answer-text split for chronological display:
+                        # when the model produced visible answer text across MULTIPLE
+                        # rounds (interleaved with tool calls), persist the per-round
+                        # segments {round, text} so the renderer can interleave them
+                        # with the tool cards (text → tool → text) instead of dumping
+                        # all tools above one monolithic answer. Display-only — the
+                        # canonical `reply` (joined whole) stays the message content,
+                        # so history/wire are unaffected and old clients still show
+                        # the full text. Only stored when there's a real split (>1
+                        # segment); a single-segment turn renders content as before.
+                        try:
+                            _segs = _result.get("text_segments") or []
+                            if len(_segs) > 1:
+                                msg_metadata["text_rounds"] = [
+                                    {"round": int(s.get("round", 0) or 0),
+                                     "text": s.get("text", "") or ""}
+                                    for s in _segs if (s.get("text") or "").strip()
+                                ]
+                        except Exception:
+                            pass
+                        # Leftover thinking deltas that never got a thinking_done (truncated
+                        # stream / error before flush). Persist as a fallback thinking row
+                        # rather than losing the content.
+                        thinking_leftover = "".join(_partial_thinking).strip()
+                        if thinking_leftover:
+                            try:
+                                session.add_message("thinking", thinking_leftover,
+                                                     metadata={"tool_round": None, "fallback": True})
+                            except Exception:
+                                msg_metadata["thinking"] = thinking_leftover  # legacy fallback
+                            _partial_thinking.clear()
+                        if _thinking_summary:
+                            msg_metadata["thinking_summary"] = _thinking_summary
+                        # Per-turn state snapshot: thinking level requested + caveman modes applied
+                        if thinking_level:
+                            msg_metadata["thinking_level"] = thinking_level
+                        _cav_chat = int(engine.get_request_context().caveman_chat or 0)
+                        _cav_sys = int(engine.get_request_context().caveman_system or 0)
+                        if _cav_chat:
+                            msg_metadata["caveman_chat"] = _cav_chat
+                        if _cav_sys:
+                            msg_metadata["caveman_system"] = _cav_sys
+                        # --- Citation validator ---
+                        # Scans the reply for [Quelle: X — "Y"] brackets, verifies each
+                        # quote against the files read this turn, counts uncited claims,
+                        # and appends a persistent fidelity warning when the reply
+                        # violates the threshold (>30% uncited OR ≥2 unverified quotes).
+                        #
+                        # The validator now runs whenever the citation discipline was
+                        # active this turn — the DYNAMIC grounding case (any chat) OR
+                        # the explicit research_mode toggle/project flag (computed +
+                        # stored as session._citation_discipline_active before the
+                        # run). validate_citations_in_response verifies quotes against
+                        # the files read this turn, so it's meaningful outside projects.
+                        _research_active = bool(getattr(session, "_citation_discipline_active", False))
+                        if _research_active and reply:
+                            try:
+                                _val = engine.validate_citations_in_response(reply, session_id=sid)
+                                _cv_meta = {
+                                    "verified": _val.get("verified", 0),
+                                    "unverified_count": len(_val.get("unverified", []) or []),
+                                    "unverified_samples": [
+                                        {"basename": bn, "quote_excerpt": q[:120], "reason": r}
+                                        for (bn, q, r) in (_val.get("unverified") or [])[:5]
+                                    ],
+                                    "uncited_claims": _val.get("uncited_claims", 0),
+                                    "claim_total": _val.get("claim_total", 0),
+                                    "total_brackets": _val.get("total_brackets", 0),
+                                }
 
-                    # Auto chat→wiki: when this session has memory ON/auto
-                    # (save_to_memory > 0), re-wikify it in the background so the
-                    # conversation lands in the user-visible wiki (and thus
-                    # MemPalace) WITHOUT the user having to press 'merken'. This
-                    # replaces the retired mempalace-chat-sync daemon as the
-                    # automatic feeder. upsert_from_source keys on
-                    # source_ref=session/<sid>, so repeated turns re-version the
-                    # SAME page (diff-merge, no fork). Debounced per session so a
-                    # multi-turn chat doesn't LLM-rebuild the page every round.
-                    try:
-                        if int(getattr(session, "save_to_memory", 0) or 0) > 0 \
-                                and len([m for m in session.messages if m.get("role") == "user"]) >= 1:
-                            import time as _t
-                            _last = getattr(session, "_last_wiki_sync_at", 0)
-                            now = _t.time()
-                            # At most once per ~90s of wall-clock per session
-                            # (the LLM reorganization is the cost). The final
-                            # state is captured on session delete/idle too.
-                            if now - _last >= 90:
-                                session._last_wiki_sync_at = now
-                                _wsid = sid
+                                # Citation-Warning: instead of re-rounding (which
+                                # turned correct refusals into hallucinated
+                                # citations on refusal-bucket questions), we flag
+                                # the message in metadata so the frontend can render
+                                # a compact "x von y" badge (full text in tooltip)
+                                # that survives reload. Same threshold the re-round
+                                # used (>30% uncited OR ≥2 unverified quotes). The
+                                # prose is no longer baked into `reply` — the badge
+                                # is built client-side from these fields.
+                                #
+                                # Only flag the message when a retrieval tool was
+                                # ACTUALLY CALLED this turn (not merely live): if the
+                                # model answered from its own knowledge without ever
+                                # reading a file / searching / fetching, there were
+                                # no sources to cite and "N von N ohne Quellenangabe"
+                                # would be misleading. _RETRIEVAL_TOOLS is the same
+                                # set turn_has_retrieval_tools uses.
+                                _called_tool_names = [
+                                    (t or {}).get("name") for t in (_partial_tools or [])
+                                ]
+                                _retrieval_called = engine.turn_has_retrieval_tools(_called_tool_names)
+                                if _retrieval_called and engine.citation_reround_needed(_val):
+                                    _uncited = int(_val.get("uncited_claims", 0) or 0)
+                                    _ctotal = int(_val.get("claim_total", 0) or 0)
+                                    _unver = len(_val.get("unverified", []) or [])
+                                    _parts = []
+                                    if _ctotal > 0 and _uncited > 0:
+                                        _parts.append(
+                                            f"{_uncited} von {_ctotal} Behauptungen "
+                                            f"ohne Quellenangabe"
+                                        )
+                                    if _unver >= 2:
+                                        _parts.append(
+                                            f"{_unver} Zitat(e) konnten nicht "
+                                            f"in den Quelldateien verifiziert werden"
+                                        )
+                                    if _parts:
+                                        _cv_meta["warning_appended"] = True
+                                        _cv_meta["warning_text"] = (
+                                            "Hinweis zur Quellentreue: "
+                                            + "; ".join(_parts)
+                                            + ". Möglich ist auch, dass zu dieser "
+                                              "Frage keine passenden Informationen "
+                                              "in den Quellen vorlagen und die "
+                                              "Antwort daher ohne Belege bleiben "
+                                              "musste. Bitte einzelne Aussagen vor "
+                                              "Weiterverwendung gegen die "
+                                              "Originalquellen prüfen."
+                                        )
 
-                                _mem_mode = int(getattr(session, "save_to_memory", 0) or 0)
+                                msg_metadata["citation_validation"] = _cv_meta
+                            except Exception as _e:
+                                # Validation must never crash the response; log and continue.
+                                try: print(f"[citation-validator] error: {_e}")
+                                except Exception: pass
 
-                                def _auto_wiki(_s=_wsid, _mode=_mem_mode):
+                        # Sidecar empty-round nudge marker — persistent so the
+                        # user sees it after reload too, not just live via SSE.
+                        # Triggered from attempt 1 (any nudge is unusual; the
+                        # model should have answered directly).
+                        _nudges = int(_nudge_count[0] or 0)
+                        if _nudges > 0:
+                            msg_metadata["nudge_count"] = _nudges
+                            _gave_up = (reply.strip() ==
+                                        "No response was returned. Please modify "
+                                        "your request or change the model.")
+                            if _gave_up:
+                                # Give-up text is already the visible reply — don't
+                                # double up with a hint, the message itself says it.
+                                pass
+                            else:
+                                _nudge_hint = (
+                                    "\n\n---\n\n"
+                                    f"> ℹ️ **Hinweis**: Das Modell hat {_nudges} "
+                                    f"Mal neu angesetzt, bevor eine Antwort kam."
+                                )
+                                reply = reply + _nudge_hint
+                        # ── Transparent anonymisation: deanonymize final reply ──
+                        # The text_delta path already de-anonymised live deltas;
+                        # this pass covers the final assembled reply (which may
+                        # include text the streamer held back at flush time, plus
+                        # nudge/citation hints appended above). It's also the
+                        # canonical text persisted to the messages table.
+                        _gdpr_streamer = getattr(session, "_gdpr_streamer", None)
+                        _gdpr_mapping_id = getattr(session, "_gdpr_mapping_id", None)
+                        if _gdpr_mapping_id and _gdpr_streamer is not None:
+                            # Flush any held-back streamer tail to subscribers.
+                            _tail = _gdpr_streamer.flush()
+                            if _tail:
+                                live.emit("text_delta", {"text": _tail})
+                            _mapping = pseudonymizer.get_mapping(_gdpr_mapping_id)
+                            if _mapping is not None:
+                                _deanon_reply, _restored = pseudonymizer.deanonymize_text(
+                                    reply, mapping=_mapping)
+                                _t1 = time.time()
+                                _deanon_tool_id = f"deanon_{_gdpr_mapping_id[:12]}"
+                                _emit_synthetic_tool_event(
+                                    live=live, sid=sid, kind="deanonymise_text",
+                                    tool_use_id=_deanon_tool_id, phase="dispatch",
+                                    args={"target": "assistant_reply",
+                                          "mapping_id": _gdpr_mapping_id},
+                                )
+                                _emit_synthetic_tool_event(
+                                    live=live, sid=sid, kind="deanonymise_text",
+                                    tool_use_id=_deanon_tool_id, phase="done",
+                                    result={"restored": int(_restored),
+                                            "mapping_id": _gdpr_mapping_id},
+                                    status="ok",
+                                    duration_ms=int((time.time() - _t1) * 1000),
+                                )
+                                try:
+                                    if engine._audit_log:
+                                        engine._audit_log.log_action(
+                                            agent=session.agent_id, session_id=sid,
+                                            action_type="pii_deanonymise_text",
+                                            tool_name="gdpr_scanner",
+                                            args_summary="assistant_reply",
+                                            result_summary=(
+                                                f"restored={_restored} "
+                                                f"mapping_id={_gdpr_mapping_id}"),
+                                            result_status="success",
+                                            duration_ms=0, source="chat",
+                                        )
+                                except Exception:
+                                    pass
+                                # Capture wire-truth before we mutate `reply`.
+                                # The session inspector reads this so an auditor
+                                # can see the raw LLM output (with pseudonymised
+                                # tokens still embedded) alongside the de-
+                                # anonymised text the user actually sees in chat.
+                                # Skip the metadata bloat when no tokens needed
+                                # restoring (pre/post are byte-identical).
+                                if _restored:
+                                    msg_metadata["wire_content"] = reply
+                                reply = _deanon_reply
+                                msg_metadata["gdpr_mapping_id"] = _gdpr_mapping_id
+                                msg_metadata["gdpr_restored"] = int(_restored)
+                                # Per-span highlight payload so the UI can mark
+                                # each restored value in the assistant reply with
+                                # a tooltip ("email — alice@… was anonymised as
+                                # <EMAIL_1_7e77>"). Offsets are against `reply`
+                                # (the de-anonymised final text). Skipped when
+                                # no tokens were restored to keep metadata lean.
+                                if _restored:
                                     try:
-                                        from engine import wiki_store as _wiki
-                                        # Auto mode (2): an LLM gate decides if the
-                                        # conversation is worth saving. On mode (1):
-                                        # always file. (Successor to the retired
-                                        # per-turn memory classifier.)
-                                        if _mode == 2 and not _wiki.wiki_worth_saving(_s):
-                                            print(f"[auto-wiki] {_s[:8]} gated: SKIP (not memorable)", flush=True)
-                                            return
-                                        _wiki.wiki_from_chat(_s)
-                                    except Exception as _e:
-                                        print(f"[auto-wiki] {_s[:8]} failed: {_e}", flush=True)
-                                threading.Thread(target=_auto_wiki, daemon=True,
-                                                 name=f"auto-wiki-{sid[:8]}").start()
-                    except Exception:
-                        pass
+                                        _spans = pseudonymizer.find_restored_spans(
+                                            reply, mapping=_mapping)
+                                    except Exception:
+                                        _spans = []
+                                    if _spans:
+                                        msg_metadata["gdpr_restored_spans"] = _spans
+                        # ── Per-turn GDPR outcome (metadata.gdpr) ──
+                        # Data source for the post-turn feedback modal, for BOTH
+                        # occasions:
+                        #   anonymise            → N PII anonymised, M restored in reply
+                        #   anonymise_failed_local → anonymise failed, answered on local
+                        #   local_model          → PII found, answered on the local model
+                        # The `active` flag (set at the decision points) tells the
+                        # client whether to actually OFFER the feedback modal — only
+                        # when THIS turn's own input was anonymised/swapped, not when
+                        # anonymise merely re-pseudonymised prior history. Built here
+                        # so the de-anonymise `_restored` count (above) is known.
+                        _gdpr_outcome = getattr(
+                            engine.get_request_context(), "_gdpr_turn_outcome", None)
+                        if isinstance(_gdpr_outcome, dict):
+                            _gdpr_meta = dict(_gdpr_outcome)
+                            if _gdpr_meta.get("mode") == "anonymise":
+                                _gdpr_meta["restored"] = int(
+                                    msg_metadata.get("gdpr_restored", 0) or 0)
+                                # Recompute tokens_minted from the LIVE mapping —
+                                # the early stash captured only the typed-text slice;
+                                # read-side tools (read_document/read_file) may have
+                                # added attachment PII to the same mapping mid-turn.
+                                try:
+                                    _gmid = getattr(session, "_gdpr_mapping_id", None)
+                                    _m_live = (pseudonymizer.get_mapping(_gmid)
+                                               if _gmid else None)
+                                    if _m_live is not None:
+                                        _gdpr_meta["tokens_minted"] = len(_m_live.forward)
+                                except Exception:
+                                    pass
+                            msg_metadata["gdpr"] = _gdpr_meta
+                        else:
+                            _local_swap = getattr(session, "_gdpr_local_swap", "") or ""
+                            if _local_swap:
+                                # Always active — the user explicitly picked the
+                                # local model for this turn (pre-worker swap).
+                                msg_metadata["gdpr"] = {
+                                    "mode": "local_model",
+                                    "model": _local_swap,
+                                    "active": True,
+                                }
+                        session.add_message("assistant", reply, metadata=msg_metadata or None)
+                        # ── Goal-Modus: judge + auto-continue ──
+                        # Runs after the iteration's assistant message is
+                        # persisted (the judge sees exactly what the user sees).
+                        # Turn errors (_se) are terminal — never judged, never
+                        # continued. A continue verdict appends a VISIBLE user
+                        # message (metadata.goal_continue) and re-enters the
+                        # loop; every other outcome falls through to the single
+                        # terminal `done` below.
+                        if _goal_active and not _se:
+                            _gv = None
+                            if not session.cancel_token.cancelled:
+                                live.emit("goal_judge_start",
+                                          {"iteration": _goal_iter, "max": _goal_max})
+                                try:
+                                    _gv = _goal_judge.judge(
+                                        goal=session.goal_text,
+                                        reply=reply,
+                                        iteration=_goal_iter,
+                                        max_iterations=_goal_max,
+                                        session_id=sid,
+                                        agent_id=session.agent_id,
+                                        project=session.project or "",
+                                        user_id=session.user_id or "",
+                                        last_user_msg=(message if isinstance(message, str) else ""),
+                                    )
+                                except Exception as _je:
+                                    _gv = {"fulfilled": False, "impossible": False,
+                                           "reasoning": "", "continue_instruction": "",
+                                           "error": f"judge_exception: {_je}"}
+                            if _gv is None or session.cancel_token.cancelled:
+                                # Cancelled around the judge — the reply is already
+                                # persisted; end the turn without a verdict.
+                                _goal_done_meta = {"status": "cancelled",
+                                                   "iteration": _goal_iter,
+                                                   "max": _goal_max, "reasoning": ""}
+                            elif _gv.get("error"):
+                                _goal_done_meta = {"status": "judge_error",
+                                                   "iteration": _goal_iter,
+                                                   "max": _goal_max,
+                                                   "reasoning": str(_gv["error"])[:300]}
+                                live.emit("goal_verdict",
+                                          dict(_goal_done_meta, fulfilled=False))
+                            elif _gv.get("fulfilled"):
+                                _goal_set(status="fulfilled", iteration=_goal_iter)
+                                _goal_done_meta = {"status": "fulfilled",
+                                                   "iteration": _goal_iter,
+                                                   "max": _goal_max,
+                                                   "reasoning": _gv.get("reasoning", "")}
+                                live.emit("goal_verdict",
+                                          dict(_goal_done_meta, fulfilled=True))
+                            elif _gv.get("impossible") or _goal_iter >= _goal_max:
+                                _goal_set(status="capped", iteration=_goal_iter)
+                                _goal_done_meta = {"status": "capped",
+                                                   "iteration": _goal_iter,
+                                                   "max": _goal_max,
+                                                   "reasoning": _gv.get("reasoning", ""),
+                                                   "impossible": bool(_gv.get("impossible"))}
+                                live.emit("goal_verdict",
+                                          dict(_goal_done_meta, fulfilled=False))
+                            else:
+                                # Unmet with budget left → iterate. Persist the
+                                # continue-instruction as a real (styled) user
+                                # message, tell the client to close this bubble,
+                                # reset per-iteration stream state, loop.
+                                _goal_set(iteration=_goal_iter)
+                                live.emit("goal_verdict",
+                                          {"fulfilled": False, "status": "active",
+                                           "iteration": _goal_iter, "max": _goal_max,
+                                           "reasoning": _gv.get("reasoning", "")})
+                                # Rollback scope narrows to THIS iteration: a later
+                                # cancel/error must not undo persisted iterations.
+                                _msg_count_before = len(session.messages)
+                                session.add_message(
+                                    "user", _gv["continue_instruction"],
+                                    metadata={"goal_continue": True,
+                                              "goal_iteration": _goal_iter + 1,
+                                              "goal_reasoning": _gv.get("reasoning", "")})
+                                _gc_payload = {"text": _gv["continue_instruction"],
+                                               "iteration": _goal_iter + 1,
+                                               "max": _goal_max,
+                                               "assistant_text": reply}
+                                if msg_metadata.get("text_rounds"):
+                                    _gc_payload["text_rounds"] = msg_metadata["text_rounds"]
+                                live.emit("goal_continue", _gc_payload)
+                                _partial_reply.clear()
+                                _partial_tools.clear()
+                                _partial_thinking.clear()
+                                _thinking_summary.clear()
+                                _request_payloads.clear()
+                                _nudge_count[0] = 0
+                                created_files.clear()
+                                with session.lock:
+                                    session._turn_created_files = []
+                                try:
+                                    ChatDB.set_streaming_text(sid, "")
+                                except Exception:
+                                    pass
+                                continue
+                        done_data = {
+                            "text": reply,
+                            "tokens": engine._estimate_conversation_tokens(session.messages),
+                            "max_context": session.max_context,
+                            "model": session.model,
+                            "duration": _req_duration,
+                            "tokens_in": _usage_totals["tokens_in"],
+                            "tokens_out": _usage_totals["tokens_out"],
+                            "last_tokens_in": _usage_totals["last_tokens_in"],
+                            "cache_read_tokens": _usage_totals.get("cache_read_tokens", 0),
+                        }
+                        # Per-round answer-text split → client reconstructs the
+                        # chronological text↔tool interleave on reload (display-only).
+                        if msg_metadata.get("text_rounds"):
+                            done_data["text_rounds"] = msg_metadata["text_rounds"]
+                        if session_cost is not None:
+                            done_data["cost"] = session_cost
+                        # Auto-LCM compaction level → live status-line badge picks it
+                        # up here; reload reads the same dict from msg_metadata.
+                        if msg_metadata.get("lcm_state"):
+                            done_data["lcm_state"] = msg_metadata["lcm_state"]
+                        # GDPR highlight payload — UI marks each restored span
+                        # in the reply with a tooltip. Pulled from the metadata
+                        # we just attached to the persisted message; live path
+                        # picks it up here, reload reads it from msg_metadata.
+                        _gdpr_spans = msg_metadata.get("gdpr_restored_spans") if msg_metadata else None
+                        if _gdpr_spans:
+                            done_data["gdpr_restored_spans"] = _gdpr_spans
+                        # Per-turn GDPR outcome badge — live path picks it up here,
+                        # reload reads the same dict from msg_metadata["gdpr"].
+                        _gdpr_outcome_meta = msg_metadata.get("gdpr") if msg_metadata else None
+                        if _gdpr_outcome_meta:
+                            done_data["gdpr"] = _gdpr_outcome_meta
+                        # Include fallback model info if a fallback was used
+                        fb_model = engine.get_request_context()._fallback_model_used
+                        if fb_model:
+                            done_data["fallback_model"] = fb_model
+                            done_data["original_model"] = session.model
+                        # Auto-routing: tell the client which model Auto picked and
+                        # why, so the composer can show "Auto (Model)" + tooltip
+                        # without dropping the user's "auto" selection.
+                        if auto_route:
+                            # Match the persisted shape (incl. the tool-gating
+                            # decision) so the live turn's classification modal is
+                            # identical to a reloaded turn's.
+                            _ar_done = dict(auto_route)
+                            if _gating_decision is not None:
+                                _ar_done["tool_gating"] = _gating_decision
+                            try:
+                                if _tool_breakdown:
+                                    _ar_done["tool_resolution"] = _tool_breakdown
+                            except NameError:
+                                pass
+                            try:
+                                if _discipline_meta is not None:
+                                    _ar_done["discipline"] = _discipline_meta
+                            except NameError:
+                                pass
+                            done_data["auto_route"] = _ar_done
+                        # Include file attachments
+                        if created_files:
+                            done_data["files"] = created_files
+                        # Deep Research turn → live pill marker (reload reads metadata).
+                        if deep_research:
+                            done_data["deep_research"] = True
+                        # Goal-Modus outcome → composer badge / status bar; reload
+                        # reads the same state from GET /messages goal_* fields.
+                        if _goal_done_meta:
+                            done_data["goal"] = _goal_done_meta
+                        live.emit("done", done_data)
 
-                    # Generate chat summary (background, for sidebar display).
-                    # Regenerated every turn so the synopsis tracks the latest
-                    # questions, not just the opening one.
-                    try:
-                        if len(session.messages) >= 2:
-                            threading.Thread(
-                                target=_generate_chat_summary,
-                                args=(session,),
-                                daemon=True,
-                                name=f"chat_summary_{sid}"
-                            ).start()
-                    except Exception:
-                        pass
+                        # Auto chat→wiki: when this session has memory ON/auto
+                        # (save_to_memory > 0), re-wikify it in the background so the
+                        # conversation lands in the user-visible wiki (and thus
+                        # MemPalace) WITHOUT the user having to press 'merken'. This
+                        # replaces the retired mempalace-chat-sync daemon as the
+                        # automatic feeder. upsert_from_source keys on
+                        # source_ref=session/<sid>, so repeated turns re-version the
+                        # SAME page (diff-merge, no fork). Debounced per session so a
+                        # multi-turn chat doesn't LLM-rebuild the page every round.
+                        try:
+                            if int(getattr(session, "save_to_memory", 0) or 0) > 0 \
+                                    and len([m for m in session.messages if m.get("role") == "user"]) >= 1:
+                                import time as _t
+                                _last = getattr(session, "_last_wiki_sync_at", 0)
+                                now = _t.time()
+                                # At most once per ~90s of wall-clock per session
+                                # (the LLM reorganization is the cost). The final
+                                # state is captured on session delete/idle too.
+                                if now - _last >= 90:
+                                    session._last_wiki_sync_at = now
+                                    _wsid = sid
 
-                    # Index chat transcript for content search (4+ messages, every 4th message or first time)
-                    try:
-                        msg_count = len(session.messages)
-                        if msg_count >= 4 and (msg_count % 4 == 0 or not os.path.isdir(
-                                os.path.join(engine.AGENTS_DIR, session.agent_id, "chats-indexed"))):
-                            threading.Thread(
-                                target=_index_chat_transcript,
-                                args=(session,),
-                                daemon=True,
-                                name=f"chat_index_{sid}"
-                            ).start()
-                    except Exception:
-                        pass
-                else:
-                    # Empty reply — rollback all intermediate messages from tool loop
-                    _rollback_messages(session, sid, _msg_count_before)
-                    live.emit("done", {"text": "", "tokens": 0, "model": session.model})
+                                    _mem_mode = int(getattr(session, "save_to_memory", 0) or 0)
+
+                                    def _auto_wiki(_s=_wsid, _mode=_mem_mode):
+                                        try:
+                                            from engine import wiki_store as _wiki
+                                            # Auto mode (2): an LLM gate decides if the
+                                            # conversation is worth saving. On mode (1):
+                                            # always file. (Successor to the retired
+                                            # per-turn memory classifier.)
+                                            if _mode == 2 and not _wiki.wiki_worth_saving(_s):
+                                                print(f"[auto-wiki] {_s[:8]} gated: SKIP (not memorable)", flush=True)
+                                                return
+                                            _wiki.wiki_from_chat(_s)
+                                        except Exception as _e:
+                                            print(f"[auto-wiki] {_s[:8]} failed: {_e}", flush=True)
+                                    threading.Thread(target=_auto_wiki, daemon=True,
+                                                     name=f"auto-wiki-{sid[:8]}").start()
+                        except Exception:
+                            pass
+
+                        # Generate chat summary (background, for sidebar display).
+                        # Regenerated every turn so the synopsis tracks the latest
+                        # questions, not just the opening one.
+                        try:
+                            if len(session.messages) >= 2:
+                                threading.Thread(
+                                    target=_generate_chat_summary,
+                                    args=(session,),
+                                    daemon=True,
+                                    name=f"chat_summary_{sid}"
+                                ).start()
+                        except Exception:
+                            pass
+
+                        # Index chat transcript for content search (4+ messages, every 4th message or first time)
+                        try:
+                            msg_count = len(session.messages)
+                            if msg_count >= 4 and (msg_count % 4 == 0 or not os.path.isdir(
+                                    os.path.join(engine.AGENTS_DIR, session.agent_id, "chats-indexed"))):
+                                threading.Thread(
+                                    target=_index_chat_transcript,
+                                    args=(session,),
+                                    daemon=True,
+                                    name=f"chat_index_{sid}"
+                                ).start()
+                        except Exception:
+                            pass
+                    else:
+                        # Empty reply — rollback all intermediate messages from tool loop
+                        _rollback_messages(session, sid, _msg_count_before)
+                        live.emit("done", {"text": "", "tokens": 0, "model": session.model})
+                    # Terminal turn (goal met/capped/off/error/empty) — the only
+                    # way the loop repeats is the explicit `continue` in the
+                    # goal-judge step above.
+                    break
             except engine.TaskCancelled:
                 # Persist whatever this turn produced before the cancel — partial
                 # text AND/OR tool calls. Gating on text alone lost a turn that

@@ -29,6 +29,29 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.256.0",
+        "date": "2026-07-02",
+        "title": "Goal-Modus: Ziel setzen, Agent arbeitet bis zur Erfüllung",
+        "body": "Geben Sie einem Chat, dem Terminal-Chat oder einer geplanten "
+                "Aufgabe ein Ziel — z. B. „Der Bericht enthält alle fünf "
+                "Abschnitte und jede Zahl ist belegt.“ Nach jeder Antwort wird "
+                "automatisch geprüft, ob das Ziel erreicht ist; wenn nicht, "
+                "arbeitet der Assistent selbstständig weiter und verbessert das "
+                "Ergebnis, bis es passt (mit einstellbarer Obergrenze an "
+                "Durchläufen). Im Chat setzen Sie das Ziel über den neuen "
+                "Zielscheiben-Knopf im Eingabefeld, im Terminal-Chat per "
+                "/goal, bei geplanten Aufgaben direkt im Aufgaben-Editor. "
+                "Aktive Ziele sind jederzeit sichtbar: farbiger Knopf im "
+                "Eingabefeld, 🎯-Markierung in der Chat-Liste, Fortschritt "
+                "(„Iteration 2/5“) in der Statusleiste — und jeder automatische "
+                "Zwischenschritt bleibt als eigene Nachricht nachvollziehbar. "
+                "Admins wählen unter Service-Modelle das Prüf-Modell und legen "
+                "in den Eingabefeld-Standards die Obergrenze fest oder schalten "
+                "den Goal-Modus ab.",
+        "audience": "user",
+        "versions": ["9.256.0"],
+    },
+    {
         "version": "9.255.0",
         "date": "2026-07-01",
         "title": "Klareres Deep-Research-Symbol + ruhigerer Arbeits-Spinner",

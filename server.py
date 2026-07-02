@@ -372,6 +372,14 @@ class Session:
         # a turn was streaming, to auto-send as normal turns once it finishes.
         # Persisted so a reload restores the queue. Empty string = empty.
         self.message_queue: str = ""
+        # Goal-Modus: while goal_status == 'active', every send runs the
+        # post-turn judge loop (adapt + continue until the goal is met).
+        # goal_status: '' none | 'active' | 'fulfilled' | 'capped'.
+        # goal_max_iterations 0 = use the admin default. Persist in sessions DB.
+        self.goal_text: str = ""
+        self.goal_status: str = ""
+        self.goal_iteration: int = 0
+        self.goal_max_iterations: int = 0
         # Transparent anonymisation sticky preference (step 6.2). When non-
         # empty, the web modal is skipped on every send and this value is
         # forwarded as body.gdpr_action. Allowed: '', 'anonymise',
@@ -461,6 +469,13 @@ class Session:
                 self.gdpr_details_visible = bool(info.get("gdpr_details_visible", 0))
                 self.web_basket = info.get("web_basket", "") or ""
                 self.message_queue = info.get("message_queue", "") or ""
+                self.goal_text = info.get("goal_text", "") or ""
+                _gst = str(info.get("goal_status", "") or "")
+                self.goal_status = (_gst if _gst in
+                    ("active", "fulfilled", "capped") else "")
+                self.goal_iteration = int(info.get("goal_iteration", 0) or 0)
+                self.goal_max_iterations = int(
+                    info.get("goal_max_iterations", 0) or 0)
                 _pref = info.get("gdpr_action_pref", "") or ""
                 self.gdpr_action_pref = (_pref if _pref in
                     ("anonymise", "local_model", "continue") else "")
@@ -2625,6 +2640,8 @@ class BrainAgentHandler(
                 tool_profile=body.get("tool_profile", "") or "",
                 project_id=project_id,
                 wiki_file=body.get("wiki_file", 0) or 0,
+                goal=body.get("goal", "") or "",
+                goal_max_iterations=body.get("goal_max_iterations", 0) or 0,
             )
             self._send_json(result)
         elif action == "pause":
@@ -2713,7 +2730,7 @@ class BrainAgentHandler(
                       ("task", "schedule", "model", "timeout", "agent",
                        "new_name", "attachments", "working_dir",
                        "thinking_level", "caveman_chat", "tool_profile",
-                       "project_id", "wiki_file")
+                       "project_id", "wiki_file", "goal", "goal_max_iterations")
                       if k in body}
             # Validate project access on (re)binding. Empty string is allowed
             # (clears the binding back to agent-global).

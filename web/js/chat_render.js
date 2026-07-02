@@ -763,6 +763,19 @@ function renderUserMessage(msg, idx) {
   const userTextHtml = showGdpr
     ? renderPlainTextWithGdprHighlights(textContent, userSpans)
     : esc(textContent);
+  // Goal-Modus auto-continue instruction: a server-generated user message
+  // (judge verdict → next instruction). Rendered muted with a caption so it
+  // reads as automation, not as something the user typed.
+  if (msg.metadata?.goal_continue) {
+    const gi = msg.metadata.goal_iteration || '';
+    return `
+    <div class="msg-turn msg-turn-user">
+      <div class="msg-user" style="opacity:0.75;border-left:3px solid var(--accent-500, #6366f1)">
+        <div style="font-size:11px;color:var(--accent-500, #6366f1);font-weight:600;margin-bottom:4px">🎯 Automatische Fortsetzung${gi ? ` (Iteration ${esc(String(gi))})` : ''}</div>
+        ${userTextHtml}
+      </div>
+    </div>`;
+  }
   return `
     <div class="msg-turn msg-turn-user">
       ${thumbsHtml}

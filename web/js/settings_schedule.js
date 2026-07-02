@@ -748,6 +748,14 @@ async function _schedViewEdit(name) {
       </div>
     </div>
     <div class="sched-form-group">
+      <label>🎯 Ziel <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional — Goal-Modus: der Lauf wird nach jedem Durchgang gegen das Ziel geprüft und arbeitet weiter, bis es erreicht ist)</span></label>
+      <textarea id="sched-edit-goal" rows="2" placeholder="(kein Ziel — Aufgabe läuft einmal)" style="resize:vertical">${esc(task.goal || '')}</textarea>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+        <label style="margin:0;font-weight:normal;font-size:12px;color:var(--text-300)">Max. Iterationen</label>
+        <input id="sched-edit-goal-maxiter" type="number" value="${Number(task.goal_max_iterations || 0) || ''}" placeholder="Standard" min="1" max="10" style="width:90px">
+      </div>
+    </div>
+    <div class="sched-form-group">
       <label>Tool-Profil <span style="color:var(--text-400);font-weight:normal;font-size:11px">(welche Tools der Agent bei dieser Aufgabe sieht)</span></label>
       <select id="sched-edit-tool-profile">
         ${[
@@ -812,6 +820,8 @@ async function _saveScheduledEdit(originalName) {
   const tool_profile = document.getElementById('sched-edit-tool-profile')?.value || '';
   const working_dir = document.getElementById('sched-edit-workdir')?.value?.trim() || '';
   const wiki_file = document.getElementById('sched-edit-wiki-file')?.checked ? 1 : 0;
+  const goal = document.getElementById('sched-edit-goal')?.value?.trim() || '';
+  const goal_max_iterations = parseInt(document.getElementById('sched-edit-goal-maxiter')?.value) || 0;
   const attachments = window._schedEditAttachments || [];
 
   if (!newName) { showToast('Name ist erforderlich', true); return; }
@@ -830,6 +840,8 @@ async function _saveScheduledEdit(originalName) {
     tool_profile,
     working_dir,
     wiki_file,
+    goal,
+    goal_max_iterations,
     attachments,
     // Empty string signals "clear back to Default" so the scheduler falls
     // back to the target agent's preferred_model at dispatch time. null
@@ -923,6 +935,14 @@ function showCreateScheduledModal() {
           <option value="2">Full</option>
           <option value="3">Ultra</option>
         </select>
+      </div>
+    </div>
+    <div class="sched-form-group">
+      <label>🎯 Ziel <span style="color:var(--text-400);font-weight:normal;font-size:11px">(optional — Goal-Modus: der Lauf wird nach jedem Durchgang gegen das Ziel geprüft und arbeitet weiter, bis es erreicht ist)</span></label>
+      <textarea id="sched-new-goal" rows="2" placeholder="(kein Ziel — Aufgabe läuft einmal)" style="resize:vertical"></textarea>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+        <label style="margin:0;font-weight:normal;font-size:12px;color:var(--text-300)">Max. Iterationen</label>
+        <input id="sched-new-goal-maxiter" type="number" placeholder="Standard" min="1" max="10" style="width:90px">
       </div>
     </div>
     <div class="sched-form-group">
@@ -1129,12 +1149,14 @@ async function _createScheduledTask() {
   }
 
   const working_dir = document.getElementById('sched-new-workdir')?.value?.trim() || '';
+  const goal = document.getElementById('sched-new-goal')?.value?.trim() || '';
+  const goal_max_iterations = parseInt(document.getElementById('sched-new-goal-maxiter')?.value) || 0;
   const attachments = window._schedNewAttachments || [];
   try {
     const res = await API.manageSchedule({
       action: 'add', name, task, schedule, agent, model, timeout,
       thinking_level, caveman_chat, tool_profile,
-      working_dir, attachments,
+      working_dir, attachments, goal, goal_max_iterations,
     });
     if (res.error) { showToast(res.error, true); return; }
     showToast('Aufgabe erstellt');

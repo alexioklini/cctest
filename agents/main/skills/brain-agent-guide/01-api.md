@@ -177,6 +177,19 @@ streaming call, per-USER history, fixed read-only tool set. See
 - Message queue persists per session (`sessions.message_queue`, manage action
   `message_queue`, returned by `GET /messages`) — messages typed while a turn
   streams, auto-sent as normal turns when it finishes.
+- Goal-Modus (v9.256.0): while a session carries an ACTIVE goal
+  (`sessions.goal_status='active'`, set via manage action `goal`), EVERY send
+  runs a post-turn judge loop server-side — after each persisted reply an LLM
+  judge (`engine/goal_judge.py`, model `config.goal_judge_model`) checks the
+  reply against the goal; unmet → the continue-instruction is persisted as a
+  visible user message (`metadata.goal_continue`) and the turn re-runs, until
+  fulfilled / judged impossible / iteration cap. New SSE events:
+  `goal_judge_start {iteration, max}` · `goal_verdict {fulfilled, status:
+  active|fulfilled|capped|judge_error, iteration, max, reasoning}` ·
+  `goal_continue {text, iteration, max, assistant_text, text_rounds}`
+  (= iteration boundary: client closes the current assistant bubble). The
+  single terminal `done` carries `goal {status, iteration, max, reasoning}`.
+  `fulfilled` auto-ends the loop (badge ✓ until the goal is cleared/replaced).
 - `POST /v1/chat/answer` — `{session_id, answer}` unblocks `AskUserQuestion`
 - `POST /v1/chat/gdpr-recovery` — `{session_id, action}` resolve a
   pre-send PII modal (`block`, `proceed_local`, `proceed_pseudo`, …)
@@ -203,6 +216,11 @@ streaming call, per-USER history, fixed read-only tool set. See
    `gdpr_details_visible {value}` persists the per-chat "Datenschutz-Details
    sichtbar" shield toggle (GDPR mark overlays + detail block), restored on
    reopen; `gdpr_feedback_ask {value}` the sticky post-turn GDPR feedback opt-in.
+   `goal {goal:"<text>", goal_max_iterations?:1..10}` sets the Goal-Modus goal
+   (non-empty → status `active`, iteration reset; empty → clears everything;
+   re-setting a fulfilled/capped goal re-arms it). Echoed by `GET /messages` as
+   `goal_text/goal_status/goal_iteration/goal_max_iterations` and by the
+   session list (sidebar 🎯 pill).
 
 ## Agents
 
@@ -356,8 +374,8 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 
 | Action | Body | Effect |
 |---|---|---|
-| `add` | `{name, task, schedule, agent="main", model?, timeout=300, attachments=[], working_dir?, thinking_level?, caveman_chat?, tool_profile?, project_id?}` | Create new schedule. `schedule` is a cron expr or `@every 10m` etc. `project_id` (stable uuid) binds the task to a project — the run then executes inside that project's context (instructions, MemPalace `project__<id>` wing, research_mode); the server validates the caller may access the project. |
-| `edit` | `{name, task?, schedule?, model?, timeout?, agent?, new_name?, attachments?, working_dir?, thinking_level?, caveman_chat?, tool_profile?, project_id?}` | Partial update. `project_id=""` clears a project binding back to agent-global. |
+| `add` | `{name, task, schedule, agent="main", model?, timeout=300, attachments=[], working_dir?, thinking_level?, caveman_chat?, tool_profile?, project_id?, goal?, goal_max_iterations?}` | Create new schedule. `schedule` is a cron expr or `@every 10m` etc. `project_id` (stable uuid) binds the task to a project — the run then executes inside that project's context (instructions, MemPalace `project__<id>` wing, research_mode); the server validates the caller may access the project. `goal` (Goal-Modus) makes the run judge each turn against the goal and auto-continue until met / impossible / `goal_max_iterations` (0 = admin default) / <30s timeout budget left; result gets a German `Ziel: …` suffix and `schedule_history.goal_iterations` records the count. |
+| `edit` | `{name, task?, schedule?, model?, timeout?, agent?, new_name?, attachments?, working_dir?, thinking_level?, caveman_chat?, tool_profile?, project_id?, goal?, goal_max_iterations?}` | Partial update. `project_id=""` clears a project binding back to agent-global; `goal=""` turns Goal-Modus off for the task. |
 | `pause` / `resume` | `{name}` | Toggle enabled flag |
 | `delete` | `{name}` | Remove schedule (history kept) |
 | `run_now` | `{name}` | Trigger immediately (synthetic session `sched-<run_id>`) |
@@ -407,9 +425,13 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 - `GET /v1/mempalace/stats` — wing/room/drawer counts
 - `GET /v1/mempalace/classifier` / `POST` — chat-sync classifier config
 - `GET /v1/composer/defaults` (any logged-in user) / `POST` (admin) — new-chat
-  composer defaults `{thinking_level, caveman_mode, memory_mode}`. thinking +
-  caveman live in `config.json → composer_defaults`; memory_mode writes through
-  to `mempalace.chat_sync.classifier.default_mode` (single source). Configured
+  composer defaults `{thinking_level, caveman_mode, memory_mode,
+  goal_mode_enabled, goal_max_iterations}`. thinking + caveman + the two
+  Goal-Modus knobs live in `config.json → composer_defaults`
+  (`goal_mode_enabled` false hides the 🎯 button AND disables the server loop;
+  `goal_max_iterations` = default iteration cap 1..10, per-session/task
+  override wins); memory_mode writes through to
+  `mempalace.chat_sync.classifier.default_mode` (single source). Configured
   in General Settings → Server → „Eingabefeld-Standards".
 - `GET /v1/mempalace/activity` — live miner state
 - `GET /v1/mempalace/session-turns?session_id=` — drawer ids per turn
@@ -634,7 +656,8 @@ Once a feedback row exists, user and admin exchange short one-line messages
   check. Powers Settings → Allgemein → **Bibliotheken**.
 - `GET /v1/services/models` — admin: every service-model slot (default,
   chat-summary, **classifier** (Prompt-Klassifikation/Auto-Routing), fan-out,
-  KG-extraction, TTS, transcribe) + OCR, each with a
+  KG-extraction, **goal_judge_model** (Goal-Modus Ziel-Prüfung; empty = server
+  default model), TTS, transcribe) + OCR, each with a
   resolve status (`ok`/`unset`/`missing`/`disabled`) + the dropdown option
   lists. Also returns a `conversion` block: the per-file-type extractor
   **matrix** (`{ext, markitdown, own_extractor}`) + `markitdown_available` +

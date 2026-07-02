@@ -1185,6 +1185,7 @@ function initComposers() {
       set('btn-refine',           'btn-refine');
       set('btn-save-to-memory',   'btn-save-to-memory');
       set('btn-caveman',          'btn-caveman');
+      set('btn-goal',             'btn-goal');
       set('model-selector',       'chat-model-selector');
       set('warmup-dot',           'chat-warmup-dot');
       set('model-name',           'chat-model-name');
@@ -1201,6 +1202,7 @@ function initComposers() {
       set('btn-refine',           p + 'btn-refine');
       set('btn-save-to-memory',   p + 'btn-save-to-memory');
       set('btn-caveman',          p + 'btn-caveman');
+      set('btn-goal',             p + 'btn-goal');
       set('model-selector',       p + 'model-selector');
       set('warmup-dot',           p + 'warmup-dot');
       set('model-name',           p + 'model-name');

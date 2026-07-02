@@ -370,10 +370,14 @@ class AdminObservabilityHandlers:
         tl = str(cd.get("thinking_level", "none") or "none").lower()
         if tl not in ("none", "low", "medium", "high"):
             tl = "none"
+        from engine.goal_judge import GOAL_ITER_HARD_CAP
         self._send_json({
             "thinking_level": tl,
             "caveman_mode": max(0, min(3, int(cd.get("caveman_mode", 0) or 0))),
             "memory_mode": max(0, min(2, int(mem_default or 0))),
+            "goal_mode_enabled": bool(cd.get("goal_mode_enabled", True)),
+            "goal_max_iterations": max(1, min(GOAL_ITER_HARD_CAP,
+                int(cd.get("goal_max_iterations", 5) or 5))),
         })
 
     def _handle_composer_defaults_save(self):
@@ -405,6 +409,12 @@ class AdminObservabilityHandlers:
                 cs = mp.setdefault("chat_sync", {})
                 clf = cs.setdefault("classifier", {})
                 clf["default_mode"] = max(0, min(2, int(body["memory_mode"])))
+            if "goal_mode_enabled" in body:
+                cd["goal_mode_enabled"] = bool(body["goal_mode_enabled"])
+            if "goal_max_iterations" in body:
+                from engine.goal_judge import GOAL_ITER_HARD_CAP
+                cd["goal_max_iterations"] = max(1, min(
+                    GOAL_ITER_HARD_CAP, int(body["goal_max_iterations"])))
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=2)
             engine._mempalace_config_cache = None
@@ -997,6 +1007,7 @@ class AdminObservabilityHandlers:
         ("audio_overview_model", "Audio Overview (Podcast-Skript)", "config", None),
         ("code_graph_model", "Code-Graph (Symbol-Zusammenfassungen)", "config", None),
         ("deep_research_model", "Deep Research (Recherche-Loop)", "config", None),
+        ("goal_judge_model", "Goal-Modus (Ziel-Prüfung)", "config", None),
         ("translation_model", "Übersetzung", "tools", None),
         ("translation_rewrite_model", "Übersetzung – Ton-Glättung", "tools", None),
         ("translation_detect_fallback_model", "Übersetzung – Spracherkennung (LLM-Fallback)", "tools", None),
@@ -1038,6 +1049,7 @@ class AdminObservabilityHandlers:
             "audio_overview_model": cfg.get("audio_overview_model", "") or "",
             "code_graph_model": cfg.get("code_graph_model", "") or "",
             "deep_research_model": cfg.get("deep_research_model", "") or "",
+            "goal_judge_model": cfg.get("goal_judge_model", "") or "",
             "background_task_model": cfg.get("background_task_model", "") or "",
             "kg_extraction_model": kg.get("extraction_model", "") or "",
             "tts_model": (tool_cfg.get("text_to_speech") or {}).get("default_model", "") or "",
@@ -1211,6 +1223,8 @@ class AdminObservabilityHandlers:
                 cfg.setdefault("telegram", {})["model"] = _validate_model(body["telegram_model"])
             if "deep_research_model" in body:
                 cfg["deep_research_model"] = _validate_model(body["deep_research_model"])
+            if "goal_judge_model" in body:
+                cfg["goal_judge_model"] = _validate_model(body["goal_judge_model"])
             if "background_task_model" in body:
                 cfg["background_task_model"] = _validate_model(body["background_task_model"])
             if "kg_extraction_model" in body:

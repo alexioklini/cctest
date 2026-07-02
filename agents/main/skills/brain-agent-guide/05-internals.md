@@ -1226,6 +1226,56 @@ multi-project cycles strictly sequential. Per project:
 Startup wipe drops every drawer in `project__*` wings AND clears
 `sync_status` (needs marker-file gate — see backlog).
 
+## Goal-Modus (post-turn judge loop, v9.256.0)
+
+A per-session (or per-scheduled-task) GOAL the server judges every turn
+against, auto-continuing until fulfilled — like Claude Code's `/goal`.
+
+- **Judge**: `engine/goal_judge.py::judge()` — one `background_call` with
+  `forced_tool=goal_verdict` → validated dict `{fulfilled, impossible,
+  reasoning, continue_instruction}` (no JSON parsing). Model:
+  `config.goal_judge_model` → server default. GDPR-gated
+  (`gdpr_pick_model_for_background`, purpose `goal_judge`); cost rows tagged
+  `cost_purpose=goal_judge`. Input is CAPPED (goal + last user msg ~2k +
+  reply tail ~12k) — never the full transcript. `impossible=true` (legitimate
+  refusal / objectively unreachable) ends the loop WITHOUT forcing a
+  continuation — the citation-re-round lesson (never bully a correct refusal
+  into hallucination). **Judge errors are always terminal** (no retry) — an
+  unreliable judge must not be able to spin the loop.
+- **Chat loop** (`handlers/chat.py` worker): the turn body
+  (wire-build → `run_turn` → persist) runs in a `while True`; after each
+  persisted assistant message the judge runs; a continue verdict persists the
+  `continue_instruction` as a VISIBLE user message
+  (`metadata.goal_continue/goal_iteration/goal_reasoning`) and re-enters the
+  loop. Exactly ONE terminal `done` (carries `goal {status,iteration,max,
+  reasoning}`); boundaries are SSE `goal_judge_start` / `goal_verdict` /
+  `goal_continue`. Invariants: `_msg_count_before` is re-snapshotted before
+  each continue message (cancel/error in iteration N rolls back ONLY N);
+  per-iteration callback state (`_partial_*`, created_files,
+  `_turn_created_files`, streaming_text) is cleared at the boundary; the
+  Websuche fetch from iteration 1 is CACHED and re-injected (no re-fetch per
+  pass); the PII wire-rewrite runs every pass (audit event only on pass 1);
+  the aggregate-cost fallback logs token DELTAS (never cumulative). Turn
+  error / empty reply / cancel → break without judging. Deep-Research turns
+  are exempt. `AskUserQuestion` inside an iteration blocks as usual — the
+  loop simply waits.
+- **Caps**: `gmax = session.goal_max_iterations or
+  composer_defaults.goal_max_iterations or 5`, hard ceiling
+  `GOAL_ITER_HARD_CAP=10`. Kill switch:
+  `composer_defaults.goal_mode_enabled=false` disables button AND loop.
+- **Lifecycle**: manage action `goal` arms (`goal_status='active'`); while
+  active EVERY send loops; `fulfilled` auto-ends judging (badge ✓ until the
+  goal is cleared or re-set — re-setting re-arms); `capped` = impossible or
+  budget exhausted; `judge_error`/cancel leave the goal armed.
+- **Scheduler variant**: `_execute_scheduled` wraps `run_turn` in
+  `for _gi in 1..gmax` when `schedules.goal` is set. The judge sees the RAW
+  (still-pseudonymised) reply; continuation appends assistant+user messages
+  in the same token space; only the FINAL `result_text` is de-anonymised.
+  Guards: stop on turn error, `cancel_token`, or <30s of timeout budget
+  left. German result suffix (`Ziel: erreicht nach N Iteration(en)` /
+  `nicht erreicht (Limit N)` / `Ziel-Prüfung fehlgeschlagen`);
+  `schedule_history.goal_iterations` records the count.
+
 ## Scheduler
 
 - `engine._scheduler` is a singleton. APScheduler-style cron + `@every`.

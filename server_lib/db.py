@@ -520,6 +520,24 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN message_queue TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Goal-Modus (per-session goal the server judges each turn against,
+            # auto-continuing until fulfilled): goal_text = the user's goal
+            # ('' = none), goal_status = ''|active|fulfilled|capped,
+            # goal_iteration = iterations spent on the current send,
+            # goal_max_iterations = per-session override (0 = admin default).
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN goal_text TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN goal_status TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+            for _col in ("goal_iteration", "goal_max_iterations"):
+                try:
+                    conn.execute(f"ALTER TABLE sessions ADD COLUMN {_col} INTEGER DEFAULT 0")
+                except sqlite3.OperationalError:
+                    pass
             # Add team_id + visibility for session team-scoping
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN team_id TEXT DEFAULT ''")
@@ -2391,6 +2409,29 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
+    def update_session_goal(session_id, *, text=None, status=None,
+                            iteration=None, max_iterations=None):
+        """Update Goal-Modus fields; only kwargs that are not None are written.
+        text '' clears the goal (callers also reset status/iteration/max)."""
+        sets, vals = [], []
+        if text is not None:
+            sets.append("goal_text = ?"); vals.append(text)
+        if status is not None:
+            sets.append("goal_status = ?"); vals.append(status)
+        if iteration is not None:
+            sets.append("goal_iteration = ?"); vals.append(int(iteration))
+        if max_iterations is not None:
+            sets.append("goal_max_iterations = ?"); vals.append(int(max_iterations))
+        if not sets:
+            return
+        vals.append(session_id)
+        with _db_conn() as conn:
+            conn.execute(f"UPDATE sessions SET {', '.join(sets)} WHERE id = ?",
+                        tuple(vals))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
     def update_session_gdpr_action_pref(session_id, value):
         """Transparent-anonymisation sticky preference (step 6.2).
 
@@ -2868,6 +2909,7 @@ class ChatDB:
                  "s.project_id, s.workflow_run_id, s.research_mode_override, "
                  "s.extra_member_user_ids, s.excluded_user_ids, "
                  "s.gdpr_action_pref, s.allow_further_web, "
+                 "s.goal_text, s.goal_status, s.goal_iteration, s.goal_max_iterations, "
                  "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND (m.compacted = 0 OR m.compacted IS NULL)) as message_count, "
                  "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id AND m.metadata LIKE '%\"files\"%') as has_attachments "
                  "FROM sessions s WHERE 1=1")

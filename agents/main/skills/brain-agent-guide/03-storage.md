@@ -121,7 +121,12 @@ web_basket TEXT (JSON list of curated Websuche sources
 chat_audio_overview TEXT (JSON cache of the chat-podcast button's last
   Audio Overview {content_hash,artifact_id,audio_file,script_file,
   spoken_lines,cost}; lets a re-click on an unchanged chat replay instead
-  of regenerating; '' = none)
+  of regenerating; '' = none),
+goal_text TEXT (Goal-Modus goal, '' = none),
+goal_status TEXT ('' | active | fulfilled | capped — active = every send
+  runs the post-turn judge loop; fulfilled/capped stick until cleared/re-set),
+goal_iteration INTEGER (iterations spent on the current/most recent send),
+goal_max_iterations INTEGER (per-session cap; 0 = composer_defaults default)
 ```
 
 Status values: `active | archived | note_chat` (note_chat = AI-editing
@@ -157,14 +162,17 @@ extra_member_user_ids TEXT, excluded_user_ids TEXT,
 tool_profile TEXT ('' = research_minimal, 'interactive' = full),
 project_id TEXT ('' = agent-global; else stable project uuid — the
   fire-path resolves id→name and runs the task inside that project's
-  context: instructions, MemPalace project__<id> wing, research_mode)
+  context: instructions, MemPalace project__<id> wing, research_mode),
+goal TEXT (Goal-Modus goal for the run, '' = off),
+goal_max_iterations INTEGER (0 = composer_defaults default, max 10)
 ```
 
 ### schedules.db → schedule_history (one row per run)
 Columns include: `id` (= run_id, synthetic session = `sched-<id>`),
 `schedule_name`, `status` (running|success|error|cancelled), `started_at`,
 `finished_at`, `output`, `error`, `cost`, `tokens_in/out`, `model_used`,
-`user_id`, `artifacts` (JSON), `traces` (JSON ids).
+`user_id`, `artifacts` (JSON), `traces` (JSON ids),
+`goal_iterations` (Goal-Modus: judge iterations this run went through, 0 = off).
 
 ### costs.db → cost_log
 ```
@@ -182,7 +190,7 @@ purpose TEXT,        -- use-case tag — EVERY LLM call writes one (chat|
                      -- read_aloud|translate_*|lang_detect|helpdesk|soul_chat|
                      -- refine|ask_llm|kg_extract|code_graph_summary|lcm_*|
                      -- memory_*|relationship_discovery|user_profile|
-                     -- citation_reround|auto_route_classify|ocr|…);
+                     -- citation_reround|auto_route_classify|goal_judge|ocr|…);
                      -- '' = pre-tagging legacy. $0/local + zero-usage calls
                      -- are logged too (audit completeness).
 created_at TEXT      -- UTC, sqlite datetime('now')

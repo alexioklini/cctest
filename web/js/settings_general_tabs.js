@@ -74,6 +74,19 @@ async function _genTab_server(C) {
               </select>
             </label>
           </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:8px">
+            <label style="font-size:12px;color:var(--text-200)">Goal-Modus
+              <select class="form-select" id="cd-goal-enabled" style="width:100%;margin-top:4px">
+                <option value="1" ${cd.goal_mode_enabled !== false ? 'selected' : ''}>Aktiviert</option>
+                <option value="0" ${cd.goal_mode_enabled === false ? 'selected' : ''}>Deaktiviert</option>
+              </select>
+            </label>
+            <label style="font-size:12px;color:var(--text-200)">Goal-Modus: Standard-Iterationen
+              <input class="form-input" id="cd-goal-maxiter" type="number" min="1" max="10"
+                value="${parseInt(cd.goal_max_iterations) || 5}" style="width:100%;margin-top:4px">
+            </label>
+            <span></span>
+          </div>
           <div style="margin-top:8px">
             <button class="btn-secondary" onclick="saveComposerDefaults()">Standards speichern</button>
           </div>`;
@@ -2520,6 +2533,9 @@ async function saveComposerDefaults() {
     thinking_level: document.getElementById('cd-thinking')?.value || 'none',
     caveman_mode: parseInt(document.getElementById('cd-caveman')?.value) || 0,
     memory_mode: parseInt(document.getElementById('cd-memory')?.value) || 0,
+    goal_mode_enabled: document.getElementById('cd-goal-enabled')?.value !== '0',
+    goal_max_iterations: Math.max(1, Math.min(10,
+      parseInt(document.getElementById('cd-goal-maxiter')?.value) || 5)),
   };
   try {
     await API.post('/v1/composer/defaults', body);
@@ -2527,7 +2543,10 @@ async function saveComposerDefaults() {
       thinking_level: body.thinking_level,
       caveman_mode: body.caveman_mode,
       memory_mode: body.memory_mode,
+      goal_mode_enabled: body.goal_mode_enabled,
+      goal_max_iterations: body.goal_max_iterations,
     };
+    if (typeof updateStatusBar === 'function') updateStatusBar();
     // Keep the memory classifier mirror in sync so anything reading it agrees.
     if (state.mempalaceClassifier) state.mempalaceClassifier.default_mode = body.memory_mode;
     showToast('Eingabefeld-Standards gespeichert');

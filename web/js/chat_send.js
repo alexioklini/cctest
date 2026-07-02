@@ -1146,6 +1146,69 @@ function buildStreamCallbacks(chat, isActive) {
         }
         if (isActive()) renderMessages();
       },
+      // ── Goal-Modus events ──
+      goal_judge_start: (d) => {
+        chat._goalIteration = d.iteration || 1;
+        chat._goalMax = d.max || 0;
+        if (!isActive()) return;
+        setStreamStatus(chat, 'label', `Ziel wird geprüft (Iteration ${d.iteration}/${d.max})…`);
+        updateStatusBar();
+      },
+      goal_verdict: (d) => {
+        chat.goalStatus = d.status || chat.goalStatus;
+        chat._goalIteration = d.iteration || chat._goalIteration;
+        if (!isActive()) return;
+        setStreamStatus(chat, 'label', '');
+        if (d.status === 'fulfilled' && typeof showToast === 'function') {
+          showToast('🎯 Ziel erreicht');
+        } else if (d.status === 'capped' && typeof showToast === 'function') {
+          showToast('🎯 Ziel nicht erreicht (Limit/unerreichbar)', true);
+        } else if (d.status === 'judge_error' && typeof showToast === 'function') {
+          showToast('🎯 Ziel-Prüfung fehlgeschlagen — Durchlauf beendet', true);
+        }
+        updateStatusBar();
+        if (typeof renderRecentChats === 'function') renderRecentChats();
+      },
+      // Iteration boundary: the server persisted this iteration's assistant
+      // reply + the auto-continue user message and is about to re-run the
+      // turn. Close the live bubble into a real message pair and keep
+      // streaming state open for the next iteration (single `done` at the
+      // very end). Content pick mirrors the done handler's segment-aware
+      // rule: with committed assistant_segment rows only the trailing run
+      // (chat.streamingText) becomes the message body, else the full text.
+      goal_continue: (d) => {
+        const _hasLiveSegments = chat.messages.some(
+          m => m && m.role === 'assistant_segment');
+        const _content = _hasLiveSegments
+          ? (chat.streamingText || '')
+          : (d.assistant_text || chat.streamingText || '');
+        const assistantMsg = { role: 'assistant', content: _content, metadata: { model: chat.model } };
+        if (_hasLiveSegments && Array.isArray(d.text_rounds) && d.text_rounds.length) {
+          assistantMsg.metadata.text_rounds = d.text_rounds;
+        }
+        if (chat.files && chat.files.length) assistantMsg._files = chat.files;
+        if (chat.thinkingText) assistantMsg._thinking = chat.thinkingText;
+        if (chat.thinkingSummary) assistantMsg._thinkingSummary = chat.thinkingSummary;
+        chat.messages.push(assistantMsg);
+        chat.messages.push({
+          role: 'user',
+          content: d.text || '',
+          metadata: { goal_continue: true, goal_iteration: d.iteration || 0 },
+        });
+        // Reset the live-stream buffers for the next iteration; the turn
+        // itself stays streaming until the terminal done/error.
+        chat.streamingText = '';
+        chat.thinkingText = '';
+        chat.thinkingSummary = null;
+        chat.files = [];
+        chat._goalIteration = d.iteration || chat._goalIteration;
+        chat._goalMax = d.max || chat._goalMax;
+        if (isActive()) {
+          setStreamStatus(chat, 'label', `🎯 Iteration ${d.iteration}/${d.max}…`);
+          try { renderMessages(); } catch (_) {}
+          updateStatusBar();
+        }
+      },
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
         // Chronological interleave: if we committed 'assistant_segment' rows
@@ -1245,6 +1308,15 @@ function buildStreamCallbacks(chat, isActive) {
         if (d.files?.length) assistantMsg._files = d.files;
         else if (chat.files.length) assistantMsg._files = chat.files;
         if (d.deep_research) assistantMsg._deepResearch = true;
+        // Goal-Modus outcome for this turn → badge state (fulfilled/capped
+        // stick; judge_error/cancelled leave the goal armed for the next send).
+        if (d.goal && typeof d.goal === 'object') {
+          if (d.goal.status === 'fulfilled' || d.goal.status === 'capped') {
+            chat.goalStatus = d.goal.status;
+          }
+          chat._goalIteration = 0;
+          if (typeof renderRecentChats === 'function') renderRecentChats();
+        }
         if (chat.thinkingText) assistantMsg._thinking = chat.thinkingText;
         if (chat.thinkingSummary) assistantMsg._thinkingSummary = chat.thinkingSummary;
 

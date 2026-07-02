@@ -113,6 +113,48 @@ function updateStatusBar() {
     cavBtn.style.color = '';
   }
 
+  // Goal-Modus button: grey=no goal, colored=active, green=fulfilled,
+  // red=capped. Tooltip carries the goal text. Hidden entirely when the
+  // admin disabled goal mode (composer_defaults.goal_mode_enabled=false).
+  const goalEnabled = !state.composerDefaults || state.composerDefaults.goal_mode_enabled !== false;
+  const gst = chat.goalStatus || '';
+  for (const goalBtn of _composerToggleEls('btn-goal')) {
+    goalBtn.style.display = goalEnabled ? '' : 'none';
+    if (gst === 'active') {
+      goalBtn.style.color = 'var(--accent-500, #6366f1)';
+      goalBtn.title = `Goal-Modus aktiv — Ziel: ${chat.goalText || ''}` +
+        (chat._goalIteration ? ` (Iteration ${chat._goalIteration}/${chat._goalMax || ''})` : '') +
+        ' — klicken zum Bearbeiten';
+    } else if (gst === 'fulfilled') {
+      goalBtn.style.color = 'var(--success, #22c55e)';
+      goalBtn.title = `Ziel erreicht: ${chat.goalText || ''} — klicken für ein neues Ziel`;
+    } else if (gst === 'capped') {
+      goalBtn.style.color = 'var(--error, #ef4444)';
+      goalBtn.title = `Ziel nicht erreicht (Limit/unerreichbar): ${chat.goalText || ''} — klicken zum Anpassen`;
+    } else {
+      goalBtn.style.color = '';
+      goalBtn.title = 'Ziel setzen (Goal-Modus) — der Assistent arbeitet weiter, bis das Ziel erreicht ist';
+    }
+  }
+  // Live goal-iteration status item ("Ziel: Iteration 2/5"), mirrors the
+  // warmup-indicator insert pattern below.
+  let goalEl = document.getElementById('status-goal');
+  if (!goalEl) {
+    goalEl = document.createElement('div');
+    goalEl.id = 'status-goal';
+    goalEl.className = 'status-item';
+    document.getElementById('status-bar').insertBefore(goalEl, document.getElementById('status-bar').children[2]);
+  }
+  if (gst === 'active' && chat.streaming && chat._goalIteration) {
+    goalEl.innerHTML = `<span style="font-size:11px;color:#6366f1;font-weight:500">🎯 Ziel: Iteration ${chat._goalIteration}/${chat._goalMax || '?'}</span>`;
+    goalEl.style.display = '';
+  } else if (gst === 'active') {
+    goalEl.innerHTML = '<span style="font-size:11px;color:#6366f1;font-weight:500">🎯 Ziel aktiv</span>';
+    goalEl.style.display = '';
+  } else {
+    goalEl.style.display = 'none';
+  }
+
   // Handover button: only meaningful once the chat has a saved session with
   // history to hand over (a fresh/empty chat has nothing to summarize).
   const canHandover = !!chat.sessionId && (chat.messages || []).some(m => m.role === 'assistant');
@@ -559,8 +601,13 @@ async function loadChatsList() {
       const div = document.createElement('div');
       const clStreaming = state.streamingSessions?.has(csid);
       div.className = 'chat-list-item' + (clStreaming ? ' streaming' : '');
+      const clGoalPill = s.goal_status === 'active'
+        ? `<span class="sb-stream-pill" style="background:var(--accent-500, #6366f1)" title="Goal-Modus aktiv: ${esc(s.goal_text || '')}">🎯</span>`
+        : (s.goal_status === 'fulfilled'
+          ? `<span class="sb-stream-pill" style="background:var(--success, #22c55e)" title="Ziel erreicht: ${esc(s.goal_text || '')}">🎯✓</span>`
+          : '');
       div.innerHTML = `
-        <div class="chat-list-item-title"${tip}>${esc(title)}${clStreaming ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>' : ''}</div>
+        <div class="chat-list-item-title"${tip}>${esc(title)}${clGoalPill}${clStreaming ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>' : ''}</div>
         <div class="chat-list-item-meta">
           Letzte Nachricht ${relativeTime(s.last_active)}
           ${s.agentId ? ' in <span class="chat-list-item-agent">' + esc(s.agentDisplay) + '</span>' : ''}

@@ -482,3 +482,151 @@ const ChatTurnControl = {
     panel.innerHTML = html;
   },
 };
+
+// ── Goal-Modus popover (composer 🎯 button) ──────────────────────────────────
+// Set / edit / clear the per-session goal. While a goal is 'active' the server
+// judges every reply against it and auto-continues (visible iterations) until
+// fulfilled, judged impossible, or the iteration cap. Reuses the btw bubble's
+// CSS (btw-pop / btw-scrim) with its own element ids.
+
+function _goalButtonEl() {
+  for (const id of ['btn-goal', 'project-btn-goal', 'welcome-btn-goal']) {
+    const el = document.getElementById(id);
+    if (el && el.offsetParent !== null) return el;   // visible instance
+  }
+  return document.getElementById('btn-goal');
+}
+
+function _positionGoalPop(pop) {
+  const btn = _goalButtonEl();
+  if (!btn) return;
+  const b = btn.getBoundingClientRect();
+  const pw = pop.offsetWidth || 380, ph = pop.offsetHeight || 240;
+  const gap = 12, margin = 8;
+  let left = b.left + b.width / 2 - pw / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - pw - margin));
+  let top = b.top - ph - gap;
+  let below = false;
+  if (top < margin) { top = b.bottom + gap; below = true; }
+  pop.style.left = left + 'px';
+  pop.style.top = top + 'px';
+  pop.classList.toggle('btw-pop-below', below);
+  const tailX = Math.max(16, Math.min(b.left + b.width / 2 - left, pw - 16));
+  pop.style.setProperty('--btw-tail-x', tailX + 'px');
+}
+
+function closeGoalPopover() {
+  const p = document.getElementById('goal-pop'); if (p) p.remove();
+  const s = document.getElementById('goal-scrim'); if (s) s.remove();
+  if (window._goalReposition) {
+    window.removeEventListener('resize', window._goalReposition);
+    window.removeEventListener('scroll', window._goalReposition, true);
+    window._goalReposition = null;
+  }
+}
+
+function openGoalPopover() {
+  const chat = state.activeChat;
+  if (!chat) { if (typeof showToast === 'function') showToast('Kein aktiver Chat.', true); return; }
+  if (document.getElementById('goal-pop')) { closeGoalPopover(); return; }  // toggle
+
+  const scrim = document.createElement('div');
+  scrim.className = 'btw-scrim';
+  scrim.id = 'goal-scrim';
+  scrim.onclick = () => closeGoalPopover();
+  document.body.appendChild(scrim);
+
+  const defMax = (state.composerDefaults && state.composerDefaults.goal_max_iterations) || 5;
+  const st = chat.goalStatus || '';
+  const stLine = st === 'fulfilled'
+    ? '<div class="btw-pop-hint" style="color:var(--success)">✓ Ziel erreicht — neues Ziel setzen oder löschen.</div>'
+    : st === 'capped'
+      ? '<div class="btw-pop-hint" style="color:var(--error)">Ziel nicht erreicht (Limit/unerreichbar) — anpassen und erneut senden re-aktiviert es.</div>'
+      : '';
+  const pop = document.createElement('div');
+  pop.className = 'btw-pop';
+  pop.id = 'goal-pop';
+  pop.innerHTML =
+    '<div class="btw-pop-head">' +
+      '<span class="tc-btw-tag">🎯</span>' +
+      '<span class="btw-pop-title">Ziel (Goal-Modus)</span>' +
+      '<button class="btw-pop-close" onclick="closeGoalPopover()" title="Schließen">&times;</button>' +
+    '</div>' +
+    '<div class="btw-pop-hint">Der Assistent prüft nach jeder Antwort, ob das Ziel erreicht ist, und arbeitet automatisch weiter, bis es erfüllt ist (max. Iterationen pro Anfrage begrenzt).</div>' +
+    stLine +
+    '<div class="btw-pop-composer" style="flex-direction:column;align-items:stretch;gap:8px">' +
+      '<textarea id="goal-pop-input" class="btw-pop-input" rows="3" ' +
+        'placeholder="Ziel beschreiben — z. B. „Der Bericht enthält alle 5 Abschnitte und jede Zahl ist belegt.“"></textarea>' +
+      '<div style="display:flex;align-items:center;gap:8px">' +
+        '<label style="font-size:12px;color:var(--text-300)">Max. Iterationen</label>' +
+        '<input id="goal-pop-maxiter" type="number" min="1" max="10" style="width:70px" placeholder="' + defMax + '">' +
+        '<span style="flex:1"></span>' +
+        ((chat.goalText) ? '<button class="btw-pop-send" style="background:transparent;color:var(--error);border:1px solid var(--border-100)" onclick="clearGoalFromPopover()">Ziel löschen</button>' : '') +
+        '<button class="btw-pop-send" onclick="saveGoalFromPopover()">Speichern</button>' +
+      '</div>' +
+    '</div>' +
+    '<div class="btw-pop-tail"></div>';
+  document.body.appendChild(pop);
+  _positionGoalPop(pop);
+  window._goalReposition = () => { const p = document.getElementById('goal-pop'); if (p) _positionGoalPop(p); };
+  window.addEventListener('resize', window._goalReposition);
+  window.addEventListener('scroll', window._goalReposition, true);
+
+  const inp = document.getElementById('goal-pop-input');
+  const maxinp = document.getElementById('goal-pop-maxiter');
+  if (inp) {
+    inp.value = chat.goalText || '';
+    if (maxinp && chat.goalMaxIterations) maxinp.value = chat.goalMaxIterations;
+    inp.focus();
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); saveGoalFromPopover(); }
+      if (e.key === 'Escape') { e.preventDefault(); closeGoalPopover(); }
+    });
+  }
+}
+
+async function _persistGoal(chat, goal, maxIter) {
+  await API.post('/v1/sessions/manage', {
+    action: 'goal', session_id: chat.sessionId,
+    goal: goal, goal_max_iterations: maxIter || 0,
+  });
+  chat.goalText = goal;
+  chat.goalStatus = goal ? 'active' : '';
+  chat.goalIteration = 0;
+  chat.goalMaxIterations = maxIter || 0;
+  if (typeof updateStatusBar === 'function') updateStatusBar();
+  if (typeof renderRecentChats === 'function') renderRecentChats();
+}
+
+async function saveGoalFromPopover() {
+  const chat = state.activeChat;
+  if (!chat) return;
+  const inp = document.getElementById('goal-pop-input');
+  const goal = inp ? inp.value.trim() : '';
+  if (!goal) { if (typeof showToast === 'function') showToast('Bitte ein Ziel eingeben (oder „Ziel löschen“).', true); return; }
+  const maxIter = parseInt(document.getElementById('goal-pop-maxiter')?.value) || 0;
+  // Goal lives on the session row — make sure one exists (mirrors caveman).
+  if (!chat.sessionId) {
+    try { await ensureSession(chat); } catch (_) { return; }
+    if (!chat.sessionId) return;
+  }
+  try {
+    await _persistGoal(chat, goal, maxIter);
+    closeGoalPopover();
+    if (typeof showToast === 'function') showToast('🎯 Goal-Modus aktiviert');
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('Fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
+async function clearGoalFromPopover() {
+  const chat = state.activeChat;
+  if (!chat || !chat.sessionId) { closeGoalPopover(); return; }
+  try {
+    await _persistGoal(chat, '', 0);
+    closeGoalPopover();
+    if (typeof showToast === 'function') showToast('Ziel gelöscht');
+  } catch (e) {
+    if (typeof showToast === 'function') showToast('Fehlgeschlagen: ' + (e.message || e), true);
+  }
+}

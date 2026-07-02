@@ -690,6 +690,11 @@ class SessionsHandlerMixin:
             resp["gdpr_details_visible"] = bool(getattr(session, "gdpr_details_visible", False))
             resp["web_basket"] = getattr(session, "web_basket", "") or ""
             resp["message_queue"] = getattr(session, "message_queue", "") or ""
+            resp["goal_text"] = getattr(session, "goal_text", "") or ""
+            resp["goal_status"] = getattr(session, "goal_status", "") or ""
+            resp["goal_iteration"] = int(getattr(session, "goal_iteration", 0) or 0)
+            resp["goal_max_iterations"] = int(
+                getattr(session, "goal_max_iterations", 0) or 0)
             resp["gdpr_action_pref"] = getattr(session, "gdpr_action_pref", "") or ""
             resp["has_gdpr_mapping"] = bool(
                 getattr(session, "_gdpr_mapping_id", "") or "")
@@ -718,6 +723,11 @@ class SessionsHandlerMixin:
                 resp["gdpr_details_visible"] = bool(info.get("gdpr_details_visible", 0))
                 resp["web_basket"] = info.get("web_basket", "") or ""
                 resp["message_queue"] = info.get("message_queue", "") or ""
+                resp["goal_text"] = info.get("goal_text", "") or ""
+                resp["goal_status"] = info.get("goal_status", "") or ""
+                resp["goal_iteration"] = int(info.get("goal_iteration", 0) or 0)
+                resp["goal_max_iterations"] = int(
+                    info.get("goal_max_iterations", 0) or 0)
                 _pref_db = info.get("gdpr_action_pref", "") or ""
                 resp["gdpr_action_pref"] = (_pref_db if _pref_db in
                     ("anonymise", "local_model", "continue") else "")
@@ -2157,5 +2167,30 @@ class SessionsHandlerMixin:
             if s:
                 s.message_queue = queue_json
             self._send_json({"status": "ok", "session_id": sid})
+        elif action == "goal":
+            # Goal-Modus: set/clear the per-session goal. Non-empty goal arms
+            # (or re-arms a fulfilled/capped goal to) 'active' and resets the
+            # iteration counter; empty goal clears everything.
+            from engine.goal_judge import GOAL_ITER_HARD_CAP
+            goal = str(body.get("goal", "") or "").strip()
+            gmax = 0
+            try:
+                gmax = max(0, min(GOAL_ITER_HARD_CAP,
+                                  int(body.get("goal_max_iterations", 0) or 0)))
+            except (TypeError, ValueError):
+                gmax = 0
+            status = "active" if goal else ""
+            ChatDB.update_session_goal(sid, text=goal, status=status,
+                                       iteration=0, max_iterations=gmax)
+            s = sessions.get(sid)
+            if s:
+                with s.lock:
+                    s.goal_text = goal
+                    s.goal_status = status
+                    s.goal_iteration = 0
+                    s.goal_max_iterations = gmax
+            self._send_json({"status": "ok", "session_id": sid,
+                             "goal_text": goal, "goal_status": status,
+                             "goal_max_iterations": gmax})
         else:
             self._send_json({"error": f"Unknown action: {action}"}, 400)
