@@ -233,7 +233,7 @@ async function _genTab_models(C) {
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               ${mdlInput('mdl-cost-input','Kosten ein ($/M)',cfg.cost_input,{step:'0.01',min:0,ph:'0'})}
               ${mdlInput('mdl-cost-output','Kosten aus ($/M)',cfg.cost_output,{step:'0.01',min:0,ph:'0'})}
-              <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
+              ${mdlInput('mdl-cost-cache-read','Kosten cached ($/M)',cfg.cost_cache_read,{step:'0.001',min:0,ph:'auto (0,1× ein)'})}
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               <div><label style="font-size:13px;color:var(--text-400);display:block;margin-bottom:2px">Caveman (Standard-Ausgabestil)${helpIcon('Standard-Antwortstil für dieses Modell (0=aus, lite/voll/ultra). Wirkt NUR auf den Ausgabestil — der System-Prompt und die Tool-Beschreibungen werden NICHT mehr komprimiert (das war fehleranfällig). Wird angewendet, solange im Chat der 🪨-Schalter auf „aus" steht; der Schalter pro Chat hat Vorrang. Die Eingabe wird nicht beeinflusst — die Komprimierung der Eingabe passiert nur beim Verfeinern.')}</label>
                 <select class="mdl-caveman-system" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:13px;background:var(--bg-000);color:var(--text-200)">

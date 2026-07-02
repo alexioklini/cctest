@@ -677,12 +677,16 @@ def _meta_footer_html(meta: Optional[dict]) -> str:
     dur = meta.get("duration_s") or 0
     dur_str = f"{int(dur // 60)} min {int(dur % 60)} s" if dur >= 60 else f"{dur:.1f} s"
     ti, to = meta.get("tokens_in", 0), meta.get("tokens_out", 0)
+    cr = meta.get("cache_read_tokens", 0) or 0
     cost = meta.get("cost", 0)
+    tokens_part = f"{ti:,} / {to:,} Tokens"
+    if cr:
+        tokens_part += f" · {cr:,} ⚡ gecacht"
     parts = [
         html.escape(str(meta.get("model", "—"))),
         when,
         dur_str,
-        f"{ti:,} / {to:,} Tokens",
+        tokens_part,
         f"${cost:.4f}",
     ]
     return ('<footer class="report-footer">'

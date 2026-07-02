@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review: ECL-Berechnungen in R</title>
+<style>
+    @page { margin: 2cm; }
+    body { font-family: 'Calibri', Arial, sans-serif; color: #222222;
+      font-size: 11pt; line-height: 1.5; max-width: 820px;
+      margin: 0 auto; padding: 24px; background: #fff; }
+    h1,h2,h3,h4,h5,h6 { font-family: 'Calibri', Arial, sans-serif;
+      color: #1f3864; line-height: 1.2; margin: 1.1em 0 .4em; }
+    h1 { font-size: 20pt; } h2 { font-size: 16pt; }
+    h3 { font-size: 13pt; }
+    a { color: #2e74b5; }
+    code { font-family: 'Consolas', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    p.figure { text-align: center; } p.figure img { max-width: 100%; height: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #ddd; padding: 5px 9px; text-align: left; }
+    th { background: #1f3864;
+      color: #ffffff; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    .doc-header { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 20px; overflow: hidden; }
+    .doc-footer { border-top: 1px solid #eee; padding-top: 8px; margin-top: 28px; overflow: hidden; }
+    .pagenum::after { content: ""; }
+    @media print { .pagenum::after { content: counter(page); } }
+    </style>
+</head>
+<body>
+<div class="doc-header" style="text-align:right;font-size:9pt;color:#666666"><img class="doc-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAM4AAABrCAYAAAA/zr2ZAAAACXBIWXMAABcRAAAXEQHKJvM/AAAOk0lEQVR4nO2dwXHjuBKGf2/5bp+WpyW1EcgvAmsisDaCwUZgbwSjiWDsCIYTwWoiGDqCtTMQddPNjsDvwIbZhEASACGRcvVXpRIlkSBE4geaQKNx9vsf6QITZbcti7HzIAg2zgH8GjsTHZyNnQFBsPHb2BkQhFNEhCMIAYhwBCEAEY4gBCDCEYQARDiCEIAIRxACOHfc7weAPOJ5FYDPEdMThKPiKpxNzFH8JM0WsdIShDFwFc47Qwq9uNAIHwVv4WCYi4640AgfAukcEIQARDiCEIAIRxACEOEIQgAiHEEIQIQjCAGIcAQhABGOIAQgwhGEAEQ4ghCACEcQAhDhCEIAIhxBCOAcwKPDfhu27bK/S3ox0hGEUTh7e3sbOw+CcHKIqSYIAYhwBCEAEY4gBCDCEYQARDiCEIAIRxACEOEIQgAiHEEIQIQjCAGIcAQhABGOIAQgwhGEAEQ4ghCACEcQAhDhCEIAZ7//kS70B9/1a5I0uwRwRR9fdtvyyfP4GYAZfdzstuWm4/en3bZ8aUln4XPeoefrIkmzKwCX6LgebB8f9tIzrn8bQf9D6OYc1RKFGQAkafanWZh6UAC+0XaJutC5skK9pOEnNGea6vS/sN+LlnRC1uz5SudvO98DgLuAdO8BXKOa4bro2ccHW3pXcPjvSZqVqO7zvYgoDr8BWLPPC8/jFdvOqCb1QZ/vdYKrtd0mabYcOxORyFBVCBtZRjIO56iEc0ufl3BcJJfMmrnxtYJjLU0iy+jjumtfD55dz4/91s1GnqTZ7MC19CfH/fryYFvg+BJV5aQAXNDrV5Jm//M1q4Um57ttWSRp9orqoi48jrXVxku4F1x+rsLjvF28RG65LlAVxoO1PBHz27bA8TpJsxWqykmbh/fwty4Ehu5V0zX+hYd5ouj9FVVtB/iZa/w8sVqcmDzT+02SZiHPOpOBWswlqnsFANcBZrXA0MIp2HeLvoOoN0ebaWs0C75yPF7Xfo8TfWDlBW1FpunJQtc4Z1+JcAZgtjiAm1nSaC1223KNupC5HL/gxzvsf3Sod3FFH7XJdups2PZspDx8CH4D3msjHSAwc6hdtTheSTRALQAXc23qZhoAYLct71Ffl2t6VjhlfMeOhBa454BTq0Nm1o3lGB9zTadfeo4bjQE32b6c+LPBjG0XI+XhQ9AmnEXHMdbWwtVco4J3YTnnJKHWWLGv8nFyMgy67nqweYrjZifFud7YbctNkmbPqB76b9oPsZppmjWqm5MlaXbVMlZwSDPt0mGAb8/Vpo/dtlwnafYT1XWZJ2l2v9uWUXraHPLr7crUcg5+re+HpCcw4RAFqLcsSbOlKYwOMw3sO12rKdjHdLjwCu8cdzNHvwuKzdXGBQXgCdWg7W2SZutI+e/Lb5frDmdmiHBGryWaA9U/dtty5Zw7wYrpHZ2z7bYBTs2ecPrMNUs39slgM9no/0yFz6hEqF/fUbnZcNF83W1LdfysfTwaLc5uWz71eBF0mWmaLnONi6kIynE3Li43m9DEycviAZWLUoY4XgV9LjdDx7heUbWw6xPoiDkZTFMNaCn4DmaaeTxQia9NOIdocWK73NhYofpfc1ReBXsmrQ8R8/tVm2BksnETsBDRxMU2ka2td82p0BvmmjJ+1un9nKi3QC8nYLJpMT7Qx48yeDspbMIp2DYXy4Leu8w0jf59rgdTqRbU3dDF/iGnA7XCX+njBSb4vEa9ftrfbp6kmfSkRWRPOFSj/qSP16w21SJyKST8Ji2Nd9c0Jg2ZRdyrYIqOoAp1638rc3Hi0RZzoGGukce086Al1cglfVQ6HXp//kD2tsKEHUHpPqzYV+upmZWnSptwCra9hFtvmgk31xaou0UL694niMURdHItKfnbaQtiknk8RazCoQKh7WMuHJ+LnjtsnzxGwZzDP5bAMVCoLYCpmpUnRVd4KC0SPeWWf9eLYa7pKdKvH3TKrkJtsk0OS0/gtxN3Vh0d2ziOZo064gvgZ6bxNG6Nz4fExVdNM9gHTLPbli9JmikA//oe6/PAPmTMhwZvv6K+p3mSZotTHRYYm1bhkBdBiWEBNXIcVzguvmoaVx8wJ8gR9AfqwV9XfEJbnXmm3WC3LVfU0TOn1z0cZuwK+/RF8izYtnehN8w1M72PyB2a/3eK8PlFnz9QCKyj0mWqAVWPUQ4MMhOWqCNb+poFOWqxdZlVriGWOLa88PN5QybbApVXctd/vUOc2ZhPqP/7xuUAmj6yYOcXUy2As7e3t7HzIAgnhwRdF4QARDiCEIAIRxACEOEIQgAiHEEIQIQjCAGIcAQhABGOIAQgwhGEABqL57bgvPjqIaJoGgvE2ha8fT/n0Igxvovn9i3+27P/UBr5c1hI1/vadzF04WSWzmJIGkY+uhZY7ixHjum/H3sO98VX16gWX+06oUtar5RW7ljQr1i6tiicOerFf4cu0bdGPVP1T/T7ceVg6/yg39taoTlVYwjmYsL8OlkJuPZdrFB7vr8i3PfuPc+B94//764FlvvK0R4kmgJ1mXgG3WNXUy1DdZGeaN7JEC5AUScjRV7haajQRGhil75Aj46tB5/teT21mAMWYl57xdONUC6ACYXaahONbtG4d7QtCuYlKoUtUYnnAsD3JM2w25Z5z7ltHss6LZ2ZW0pryFTeHPWS8QphS6zrY3mafdjOc9dz/hzd3tcK9Xyef9DtEd71m+3YK1TXXov9Nkmzl5A40iSSC+NrheHT4ueoWoJRp3b3iQZoCqctCuYawF2SZjnqm3pPQcdbTZmWtApU0WDuUBf22yTN8lATi1z59QSyiyTNlIOobSh61+aM6/7PqCqYDD3CpVZs0/a78Yz4NMCcsh1boLpvClVcaaC6r/cB0z0Uvb+iEug1qMWN8BwVM6C9Ny6iATx61ShYt44jdoEBMZMpwMVX9pUKTYvI2bZ3vszwVw6dAortf4/m4sPK9/zHhCoVvdix9300TNQ1mqbykJaCx2wYJYyVq2gA/+5ofpEWIZlj5Gx7UOAIqp30zMubgGcNxbZdbH9e2MzCozB9eIs68zxWse28J+SxD09oRkfNB6TljY9oAH/hFGx75nlsA6NJH5QWkbNt51rUCCb/3Gcykij1/j922/KF/guP6jlzPf9IDJn1qei9ZOZUTu+DWlx63tJhyW6ONa3bIppHdIgGmM4AaIzpuznb9jEZVEsavvuHnn8MZmzb+dpTQdbBW3grG7PF5cfnh66ELKL5sduWvdF/fIXDTapBhd2I6zVYOFTr68CAmUfYJV7Ic4f9Fb2XxgMsN1mmHgCD/2eXjhCNsh1nBLAc1OJSi/8PfTyoydYiGuVyrK9weKKF57EmK7btc/O6yNm26tuZxKtr0B8OnQK8xuXn0kH/9P/Iphg9JkmzS+od1QXlwWMEfYbaRP1pOS5aq0OdRwcNaD9ENICHcMh2fV+1GIE1Abt5+iaUoWmZ0IOq7iRYOvTMhLY2bftPpZPgKkmzBXstacDzCfU9fITfWqi8Isgtv8fqJNAoNAPaD+pAMrhCdS2CRAP0h4fStfIdmoH2Vg6188L46gr1IJzuyn0FsIwcTXKNystBd7XmHfvqwmCaXXs41LhmEMebSOMaIXzr+f0hYNBZ72+N6ErjaWvUq/kNXaluQy3Nd9QmWyzx8FXVf4asi8pbnKskzQr22iRp9gbgPzRF80BNaR+/jNc3SkeLRnf3BQ18duBU61vGYvowu6AHnX9kbukez1x2pkrQaqIa8N9UQL4a0JjTe0D7JM1WQ9Mk+JjRIqQ148K5AI0A0ysz9n0E8GmgewxQDb79tduW5sK6UfDoGnYVgobXuHnHfvw35ZDuIfi025Zn+oXKYfUTqofu91ULUPkeuhQaxbZbK5kI42lt59YF/UukxbHu0RwELnzFw021tmeNDQIWX6UbZnsI2wxpwh3JUY9u38HoHnYxu4z9F6grksLh5j2j+r+DTZYYMFefApXbTY669c/RYQLR/dMWRwlg1iOIgu2v4PcctYcloH2eVIs6DzLvd9tSJWkG1NehoCD0TpU5F84mxOHPIYP6j/9HX31J0qw4pC/Sblvm9DCsn3PMVlKx7dwhSb7/DZo2ch9LTGwxJyo0M1SVy7xH3IptZ/ALEq8wUDjAe0D7B1TPrhkiOYIOEc9RBkCNvnngOO7jOb3buoYVvZd9rYFR44bweSqu8gbc5OoyU4YU0Jjd8ivUZuBtrHSpY8DbbDua54DRN5/h8L5IPP33i2yYXS4tgWLbf/Nnh64X4jqxHoKCbS9sO1jGuVz/+18smVgF/AX7XgVRKqQQ8Rzb5WaJ+kHv5hADWxpq5fRoNq/1FdvNpTdN7+863UCTs+0puuC4FDqeb5drBWBvPC1ai0vm/UEcQX3Fc1ThWGqN2ANbJo2uYbqBugZ0meV5hbpTo3e6Acfo3fNxAToW/LoX5o/GtSoDekB5JaM8j23FdASNnLZCc+pMq3iO7uRJtdEDfTy0+7g5ms0HX13O6+tZYMKPUQHHH5IV27aJgl8r59aGwY+J3eIqsMWxIqe9RC3MVvGM4h1NY0E6c/MI89/bzsP9x/S0XKB/LMZW4xYB58/RXP1s9E4Ccnlao25J2zpIBlUah2xxqfVbxUrPSPsF1TNfp3jGnFagUBeqaL0kFrgoXUa/Nb6tUxsHMVl6MH3VuL/aBnV3+issD++GifpzwJhJzrZVYBpWjM6mqLSIp9EZMZpwLLXGQbqod/vrkALHMdM0Y7jgfMO+y9O/qH34gOqatI1ZKLadh2biCC2uQtN9JhoW8cxRtTyXwMgT2ajW0L5IFzjcQCEvvK6zPHmNuwk9sdG7Nz9wZ4gLjwD+BtDl8qTo3erQ6cnBWly6L1HTNNJvFc856jBOg1wYiJBFbBW6B+Ce4LlArIUc9QOwaxpDz8lZop512XWdc7gtFmyDXycbTpEyjWe7GGXiDnWrZUtvUPkjrwKdRtf/CypHu3pBZF5GL/8PsLx0GunGy20AAAAASUVORK5CYII=" alt="" style="max-height:29px;width:auto;float:left;">Wiener Privatbank SE</div>
+<h1>Code Review: ECL-Berechnungen in R</h1>
+<p>---</p>
+<h2>📌 <strong>Management Summary</strong></h2>
+<p>Dieser Report fasst die Ergebnisse des <strong>Code Reviews</strong> der R-Skripte</p>
+<p><strong><code>ECL_Hilfsfunktion.R</code></strong> und <strong><code>ECL_Hilfsfunktion_2.R</code></strong> zusammen.</p>
+<h3><strong>Zweck der Skripte</strong></h3>
+<p>Die Skripte enthalten Funktionen zur Berechnung des <strong>Expected Credit Loss (ECL)</strong></p>
+<p>für Finanzportfolios. Dabei werden verschiedene Methoden wie</p>
+<p>- <strong>12-Monats-ECL</strong> (<code>get_12M_ECL</code>),</p>
+<p>- <strong>Langfristiger ECL</strong> (<code>get_LT_ECL</code>, <code>ext_LT_ECL</code>), und</p>
+<p>- <strong>ECL-Berechnung für Buckets</strong> (<code>get_ECL</code>)</p>
+<p>unterstützt.</p>
+<h3><strong>Bewertung der Code-Qualität</strong></h3>
+<table><thead><tr><th><strong>Kriterium</strong></th><th><strong>Bewertung</strong></th><th><strong>Bemerkungen</strong></th></tr></thead><tbody><tr><td><strong>Funktionale Korrektheit</strong></td><td>⭐⭐⭐⭐☆ (4/5)</td><td>Mathematisch fundiert, aber teilweise unklare Logik und fehlende Dokumentation.</td></tr><tr><td><strong>Code-Qualität</strong></td><td>⭐⭐⭐☆☆ (3/5)</td><td>Redundanzen, fehlende Modularisierung, inkonsistente Formatierung.</td></tr><tr><td><strong>Fehlerbehandlung</strong></td><td>⭐⭐☆☆☆ (2/5)</td><td>Kaum Eingabevalidierung oder Try-Catch-Blöcke.</td></tr><tr><td><strong>Wartbarkeit</strong></td><td>⭐⭐☆☆☆ (2/5)</td><td>Funktionen sind nicht modularisiert, globale Abhängigkeiten (z.B. <code>PD_cube</code>).</td></tr><tr><td><strong>Dokumentation</strong></td><td>⭐☆☆☆☆ (1/5)</td><td>Keine Roxygen-Dokumentation, unklare Variablennamen und Abhängigkeiten.</td></tr><tr><td><strong>Performance</strong></td><td>⭐⭐⭐☆☆ (3/5)</td><td>Schleifenbasierte Berechnungen, aber keine offensichtlichen Bottlenecks.</td></tr><tr><td><strong>Sicherheit</strong></td><td>⭐☆☆☆☆ (1/5)</td><td>Keine Eingabevalidierung, Nutzung globaler Variablen, potenzielle Sicherheitsrisiken.</td></tr></tbody></table>
+<h3><strong>Gesamtbewertung</strong></h3>
+<p><strong>⭐⭐☆☆☆ (2/5)</strong> – Der Code ist funktional korrekt, aber <strong>nicht wartbar oder erweiterbar</strong> ohne tiefgreifende Refaktorisierung.</p>
+<p>---</p>
+<h2>📂 <strong>Struktur der Skripte</strong></h2>
+<h3><strong>Gemeinsame Funktionen</strong></h3>
+<table><thead><tr><th><strong>Funktion</strong></th><th><strong>Datei</strong></th><th><strong>Zweck</strong></th></tr></thead><tbody><tr><td><code>readcsv2</code></td><td>Beide Dateien</td><td>Liest CSV-Dateien, unterstützt Konvertierung in Matrix und Zeitinterpolation.</td></tr><tr><td><code>get_12M_ECL</code></td><td>Beide Dateien</td><td>Berechnet den <strong>12-Monats-ECL</strong> basierend auf PD, EAD, LGD und EIR.</td></tr><tr><td><code>ext_LT_ECL</code></td><td>Beide Dateien</td><td>Berechnet den <strong>langfristigen ECL</strong> für eine Zeile eines Datenrahmens.</td></tr><tr><td><code>get_LT_ECL</code></td><td>Beide Dateien</td><td>Berechnet den <strong>langfristigen ECL</strong> für ein Portfolio.</td></tr><tr><td><code>get_ead_f</code></td><td>Beide Dateien</td><td>Berechnet den <strong>Exposure-at-Default-Faktor (EAD-Faktor)</strong> für Amortisierungsmethoden.</td></tr><tr><td><code>get_ECL</code></td><td>Beide Dateien</td><td>Kombiniert <strong>12M-ECL</strong> und <strong>LT-ECL</strong> basierend auf einem Bucket-Wert.</td></tr></tbody></table>
+<h3><strong>Unterschiede zwischen den Dateien</strong></h3>
+<p>- <strong><code>ECL_Hilfsfunktion.R</code></strong> und <strong><code>ECL_Hilfsfunktion_2.R</code></strong> sind <strong>fast identisch</strong>.</p>
+<p>- Die einzige nennenswerte Abweichung ist die <strong>Formatierung und Kommentierung</strong> (z.B. zusätzliche Leerzeilen in <code>ECL_Hilfsfunktion_2.R</code>).</p>
+<p>- Beide Dateien enthalten <strong>keine Roxygen-Dokumentation</strong> und nutzen <strong>globale Variablen</strong> wie <code>PD_cube</code>.</p>
+<p>---</p>
+<h2>🔍 <strong>Detaillierte Analyse</strong></h2>
+<p>---</p>
+<h3><strong>1. Funktionale Korrektheit</strong></h3>
+<h4><strong>Stärken</strong></h4>
+<p>✅ <strong>Mathematische Logik</strong> ist korrekt:</p>
+<p>- Die Berechnung des <strong>12M-ECL</strong> (<code>get_12M_ECL</code>) folgt der Formel:</p>
+<p>```</p>
+<p>ECL = Exposure <em> LGD </em> PD / (1 + EIR)^jahre_echt</p>
+<p>```</p>
+<p>- Die <strong>langfristige ECL-Berechnung</strong> (<code>get_LT_ECL</code>, <code>ext_LT_ECL</code>) berücksichtigt marginale PDs über die Laufzeit.</p>
+<p>- Die <strong>Amortisierungslogik</strong> (<code>get_ead_f</code>) unterstützt <strong>Annuität</strong> und <strong>lineare Amortisierung</strong> korrekt.</p>
+<p>✅ <strong>Interpolation</strong> für jährliche Daten wird unterstützt:</p>
+<p>- <code>readcsv2</code> ermöglicht <strong>lineare</strong> und <strong>quadratische Interpolation</strong> für monatliche Daten aus jährlichen Inputs.</p>
+<h4><strong>Schwächen &amp; Risiken</strong></h4>
+<p>❌ <strong>Fehlende Eingabevalidierung:</strong></p>
+<p>- Es wird nicht geprüft, ob <code>PD_cube</code> existiert oder ob die Eingabeparameter (z.B. <code>Month_Remaining</code>, <code>rating</code>) gültig sind.</p>
+<p>- <strong>Beispiel:</strong></p>
+<p>```r</p>
+<p>PD_1 &lt;- PD_cube[rating,rem_time,port]  # Keine Prüfung, ob PD_cube existiert!</p>
+<p>```</p>
+<p>❌ <strong>Globale Abhängigkeiten:</strong></p>
+<p>- Die Funktionen hängen von <strong>globalen Variablen</strong> wie <code>PD_cube</code>, <code>interpol</code>, <code>pdtime</code> ab. Dies erschwert die Wiederverwendbarkeit und Testbarkeit.</p>
+<p>❌ <strong>Unklare Logik in <code>ext_LT_ECL</code>:</strong></p>
+<p>- Die Funktion <code>ext_LT_ECL</code> nutzt <code>row_i</code> als Eingabe, aber die Abhängigkeiten zu <code>ead_col</code> und <code>lgd_col</code> sind unklar.</p>
+<p>- <strong>Empfehlung:</strong> Die Funktion sollte <strong>explizit dokumentiert</strong> werden, welche Spalten im Datenrahmen <code>row_i</code> erwartet werden.</p>
+<p>---</p>
+<h3><strong>2. Code-Qualität &amp; Struktur</strong></h3>
+<h4><strong>Stärken</strong></h4>
+<p>✅ <strong>Funktionen sind klar strukturiert</strong> und folgen einem logischen Ablauf.</p>
+<p>✅ <strong>Wiederverwendbare Logik:</strong></p>
+<p>- Die Amortisierungslogik (<code>get_ead_f</code>) ist sauber getrennt und wiederverwendbar.</p>
+<h4><strong>Schwächen &amp; Risiken</strong></h4>
+<p>❌ <strong>Redundanzen:</strong></p>
+<p>- <code>readcsv2</code> ist in <strong>beiden Dateien identisch</strong> und könnte in eine <strong>gemeinsame Hilfsfunktion</strong> ausgelagert werden.</p>
+<p>- Die <strong>Formatierung</strong> ist inkonsistent (z.B. Leerzeilen, geschweifte Klammern).</p>
+<p>❌ <strong>Fehlende Modularisierung:</strong></p>
+<p>- Die Funktionen sind <strong>nicht in einem Paket oder Modul</strong> organisiert.</p>
+<p>- <strong>Empfehlung:</strong> Nutzung eines <strong>R-Pakets</strong> mit <code>devtools</code> oder <code>roxygen2</code> für bessere Wartbarkeit.</p>
+<p>❌ <strong>Unklare Variablennamen:</strong></p>
+<p>- Variablen wie <code>M_cpd_y</code>, <code>M_cpd</code>, <code>jahre_echt</code> sind schwer verständlich.</p>
+<p>- <strong>Empfehlung:</strong> Verwendung von <strong>sprechenden Namen</strong> wie <code>exposure_matrix</code> oder <code>effective_years</code>.</p>
+<p>---</p>
+<h3><strong>3. Fehlerbehandlung &amp; Robustheit</strong></h3>
+<h4><strong>Stärken</strong></h4>
+<p>✅ <strong>Keine offensichtlichen Laufzeitfehler</strong> in den Funktionen.</p>
+<h4><strong>Schwächen &amp; Risiken</strong></h4>
+<p>❌ <strong>Keine Eingabevalidierung:</strong></p>
+<p>- Es gibt <strong>keine Prüfung</strong>, ob:</p>
+<p>- <code>Month_Remaining &gt;= 0</code></p>
+<p>- <code>rating</code> im gültigen Bereich liegt</p>
+<p>- <code>PD_cube</code> existiert und die richtige Dimension hat</p>
+<p>- <strong>Empfehlung:</strong> Nutzung von <code>stopifnot()</code> oder <code>assertive</code>-Paket für Eingabevalidierung.</p>
+<p>❌ <strong>Fehlende Try-Catch-Blöcke:</strong></p>
+<p>- Bei Dateioperationen (<code>readcsv2</code>) oder Matrixzugriffen könnte ein Fehler auftreten, der nicht abgefangen wird.</p>
+<p>---</p>
+<h3><strong>4. Wartbarkeit &amp; Erweiterbarkeit</strong></h3>
+<h4><strong>Stärken</strong></h4>
+<p>✅ <strong>Funktionen sind klein und fokussiert</strong> (z.B. <code>get_ead_f</code> hat eine klare Aufgabe).</p>
+<h4><strong>Schwächen &amp; Risiken</strong></h4>
+<p>❌ <strong>Keine Dokumentation:</strong></p>
+<p>- <strong>Keine Roxygen-Dokumentation</strong> für die Funktionen.</p>
+<p>- <strong>Fehlende Beispiele</strong> in den Funktionen.</p>
+<p>❌ <strong>Globale Abhängigkeiten:</strong></p>
+<p>- Die Funktionen hängen von <strong>externen Daten</strong> wie <code>PD_cube</code> ab, die nicht als Parameter übergeben werden.</p>
+<p>- <strong>Empfehlung:</strong> <code>PD_cube</code> als Parameter in die Funktionen aufnehmen.</p>
+<p>❌ <strong>Keine Unit Tests:</strong></p>
+<p>- Es gibt <strong>keine Tests</strong> für die Funktionen, was die Wartbarkeit erschwert.</p>
+<p>- <strong>Empfehlung:</strong> Nutzung von <code>testthat</code> für Unit Tests.</p>
+<p>---</p>
+<h3><strong>5. Performance</strong></h3>
+<h4><strong>Stärken</strong></h4>
+<p>✅ <strong>Keine offensichtlichen Performance-Probleme:</strong></p>
+<p>- Die Berechnungen sind <strong>schleifenbasiert</strong>, aber für typische Portfoliogrößen akzeptabel.</p>
+<h4><strong>Schwächen &amp; Risiken</strong></h4>
+<p>❌ <strong>Keine Vektorisierung:</strong></p>
+<p>- Die Funktionen nutzen <strong>Schleifen</strong> (<code>for</code>, <code>while</code>), obwohl viele Berechnungen <strong>vektorisiert</strong> werden könnten.</p>
+<p>- <strong>Beispiel:</strong> In <code>ext_LT_ECL</code> könnte die marginale PD-Berechnung vektorisiert werden.</p>
+<p>❌ <strong>Keine Parallelisierung:</strong></p>
+<p>- Die Berechnung des ECL für große Portfolios könnte von <strong>Parallelisierung</strong> profitieren.</p>
+<p>- <strong>Empfehlung:</strong> Nutzung von <code>parallel</code>- oder <code>foreach</code>-Paket.</p>
+<p>---</p>
+<h3><strong>6. Sicherheit</strong></h3>
+<h4><strong>Risiken</strong></h4>
+<p>⚠️ <strong>Globale Variablen:</strong></p>
+<p>- Die Nutzung globaler Variablen wie <code>PD_cube</code> birgt <strong>Sicherheitsrisiken</strong> (z.B. unbeabsichtigte Änderungen).</p>
+<p>⚠️ <strong>Keine Eingabevalidierung:</strong></p>
+<p>- <strong>Arbitrary Code Execution</strong> ist möglich, wenn <code>PD_cube</code> oder andere globale Variablen manipuliert werden.</p>
+<p>---</p>
+<h2>🛠 <strong>Empfehlungen für Verbesserungen</strong></h2>
+<h3><strong>🔥 Hochpriorisiert (sofort umsetzen)</strong></h3>
+<table><thead><tr><th><strong>Empfehlung</strong></th><th><strong>Umsetzung</strong></th></tr></thead><tbody><tr><td><strong>Eingabevalidierung einführen</strong></td><td>Nutzung von <code>stopifnot()</code> oder <code>assertive</code>-Paket für alle Funktionen.</td></tr><tr><td><strong>Globale Variablen eliminieren</strong></td><td><code>PD_cube</code> als Parameter in alle Funktionen aufnehmen.</td></tr><tr><td><strong>Roxygen-Dokumentation hinzufügen</strong></td><td>Dokumentation für alle Funktionen mit <code>@param</code>, <code>@return</code>, <code>@examples</code> erstellen.</td></tr><tr><td><strong>Unit Tests schreiben</strong></td><td>Nutzung von <code>testthat</code> für alle Funktionen.</td></tr><tr><td><strong>Fehlerbehandlung verbessern</strong></td><td>Try-Catch-Blöcke für Dateioperationen und Matrixzugriffe einführen.</td></tr></tbody></table>
+<p>---</p>
+<h3><strong>⚡ Mittelpriorisiert (innerhalb 1 Monat umsetzen)</strong></h3>
+<table><thead><tr><th><strong>Emphehlung</strong></th><th><strong>Umsetzung</strong></th></tr></thead><tbody><tr><td><strong>Funktionen modularisieren</strong></td><td>Auslagerung von <code>readcsv2</code> in ein separates Hilfsmodul.</td></tr><tr><td><strong>Variablennamen verbessern</strong></td><td>Verwendung von sprechenden Namen (z.B. <code>effective_years</code> statt <code>jahre_echt</code>).</td></tr><tr><td><strong>Performance optimieren</strong></td><td>Vektorisierung von Schleifen und Parallelisierung für große Portfolios.</td></tr><tr><td><strong>Amortisierungslogik erweitern</strong></td><td>Unterstützung für weitere Amortisierungsmethoden (z.B. <code>Bulgarian</code>).</td></tr></tbody></table>
+<p>---</p>
+<h3><strong>📈 Niedrigpriorisiert (langfristige Verbesserungen)</strong></h3>
+<table><thead><tr><th><strong>Empfehlung</strong></th><th><strong>Umsetzung</strong></th></tr></thead><tbody><tr><td><strong>R-Paket erstellen</strong></td><td>Organisation der Funktionen in einem <code>ECL</code>-Paket mit <code>roxygen2</code>.</td></tr><tr><td><strong>Datenvalidierung für <code>PD_cube</code> einführen</strong></td><td>Prüfung der Dimensionen und Wertebereiche von <code>PD_cube</code>.</td></tr><tr><td><strong>Visualisierungsfunktionen hinzufügen</strong></td><td>Funktionen zur Visualisierung von ECL-Ergebnissen (z.B. mit <code>ggplot2</code>).</td></tr><tr><td><strong>Integration in bestehende Workflows</strong></td><td>Anpassung der Funktionen für die Nutzung in <code>Ablaufmodellierung.R</code>.</td></tr></tbody></table>
+<p>---</p>
+<h2>📚 <strong>Beispiel: Überarbeitete Version von <code>get_12M_ECL</code></strong></h2>
+<pre><code>#&#x27; Berechnet den 12-Monats Expected Credit Loss (ECL)
+#&#x27;
+#&#x27; @param Month_Remaining Integer, verbleibende Monate bis zur Fälligkeit.
+#&#x27; @param rating Character, Rating des Kreditnehmers.
+#&#x27; @param exposure Numeric, Exposure-At-Default (EAD).
+#&#x27; @param LGD Numeric, Loss Given Default (in %).
+#&#x27; @param EIR Numeric, Effective Interest Rate.
+#&#x27; @param amort Character, Amortisierungsmethode (&quot;Annuity&quot;, &quot;Linear&quot;, &quot;None&quot;).
+#&#x27; @param port Integer, Portfolio-ID.
+#&#x27; @param PD_cube Array, Probability of Default Cube (Rating x Monat x Portfolio).
+#&#x27; @return Numeric, berechneter ECL.
+#&#x27; @examples
+#&#x27; get_12M_ECL(12, &quot;A&quot;, 1000000, 0.45, 0.05, &quot;Annuity&quot;, 1, PD_cube = load_pd_cube())
+get_12M_ECL &lt;- function(Month_Remaining, rating, exposure, LGD, EIR, amort, port, PD_cube) {
+  # Eingabevalidierung
+  stopifnot(
+    Month_Remaining &gt;= 0,
+    LGD &gt;= 0 &amp;&amp; LGD &lt;= 1,
+    EIR &gt;= 0,
+    port &gt; 0
+  )
+
+  if (Month_Remaining == 0) {
+    return(0)
+  }
+
+  jahre_echt &lt;- min(Month_Remaining / 12, 1)
+  rem_time &lt;- min(Month_Remaining, 12)
+
+  # PD aus dem Cube laden
+  PD_1 &lt;- PD_cube[rating, rem_time, port]
+
+  # EAD-Faktor berechnen
+  exp_f &lt;- get_ead_f(EIR, jahre_echt, 0, amort)
+  ead &lt;- exposure * exp_f
+
+  # ECL berechnen
+  ecl &lt;- ead * LGD * PD_1 / (1 + EIR)^jahre_echt
+
+  return(ecl)
+}</code></pre>
+<p>---</p>
+<h2>📊 <strong>Fazit &amp; Zusammenfassung</strong></h2>
+<h3><strong>Zusammenfassung der Bewertung</strong></h3>
+<table><thead><tr><th><strong>Kriterium</strong></th><th><strong>Bewertung</strong></th><th><strong>Handlungsbedarf</strong></th></tr></thead><tbody><tr><td><strong>Funktionale Korrektheit</strong></td><td>⭐⭐⭐⭐☆ (4/5)</td><td>Gering – Mathematik ist korrekt, aber Logik muss dokumentiert werden.</td></tr><tr><td><strong>Code-Qualität</strong></td><td>⭐⭐⭐☆☆ (3/5)</td><td>Hoch – Redundanzen und globale Variablen müssen eliminiert werden.</td></tr><tr><td><strong>Fehlerbehandlung</strong></td><td>⭐⭐☆☆☆ (2/5)</td><td>Kritisch – Eingabevalidierung und Try-Catch-Blöcke fehlen.</td></tr><tr><td><strong>Wartbarkeit</strong></td><td>⭐⭐☆☆☆ (2/5)</td><td>Kritisch – Modularisierung und Dokumentation fehlen.</td></tr><tr><td><strong>Dokumentation</strong></td><td>⭐☆☆☆☆ (1/5)</td><td>Kritisch – Keine Roxygen-Dokumentation, unklare Variablennamen.</td></tr><tr><td><strong>Performance</strong></td><td>⭐⭐⭐☆☆ (3/5)</td><td>Mittel – Schleifen könnten vektorisiert werden.</td></tr><tr><td><strong>Sicherheit</strong></td><td>⭐☆☆☆☆ (1/5)</td><td>Kritisch – Globale Variablen und fehlende Validierung.</td></tr></tbody></table>
+<h3><strong>Gesamtempfehlung</strong></h3>
+<p>✅ <strong>Die Skripte sind funktional korrekt</strong>, aber <strong>nicht wartbar oder erweiterbar</strong> ohne tiefgreifende Refaktorisierung.</p>
+<p>🔧 <strong>Priorisierte Maßnahmen:</strong></p>
+<p>1. <strong>Eingabevalidierung</strong> einführen.</p>
+<p>2. <strong>Globale Variablen eliminieren</strong> und als Parameter übergeben.</p>
+<p>3. <strong>Roxygen-Dokumentation</strong> für alle Funktionen erstellen.</p>
+<p>4. <strong>Unit Tests</strong> mit <code>testthat</code> schreiben.</p>
+<p>5. <strong>Modularisierung</strong> vornehmen (z.B. separate Hilfsfunktionen).</p>
+<p>📈 <strong>Langfristige Maßnahmen:</strong></p>
+<p>- Erstellung eines <strong>R-Pakets</strong> für die ECL-Berechnung.</p>
+<p>- <strong>Parallelisierung</strong> für große Portfolios.</p>
+<p>- <strong>Integration in bestehende Workflows</strong> (z.B. <code>Ablaufmodellierung.R</code>).</p>
+<p>---</p>
+<h2>📎 <strong>Anhang: Nützliche Ressourcen</strong></h2>
+<p>- <a href="https://cran.r-project.org/web/packages/roxygen2/vignettes/roxygen2.html">Roxygen2 Dokumentation</a></p>
+<p>- <a href="https://testthat.r-lib.org/">testthat-Paket</a></p>
+<p>- <a href="https://cran.r-project.org/web/packages/assertive/index.html">assertive-Paket für Eingabevalidierung</a></p>
+<p>- <a href="https://cran.r-project.org/web/views/HighPerformanceComputing.html">Parallelisierung in R</a></p>
+<p>---</p>
+<p><strong>📌 Autor:</strong> Brain Agent – Code Review System</p>
+<p><strong>📅 Datum:</strong> 2026-06-29</p>
+<p><strong>📂 Projekt:</strong> Bodensatz R-Scripte</p>
+<div class="doc-footer" style="text-align:center;font-size:9pt;color:#666666"><div class="doc-autoline">Klassifizierung: Intern</div><div class="doc-autoline">Dieses Dokument wurde mit Unterstützung künstlicher Intelligenz erstellt.</div><div class="doc-pageline">Seite - <span class="pagenum"></span></div></div>
+</body>
+</html>

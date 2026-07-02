@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.257.0",
+        "date": "2026-07-02",
+        "title": "Klarere Kosten- und Fortschrittsanzeigen",
+        "body": "Drei Verbesserungen der Transparenz. Deep-Research- und "
+                "Studio-Berichte weisen in ihren Metadaten jetzt aus, wie viele "
+                "Tokens aus dem Prompt-Cache bedient wurden (⚡ gecacht — diese "
+                "kosten nur rund ein Zehntel); Admins können den Cache-Preis "
+                "pro Modell unter Einstellungen → Modelle im neuen Feld "
+                "„Kosten cached“ hinterlegen. Die Projekt-Synchronisierung "
+                "zeigt beim Einlesen zusätzlich an, wie viele Dokumente bereits "
+                "unverändert aktuell sind (z. B. „4/145 Dokumente · 258 "
+                "unverändert“) — die Zahl liest sich nicht mehr, als wäre das "
+                "der ganze Projektbestand. Außerdem wirkt der Befehl /caveman "
+                "im Terminal-Chat jetzt tatsächlich auf die Sitzung (er wurde "
+                "bisher nicht gespeichert).",
+        "audience": "user",
+        "versions": ["9.257.0"],
+    },
+    {
         "version": "9.256.0",
         "date": "2026-07-02",
         "title": "Goal-Modus: Ziel setzen, Agent arbeitet bis zur Erfüllung",

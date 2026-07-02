@@ -785,7 +785,11 @@ biografische/relationale Inhalte oder wenn nichts das Gerät verlassen soll.
 Das Profil (normative/generic) ist nur bei der LLM-Methode wirksam.
 
 **Synchronisierung**: Eingabeordner werden von einem Daemon alle 6 h
-eingespeist. Knöpfe auf der Projektseite:
+eingespeist. Während des Einlesens zeigt der Status-Chip den Fortschritt nur
+über die tatsächlich **geänderten** Dokumente — bereits aktuelle werden
+separat ausgewiesen (z. B. „Speicher: Dokumente werden gelesen 4/145
+Dokumente · 258 unverändert · noch ca. 2 Min."), die Zahl ist also nicht der
+ganze Projektbestand. Knöpfe auf der Projektseite:
 - **Jetzt synchronisieren** — neue/geänderte Dateien sofort einspeisen
 - **Vollständig neu synchronisieren** — den Gedächtnis-Wing des Projekts
   leeren und alles neu einspeisen
@@ -1319,7 +1323,12 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   Agent geschaltet (siehe Agent-Einstellungen → Token-Optimierung).
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
-- **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost). Pro
+- **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost).
+  Bei den Kosten gibt es neben „Kosten ein/aus ($/M)" das Feld **„Kosten
+  cached ($/M)"** — der Preis für Tokens aus dem Prompt-Cache (leer = automatisch
+  0,1× des Eingabepreises). Ein gesetzter Wert markiert das Modell zugleich als
+  „cache-priced" (Auto-Routing friert Modell + Tools dann auf Turn 1 ein, damit
+  der Provider-Cache trifft). Pro
   Modell über das ⚙-Icon: u.a. **Fan-out-Modell** — teilt dieses Chat-Modell im
   Chat eine Hintergrundaufgabe per Fan-out auf, laufen die Leaf-Tasks auf dem
   hier gewählten (meist günstigeren) Modell; leer = bleiben auf diesem Modell.

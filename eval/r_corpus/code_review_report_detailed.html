@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Umfassender Code-Review: Bodensatz R-Skripte (IFRS 9 Impairment)</title>
+<style>
+    @page { margin: 2cm; }
+    body { font-family: 'Calibri', Arial, sans-serif; color: #222222;
+      font-size: 11pt; line-height: 1.5; max-width: 820px;
+      margin: 0 auto; padding: 24px; background: #fff; }
+    h1,h2,h3,h4,h5,h6 { font-family: 'Calibri', Arial, sans-serif;
+      color: #1f3864; line-height: 1.2; margin: 1.1em 0 .4em; }
+    h1 { font-size: 20pt; } h2 { font-size: 16pt; }
+    h3 { font-size: 13pt; }
+    a { color: #2e74b5; }
+    code { font-family: 'Consolas', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    p.figure { text-align: center; } p.figure img { max-width: 100%; height: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #ddd; padding: 5px 9px; text-align: left; }
+    th { background: #1f3864;
+      color: #ffffff; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    .doc-header { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 20px; overflow: hidden; }
+    .doc-footer { border-top: 1px solid #eee; padding-top: 8px; margin-top: 28px; overflow: hidden; }
+    .pagenum::after { content: ""; }
+    @media print { .pagenum::after { content: counter(page); } }
+    </style>
+</head>
+<body>
+<div class="doc-header" style="text-align:right;font-size:9pt;color:#666666"><img class="doc-logo" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAM4AAABrCAYAAAA/zr2ZAAAACXBIWXMAABcRAAAXEQHKJvM/AAAOk0lEQVR4nO2dwXHjuBKGf2/5bp+WpyW1EcgvAmsisDaCwUZgbwSjiWDsCIYTwWoiGDqCtTMQddPNjsDvwIbZhEASACGRcvVXpRIlkSBE4geaQKNx9vsf6QITZbcti7HzIAg2zgH8GjsTHZyNnQFBsPHb2BkQhFNEhCMIAYhwBCEAEY4gBCDCEYQARDiCEIAIRxACOHfc7weAPOJ5FYDPEdMThKPiKpxNzFH8JM0WsdIShDFwFc47Qwq9uNAIHwVv4WCYi4640AgfAukcEIQARDiCEIAIRxACEOEIQgAiHEEIQIQjCAGIcAQhABGOIAQgwhGEAEQ4ghCACEcQAhDhCEIAIhxBCOAcwKPDfhu27bK/S3ox0hGEUTh7e3sbOw+CcHKIqSYIAYhwBCEAEY4gBCDCEYQARDiCEIAIRxACEOEIQgAiHEEIQIQjCAGIcAQhABGOIAQgwhGEAEQ4ghCACEcQAhDhCEIAZ7//kS70B9/1a5I0uwRwRR9fdtvyyfP4GYAZfdzstuWm4/en3bZ8aUln4XPeoefrIkmzKwCX6LgebB8f9tIzrn8bQf9D6OYc1RKFGQAkafanWZh6UAC+0XaJutC5skK9pOEnNGea6vS/sN+LlnRC1uz5SudvO98DgLuAdO8BXKOa4bro2ccHW3pXcPjvSZqVqO7zvYgoDr8BWLPPC8/jFdvOqCb1QZ/vdYKrtd0mabYcOxORyFBVCBtZRjIO56iEc0ufl3BcJJfMmrnxtYJjLU0iy+jjumtfD55dz4/91s1GnqTZ7MC19CfH/fryYFvg+BJV5aQAXNDrV5Jm//M1q4Um57ttWSRp9orqoi48jrXVxku4F1x+rsLjvF28RG65LlAVxoO1PBHz27bA8TpJsxWqykmbh/fwty4Ehu5V0zX+hYd5ouj9FVVtB/iZa/w8sVqcmDzT+02SZiHPOpOBWswlqnsFANcBZrXA0MIp2HeLvoOoN0ebaWs0C75yPF7Xfo8TfWDlBW1FpunJQtc4Z1+JcAZgtjiAm1nSaC1223KNupC5HL/gxzvsf3Sod3FFH7XJdups2PZspDx8CH4D3msjHSAwc6hdtTheSTRALQAXc23qZhoAYLct71Ffl2t6VjhlfMeOhBa454BTq0Nm1o3lGB9zTadfeo4bjQE32b6c+LPBjG0XI+XhQ9AmnEXHMdbWwtVco4J3YTnnJKHWWLGv8nFyMgy67nqweYrjZifFud7YbctNkmbPqB76b9oPsZppmjWqm5MlaXbVMlZwSDPt0mGAb8/Vpo/dtlwnafYT1XWZJ2l2v9uWUXraHPLr7crUcg5+re+HpCcw4RAFqLcsSbOlKYwOMw3sO12rKdjHdLjwCu8cdzNHvwuKzdXGBQXgCdWg7W2SZutI+e/Lb5frDmdmiHBGryWaA9U/dtty5Zw7wYrpHZ2z7bYBTs2ecPrMNUs39slgM9no/0yFz6hEqF/fUbnZcNF83W1LdfysfTwaLc5uWz71eBF0mWmaLnONi6kIynE3Li43m9DEycviAZWLUoY4XgV9LjdDx7heUbWw6xPoiDkZTFMNaCn4DmaaeTxQia9NOIdocWK73NhYofpfc1ReBXsmrQ8R8/tVm2BksnETsBDRxMU2ka2td82p0BvmmjJ+1un9nKi3QC8nYLJpMT7Qx48yeDspbMIp2DYXy4Leu8w0jf59rgdTqRbU3dDF/iGnA7XCX+njBSb4vEa9ftrfbp6kmfSkRWRPOFSj/qSP16w21SJyKST8Ji2Nd9c0Jg2ZRdyrYIqOoAp1638rc3Hi0RZzoGGukce086Al1cglfVQ6HXp//kD2tsKEHUHpPqzYV+upmZWnSptwCra9hFtvmgk31xaou0UL694niMURdHItKfnbaQtiknk8RazCoQKh7WMuHJ+LnjtsnzxGwZzDP5bAMVCoLYCpmpUnRVd4KC0SPeWWf9eLYa7pKdKvH3TKrkJtsk0OS0/gtxN3Vh0d2ziOZo064gvgZ6bxNG6Nz4fExVdNM9gHTLPbli9JmikA//oe6/PAPmTMhwZvv6K+p3mSZotTHRYYm1bhkBdBiWEBNXIcVzguvmoaVx8wJ8gR9AfqwV9XfEJbnXmm3WC3LVfU0TOn1z0cZuwK+/RF8izYtnehN8w1M72PyB2a/3eK8PlFnz9QCKyj0mWqAVWPUQ4MMhOWqCNb+poFOWqxdZlVriGWOLa88PN5QybbApVXctd/vUOc2ZhPqP/7xuUAmj6yYOcXUy2As7e3t7HzIAgnhwRdF4QARDiCEIAIRxACEOEIQgAiHEEIQIQjCAGIcAQhABGOIAQgwhGEABqL57bgvPjqIaJoGgvE2ha8fT/n0Igxvovn9i3+27P/UBr5c1hI1/vadzF04WSWzmJIGkY+uhZY7ixHjum/H3sO98VX16gWX+06oUtar5RW7ljQr1i6tiicOerFf4cu0bdGPVP1T/T7ceVg6/yg39taoTlVYwjmYsL8OlkJuPZdrFB7vr8i3PfuPc+B94//764FlvvK0R4kmgJ1mXgG3WNXUy1DdZGeaN7JEC5AUScjRV7haajQRGhil75Aj46tB5/teT21mAMWYl57xdONUC6ACYXaahONbtG4d7QtCuYlKoUtUYnnAsD3JM2w25Z5z7ltHss6LZ2ZW0pryFTeHPWS8QphS6zrY3mafdjOc9dz/hzd3tcK9Xyef9DtEd71m+3YK1TXXov9Nkmzl5A40iSSC+NrheHT4ueoWoJRp3b3iQZoCqctCuYawF2SZjnqm3pPQcdbTZmWtApU0WDuUBf22yTN8lATi1z59QSyiyTNlIOobSh61+aM6/7PqCqYDD3CpVZs0/a78Yz4NMCcsh1boLpvClVcaaC6r/cB0z0Uvb+iEug1qMWN8BwVM6C9Ny6iATx61ShYt44jdoEBMZMpwMVX9pUKTYvI2bZ3vszwVw6dAortf4/m4sPK9/zHhCoVvdix9300TNQ1mqbykJaCx2wYJYyVq2gA/+5ofpEWIZlj5Gx7UOAIqp30zMubgGcNxbZdbH9e2MzCozB9eIs68zxWse28J+SxD09oRkfNB6TljY9oAH/hFGx75nlsA6NJH5QWkbNt51rUCCb/3Gcykij1/j922/KF/guP6jlzPf9IDJn1qei9ZOZUTu+DWlx63tJhyW6ONa3bIppHdIgGmM4AaIzpuznb9jEZVEsavvuHnn8MZmzb+dpTQdbBW3grG7PF5cfnh66ELKL5sduWvdF/fIXDTapBhd2I6zVYOFTr68CAmUfYJV7Ic4f9Fb2XxgMsN1mmHgCD/2eXjhCNsh1nBLAc1OJSi/8PfTyoydYiGuVyrK9weKKF57EmK7btc/O6yNm26tuZxKtr0B8OnQK8xuXn0kH/9P/Iphg9JkmzS+od1QXlwWMEfYbaRP1pOS5aq0OdRwcNaD9ENICHcMh2fV+1GIE1Abt5+iaUoWmZ0IOq7iRYOvTMhLY2bftPpZPgKkmzBXstacDzCfU9fITfWqi8Isgtv8fqJNAoNAPaD+pAMrhCdS2CRAP0h4fStfIdmoH2Vg6188L46gr1IJzuyn0FsIwcTXKNystBd7XmHfvqwmCaXXs41LhmEMebSOMaIXzr+f0hYNBZ72+N6ErjaWvUq/kNXaluQy3Nd9QmWyzx8FXVf4asi8pbnKskzQr22iRp9gbgPzRF80BNaR+/jNc3SkeLRnf3BQ18duBU61vGYvowu6AHnX9kbukez1x2pkrQaqIa8N9UQL4a0JjTe0D7JM1WQ9Mk+JjRIqQ148K5AI0A0ysz9n0E8GmgewxQDb79tduW5sK6UfDoGnYVgobXuHnHfvw35ZDuIfi025Zn+oXKYfUTqofu91ULUPkeuhQaxbZbK5kI42lt59YF/UukxbHu0RwELnzFw021tmeNDQIWX6UbZnsI2wxpwh3JUY9u38HoHnYxu4z9F6grksLh5j2j+r+DTZYYMFefApXbTY669c/RYQLR/dMWRwlg1iOIgu2v4PcctYcloH2eVIs6DzLvd9tSJWkG1NehoCD0TpU5F84mxOHPIYP6j/9HX31J0qw4pC/Sblvm9DCsn3PMVlKx7dwhSb7/DZo2ch9LTGwxJyo0M1SVy7xH3IptZ/ALEq8wUDjAe0D7B1TPrhkiOYIOEc9RBkCNvnngOO7jOb3buoYVvZd9rYFR44bweSqu8gbc5OoyU4YU0Jjd8ivUZuBtrHSpY8DbbDua54DRN5/h8L5IPP33i2yYXS4tgWLbf/Nnh64X4jqxHoKCbS9sO1jGuVz/+18smVgF/AX7XgVRKqQQ8Rzb5WaJ+kHv5hADWxpq5fRoNq/1FdvNpTdN7+863UCTs+0puuC4FDqeb5drBWBvPC1ai0vm/UEcQX3Fc1ThWGqN2ANbJo2uYbqBugZ0meV5hbpTo3e6Acfo3fNxAToW/LoX5o/GtSoDekB5JaM8j23FdASNnLZCc+pMq3iO7uRJtdEDfTy0+7g5ms0HX13O6+tZYMKPUQHHH5IV27aJgl8r59aGwY+J3eIqsMWxIqe9RC3MVvGM4h1NY0E6c/MI89/bzsP9x/S0XKB/LMZW4xYB58/RXP1s9E4Ccnlao25J2zpIBlUah2xxqfVbxUrPSPsF1TNfp3jGnFagUBeqaL0kFrgoXUa/Nb6tUxsHMVl6MH3VuL/aBnV3+issD++GifpzwJhJzrZVYBpWjM6mqLSIp9EZMZpwLLXGQbqod/vrkALHMdM0Y7jgfMO+y9O/qH34gOqatI1ZKLadh2biCC2uQtN9JhoW8cxRtTyXwMgT2ajW0L5IFzjcQCEvvK6zPHmNuwk9sdG7Nz9wZ4gLjwD+BtDl8qTo3erQ6cnBWly6L1HTNNJvFc856jBOg1wYiJBFbBW6B+Ce4LlArIUc9QOwaxpDz8lZop512XWdc7gtFmyDXycbTpEyjWe7GGXiDnWrZUtvUPkjrwKdRtf/CypHu3pBZF5GL/8PsLx0GunGy20AAAAASUVORK5CYII=" alt="" style="max-height:29px;width:auto;float:left;">Wiener Privatbank SE</div>
+<h1>Umfassender Code-Review: Bodensatz R-Skripte (IFRS 9 Impairment)</h1>
+<p>Projekt: Bodensatz R-Scripte</p>
+<p>Stichtag: 29.06.2026</p>
+<p>Prüfer: Brain Agent – automatisierte Code-Analyse</p>
+<p>Umfang: 6 R-Skripte (exkl. lab, bdensatz, ablaufmodellierung)</p>
+<p>Format: Detaillierte Zeile-für-Zeile-Analyse mit konkreten Refactoring-Beispielen</p>
+<p>---</p>
+<h2>Management Summary</h2>
+<p>Dieser Report analysiert die sechs IFRS-9-Impairment-R-Skripte (<code>ECL_122025.R</code>, <code>ECL_Hilfsfunktion.R</code>, <code>ECL_Hilfsfunktion_2.R</code>, <code>PIT_122025.R</code>, <code>TL_122025.R</code>, <code>TTC_122025.R</code>) auf Code-Qualität, Wartbarkeit, Sicherheit und Konformität mit R-Best-Practices.</p>
+<p><strong>Haupterkenntnisse:</strong></p>
+<p>- <strong>Kritischste Probleme:</strong> Hardcodierte absolute Windows-Pfade in allen sechs Skripten machen sie nicht-portabel und blockieren jede Team-Kollaboration. Fehlende Fehlerbehandlung führt zu unkontrollierten Abstürzen bei invaliden Eingabedaten.</p>
+<p>- <strong>Strukturelle Defizite:</strong> Exzessive Nutzung globaler Variablen (<code>pdtime</code>, <code>interpol</code>, <code>External_mode</code>, <code>PD_cube</code>) verhindert Unit-Testing und erschwert das Debugging massiv.</p>
+<p>- <strong>Redundanz:</strong> <code>ECL_Hilfsfunktion.R</code> und <code>ECL_Hilfsfunktion_2.R</code> sind zu 95 % identisch – ein klares Signal für dringendes Refactoring.</p>
+<p>- <strong>Fehlende Abhängigkeit:</strong> <code>PIT_122025.R</code> referenziert die Funktion <code>bayes()</code>, die nirgends definiert ist – das Skript ist zurzeit nicht lauffähig.</p>
+<p>- <strong>Performance-Schwächen:</strong> <code>TL_122025.R</code> verwendet eine explizite <code>for</code>-Schleife über alle Deals statt vektorisierter Operationen.</p>
+<p>- <strong>Dokumentation:</strong> Kein einziges Skript enthält Funktionsdokumentation (Roxygen), Kommentare oder ein README.</p>
+<p>Der Report liefert zu jedem Befund konkrete Vorher-/Nachher-Codebeispiele, empfiehlt eine moderne Projektstruktur mit <code>renv</code>/<code>here</code>/<code>testthat</code> und enthält eine priorisierte Umsetzungs-Checkliste.</p>
+<p>---</p>
+<h2>1. ECL_122025.R – Hauptskript Expected Credit Loss</h2>
+<h3>1.1 Zweck</h3>
+<p>Berechnet den Expected Credit Loss (ECL) – sowohl 12-Monats-ECL als auch Lifetime-ECL – für ein Kreditportfolio. Entscheidet anhand des Stage-Buckets (1 oder 2), welcher ECL-Wert angesetzt wird, und exportiert das Ergebnis als CSV.</p>
+<h3>1.2 Vollständige Zeile-für-Zeile-Analyse</h3>
+<h4>Zeile 1 – <code>rm(list=ls())</code></h4>
+<pre><code>rm(list=ls())</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td>Löscht den gesamten globalen Workspace ohne Rückfrage. In einem Produktionsskript akzeptabel, in einem Modulkontext jedoch gefährlich – lädt ein anderer Prozess dieses Skript als <code>source()</code>, verliert er alle seine Variablen.</td></tr><tr><td>Risiko</td><td>Hoch – Datenverlust in abhängigen Prozessen</td></tr><tr><td>Empfehlung</td><td>Entweder: (a) nur im Hauptskript behalten, aus Hilfsfunktionen entfernen; oder (b) selektiv löschen: <code>rm(list = setdiff(ls(), c(&quot;config&quot;, &quot;logfile&quot;)))</code></td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 3 – Hardcodierter Pfad</h4>
+<pre><code>pfad&lt;-&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung&quot;</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td>Der Pfad <code>W:/COLLABORATION/...</code> ist eine absolute Windows-Netzwerkfreigabe. Das Skript funktioniert auf keinem anderen Rechner, scheitert in CI/CD-Pipelines und ist nicht versionierbar (der Pfad enthält keine Umgebungsvariable).</td></tr><tr><td>Risiko</td><td>Kritisch – Null Portabilität</td></tr><tr><td>Empfehlung</td><td>Konfigurationsdatei (<code>config.yml</code>) oder Umgebungsvariable, siehe Verbesserungsvorschlag unten.</td></tr></tbody></table>
+<p><strong>Verbesserung – Konfiguration auslagern:</strong></p>
+<pre><code># config.yml
+paths:
+  base: &quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung&quot;
+  input: &quot;Daten_Impairment Test/Daten 202512/ECL_Inputdaten_2025-12_Konzern.csv&quot;
+  output: &quot;output files/122025&quot;</code></pre>
+<pre><code># config.R
+library(yaml)
+config &lt;- yaml::read_yaml(&quot;config.yml&quot;)
+pfad &lt;- config$paths$base</code></pre>
+<p>---</p>
+<h4>Zeile 5 – <code>source()</code> mit hartem Pfad</h4>
+<pre><code>source(paste(pfad,&quot;/R codes/ECL_Hilfsfunktion_2.R&quot;,sep=&quot;&quot;))</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td>Workflow-Abhängigkeit: <code>ECL_122025.R</code> nutzt <code>ECL_Hilfsfunktion_2.R</code>, aber <code>ECL_Hilfsfunktion.R</code> existiert ebenfalls mit fast identischem Inhalt. Niemand weiß, welche Version die „wahre&quot; ist.</td></tr><tr><td>Risiko</td><td>Hoch – Versions-Drift, inkonsistente Ergebnisse</td></tr><tr><td>Empfehlung</td><td>Beide Hilfsfunktionsdateien zu EINER konsolidieren; <code>source()</code> über <code>here::here(&quot;R/ecl_utils.R&quot;)</code> aufrufen.</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 7 – Zweiter Hardcodierter Pfad</h4>
+<pre><code>df&lt;-read.csv2(&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung/output files/122025/TL/deals_TL2026_Konzern.csv&quot;,sep=&quot;;&quot;,header=T,stringsAsFactors = F,dec=&quot;,&quot;)</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td>Gleiches Pfadproblem wie Zeile 3 – absolut und unportabel. Zusätzlich: Keine Prüfung, ob die Datei existiert.</td></tr><tr><td>Risiko</td><td>Kritisch</td></tr><tr><td>Empfehlung</td><td><code>input_path &lt;- file.path(config$paths$base, config$paths$tl_output)</code>; dann <code>stopifnot(file.exists(input_path))</code></td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 9 – Leerzeilen-Entfernung</h4>
+<pre><code>df&lt;-df[!apply(is.na(df) | df == &quot;&quot;, 1, all),]</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td>Die Logik ist korrekt (entfernt Zeilen, die komplett NA oder leer sind), aber <code>apply(..., 1, all)</code> skaliert schlecht bei großen Dataframes. Zudem werden partiell leere Zeilen nicht erkannt.</td></tr><tr><td>Risiko</td><td>Mittel – Performance bei &gt;100k Zeilen</td></tr><tr><td>Empfehlung</td><td>Vektorisierte Alternative: <code>df &lt;- df[rowSums(!is.na(df) &amp; df != &quot;&quot;) &gt; 0, ]</code></td></tr></tbody></table>
+<p>---</p>
+<h4>Zeilen 11–13 – Globale Variablen</h4>
+<pre><code>pdtime&lt;-&quot;PD_input_monthly&quot;
+interpol&lt;-&quot;First_order&quot;
+External_mode&lt;-1</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td>Diese Variablen werden im globalen Scope gesetzt und von den Hilfsfunktionen per Lexical Scoping gelesen. Das ist die Definition von <strong>spaghetti coupling</strong>: Jede Hilfsfunktion greift unsichtbar auf Variablen zu, die der Aufrufer kennen muss. Unit-Tests sind unmöglich.</td></tr><tr><td>Risiko</td><td>Kritisch – strukturelles Anti-Pattern</td></tr><tr><td>Empfehlung</td><td>Als Parameter an die Funktionen übergeben (siehe Beispiel unten).</td></tr></tbody></table>
+<p><strong>Verbesserung – Parameter statt globale Variablen:</strong></p>
+<p>Vorher (ECL_Hilfsfunktion_2.R, Zeile 12):</p>
+<pre><code>if (pdtime==&quot;PD_input_yearly&quot;){</code></pre>
+<p>Nachher:</p>
+<pre><code>readcsv2 &lt;- function(filename, convmat = TRUE, kopf = FALSE, readtime = 0, removecolcsv = 0, pdtime = &quot;PD_input_monthly&quot;) {
+  # ...
+  if (readtime == 1 &amp;&amp; pdtime == &quot;PD_input_yearly&quot;) {
+    time &lt;- &quot;Years&quot;
+  }
+  # ...
+}</code></pre>
+<p>---</p>
+<h4>Zeile 15 – <code>readcsv2</code>-Aufruf</h4>
+<pre><code>M_cpd&lt;-readcsv2(paste(pfad,&quot;/output files/122025/PIT/PIT_PD_monthly1.csv&quot;,sep=&quot;&quot;),convmat=TRUE,readtime = 1)</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td><code>readcsv2</code> ist in <code>ECL_Hilfsfunktion_2.R</code> definiert und greift dort auf <code>pdtime</code> und <code>interpol</code> aus dem globalen Scope zu. Dieses versteckte Coupling macht das Lesen des Codes extrem schwierig.</td></tr><tr><td>Risiko</td><td>Hoch</td></tr><tr><td>Empfehlung</td><td>Siehe Refactoring von <code>readcsv2</code> in Abschnitt 2 und 3.</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 19 – Dynamischer Output-Pfad mit Zeitstempel</h4>
+<pre><code>outputfile1&lt;-paste(pfad,&quot;/output files/122025/ECL/ECL_deals_Konzern&quot;,sys_t,&quot;.csv&quot;,sep=&quot;&quot;)</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Positiv</td><td>Zeitstempel im Dateinamen – gute Praxis für Audit-Trail.</td></tr><tr><td>Problem</td><td>Der Zielordner wird nicht erstellt, falls er nicht existiert.</td></tr><tr><td>Empfehlung</td><td><code>dir.create(dirname(outputfile1), recursive = TRUE, showWarnings = FALSE)</code> vor dem Schreiben.</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeilen 33–34 – PD-Cube-Array</h4>
+<pre><code>PD_cube &lt;- array(rep(1, nrow(M_cpd)*ncol(M_cpd)), dim=c(nrow(M_cpd),ncol(M_cpd),1))
+PD_cube[ , ,1]=M_cpd</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td>Erzeugt ein 3D-Array mit einer einzigen Schicht – warum? Möglicherweise ein Relikt aus einer früheren Version mit mehreren Portfolios. Ineffizient und verwirrend.</td></tr><tr><td>Risiko</td><td>Mittel – Verwirrung und leichter Performance-Verlust</td></tr><tr><td>Empfehlung</td><td>Wenn nur ein Portfolio existiert: <code>PD_cube &lt;- as.matrix(M_cpd)</code>. Falls mehrere Portfolios möglich sind, die Dimension dokumentieren.</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 36 – Spaltenumbenennung</h4>
+<pre><code>colnames(df)[which(colnames(df)==&quot;rstage&quot;)]&lt;-&quot;Bucket&quot;</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td><code>which()</code> ist hier unnötig (logische Indizierung reicht). Das Skript erwartet implizit, dass die Spalte <code>rstage</code> existiert – fehlt sie, passiert stillschweigend nichts.</td></tr><tr><td>Risiko</td><td>Niedrig</td></tr><tr><td>Empfehlung</td><td><code>stopifnot(&quot;rstage&quot; %in% colnames(df))</code> vor der Umbenennung; dann <code>colnames(df)[colnames(df) == &quot;rstage&quot;] &lt;- &quot;Bucket&quot;</code></td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 39 – <code>mapply</code> für 12M-ECL</h4>
+<pre><code>df[&quot;YM_ECL&quot;] &lt;- mapply(get_12M_ECL,df$Month_Remaining,df$Rating,df$Exposure,df$LGD,df$EIR,df$Amortization,1)</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td><code>mapply</code> iteriert über alle Spalten als separate Vektoren. <code>df$Rating</code> ist vermutlich ein Character/Factor, der in <code>PD_cube[rating, rem_time, port]</code> als numerischer Index verwendet wird – das schlägt fehl. Zudem O(n) Aufrufe einer Funktion mit globalem <code>PD_cube</code>-Zugriff.</td></tr><tr><td>Risiko</td><td>Hoch – potenzieller Laufzeitfehler</td></tr><tr><td>Empfehlung</td><td>Alle notwendigen Daten in einem Dataframe bündeln und mit <code>apply</code> oder <code>pmap</code> (purrr) verarbeiten. Rating vorher in Integer konvertieren.</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeilen 43–50 – External Mode vs. interner Lifetime-ECL</h4>
+<pre><code>if (External_mode==1){
+  df[&quot;LT_ECL&quot;]&lt;-NA
+  for (i in 1:nrow(df)){
+    df[i,&quot;LT_ECL&quot;]&lt;-ext_LT_ECL(df[i,])
+  }
+} else {
+  df[&quot;LT_ECL&quot;] &lt;- mapply(get_LT_ECL,df$Month_Remaining,df$Rating,df$Exposure,df$LGD,df$EIR,df$Amortization,1,row.names(df))
+}</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem 1</td><td><code>External_mode</code> ist eine globale Variable – gleiches Problem wie Zeile 11.</td></tr><tr><td>Problem 2</td><td>Die <code>for</code>-Schleife im External-Mode ruft <code>ext_LT_ECL</code> für jede Zeile einzeln auf und übergibt eine 1-zeilige Dataframe-Zeile – extrem langsam und unnötig komplex.</td></tr><tr><td>Problem 3</td><td><code>row.names(df)</code> als achten Parameter – diese werden in <code>get_LT_ECL</code> nur für <code>print(zeilenname)</code> bei jedem 1000. Eintrag verwendet. Produktionscode sollte keinen Debug-Print enthalten.</td></tr><tr><td>Risiko</td><td>Mittel (Performance), Niedrig (Debug-Print)</td></tr><tr><td>Empfehlung</td><td>External Mode entweder entfernen oder beide Pfade auf Vektorisierung umstellen. Debug-Print mit <code>if (verbose)</code> wrappen.</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 53 – ECL-Auswahl</h4>
+<pre><code>df[&quot;ECL&quot;] &lt;- mapply(get_ECL,df$Bucket,df$YM_ECL,df$LT_ECL)</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Problem</td><td><code>get_ECL</code> ist eine triviale 4-Zeilen-Funktion, die nur <code>ifelse(buck == 2, LT_ecl, YM_ecl)</code> macht. Ein <code>mapply</code>-Aufruf für eine Vektorisierung ist Overkill.</td></tr><tr><td>Empfehlung</td><td>Direkt: <code>df$ECL &lt;- ifelse(df$Bucket == 2, df$LT_ECL, df$YM_ECL)</code></td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 56 – CSV-Export</h4>
+<pre><code>write.table(df[,],outputfile1,sep=&quot;;&quot;,col.names=T,row.names=F, na=&quot;&quot;,dec=&quot;,&quot;)</code></pre>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Positiv</td><td>Korrekte Parameter für deutsches CSV-Format (Semikolon, Komma-Dezimal).</td></tr><tr><td>Problem</td><td>Kein <code>tryCatch</code> – schlägt das Schreiben fehl (z. B. weil das Zielverzeichnis nicht existiert), bricht das Skript ab.</td></tr><tr><td>Empfehlung</td><td><code>tryCatch(write.table(...), error = function(e) message(&quot;Fehler beim Schreiben: &quot;, e$message))</code></td></tr></tbody></table>
+<p>---</p>
+<h3>1.3 Zusammenfassung aller Befunde – ECL_122025.R</h3>
+<table><thead><tr><th>#</th><th>Kategorie</th><th>Problem</th><th>Kritikalität</th><th>Zeile(n)</th></tr></thead><tbody><tr><td>1</td><td>Portabilität</td><td>Hardcodierte absolute Pfade</td><td>Kritisch</td><td>3, 7, 15, 19</td></tr><tr><td>2</td><td>Architektur</td><td>Globale Variablen statt Parameter</td><td>Kritisch</td><td>11–13</td></tr><tr><td>3</td><td>Robustheit</td><td>Keine Fehlerbehandlung bei Datei-I/O</td><td>Hoch</td><td>7, 56</td></tr><tr><td>4</td><td>Lesbarkeit</td><td><code>mapply</code> auf triviale Funktion <code>get_ECL</code></td><td>Mittel</td><td>53</td></tr><tr><td>5</td><td>Performance</td><td><code>for</code>-Schleife im External Mode</td><td>Mittel</td><td>45–47</td></tr><tr><td>6</td><td>Code-Smell</td><td>3D-Array mit Schicht 1</td><td>Mittel</td><td>33–34</td></tr><tr><td>7</td><td>Hygiene</td><td><code>rm(list=ls())</code> ohne Rückfrage</td><td>Mittel</td><td>1</td></tr><tr><td>8</td><td>Wartbarkeit</td><td>Keine Dokumentation</td><td>Hoch</td><td>gesamte Datei</td></tr><tr><td>9</td><td>Wartbarkeit</td><td><code>source()</code>-Pfad redundant/konsolidierbar</td><td>Hoch</td><td>5</td></tr><tr><td>10</td><td>Clean Code</td><td><code>which()</code> unnötig für logische Indizierung</td><td>Niedrig</td><td>36</td></tr></tbody></table>
+<p>---</p>
+<h2>2. ECL_Hilfsfunktion.R – Hilfsfunktionen (Version 1)</h2>
+<h3>2.1 Zweck</h3>
+<p>Enthält die zentralen Berechnungsfunktionen: <code>readcsv2</code> (CSV-Laden mit Interpolation), <code>get_12M_ECL</code>, <code>ext_LT_ECL</code>, <code>get_LT_ECL</code>, <code>get_ead_f</code> (EAD-Faktor für Annuität/Linear) und <code>get_ECL</code> (Bucket-Auswahl).</p>
+<h3>2.2 Vollständige Funktionsanalyse</h3>
+<h4>Funktion <code>readcsv2</code> (Zeilen 3–43)</h4>
+<pre><code>readcsv2&lt;-function(filename,convmat=T,kopf=F,readtime=0,removecolcsv=0){
+  time&lt;-&quot;Months&quot;
+  splittet&lt;-strsplit(filename,&quot;\\.&quot;)[[1]]
+  filetype&lt;-splittet[length(splittet)]
+  if(filetype==&quot;csv&quot;){
+   result&lt;-read.table(filename,sep=&quot;;&quot;,header=kopf)
+    if((removecolcsv&gt;0)){result&lt;-result[,-c(removecolcsv)]}
+    if(readtime==1){
+     if(pdtime==&quot;PD_input_yearly&quot;){
+        time&lt;-&quot;Years&quot;
+        }
+      }
+    }
+  if(convmat==T){result&lt;-as.matrix(result)}
+  if(time==&quot;Years&quot;){
+    M_cpd_y&lt;-result
+    M_cpd_y&lt;-cbind(rep(0,nrow(M_cpd_y)),M_cpd_y)
+    M_cpd&lt;-NULL
+    #
+      for(i in(1:(ncol(M_cpd_y)-1))){
+        for(j in 0:11){
+          if(interpol==&quot;first_order&quot;){
+            M_cpdy&lt;-cbind(M_cpd,M_cpd_y[,i]*(1-j/12)+M_cpd_y[,i+1]*j/12)
+            }else if (interpol==&quot;second_order&quot;){
+              jj=j
+              t1=i
+              if(i==(ncol(M_cpd_y)-1)){jj=jj+12
+              t1=t1-1}
+              L0=(jj/12-1)*(jj/12-2)/2
+              L1=(jj/12)*(2-jj/12)
+              L2=(jj/12)*(jj/12-1)/2
+              t2=t1+1
+              t3=t1+2
+              M_cpd&lt;-cbind(M_cpd,L0*M_cpd_y[,t1]+L1*M_cpd_y[,t2]+L2*M_cpd_y[,t3])
+              }
+          }
+        }
+    result&lt;-M_cpd[,-1]
+    }
+  return(result)
+  }</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><strong>Globale Abhängigkeit</strong></td><td>Greift auf <code>pdtime</code> und <code>interpol</code> aus dem globalen Scope zu – Funktion ist nicht isoliert testbar.</td><td>Kritisch</td></tr><tr><td><strong>Tippfehler Variable</strong></td><td>Zeile 25: <code>M_cpdy&lt;-cbind(M_cpd,...)</code> – das <code>y</code> ist ein Tippfehler. Die Variable heißt überall sonst <code>M_cpd</code>. Hier wird ein neues Objekt <code>M_cpdy</code> erzeugt und sofort verworfen.</td><td>Hoch</td></tr><tr><td><strong>Fehlerhafte first_order-Logik</strong></td><td>Zeile 25: Das Ergebnis der <code>cbind</code> wird in <code>M_cpdy</code> (falsch) statt in <code>M_cpd</code> (richtig) gespeichert. Bei <code>first_order</code> wird das Ergebnis verworfen!</td><td>Kritisch</td></tr><tr><td><strong>Kein else-Zweig</strong></td><td>Wenn <code>interpol</code> weder <code>&quot;first_order&quot;</code> noch <code>&quot;second_order&quot;</code> ist, passiert nichts – <code>result</code> bleibt unverändert.</td><td>Mittel</td></tr><tr><td><strong>Fehlende Validierung</strong></td><td>Kein Check, ob <code>filetype</code> tatsächlich <code>&quot;csv&quot;</code> ist – bei anderen Endungen ist <code>result</code> undefiniert.</td><td>Hoch</td></tr><tr><td><strong>Magische Zahlen</strong></td><td><code>0:11</code>, <code>12</code>, <code>j/12</code> – die Monatslogik ist nicht dokumentiert.</td><td>Mittel</td></tr><tr><td><strong>Inkonsistente Formatierung</strong></td><td>Keine Leerzeichen um Operatoren, inkonsistente Einrückung – schwer lesbar.</td><td>Niedrig</td></tr></tbody></table>
+<p><strong>Verbesserung – Korrigierte und dokumentierte <code>readcsv2</code>:</strong></p>
+<pre><code>#&#x27; CSV-Datei einlesen und optional jährliche PDs auf monatliche interpolieren
+#&#x27;
+#&#x27; @param filename Pfad zur CSV-Datei
+#&#x27; @param convmat Logical: Ergebnis als Matrix zurückgeben?
+#&#x27; @param kopf Logical: Hat die CSV einen Header?
+#&#x27; @param readtime Integer: 1 = Zeitdimension parsen (Jahre → Monate interpolieren)
+#&#x27; @param removecolcsv Integer: Spaltenindex zum Entfernen (0 = keine)
+#&#x27; @param pdtime Character: &quot;PD_input_monthly&quot; oder &quot;PD_input_yearly&quot;
+#&#x27; @param interpol Character: &quot;first_order&quot; oder &quot;second_order&quot;
+#&#x27; @return Matrix mit (interpolierten) PD-Werten
+readcsv2 &lt;- function(filename, convmat = TRUE, kopf = FALSE, readtime = 0,
+                     removecolcsv = 0, pdtime = &quot;PD_input_monthly&quot;,
+                     interpol = &quot;first_order&quot;) {
+
+  # Dateiendung prüfen
+  file_ext &lt;- tools::file_ext(filename)
+  if (file_ext != &quot;csv&quot;) {
+    stop(&quot;readcsv2 unterstützt nur CSV-Dateien. Erhalten: &quot;, file_ext)
+  }
+
+  result &lt;- read.table(filename, sep = &quot;;&quot;, header = kopf)
+
+  if (removecolcsv &gt; 0) {
+    result &lt;- result[, -removecolcsv, drop = FALSE]
+  }
+
+  time &lt;- &quot;Months&quot;
+  if (readtime == 1 &amp;&amp; pdtime == &quot;PD_input_yearly&quot;) {
+    time &lt;- &quot;Years&quot;
+  }
+
+  if (convmat) {
+    result &lt;- as.matrix(result)
+  }
+
+  # Interpolation von jährlichen auf monatliche Werte
+  if (time == &quot;Years&quot;) {
+    M_cpd_y &lt;- result
+    M_cpd_y &lt;- cbind(0, M_cpd_y)  # Vorspalte mit Nullen
+    M_cpd &lt;- NULL
+
+    n_year_pairs &lt;- ncol(M_cpd_y) - 1
+    for (i in seq_len(n_year_pairs)) {
+      for (j in 0:11) {
+        if (interpol == &quot;first_order&quot;) {
+          # Lineare Interpolation zwischen Jahr i und i+1
+          interp_val &lt;- M_cpd_y[, i] * (1 - j / 12) + M_cpd_y[, i + 1] * (j / 12)
+          M_cpd &lt;- cbind(M_cpd, interp_val)
+
+        } else if (interpol == &quot;second_order&quot;) {
+          # Lagrange-Interpolation 2. Ordnung über 3 Stützstellen
+          jj &lt;- j
+          t1 &lt;- i
+          if (i == n_year_pairs) {
+            jj &lt;- jj + 12
+            t1 &lt;- t1 - 1
+          }
+          L0 &lt;- (jj / 12 - 1) * (jj / 12 - 2) / 2
+          L1 &lt;- (jj / 12) * (2 - jj / 12)
+          L2 &lt;- (jj / 12) * (jj / 12 - 1) / 2
+          t2 &lt;- t1 + 1
+          t3 &lt;- t1 + 2
+          interp_val &lt;- L0 * M_cpd_y[, t1] + L1 * M_cpd_y[, t2] + L2 * M_cpd_y[, t3]
+          M_cpd &lt;- cbind(M_cpd, interp_val)
+
+        } else {
+          stop(&quot;Unbekannte Interpolationsmethode: &quot;, interpol)
+        }
+      }
+    }
+    result &lt;- M_cpd[, -1, drop = FALSE]  # Vorspalte entfernen
+  }
+
+  return(result)
+}</code></pre>
+<p>---</p>
+<h4>Funktion <code>get_12M_ECL</code> (Zeilen 46–54)</h4>
+<pre><code>get_12M_ECL&lt;-function(Month_Remaining,rating,exposure,LGD,EIR,amort,port){
+ if(Month_Remaining==0){d_ecl=0}else{
+    jahre_echt&lt;-min(Month_Remaining/12,1)
+    rem_time&lt;-min(Month_Remaining,12)
+    PD_1&lt;-PD_cube[rating,rem_time,port]
+    d_ecl&lt;-exposure*LGD*(PD_1)/(1+EIR)^jahre_echt
+    }
+  return(d_ecl)
+}</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><strong>Globale Variable</strong></td><td><code>PD_cube</code> wird aus dem globalen Scope gelesen.</td><td>Kritisch</td></tr><tr><td><strong>Keine Input-Validierung</strong></td><td>Wenn <code>rating</code> außerhalb der PD_cube-Dimensionen liegt, stürzt die Indizierung ab.</td><td>Hoch</td></tr><tr><td><strong>Ungenutzter Parameter</strong></td><td><code>amort</code> wird nie verwendet – Verwirrung beim Aufrufer.</td><td>Mittel</td></tr><tr><td><strong>Redundanz</strong></td><td><code>jahre_echt &lt;- min(Month_Remaining/12, 1)</code> – da der ECL nur für max. 12 Monate berechnet wird, ist <code>jahre_echt</code> immer ≤1. Die <code>min(..., 1)</code>-Klammer ist unnötig.</td><td>Niedrig</td></tr></tbody></table>
+<p><strong>Verbesserung:</strong></p>
+<pre><code>#&#x27; 12-Monats Expected Credit Loss berechnen
+#&#x27;
+#&#x27; @param month_remaining Integer: Restlaufzeit in Monaten
+#&#x27; @param rating Integer: Rating-Index für PD_cube
+#&#x27; @param exposure Numeric: Exposure at Default
+#&#x27; @param lgd Numeric: Loss Given Default
+#&#x27; @param eir Numeric: Effective Interest Rate
+#&#x27; @param pd_cube Matrix/Array: PD-Kurven
+#&#x27; @param port Integer: Portfolio-Index (default 1)
+#&#x27; @return Numeric: 12-Monats-ECL
+get_12M_ECL &lt;- function(month_remaining, rating, exposure, lgd, eir, pd_cube, port = 1) {
+  stopifnot(
+    is.numeric(month_remaining), month_remaining &gt;= 0,
+    is.numeric(rating), rating &gt;= 1,
+    is.numeric(exposure), exposure &gt;= 0,
+    is.numeric(lgd), lgd &gt;= 0, lgd &lt;= 1,
+    is.numeric(eir), eir &gt;= 0
+  )
+
+  if (month_remaining == 0) return(0)
+
+  years_effective &lt;- min(month_remaining / 12, 1)
+  rem_time &lt;- min(month_remaining, 12)
+
+  # PD_cube-Zugriff mit Boundary-Check
+  if (rating &gt; nrow(pd_cube) || rem_time &gt; ncol(pd_cube)) {
+    stop(&quot;Rating &quot;, rating, &quot; oder Laufzeit &quot;, rem_time, &quot; außerhalb PD_cube-Dimensionen&quot;)
+  }
+  pd_value &lt;- pd_cube[rating, rem_time, port]
+
+  exposure * lgd * pd_value / (1 + eir)^years_effective
+}</code></pre>
+<p>---</p>
+<h4>Funktion <code>ext_LT_ECL</code> (Zeilen 57–90)</h4>
+<pre><code>ext_LT_ECL&lt;-function(row_i){
+  if (row_i$Month_Remaining==0) {d_ecl=0}else{
+    jahre&lt;-floor(row_i$Month_Remaining/12)
+    jahre_echt&lt;-row_i$Month_Remaining/12
+    rem_month&lt;-row_i$Month_Remaining - jahre*12
+    ead_col&lt;-grep(&quot;EAD_&quot;,colnames(row_i))
+    lgd_col&lt;-grep(&quot;LGD_&quot;,colnames(row_i))
+    d_ecl&lt;-0.0
+    if(jahre&gt;=1){
+     for(j in 1:jahre){
+        PD_1&lt;-PD_cube[row_i$Rating,j*12,1]
+        PD_2&lt;-0
+        if(j-1&gt;0){PD_2&lt;-PD_cube[row_i$Rating,(j-1)*12,1]}
+        marginalePD&lt;-(PD_1-PD_2)
+        ead&lt;-row_i[1,ead_col[((j-1)*12+1)]]
+        LGD&lt;-row_i[1,lgd_col[((j-1)*12+1)]]
+        d_ecl&lt;-ead*LGD*marginalePD/(1+row_i$EIR)^j+d_ecl
+        }
+      }
+    PD_1&lt;-PD_cube[row_i$Rating,row_i$Month_Remaining,1]
+    PD_2&lt;-0
+    if(jahre&gt;=1) {PD_2&lt;-PD_cube[row_i$Rating,jahre*12,1]}
+    if(jahre_echt&gt;jahre){
+     ead&lt;-row_i[1,ead_col[jahre*12+1]]
+      LGD&lt;-row_i[1,lgd_col[jahre*12+1]]}
+    else{
+      ead&lt;-0
+      LGD&lt;-0
+      }
+    marginalePD&lt;-(PD_1-PD_2)
+    d_ecl&lt;-ead*LGD*marginalePD/(1+row_i$EIR)^(jahre_echt)+d_ecl
+    }
+  return(d_ecl)
+}</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><strong>Design</strong></td><td>Erwartet einen 1-zeiligen Dataframe als Input – extrem ungewöhnlich. Wird in <code>ECL_122025.R</code> über eine <code>for</code>-Schleife aufgerufen, was dpylr/tidyr-Logik untergräbt.</td><td>Hoch</td></tr><tr><td><strong>Globale Variable</strong></td><td><code>PD_cube</code> aus globalem Scope.</td><td>Kritisch</td></tr><tr><td><strong>Sicherheit</strong></td><td><code>grep(&quot;EAD_&quot;, colnames(row_i))</code> – wenn keine EAD_-Spalte existiert, liefert <code>ead_col</code> <code>integer(0)</code>, was später zu einem Indexfehler führt.</td><td>Hoch</td></tr><tr><td><strong>Redundanz</strong></td><td>Nahezu identische Logik wie <code>get_LT_ECL</code> (Zeilen 92–120) – die einzigen Unterschiede sind EAD/LGD-Quelle (Spalten vs. Parameter) und Diskontierung (EIR pro Zeile vs. als Parameter).</td><td>Hoch</td></tr><tr><td><strong>Magische Zahlen</strong></td><td><code>j<em>12</code>, <code>(j-1)</em>12+1</code> – nicht dokumentiert.</td><td>Mittel</td></tr></tbody></table>
+<p><strong>Verbesserung – <code>ext_LT_ECL</code> und <code>get_LT_ECL</code> konsolidieren:</strong></p>
+<pre><code>#&#x27; Lifetime Expected Credit Loss berechnen
+#&#x27;
+#&#x27; Unterstützt zwei Modi:
+#&#x27; - &quot;columns&quot;: EAD/LGD aus Dataframe-Spalten (EAD_1..EAD_n, LGD_1..LGD_n)
+#&#x27; - &quot;flat&quot;: EAD/LGD als konstante Parameter (Annuity/Linear-Amortisation)
+#&#x27;
+#&#x27; @param row_i Dataframe-Zeile (nur für mode=&quot;columns&quot;)
+#&#x27; @param month_remaining Integer (nur für mode=&quot;flat&quot;)
+#&#x27; @param rating Integer: Rating-Index
+#&#x27; @param exposure Numeric: EAD (nur für mode=&quot;flat&quot;)
+#&#x27; @param lgd Numeric: LGD (nur für mode=&quot;flat&quot;)
+#&#x27; @param eir Numeric: Effective Interest Rate
+#&#x27; @param amort Character: &quot;Annuity&quot;, &quot;Linear&quot; oder &quot;None&quot;
+#&#x27; @param pd_cube Matrix/Array: PD-Kurven
+#&#x27; @param port Integer: Portfolio-Index
+#&#x27; @param mode Character: &quot;columns&quot; oder &quot;flat&quot;
+#&#x27; @return Numeric: Lifetime-ECL
+get_LT_ECL &lt;- function(row_i = NULL, month_remaining = NULL, rating = NULL,
+                        exposure = NULL, lgd = NULL, eir = NULL, amort = &quot;None&quot;,
+                        pd_cube, port = 1, mode = c(&quot;flat&quot;, &quot;columns&quot;)) {
+
+  mode &lt;- match.arg(mode)
+
+  if (mode == &quot;columns&quot;) {
+    # Modus: EAD/LGD aus Dataframe-Spalten
+    month_remaining &lt;- row_i$Month_Remaining
+    rating &lt;- row_i$Rating
+    eir &lt;- row_i$EIR
+  }
+
+  stopifnot(
+    is.numeric(month_remaining), month_remaining &gt;= 0,
+    is.numeric(rating), rating &gt;= 1,
+    is.numeric(eir), eir &gt;= 0
+  )
+
+  if (month_remaining == 0) return(0)
+
+  full_years &lt;- floor(month_remaining / 12)
+  years_effective &lt;- month_remaining / 12
+  d_ecl &lt;- 0.0
+
+  # Volle Jahre
+  if (full_years &gt;= 1) {
+    for (j in seq_len(full_years)) {
+      pd_current &lt;- pd_cube[rating, j * 12, port]
+      pd_previous &lt;- if (j &gt; 1) pd_cube[rating, (j - 1) * 12, port] else 0
+      marginal_pd &lt;- pd_current - pd_previous
+
+      if (mode == &quot;columns&quot;) {
+        ead_cols &lt;- grep(&quot;EAD_&quot;, colnames(row_i))
+        lgd_cols &lt;- grep(&quot;LGD_&quot;, colnames(row_i))
+        ead_val &lt;- row_i[1, ead_cols[(j - 1) * 12 + 1]]
+        lgd_val &lt;- row_i[1, lgd_cols[(j - 1) * 12 + 1]]
+      } else {
+        ead_factor &lt;- get_ead_f(eir, years_effective, j - 1, amort)
+        ead_val &lt;- exposure * ead_factor
+        lgd_val &lt;- lgd
+      }
+
+      d_ecl &lt;- d_ecl + ead_val * lgd_val * marginal_pd / (1 + eir)^j
+    }
+  }
+
+  # Restmonate (unvollständiges letztes Jahr)
+  pd_current &lt;- pd_cube[rating, month_remaining, port]
+  pd_previous &lt;- if (full_years &gt;= 1) pd_cube[rating, full_years * 12, port] else 0
+
+  if (years_effective &gt; full_years) {
+    if (mode == &quot;columns&quot;) {
+      ead_cols &lt;- grep(&quot;EAD_&quot;, colnames(row_i))
+      lgd_cols &lt;- grep(&quot;LGD_&quot;, colnames(row_i))
+      ead_val &lt;- row_i[1, ead_cols[full_years * 12 + 1]]
+      lgd_val &lt;- row_i[1, lgd_cols[full_years * 12 + 1]]
+    } else {
+      ead_factor &lt;- get_ead_f(eir, years_effective, full_years, amort)
+      ead_val &lt;- exposure * ead_factor
+      lgd_val &lt;- lgd
+    }
+  } else {
+    ead_val &lt;- 0
+    lgd_val &lt;- 0
+  }
+
+  marginal_pd &lt;- pd_current - pd_previous
+  d_ecl &lt;- d_ecl + ead_val * lgd_val * marginal_pd / (1 + eir)^years_effective
+
+  return(d_ecl)
+}</code></pre>
+<p>---</p>
+<h4>Funktion <code>get_ead_f</code> (Zeilen 123–133)</h4>
+<pre><code>get_ead_f&lt;-function(x,n,i,amortisierung){
+   if(amortisierung==&quot;Annuity&quot;){
+      i=i+1
+      ead_f=((1+x)^n-(1+x)^(i-1))/((1+x)^n-1)
+      }
+    else if (amortisierung==&quot;Linear&quot;){
+      ead_f=1-1/n*i
+      }
+    else{ead_f=1}
+    return(max(0,ead_f))
+}</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><strong>Modifikation des Input-Parameters</strong></td><td><code>i = i + 1</code> überschreibt den Funktionsparameter <code>i</code> – schlechter Stil, potenzielle Verwirrung.</td><td>Mittel</td></tr><tr><td><strong>Unklare Parameter</strong></td><td><code>x</code> (EIR), <code>n</code> (Laufzeit Jahre), <code>i</code> (Jahr-Index) – nichtssagende Namen.</td><td>Mittel</td></tr><tr><td><strong>Fehlende Validierung</strong></td><td><code>n</code> könnte 0 sein → Division durch 0 in <code>1/n*i</code>.</td><td>Hoch</td></tr><tr><td><strong>Mathematik-Fehler?</strong></td><td><code>1 - 1/n <em> i</code> – Operator-Präzedenz: <code>1 - (1/n)</em>i</code>. Wenn stattdessen <code>1 - 1/(n*i)</code> gemeint ist, ist das ein Berechnungsfehler.</td><td>Hoch</td></tr></tbody></table>
+<p><strong>Verbesserung:</strong></p>
+<pre><code>#&#x27; Exposure-at-Default-Faktor berechnen
+#&#x27;
+#&#x27; @param eir Numeric: Effective Interest Rate
+#&#x27; @param total_years Numeric: Gesamtlaufzeit in Jahren
+#&#x27; @param year_index Integer: Aktuelles Jahr (0-basiert)
+#&#x27; @param amortization Character: &quot;Annuity&quot;, &quot;Linear&quot; oder &quot;None&quot;
+#&#x27; @return Numeric: EAD-Faktor (0 bis 1)
+get_ead_f &lt;- function(eir, total_years, year_index, amortization = &quot;None&quot;) {
+  stopifnot(
+    is.numeric(eir), eir &gt;= 0,
+    is.numeric(total_years), total_years &gt; 0,
+    is.numeric(year_index), year_index &gt;= 0
+  )
+
+  amortization &lt;- match.arg(amortization, c(&quot;Annuity&quot;, &quot;Linear&quot;, &quot;None&quot;))
+
+  factor &lt;- switch(amortization,
+    Annuity = {
+      i_adj &lt;- year_index + 1
+      ((1 + eir)^total_years - (1 + eir)^(i_adj - 1)) / ((1 + eir)^total_years - 1)
+    },
+    Linear = {
+      1 - (1 / total_years) * year_index
+    },
+    None = 1
+  )
+
+  max(0, factor)
+}</code></pre>
+<p>---</p>
+<h4>Funktion <code>get_ECL</code> (Zeilen 135–139)</h4>
+<pre><code>get_ECL&lt;-function(buck,YM_ecl,LT_ecl){
+    ECL&lt;-YM_ecl
+    if(buck==2){ECL&lt;-LT_ecl}
+    return(ECL)
+}</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Trivial</td><td>4-Zeilen-Funktion, die <code>ifelse(buck == 2, LT_ecl, YM_ecl)</code> tut – kein Grund, sie als separate Funktion mit <code>mapply</code> aufzurufen.</td><td>Niedrig</td></tr><tr><td>Empfehlung</td><td>Inline ersetzen: <code>df$ECL &lt;- ifelse(df$Bucket == 2, df$LT_ECL, df$YM_ECL)</code></td></tr></tbody></table>
+<p>---</p>
+<h2>3. ECL_Hilfsfunktion_2.R – Hilfsfunktionen (Version 2)</h2>
+<h3>3.1 Zweck</h3>
+<p><strong>Nahezu identische Kopie</strong> von <code>ECL_Hilfsfunktion.R</code>. Wird von <code>ECL_122025.R</code> per <code>source()</code> eingebunden. Enthält dieselben sechs Funktionen mit marginalen Unterschieden.</p>
+<h3>3.2 Unterschiede zu Version 1</h3>
+<table><thead><tr><th>Aspekt</th><th>Version 1 (<code>ECL_Hilfsfunktion.R</code>)</th><th>Version 2 (<code>ECL_Hilfsfunktion_2.R</code>)</th></tr></thead><tbody><tr><td>Formatierung</td><td>Keine Leerzeichen um <code>=</code>, <code>&lt;-</code></td><td>Leerzeichen um Operatoren</td></tr><tr><td>Kommentare</td><td>Keine</td><td>Sektionstrenner <code>#-----#</code></td></tr><tr><td><code>readcsv2</code> Bug</td><td><code>M_cpdy</code> (Tippfehler, Zeile 25)</td><td>ebenfalls <code>M_cpd</code> (korrekt, Zeile 28)</td></tr><tr><td><code>readcsv2</code> Bug</td><td><code>cbind(M_cpd,...)</code> in <code>M_cpdy</code></td><td><code>cbind(M_cpd,...)</code> in <code>M_cpd</code></td></tr><tr><td><code>ext_LT_ECL</code></td><td><code>jahre_echt</code> ohne Leerzeichen</td><td><code>jahre_echt</code> mit Leerzeichen</td></tr><tr><td><code>get_LT_ECL</code></td><td><code>print(zeilenname)</code> (ohne Modulo)</td><td><code>print(zeilenname)</code> mit <code>%% 1000 == 0</code></td></tr><tr><td><code>get_ead_f</code></td><td><code>1-1/n*i</code></td><td><code>1-1/n*i #Linear</code> (Kommentar)</td></tr></tbody></table>
+<p><strong>Fazit:</strong> Version 2 ist eine stilistisch leicht verbesserte, aber inhaltlich nahezu identische Kopie. Der <code>M_cpdy</code>-Bug aus Version 1 wurde in Version 2 korrigiert – Version 1 produziert also falsche Ergebnisse bei <code>first_order</code>-Interpolation!</p>
+<h3>3.3 Dringende Empfehlung</h3>
+<table><thead><tr><th>Maßnahme</th><th>Priorität</th></tr></thead><tbody><tr><td><strong>Sofort:</strong> Version 1 (<code>ECL_Hilfsfunktion.R</code>) löschen oder als veraltet markieren – sie enthält einen Berechnungsfehler.</td><td>Kritisch</td></tr><tr><td>Nur Version 2 (<code>ECL_Hilfsfunktion_2.R</code>) behalten und in <code>ecl_utils.R</code> umbenennen.</td><td>Hoch</td></tr><tr><td><code>ECL_122025.R</code> Zeile 5 auf den neuen Dateinamen umstellen.</td><td>Hoch</td></tr></tbody></table>
+<p><strong>Refactoring-Schritte:</strong></p>
+<pre><code># Vorher (ECL_122025.R, Zeile 5):
+source(paste(pfad,&quot;/R codes/ECL_Hilfsfunktion_2.R&quot;,sep=&quot;&quot;))
+
+# Nachher:
+library(here)
+source(here::here(&quot;R&quot;, &quot;ecl_utils.R&quot;))</code></pre>
+<pre><code># Shell-Befehle zum Bereinigen:
+# git rm ECL_Hilfsfunktion.R
+# git mv ECL_Hilfsfunktion_2.R R/ecl_utils.R</code></pre>
+<p>---</p>
+<h2>4. PIT_122025.R – Point-in-Time PD-Berechnung</h2>
+<h3>4.1 Zweck</h3>
+<p>Transformiert Through-the-Cycle (TTC) PD-Kurven in Point-in-Time (PIT) PD-Kurven mittels Skalierungsfaktoren (<code>VSA</code>-Methode) oder optionaler Bayes-Anpassung. Berechnet sowohl kumulative als auch marginale PDs.</p>
+<h3>4.2 Zeile-für-Zeile-Analyse</h3>
+<h4>Zeilen 1–5 – Initialisierung und Datenladung</h4>
+<pre><code>rm(list=ls())
+
+df&lt;-read.table(&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung/output files/122025/TTC/ttc_lt_PD_monthly1.csv&quot;,sep=&quot;;&quot;, row.names = 1)
+df2&lt;-read.table(&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung/output files/122025/TTC/ttc_lt_PD1.csv&quot;,sep=&quot;;&quot;, row.names = 1)
+colnames(df)&lt;-1:300</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Pfade</td><td>Wieder absolute Windows-Pfade.</td><td>Kritisch</td></tr><tr><td>Magische Zahl</td><td><code>1:300</code> – 300 Spalten hartcodiert. Die tatsächliche Spaltenanzahl könnte abweichen.</td><td>Hoch</td></tr><tr><td>Keine Validierung</td><td>Kein Check, ob <code>df</code> und <code>df2</code> erfolgreich geladen wurden.</td><td>Hoch</td></tr></tbody></table>
+<p><strong>Verbesserung:</strong></p>
+<pre><code>colnames(df) &lt;- seq_len(ncol(df))  # statt 1:300
+stopifnot(ncol(df) &gt; 0, ncol(df2) &gt; 0)</code></pre>
+<p>---</p>
+<h4>Zeilen 7–12 – Parameter und Skalierungsfaktoren</h4>
+<pre><code>portPD&lt;-0.0119514 # Portfolio PD (Quelle: ICAAP_GoingConcern_2025-12.xls, Blatt: Kreditrisiko)
+scaling&lt;-&quot;VSA&quot;
+id_num&lt;-&quot;1&quot;
+outputfile&lt;-paste(pfad,&quot;/PIT_PD_monthly&quot;,id_num,&quot;.csv&quot;,sep=&quot;&quot;)
+outputfiley&lt;-paste(pfad,&quot;/PIT_PD_yearly&quot;,id_num,&quot;.csv&quot;,sep=&quot;&quot;)
+AP&lt;-c(rep(portPD*0.925,18),rep(portPD*0.934,18),rep(portPD*0.937,18))  #FLI Aufschläge für die nächsten 3 Jahre manuell befüllen</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Hartcodierte PD</td><td><code>portPD &lt;- 0.0119514</code> – dieser Wert stammt aus einer externen Excel-Datei (laut Kommentar). Bei Aktualisierung muss der R-Code manuell editiert werden.</td><td>Hoch</td></tr><tr><td>Magische Array-Länge</td><td><code>c(rep(..., 18), rep(..., 18), rep(..., 18))</code> = 54 Monate = 4,5 Jahre. Die Logik ist: 18 Monate × 0.925, 18 × 0.934, 18 × 0.937. Keine Dokumentation, warum diese Faktoren.</td><td>Hoch</td></tr><tr><td><code>scaling &lt;- &quot;VSA&quot;</code></td><td>Würde jemand <code>&quot;Bayesian&quot;</code> setzen (Zeile 35), würde die undefinierte Funktion <code>bayes()</code> aufgerufen – Laufzeitfehler.</td><td>Kritisch</td></tr><tr><td><code>id_num</code></td><td>Hartcodiert auf <code>&quot;1&quot;</code> – nie parametrisiert.</td><td>Mittel</td></tr></tbody></table>
+<p><strong>Verbesserung – Parameter aus Konfiguration:</strong></p>
+<pre><code># config.yml
+pit:
+  portfolio_pd: 0.0119514
+  scaling_method: &quot;VSA&quot;    # &quot;VSA&quot; oder &quot;Bayesian&quot;
+  id_num: &quot;1&quot;
+  ap_factors:
+    - {months: 18, factor: 0.925}
+    - {months: 18, factor: 0.934}
+    - {months: 18, factor: 0.937}</code></pre>
+<pre><code># AP-Vektor dynamisch erzeugen
+ap_config &lt;- config$pit$ap_factors
+AP &lt;- unlist(lapply(ap_config, function(x) rep(portPD * x$factor, x$months)))</code></pre>
+<p>---</p>
+<h4>Zeilen 15–26 – Marginale und konditionale PDs</h4>
+<pre><code>lt_cPD&lt;-as.matrix(df[,-1])
+lt_cPD_shift&lt;-cbind(rep(0,nrow(lt_cPD)),lt_cPD[,-ncol(lt_cPD)])
+marg_PD&lt;-lt_cPD - lt_cPD_shift
+lt_conPD&lt;-marg_PD/(1 - lt_cPD_shift)</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Division durch Null</td><td><code>1 - lt_cPD_shift</code> kann 0 sein (wenn kumulative PD = 1). Dann <code>marg_PD / 0</code> → <code>Inf</code> oder <code>NaN</code>.</td><td>Hoch</td></tr><tr><td>Ungenutzte Exports</td><td>Zeilen 14, 17, 20, 23, 26 sind auskommentierte <code>write.xlsx</code>-Aufrufe – historischer Debug-Code.</td><td>Niedrig</td></tr><tr><td><code>View()</code>-Aufrufe</td><td>Auskommentiert, aber präsent – sollten komplett entfernt werden.</td><td>Niedrig</td></tr></tbody></table>
+<p><strong>Verbesserung:</strong></p>
+<pre><code># Sichere Division mit Floor
+epsilon &lt;- 1e-10
+lt_conPD &lt;- marg_PD / pmax(1 - lt_cPD_shift, epsilon)</code></pre>
+<p>---</p>
+<h4>Zeilen 27–41 – VSA-Skalierung</h4>
+<pre><code>if(scaling==&quot;VSA&quot;){
+  VSA&lt;-AP/portPD
+  }
+lt_conPD_PIT&lt;-NULL
+fakt&lt;-data.frame(rep(portPD,length(AP)),AP)
+for(j in 1:nrow(fakt)){
+  if(scaling==&quot;Bayesian&quot;){
+    lt_conPD_PIT&lt;-cbind(lt_conPD_PIT,(bayes(fakt[j,1],fakt[j,2])*lt_conPD[,j])/(bayes(fakt[j,2],fakt[j,1])*(1- lt_conPD[,j])+bayes(fakt[j,1],fakt[j,2])*lt_conPD[,j]))
+   }else{
+   lt_conPD_PIT&lt;-cbind(lt_conPD_PIT,VSA[j]*lt_conPD[,j])
+   }
+  }</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><strong>Fehlende Funktion</strong></td><td><code>bayes()</code> ist nirgends definiert – das Skript ist im Bayesian-Mode nicht lauffähig.</td><td>Kritisch</td></tr><tr><td><strong><code>fakt</code> Dataframe</strong></td><td>Unnötig – <code>rep(portPD, length(AP))</code> ist identisch zu <code>portPD</code>. Statt <code>fakt[j,1]</code> könnte direkt <code>portPD</code> verwendet werden.</td><td>Mittel</td></tr><tr><td><strong><code>for</code>-Schleife mit <code>cbind</code></strong></td><td>In jeder Iteration wird eine Spalte an <code>lt_conPD_PIT</code> angehängt – ineffizient (quadratische Laufzeit durch Kopieren).</td><td>Mittel</td></tr></tbody></table>
+<p><strong>Verbesserung – Vektorisierte VSA-Berechnung:</strong></p>
+<pre><code># VSA-Faktoren als Vektor
+vsa_factors &lt;- AP / portPD
+
+# PIT-konditionale PDs vektorisiert berechnen
+lt_conPD_PIT &lt;- sweep(lt_conPD[, seq_along(vsa_factors)], 2, vsa_factors, `*`)
+
+# Bayesian-Mode (wenn benötigt):
+if (scaling == &quot;Bayesian&quot;) {
+  # bayes-Funktion muss definiert sein!
+  bayes &lt;- function(pd_ttc, ap_value) {
+    # Bayes&#x27;sche Anpassung: PIT = TTC * AP / portPD (vereinfacht)
+    # Hier die tatsächliche Formel implementieren
+    pd_ttc * ap_value / portPD
+  }
+
+  lt_conPD_PIT &lt;- matrix(NA, nrow(lt_conPD), length(AP))
+  for (j in seq_along(AP)) {
+    b1 &lt;- bayes(portPD, AP[j])
+    b2 &lt;- bayes(AP[j], portPD)
+    lt_conPD_PIT[, j] &lt;- (b1 * lt_conPD[, j]) /
+      (b2 * (1 - lt_conPD[, j]) + b1 * lt_conPD[, j])
+  }
+}</code></pre>
+<p>---</p>
+<h4>Zeilen 42–50 – Kumulative PIT-PDs</h4>
+<pre><code>lt_cPD_PIT&lt;-lt_cPD
+lt_cPD_PIT[,1]&lt;-lt_conPD_PIT[,1]
+for(j in 2:ncol(lt_conPD_PIT)){
+  lt_cPD_PIT[,j]&lt;-lt_cPD_PIT[,j -1]+(1- lt_cPD_PIT[,j -1])*lt_conPD_PIT[,j]
+  }
+for(j in (ncol(lt_conPD_PIT)+1):ncol(lt_cPD_PIT)){
+  lt_cPD_PIT[,j]&lt;-lt_cPD_PIT[,j -1]+lt_conPD[,j]*(1- lt_cPD_PIT[,j -1])
+  }</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><code>for</code>-Schleife pro Spalte</td><td>Kumulative PD wird iterativ aufgebaut – das ist inhärent sequentiell, aber die R-Implementierung ist ineffizient.</td><td>Mittel</td></tr><tr><td>Jenseits der AP-Periode</td><td>Spalten nach der AP-Periode verwenden wieder die originalen konditionalen PDs – das ist korrekt, aber undokumentiert.</td><td>Niedrig</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeilen 59–86 – Plot</h4>
+<pre><code>colnames(df2)&lt;-1:26
+# ... Berechnung marg_PD2 ...
+
+plot(marg_PD2[18,],col=&quot;White&quot;)
+lines(marg_PD2[1,])
+lines(marg_PD2[2,])
+# ... 16 weitere lines()-Aufrufe ...</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Hartcodierte Zeilen</td><td>18 einzelne <code>lines()</code>-Aufrufe – jedes Rating ist hartcodiert.</td><td>Mittel</td></tr><tr><td>Kein Grafikgerät-Check</td><td>In einer Headless-Umgebung (CI/CD, Server) schlägt <code>plot()</code> fehl.</td><td>Hoch</td></tr><tr><td><code>col=&quot;White&quot;</code></td><td>Weißer Plot für leere Initialisierung – Workaround, <code>type = &quot;n&quot;</code> wäre klarer.</td><td>Niedrig</td></tr></tbody></table>
+<p><strong>Verbesserung:</strong></p>
+<pre><code># Plot nur wenn interaktiv
+if (interactive() || !is.null(getOption(&quot;device&quot;))) {
+  plot(marg_PD2[18, ], type = &quot;n&quot;, ylim = c(0, max(marg_PD2)),
+       xlab = &quot;Jahr&quot;, ylab = &quot;Marginale PD&quot;, main = &quot;Marginale PDs nach Rating&quot;)
+  for (r in 1:nrow(marg_PD2)) {
+    lines(marg_PD2[r, ], col = r)
+  }
+  legend(&quot;topright&quot;, legend = paste(&quot;Rating&quot;, 1:nrow(marg_PD2)),
+         col = 1:nrow(marg_PD2), lty = 1, cex = 0.6)
+}</code></pre>
+<p>---</p>
+<h3>4.3 Zusammenfassung PIT_122025.R</h3>
+<table><thead><tr><th>#</th><th>Problem</th><th>Kritikalität</th></tr></thead><tbody><tr><td>1</td><td><code>bayes()</code>-Funktion fehlt → Skript nicht lauffähig</td><td>Kritisch</td></tr><tr><td>2</td><td>Hardcodierte absolute Pfade</td><td>Kritisch</td></tr><tr><td>3</td><td><code>portPD</code> hartcodiert statt aus externer Quelle</td><td>Hoch</td></tr><tr><td>4</td><td>Division durch Null nicht abgefangen</td><td>Hoch</td></tr><tr><td>5</td><td>Plots in Produktionscode ohne Guard</td><td>Hoch</td></tr><tr><td>6</td><td><code>for</code>-Schleife mit <code>cbind</code> (ineffizient)</td><td>Mittel</td></tr><tr><td>7</td><td>18 einzelne <code>lines()</code>-Aufrufe</td><td>Mittel</td></tr><tr><td>8</td><td>Auskommentierter Debug-Code (<code>View</code>, <code>write.xlsx</code>)</td><td>Niedrig</td></tr></tbody></table>
+<p>---</p>
+<h2>5. TL_122025.R – Transfer Logic / Stage-Allokation</h2>
+<h3>5.1 Zweck</h3>
+<p>Ordnet jedem Deal eine IFRS-9-Stage (1 oder 2) zu, basierend auf einem quantitativen Trigger (Verhältnis aktuelle PD zu erwarteter PD &gt; Schwellenwert) und qualitativen Triggern (DAYSPD, Forbearance, OtherTrigger).</p>
+<h3>5.2 Zeile-für-Zeile-Analyse</h3>
+<h4>Zeilen 12, 15, 21 – Datenquellen</h4>
+<pre><code>df&lt;-read.table(&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung/output files/122025/PIT/PIT_for_TL.csv&quot;,sep=&quot;;&quot;,header=T)
+
+pfad&lt;-&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung&quot;
+
+deals&lt;-read.csv2(&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Daten_Impairment Test/Daten 202512/ECL_Inputdaten_2025-12_Konzern.csv&quot;,sep=&quot;;&quot;,header=T, stringsAsFactors = FALSE, fileEncoding=&quot;latin1&quot;, dec=&quot;,&quot;)</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Pfade</td><td>Wieder absolute Windows-Pfade. Zusätzlich: gemischte Pfad-Stile (<code>/</code> und Leerzeichen).</td><td>Kritisch</td></tr><tr><td><code>fileEncoding=&quot;latin1&quot;</code></td><td>Legacy-Encoding – weist auf Datenqualitätsprobleme hin. UTF-8 wäre Standard.</td><td>Mittel</td></tr><tr><td>Kein <code>tryCatch</code></td><td>Keine Fehlerbehandlung beim Laden.</td><td>Hoch</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 24 – Threshold-Array</h4>
+<pre><code>threshold&lt;-array(dim=c(18,300,300))
+threshold[,,]&lt;-1.5</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Unnötig komplex</td><td>Ein 3D-Array mit Konstanten – das könnte ein einziger Skalar sein. Die Dimensionen (18 Ratings × 300 Alter × 300 Restlaufzeit) legen nahe, dass unterschiedliche Schwellenwerte geplant waren.</td><td>Hoch</td></tr><tr><td>Speicher</td><td><code>18 × 300 × 300 × 8 Byte = 12,96 MB</code> – unnötig großer Speicherverbrauch für einen konstanten Wert.</td><td>Mittel</td></tr><tr><td>Zugriff</td><td><code>threshold[deals$Original_Rating[i], age_month, deals[i,&quot;Month_Remaining&quot;]]</code> – Indizes könnten außerhalb der Dimensionen liegen → Fehler.</td><td>Hoch</td></tr></tbody></table>
+<p><strong>Verbesserung:</strong></p>
+<pre><code># Statt 3D-Array: Dataframe mit Schwellenwerten
+# Falls je Rating/Alter/Laufzeit unterschiedlich:
+threshold &lt;- 1.5  # Default
+
+# Oder als Lookup-Tabelle:
+# threshold_table &lt;- data.frame(
+#   rating = ..., age = ..., remaining = ..., value = ...
+# )</code></pre>
+<p>---</p>
+<h4>Zeile 44 – Hauptschleife über alle Deals</h4>
+<pre><code>for (i in 1:nrow(deals)){</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Performance</td><td><code>for</code>-Schleife über alle Deals ist in R notorisch langsam. Bei &gt;10.000 Deals wird das Skript Minuten statt Sekunden brauchen.</td><td>Hoch</td></tr><tr><td>Seiteneffekte</td><td>Die Schleife modifiziert <code>deals[i, &quot;rstage&quot;]</code> direkt – typisches prozedurales Muster, das schwer zu parallelisieren ist.</td><td>Mittel</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeilen 53–54 – <code>subset()</code> und Sortierung</h4>
+<pre><code>cur_rat&lt;-subset(df, df$Rating == deals[i,&quot;Rating&quot;]&amp; df$Valid_From &lt;= rep_date)
+cur_rat&lt;-cur_rat[order(-as.numeric(cur_rat$Valid_From)),]</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><code>subset()</code></td><td><code>subset()</code> ist für interaktive Nutzung gedacht, nicht für Programmierlogik – es verwendet Non-Standard-Evaluation und kann in Funktionen zu subtilen Fehlern führen.</td><td>Mittel</td></tr><tr><td><code>as.numeric(cur_rat$Valid_From)</code></td><td><code>Valid_From</code> ist ein Date – <code>as.numeric()</code> konvertiert es in die interne R-Darstellung (Tage seit 1970-01-01). Funktioniert für Sortierung, ist aber unintuitiv.</td><td>Niedrig</td></tr></tbody></table>
+<p><strong>Empfehlung:</strong> <code>subset()</code> durch <code>[</code> ersetzen und <code>order(cur_rat$Valid_From, decreasing = TRUE)</code> nutzen.</p>
+<p>---</p>
+<h4>Zeilen 65–66 – <code>as.vector(unlist(...))</code></h4>
+<pre><code>cum_PD&lt;-as.vector(unlist(cur_rat[,3:ncol(cur_rat)]))</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Zerbrechlich</td><td>Hartcodiert <code>3:ncol(cur_rat)</code> – wenn sich die Spaltenstruktur ändert (z. B. neue Spalte vor den PDs), bricht die Logik.</td><td>Hoch</td></tr><tr><td><code>unlist()</code></td><td>Dataframe-Spalten zuerst unlisten – unnötiger Zwischenschritt.</td><td>Niedrig</td></tr></tbody></table>
+<p><strong>Empfehlung:</strong> Spalten nach Namen selektieren: <code>pd_cols &lt;- grep(&quot;^PD_|^\\d+$&quot;, colnames(cur_rat))</code></p>
+<p>---</p>
+<h4>Zeilen 69–76 – Restlaufzeit-Logik</h4>
+<pre><code>if (deals[i,&quot;Month_Remaining&quot;]!=0){
+  month_rem&lt;-deals[i,&quot;Month_Remaining&quot;]
+} else {
+  month_rem&lt;-1
+}
+if (transferlogic==&quot;12 months&quot; &amp; deals$Month_Remaining[i]&gt;12){
+  month_rem &lt;- 12
+}</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Inkonsistenz</td><td><code>deals[i,&quot;Month_Remaining&quot;]</code> vs. <code>deals$Month_Remaining[i]</code> – zwei verschiedene Zugriffsmethoden in zwei aufeinanderfolgenden Zeilen.</td><td>Mittel</td></tr><tr><td><code>month_rem &lt;- 1</code></td><td>Wenn Restlaufzeit = 0, wird sie auf 1 gesetzt – das ist ein Workaround für den PD-Zugriff, der mathematisch fragwürdig ist.</td><td>Mittel</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 103 – Alter-Berechnung</h4>
+<pre><code>age_month&lt;-(2025 - deals[i,&quot;Years&quot;]  )*12   +   12 - deals[i,&quot;Months&quot;]</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Hartcodiertes Jahr</td><td><code>2025</code> ist hartcodiert – sollte <code>rep_date</code> sein, nicht das aktuelle Jahr. Bei Verwendung nach 2025 falsche Ergebnisse.</td><td>Kritisch</td></tr><tr><td>Inkonsistente Leerzeichen</td><td><code>)*12   +   12 -</code> – schwer lesbar.</td><td>Niedrig</td></tr></tbody></table>
+<p><strong>Verbesserung:</strong></p>
+<pre><code>age_month &lt;- as.integer(
+  (lubridate::year(rep_date) - deals[i, &quot;Years&quot;]) * 12 +
+  lubridate::month(rep_date) - deals[i, &quot;Months&quot;]
+)</code></pre>
+<p>---</p>
+<h4>Zeilen 109–111 – Division durch Überlebenswahrscheinlichkeit</h4>
+<pre><code>surv_prob&lt;-1-cum_origPD[age_month]+0.00000001
+denominator&lt;-(cum_origPD[(age_month+month_rem)]-cum_origPD[(age_month)])/surv_prob</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><code>+0.00000001</code></td><td>Ein „Fudge-Faktor&quot; um Division durch Null zu verhindern – schlechte Praxis. Besser: <code>max(surv_prob, 1e-10)</code>.</td><td>Mittel</td></tr><tr><td>Index-Out-of-Bounds</td><td>Wenn <code>age_month + month_rem</code> größer als <code>length(cum_origPD)</code> ist, stürzt der Zugriff ab.</td><td>Hoch</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 134 – Qualitativer Trigger</h4>
+<pre><code>if (TRUE %in% (deals[i,c(&quot;DAYSPD&quot;,&quot;forbearance&quot;,&quot;OtherTrigger&quot;)]==1)){
+  deals[i,&quot;rstage&quot;]&lt;-&quot;2&quot;
+}</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Ineffizient</td><td><code>TRUE %in% (...)</code> ist semantisch <code>any(...)</code>.</td><td>Niedrig</td></tr><tr><td>Empfehlung</td><td><code>if (any(deals[i, c(&quot;DAYSPD&quot;, &quot;forbearance&quot;, &quot;OtherTrigger&quot;)] == 1, na.rm = TRUE))</code></td></tr></tbody></table>
+<p>---</p>
+<h4>Zeilen 143–147 – Stage-2-Analyse</h4>
+<pre><code>deals_stage2 &lt;- deals[deals$rstage==&quot;2&quot;,c(1:16,(ncol(deals)-4):ncol(deals))]
+deals_stage2$qualitative_staging_trigger &lt;- rep(0,nrow(deals_stage2))
+for (i in 1:nrow(deals_stage2)){deals_stage2$qualitative_staging_trigger[i] &lt;- ifelse(deals_stage2$DAYSPD[i] == 1 | deals_stage2$forbearance[i] == 1 | deals_stage2$OtherTrigger[i] == 1,1,0)}
+deals_stage2$quantitative_staging_trigger &lt;- rep(0,nrow(deals_stage2))
+for (i in 1:nrow(deals_stage2)){deals_stage2$quantitative_staging_trigger[i] &lt;- ifelse(deals_stage2$quantitative_ratio[i] &gt; 1.5 ,1,0)}</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Hartcodierte Spalten</td><td><code>c(1:16,(ncol(deals)-4):ncol(deals))</code> – bei Änderung der Spaltenreihenfolge falsch.</td><td>Hoch</td></tr><tr><td><code>for</code>-Schleife</td><td>Zwei separate <code>for</code>-Schleifen, wo einfache vektorisierte Logik reicht.</td><td>Mittel</td></tr></tbody></table>
+<p><strong>Verbesserung:</strong></p>
+<pre><code>deals$qualitative_trigger &lt;- as.integer(
+  deals$DAYSPD == 1 | deals$forbearance == 1 | deals$OtherTrigger == 1
+)
+deals$quantitative_trigger &lt;- as.integer(deals$quantitative_ratio &gt; 1.5)</code></pre>
+<p>---</p>
+<h3>5.3 Zusammenfassung TL_122025.R</h3>
+<table><thead><tr><th>#</th><th>Problem</th><th>Kritikalität</th></tr></thead><tbody><tr><td>1</td><td>Hartcodiertes Jahr <code>2025</code> in Alter-Berechnung</td><td>Kritisch</td></tr><tr><td>2</td><td>Hardcodierte absolute Pfade</td><td>Kritisch</td></tr><tr><td>3</td><td><code>for</code>-Schleife über alle Deals (Performance)</td><td>Hoch</td></tr><tr><td>4</td><td>Hartcodierte Spaltenindizes <code>1:16</code>,<code>(ncol-4):ncol</code></td><td>Hoch</td></tr><tr><td>5</td><td><code>for</code>-Schleifen in Stage-2-Analyse statt Vektorisierung</td><td>Mittel</td></tr><tr><td>6</td><td>3D-Threshold-Array mit konstantem Wert</td><td>Hoch</td></tr><tr><td>7</td><td><code>subset()</code> statt <code>[</code> in Produktionscode</td><td>Mittel</td></tr><tr><td>8</td><td>Keine Fehlerbehandlung bei Datenladung</td><td>Hoch</td></tr><tr><td>9</td><td><code>+0.00000001</code> Fudge-Faktor für Division durch Null</td><td>Mittel</td></tr></tbody></table>
+<p>---</p>
+<h2>6. TTC_122025.R – Through-the-Cycle PD-Berechnung</h2>
+<h3>6.1 Zweck</h3>
+<p>Berechnet kumulative Through-the-Cycle-PD-Kurven aus einer jährlichen Migrationsmatrix (<code>1Y_mm_finapu_2025.csv</code>). Führt Matrixmultiplikation für Multi-Year-Projektion durch und interpoliert auf monatliche Werte. Enthält Rating-Interpolation über logarithmische Skalierung.</p>
+<h3>6.2 Zeile-für-Zeile-Analyse</h3>
+<h4>Zeilen 3–4 – Hartcodierte Pfade</h4>
+<pre><code>df&lt;-&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung/diverse Dateien/1Y_mm_finapu_2025.csv&quot;
+pfad&lt;-&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung/output files/122025/TTC&quot;</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Pfade</td><td>Absolute Windows-Pfade – gleiches Problem wie in allen anderen Skripten.</td><td>Kritisch</td></tr><tr><td><code>df</code> als Pfad-String</td><td>Die Variable <code>df</code> ist ein Pfad-String, kein Dataframe – verwirrende Namensgebung.</td><td>Mittel</td></tr><tr><td><code>&quot;diverse Dateien&quot;</code></td><td>Leerzeichen und Umlaute im Pfad – potenzielle Probleme auf Nicht-Windows-Systemen.</td><td>Mittel</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeile 10–13 – Initiale monatliche PDs</h4>
+<pre><code>mig1&lt;-as.matrix(matframe)
+lt_cPD&lt;-as.matrix(mig1[,ncol(mig1)])
+lt_cPD_monthly&lt;-lt_cPD/12
+for(j in 2:12){lt_cPD_monthly&lt;-cbind(lt_cPD_monthly,lt_cPD*j/12)}</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td>Annahme</td><td><code>lt_cPD_monthly &lt;- lt_cPD / 12</code> – impliziert, dass PD linear über das Jahr verteilt ist (Uniform-Verteilung). Das ist eine starke Annahme, die dokumentiert werden sollte.</td><td>Mittel</td></tr><tr><td><code>for</code>-Schleife mit <code>cbind</code></td><td>Wiederholtes <code>cbind</code> in Schleife – ineffizient.</td><td>Mittel</td></tr></tbody></table>
+<p>---</p>
+<h4>Zeilen 14–20 – Multi-Year-Projektion</h4>
+<pre><code>for(i in 1:nyears){
+  t&lt;-mig1%*%lt_cPD[,i]
+  lt_cPD&lt;-cbind(lt_cPD,t)
+  for(j in 1:12){
+   lt_cPD_monthly&lt;-cbind(lt_cPD_monthly,lt_cPD[,i]*(1-j/12)+lt_cPD[,i+1]*(j/12))
+   }
+  }</code></pre>
+<table><thead><tr><th>Problem</th><th>Beschreibung</th><th>Kritikalität</th></tr></thead><tbody><tr><td><strong>Berechnungsfehler?</strong></td><td>Zeile 18: <code>lt_cPD[,i]<em>(1-j/12)+lt_cPD[,i+1]</em>(j/12)</code> – die Interpolation verwendet Spalte <code>i</code> (alt) und <code>i+1</code> (neu). Aber <code>lt_cPD</code> wurde gerade in Zeile 16 um <code>t</code> erweitert. In der ersten Iteration (i=1) hat <code>lt_cPD</code> 2 Spalten: Spalte 1 = Jahr-1-PD, Spalte 2 = Jahr-2-PD. Die Interpolation zwischen Spalte 1 und 2 ist korrekt. Aber in Iteration 2 hat <code>lt_cPD</code> 3 Spalten: Jahr-1, Jahr-2, Jahr-3. Die Interpolation für Jahr-2 verwendet dann Spalte 2 und 3 – das passt. <strong>→ Die Logik ist korrekt, aber extrem schwer nachvollziehbar.</strong></td><td>Mittel</td></tr><tr><td>Performance</td><td><code>cbind</code> in doppelter Schleife (25 Jahre × 12 Monate = 300 <code>cbind</code>-Aufrufe) – ineffizient.</td><td>Mittel</td></tr></tbody></table>
+<p><strong>Verbesserung – Vektorisierte monatliche Interpolation:</strong></p>
+<pre><code># Jährliche PDs über Matrixmultiplikation projizieren
+lt_cPD &lt;- matrix(NA, nrow = nrow(mig1), ncol = nyears + 1)
+lt_cPD[, 1] &lt;- mig1[, ncol(mig1)]
+for (i</code></pre>
+<div class="doc-footer" style="text-align:center;font-size:9pt;color:#666666"><div class="doc-autoline">Klassifizierung: Intern</div><div class="doc-autoline">Dieses Dokument wurde mit Unterstützung künstlicher Intelligenz erstellt.</div><div class="doc-pageline">Seite - <span class="pagenum"></span></div></div>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "_comment": "Gold set for FastContext eval on the brain-agent (cctest) repo. Each query asks 'where is X' and the gold answer is the verified file + the line where the primary definition lives. line_tolerance lets a citation count as a line-hit if within +/- N lines of the true definition (FastContext cites ranges; we score File-F1 strictly and line-hit with tolerance). Verified 2026-06-26 via grep against HEAD. Difficulty: exact = named symbol findable by grep; concept = needs understanding, symbol name differs from query wording; misplaced = lives somewhere the module layout would NOT suggest (these test real retrieval value over naive grep / over a wrong mental model).",
+  "items": [
+    {"id": "q01", "query": "Where is the single source of truth that resolves a model name to its provider api_key, base_url and provider_name?", "file": "engine/model_select.py", "line": 298, "symbol": "resolve_provider_for_model", "difficulty": "concept"},
+    {"id": "q02", "query": "Where is the single decision point for GDPR/PII model selection for non-interactive background calls (scan, swap-to-local, block)?", "file": "brain.py", "line": 9467, "symbol": "gdpr_pick_model_for_background", "difficulty": "misplaced"},
+    {"id": "q03", "query": "Where are the active tools for a turn resolved (the single per-turn tool resolution function used by chat, scheduler, warmup)?", "file": "brain.py", "line": 1745, "symbol": "resolve_active_tools", "difficulty": "misplaced"},
+    {"id": "q04", "query": "Where is the blocking RLock that serializes all MemPalace writes across the three writer daemons defined?", "file": "server_daemons.py", "line": 62, "symbol": "_palace_write_lock", "difficulty": "exact"},
+    {"id": "q05", "query": "Where does the chat worker build the ephemeral web sources (prefetch curated Websuche URLs at turn time)?", "file": "handlers/chat.py", "line": 160, "symbol": "_build_web_sources", "difficulty": "exact"},
+    {"id": "q06", "query": "Where is the provider concurrency queue class that caps omlx/cliproxyapi concurrency?", "file": "brain.py", "line": 6082, "symbol": "LocalProviderQueue", "difficulty": "misplaced"},
+    {"id": "q07", "query": "Where is the lossless context manager method that compacts the conversation when over budget?", "file": "brain.py", "line": 8533, "symbol": "check_and_compact", "difficulty": "misplaced"},
+    {"id": "q08", "query": "Where is the function that recovers in-flight chat turns after a Brain restart?", "file": "handlers/chat.py", "line": 1739, "symbol": "recover_active_turns_on_boot", "difficulty": "exact"},
+    {"id": "q09", "query": "Where is the resumable streaming replay-log class (ordered event log + subscriber queues) defined?", "file": "server.py", "line": 237, "symbol": "LiveStream", "difficulty": "exact"},
+    {"id": "q10", "query": "Where is the deterministic wire-history GDPR protection applied from the pii_decisions ledger?", "file": "handlers/chat.py", "line": 642, "symbol": "_apply_pii_decisions_to_wire", "difficulty": "concept"},
+    {"id": "q11", "query": "Where is the warm-session-pool claim() method that hands a pre-warmed session to a bare new chat?", "file": "server.py", "line": 903, "symbol": "claim", "difficulty": "concept"},
+    {"id": "q12", "query": "Where is the per-user quota manager class (daily + cycle axes) defined?", "file": "engine/quotas.py", "line": 526, "symbol": "QuotaManager", "difficulty": "exact"},
+    {"id": "q13", "query": "Where is the WorkflowEngine class defined?", "file": "brain.py", "line": 7225, "symbol": "WorkflowEngine", "difficulty": "misplaced"},
+    {"id": "q14", "query": "Where is the MODEL_PROFILES speed-profile overlay that sets deferred_tool_groups to empty for a stable KV prefix?", "file": "engine/model_select.py", "line": 63, "symbol": "speed profile / deferred_tool_groups", "difficulty": "concept"},
+    {"id": "q15", "query": "Where is the ContextManager class defined?", "file": "brain.py", "line": 8223, "symbol": "ContextManager", "difficulty": "misplaced"}
+  ]
+}

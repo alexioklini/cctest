@@ -346,6 +346,12 @@ async function saveModelsConfig() {
       if (ci !== undefined) mc[mid].cost_input = ci; else delete mc[mid].cost_input;
       const co = readNum(row, 'mdl-cost-output');
       if (co !== undefined) mc[mid].cost_output = co; else delete mc[mid].cost_output;
+      // Cached-input rate. Also the switch that marks a model "cache-priced":
+      // a non-zero value freezes Auto model+tool selection to turn 1 so the
+      // provider prompt cache hits (brain.model_is_cache_priced). Unset =
+      // auto 0.1× of cost_input for billing, and NOT cache-priced (no freeze).
+      const ccr = readNum(row, 'mdl-cost-cache-read');
+      if (ccr !== undefined) mc[mid].cost_cache_read = ccr; else delete mc[mid].cost_cache_read;
       // Inference params — collect non-empty values
       const inf = {};
       const infKeys = ['temperature','top_p','top_k','max_tokens','frequency_penalty','presence_penalty','min_p','repetition_penalty','thinking_budget'];

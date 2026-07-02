@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review: Ablaufmodellierung.R</title>
+<style>
+    @page { margin: 2cm; }
+    body { font-family: 'Calibri', Arial, sans-serif; color: #222222;
+      font-size: 11pt; line-height: 1.5; max-width: 820px;
+      margin: 0 auto; padding: 24px; background: #fff; }
+    h1,h2,h3,h4,h5,h6 { font-family: 'Calibri', Arial, sans-serif;
+      color: #1F3864; line-height: 1.2; margin: 1.1em 0 .4em; }
+    h1 { font-size: 20pt; } h2 { font-size: 16pt; }
+    h3 { font-size: 13pt; }
+    a { color: #2E74B5; }
+    code { font-family: 'Consolas', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    p.figure { text-align: center; } p.figure img { max-width: 100%; height: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #ddd; padding: 5px 9px; text-align: left; }
+    th { background: #1F3864;
+      color: #FFFFFF; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    .doc-header { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 20px; overflow: hidden; }
+    .doc-footer { border-top: 1px solid #eee; padding-top: 8px; margin-top: 28px; overflow: hidden; }
+    .pagenum::after { content: ""; }
+    @media print { .pagenum::after { content: counter(page); } }
+    </style>
+</head>
+<body>
+
+<h1>Code Review: Ablaufmodellierung.R</h1>
+<p>Stichtag: 2026-06-29</p>
+<p>Verantwortlich: Brain Agent – Code Review</p>
+<p>::kpi 100% | Abdeckung | gering</p>
+<p>::kpi 30 | Empfehlungen | mittel</p>
+<p>::kpi 4 | Priorisierte Änderungen | erhöht</p>
+<p>---</p>
+<h2>Management Summary</h2>
+<p>Die Datei <strong><code>Ablaufmodellierung.R</code></strong> enthält Funktionen zur Modellierung von Abläufen in der Finanzmathematik, insbesondere zur Berechnung der First-Hitting-Time-Wahrscheinlichkeit und zur Monte-Carlo-Simulation. Der Code ist <strong>mathematisch fundiert</strong> und <strong>funktional korrekt</strong>, weist jedoch <strong>Verbesserungspotenzial</strong> in den Bereichen <strong>Code-Qualität, Fehlerbehandlung, Flexibilität und Testbarkeit</strong> auf.</p>
+<p>Die wichtigsten Empfehlungen umfassen:</p>
+<p>- <strong>Validierung von Eingabeparametern</strong> (z.B. <code>Volumen &gt; 0</code>, <code>Konfidenz</code> zwischen 0 und 1).</p>
+<p>- <strong>Beseitigung von Redundanzen</strong> (z.B. gemeinsame Logik für <code>AbflussAbsolut</code> und <code>AbflussRelativ</code> in eine Hilfsfunktion auslagern).</p>
+<p>- <strong>Dokumentation</strong> (Roxygen-Dokumentation für alle Funktionen ergänzen).</p>
+<p>- <strong>Flexibilität</strong> (Parametrisierung von <code>n</code> in der Monte-Carlo-Simulation, <code>TimeBuckets</code> als Parameter).</p>
+<p>- <strong>Testbarkeit</strong> (Unit Tests mit <code>testthat</code> implementieren).</p>
+<p>Durch die Umsetzung dieser Empfehlungen wird der Code <strong>wartbarer, robuster und benutzfreundlicher</strong>.</p>
+<p>---</p>
+<h2>1. Allgemeine Struktur &amp; Organisation</h2>
+<h3>Stärken</h3>
+<p>- <strong>Modularität</strong>: Die Funktionen sind klar voneinander getrennt und erfüllen spezifische Aufgaben:</p>
+<p>- <code>probFirstHittingTime2</code>: Berechnet die First-Hitting-Time-Wahrscheinlichkeit für einen geometrischen Brownschen Motion (GBM).</p>
+<p>- <code>rtbis</code>: Implementiert die Bisektionsmethode zur Lösung numerischer Probleme (z.B. Quantilsberechnung).</p>
+<p>- <code>Ablaufmodellierung_GBM</code>: Parametrische Modellierung des Ablaufs.</p>
+<p>- <code>Ablaufmodellierung_BS</code>: Monte-Carlo-Simulation für den Ablauf.</p>
+<p>- <code>StochastikTool</code>: Hauptfunktion zur Steuerung der Berechnungen und Ausgabe in Excel.</p>
+<p>- <strong>Dokumentation</strong>: Die Funktionen sind mit Kommentaren versehen, die ihre Zweck und Logik erklären.</p>
+<p>- <strong>Wiederverwendbarkeit</strong>: Die Funktionen sind so gestaltet, dass sie in verschiedenen Kontexten (z.B. unterschiedliche Währungen, Krisenszenarien) wiederverwendet werden können.</p>
+<h3>Verbesserungspotenzial</h3>
+<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Namenskonventionen</strong></td><td>Funktion <code>rtbis</code> ist zu allgemein; Variablennamen wie <code>Vector1</code>, <code>Vector2</code> sind nicht aussagekräftig.</td><td>Präzisere Namen wie <code>quantile_first_hitting_time</code> und aussagekräftige Variablennamen verwenden.</td></tr><tr><td><strong>Dokumentation</strong></td><td>Fehlende Roxygen-Dokumentation (<code>@param</code>, <code>@return</code>, <code>@examples</code>).</td><td>Roxygen-Dokumentation für alle Funktionen ergänzen.</td></tr><tr><td><strong>Globale Variablen</strong></td><td>Funktion <code>rtbis</code> nutzt globale Variablen (<code>cap</code>, <code>floor</code>, <code>precision</code>).</td><td>Alle relevanten Variablen als Parameter übergeben.</td></tr></tbody></table>
+<p>---</p>
+<h2>2. Funktionale Korrektheit &amp; Logik</h2>
+<h3>Stärken</h3>
+<p>- <strong>Mathematische Korrektheit</strong>: Die Funktionen <code>probFirstHittingTime2</code> und <code>rtbis</code> basieren auf mathematischen Modellen für die First-Hitting-Time-Wahrscheinlichkeit.</p>
+<p>- <strong>Robustheit</strong>: Die Schleifen in <code>rtbis</code> und <code>Ablaufmodellierung_BS</code> brechen ab, sobald die gewünschte Präzision erreicht ist.</p>
+<p>- <strong>Monte-Carlo-Simulation</strong>: Korrekte Implementierung mit <code>replicate</code> und <code>apply</code> für die Simulation mehrerer Pfade.</p>
+<h3>Verbesserungspotenzial</h3>
+<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Fehlerbehandlung</strong></td><td>Keine Überprüfung der Eingabeparameter (z.B. <code>Volumen &gt; 0</code>, <code>Konfidenz</code> zwischen 0 und 1).</td><td>Validierungslogik am Anfang der Funktionen hinzufügen.</td></tr><tr><td><strong>Numerische Stabilität</strong></td><td>Potenzielle numerische Instabilitäten bei <code>pnorm</code> für extreme Parameterwerte.</td><td>Prüfung der Parameterwerte und Ausgabe von Warnungen.</td></tr><tr><td><strong>Monte-Carlo-Simulation</strong></td><td>Anzahl der Simulationen (<code>n = 10000</code>) ist hardgecoded.</td><td><code>n</code> als Parameter übergeben, um die Simulation anpassen zu können.</td></tr><tr><td><strong>Stop-Kriterium</strong></td><td>Theoretisch mögliche Endlosschleife in <code>Ablaufmodellierung_BS</code>.</td><td>Maximale Iterationen als zusätzliches Abbruchkriterium einführen.</td></tr></tbody></table>
+<p>---</p>
+<h2>3. Performance &amp; Effizienz</h2>
+<h3>Stärken</h3>
+<p>- <strong>Vektorisierte Operationen</strong>: Nutzung von <code>cumsum</code>, <code>diff</code>, <code>apply</code> für effiziente Berechnungen.</p>
+<p>- <strong>Monte-Carlo-Simulation</strong>: Effiziente Implementierung mit <code>replicate</code> und <code>apply</code>.</p>
+<h3>Verbesserungspotenzial</h3>
+<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Redundanzen</strong></td><td>Berechnung von <code>TimeBuckets2</code> innerhalb einer Schleife, obwohl sie nur einmal benötigt wird.</td><td>Berechnung außerhalb der Schleife durchführen.</td></tr><tr><td><strong>Parallelisierung</strong></td><td>Monte-Carlo-Simulation könnte von Parallelisierung profitieren.</td><td>Implementierung mit <code>parallel</code> oder <code>foreach</code> für große <code>n</code>.</td></tr></tbody></table>
+<p>---</p>
+<h2>4. Code-Qualität &amp; Wartbarkeit</h2>
+<h3>Stärken</h3>
+<p>- <strong>Konsistente Formatierung</strong>: Der Code ist konsistent und leicht lesbar.</p>
+<p>- <strong>Vermeidung von Redundanzen</strong>: Gemeinsame Logik für <code>AbflussAbsolut</code> und <code>AbflussRelativ</code> in beiden Funktionen.</p>
+<h3>Verbesserungspotenzial</h3>
+<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>DRY-Prinzip</strong></td><td>Redundanzen in <code>Ablaufmodellierung_GBM</code> und <code>Ablaufmodellierung_BS</code>.</td><td>Gemeinsame Logik in eine Hilfsfunktion auslagern.</td></tr><tr><td><strong>Magic Numbers</strong></td><td>Hardgecoded Werte wie <code>TimeBuckets</code> und Konfidenzniveaus (<code>Normal = 0.95</code>).</td><td>Als Parameter oder globale Konstanten definieren.</td></tr><tr><td><strong>Variablennamen</strong></td><td>Unklare Variablennamen wie <code>Vector1</code>, <code>Vector2</code>.</td><td>Aussagekräftige Namen wie <code>cumulative_abfluss</code> verwenden.</td></tr></tbody></table>
+<p>---</p>
+<h2>5. Testbarkeit &amp; Fehlerbehandlung</h2>
+<h3>Verbesserungspotenzial</h3>
+<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Unit Tests</strong></td><td>Fehlende Unit Tests für die Funktionen.</td><td>Unit Tests mit <code>testthat</code> implementieren.</td></tr><tr><td><strong>Fehlermeldungen</strong></td><td>Unbenutzerfreundliche Fehlermeldungen.</td><td>Spezifische Fehlermeldungen ausgeben, die auf das Problem hinweisen.</td></tr></tbody></table>
+<p>---</p>
+<h2>6. Integration &amp; Abhängigkeiten</h2>
+<h3>Stärken</h3>
+<p>- <strong>Verwendung von Standardpaketen</strong>: Nutzung von <code>stats</code> und <code>xlsx</code> (für Excel-Ausgabe).</p>
+<h3>Verbesserungspotenzial</h3>
+<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Paketabhängigkeiten</strong></td><td><code>xlsx</code> wird innerhalb der Funktion <code>StochastikTool</code> geladen.</td><td>Pakete am Anfang des Skripts laden.</td></tr><tr><td><strong>Externe Abhängigkeiten</strong></td><td>Verweis auf <code>LAB_V2.R</code> in <code>StochastikTool</code>.</td><td>Klären, ob die Datei benötigt wird, und ggf. integrieren oder dokumentieren.</td></tr></tbody></table>
+<p>---</p>
+<h2>7. Ausgabe &amp; Benutzerfreundlichkeit</h2>
+<h3>Stärken</h3>
+<p>- <strong>Excel-Ausgabe</strong>: Ergebnisse werden in eine Excel-Datei geschrieben, was die Benutzerfreundlichkeit erhöht.</p>
+<h3>Verbesserungspotenzial</h3>
+<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Flexibilität</strong></td><td>Excel-Datei wird immer mit demselben Namen überschrieben.</td><td>Dateinamen als Parameter übergeben oder Zeitstempel anhängen.</td></tr><tr><td><strong>Rückgabewerte</strong></td><td>Funktionen geben nur <code>AbflussRelativ</code> zurück.</td><td>Rückgabewert als Liste mit <code>AbflussAbsolut</code> und <code>AbflussRelativ</code> implementieren.</td></tr></tbody></table>
+<p>---</p>
+<h2>8. Zusammenfassung der Empfehlungen</h2>
+<h3>Priorisierte Änderungen</h3>
+<table><thead><tr><th><strong>Priorität</strong></th><th><strong>Empfehlung</strong></th><th><strong>Umsetzung</strong></th></tr></thead><tbody><tr><td>Hoch</td><td>Eingabeparameter validieren (z.B. <code>Volumen &gt; 0</code>, <code>Konfidenz</code> zwischen 0 und 1).</td><td>Funktion <code>Ablaufmodellierung_GBM</code> und <code>Ablaufmodellierung_BS</code> anpassen.</td></tr><tr><td>Hoch</td><td>Magic Numbers und Hardgecoded-Werte (z.B. <code>TimeBuckets</code>, Konfidenzniveaus) als Parameter oder Konstanten definieren.</td><td><code>TimeBuckets</code> und Konfidenzniveaus als Parameter oder globale Konstanten definieren.</td></tr><tr><td>Hoch</td><td>Redundanzen in <code>Ablaufmodellierung_GBM</code> und <code>Ablaufmodellierung_BS</code> eliminieren.</td><td>Gemeinsame Logik in eine Hilfsfunktion auslagern.</td></tr><tr><td>Mittel</td><td>Fehlende Roxygen-Dokumentation hinzufügen.</td><td>Dokumentation für alle Funktionen ergänzen.</td></tr><tr><td>Mittel</td><td>Hardgecoded <code>n = 10000</code> in <code>Ablaufmodellierung_BS</code> als Parameter übergeben.</td><td><code>n</code> als Parameter implementieren.</td></tr><tr><td>Mittel</td><td>Stop-Kriterium in <code>Ablaufmodellierung_BS</code> um maximale Iterationen erweitern.</td><td><code>max_iter</code>-Logik hinzufügen.</td></tr><tr><td>Niedrig</td><td>Unit Tests mit <code>testthat</code> implementieren.</td><td>Testdatei erstellen und Tests schreiben.</td></tr><tr><td>Niedrig</td><td>Variablennamen wie <code>Vector1</code>, <code>Vector2</code> durch aussagekräftige Namen ersetzen.</td><td>Variablennamen anpassen (z.B. <code>cumulative_abfluss</code>).</td></tr><tr><td>Niedrig</td><td>Parallelisierung der Monte-Carlo-Simulation implementieren.</td><td><code>parallel</code>-Paket nutzen.</td></tr></tbody></table>
+<p>---</p>
+<h2>9. Beispiel: Überarbeitete Funktion</h2>
+<p>Hier ein Beispiel für eine überarbeitete Version von <code>Ablaufmodellierung_GBM</code>:</p>
+<pre><code>#&#x27; Parametric Ablaufmodellierung (Geometric Brownian Motion)
+#&#x27;
+#&#x27; @param Volumen Numeric, total volume.
+#&#x27; @param Bodensatz Numeric, residual volume.
+#&#x27; @param Konfidenz Numeric, confidence level (0 &lt; Konfidenz &lt; 1).
+#&#x27; @param stand.abw Numeric, volatility.
+#&#x27; @param drift Numeric, drift parameter.
+#&#x27; @param TimeBuckets Numeric vector, time buckets.
+#&#x27; @return List containing AbflussRelativ and AbflussAbsolut.
+Ablaufmodellierung_GBM = function(Volumen, Bodensatz, Konfidenz, stand.abw, drift, TimeBuckets) {
+  # Validate inputs
+  if (Volumen &lt;= 0) stop(&quot;Volumen muss positiv sein.&quot;)
+  if (Bodensatz &lt; 0 || Bodensatz &gt; Volumen) stop(&quot;Bodensatz muss zwischen 0 und Volumen liegen.&quot;)
+  if (Konfidenz &lt;= 0 || Konfidenz &gt;= 1) stop(&quot;Konfidenz muss zwischen 0 und 1 liegen.&quot;)
+  if (length(TimeBuckets) == 0) stop(&quot;TimeBuckets muss mindestens ein Element enthalten.&quot;)
+
+  Abbaubestand &lt;- Volumen - Bodensatz
+  TimeBuckets2 &lt;- append(TimeBuckets + 1, 1, 0)[-length(TimeBuckets) - 1]
+
+  Vector1 &lt;- c(1:tail(TimeBuckets, 1)) / 12
+  dim(Vector1) &lt;- c(1, tail(TimeBuckets, 1))
+  Vector1 &lt;- apply(X = Vector1, MARGIN = 2, FUN = rtbis, alpha = Konfidenz, sig = stand.abw, mu = drift)
+  Vector1 &lt;- append(Vector1, 1, after = 0)
+  Vector1 &lt;- cumsum(-diff(Vector1) * Volumen)
+  Vector1[Vector1 &gt; Abbaubestand] &lt;- Abbaubestand
+  Vector1 &lt;- append(Vector1, 0, after = 0)
+  Vector1 &lt;- diff(Vector1)
+
+  Vector2 &lt;- rep(NA, length(TimeBuckets))
+  for (i in 1:length(TimeBuckets)) {
+    Vector2[i] &lt;- mean(Vector1[TimeBuckets2[i]:TimeBuckets[i]])
+  }
+
+  Vector3 &lt;- Vector2[2:length(TimeBuckets)] * TimeBuckets[1:length(TimeBuckets) - 1]
+  Vector3 &lt;- append(Vector3, 0, after = length(TimeBuckets) - 1)
+
+  AbflussAbsolut &lt;- Vector2 * TimeBuckets - Vector3
+  AbflussAbsolut &lt;- append(AbflussAbsolut, Volumen - sum(AbflussAbsolut), after = length(TimeBuckets))
+  AbflussRelativ &lt;- AbflussAbsolut / Volumen
+
+  return(list(
+    AbflussRelativ = AbflussRelativ,
+    AbflussAbsolut = AbflussAbsolut
+  ))
+}</code></pre>
+<p>---</p>
+<h2>10. Fazit</h2>
+<p>Die Datei <strong><code>Ablaufmodellierung.R</code></strong> ist <strong>funktional korrekt</strong> und <strong>mathematisch fundiert</strong>, aber es gibt <strong>Verbesserungspotenzial</strong> in den Bereichen:</p>
+<p>- <strong>Code-Qualität</strong> (Variablennamen, Redundanzen, Magic Numbers),</p>
+<p>- <strong>Fehlerbehandlung</strong> (Validierung, Fehlermeldungen),</p>
+<p>- <strong>Flexibilität</strong> (Parameterisierung, Konfiguration),</p>
+<p>- <strong>Testbarkeit</strong> (Unit Tests, Dokumentation).</p>
+<p>Durch die Umsetzung der Empfehlungen wird der Code <strong>wartbarer, robuster und benutzfreundlicher</strong>. Ich empfehle, die Änderungen schrittweise umzusetzen und die Funktionen mit Unit Tests zu versehen.</p>
+<p>---</p>
+<h2>Versionshistorie</h2>
+<table><thead><tr><th>Version</th><th>Datum</th><th>Autor</th><th>Änderung</th></tr></thead><tbody><tr><td>1.0</td><td>2026-06-29</td><td>Brain Agent</td><td>Ersterstellung des Code Reviews für <code>Ablaufmodellierung.R</code>.</td></tr></tbody></table>
+<div class="doc-footer" style="text-align:center;font-size:9pt;color:#666666"><div class="doc-autoline">Klassifizierung: Intern</div><div class="doc-autoline">Dieses Dokument wurde mit Unterstützung künstlicher Intelligenz erstellt.</div></div>
+</body>
+</html>

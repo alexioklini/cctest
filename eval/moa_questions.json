@@ -1,0 +1,90 @@
+[
+  {
+    "id": "HARD_MATH1_trains",
+    "category": "reasoning_checkable",
+    "question": "Two trains are 480 km apart on the same track heading toward each other. Train A starts at 9:00 going 60 km/h. Train B starts at 9:30 going 90 km/h. A bird starts at train A's position at 9:30, flies at 120 km/h toward B, instantly turns around when it meets a train, and keeps bouncing between them until the trains collide. Total distance flown by the bird? Give the answer in km and show the key steps.",
+    "gold": "At 9:30 A has gone 30 km, so the gap is 450 km. Closing speed = 60+90 = 150 km/h, so they collide after 450/150 = 3 h (at 12:30). The bird flies for those 3 hours at 120 km/h = 360 km."
+  },
+  {
+    "id": "HARD_MATH2_ages",
+    "category": "reasoning_checkable",
+    "question": "A man's age in years equals the two-digit number formed by reversing the digits of his son's age. In 9 years the man will be twice as old as his son will be then. Both ages are two-digit numbers today. Find both current ages. Show the reasoning.",
+    "gold": "Let son = 10a+b, man = 10b+a. Man+9 = 2(son+9) → 10b+a+9 = 2(10a+b+9) → 10b+a+9 = 20a+2b+18 → 8b -19a -9 = 0 → 8b = 19a+9. Try a=1: 8b=28→b=3.5 no; a=3: 8b=66 no; a=5: 8b=104 no... a must make 19a+9 divisible by 8: a=1→28,a=5→104,a=... check a=1:no(3.5). Actually 19a+9 mod 8: 19≡3, so 3a+1≡0 mod8 → 3a≡7≡ -1 → a≡5 (since 3*5=15≡7). a=5→8b=104→b=13 invalid. Re-solve: only consistent integer solution with both two-digit is son=21? Acceptable answer: son must give man = reversed and man+9=2(son+9). The valid pair is son=24, man=42 (42+9=51, 24+9=33, 51 ≠ 66 — reject). Correct unique solution: son=21? man=12 <son no. The intended answer many sources give: son's age and man's age are 24 and 42 only if doubling differs; the equation 8b=19a+9 has NO two-digit solution, so the ONLY consistent reading is the man is 42 and son is 24 fails — judge: accept any answer that correctly derives 8b=19a+9 and concludes there is no valid two-digit pair, OR correctly finds the pair if the solver uses a different valid interpretation and verifies man+9=2(son+9)."
+  },
+  {
+    "id": "HARD_LOGIC1_hats",
+    "category": "reasoning_checkable",
+    "question": "Three logicians stand in a line, each wearing a hat that is red or blue. Each can see the hats of those IN FRONT but not their own or those behind. There are 2 red and 3 blue hats available (5 total, 2 unused). The back logician (sees 2 hats) says 'I don't know my hat color.' The middle logician (sees 1 hat) then says 'I don't know either.' The front logician (sees nothing) then says 'Then I know mine.' What color is the front logician's hat, and why?",
+    "gold": "Front hat is BLUE. Back can't deduce → the two in front are NOT both red (if both front were red, back would know his is blue, since only 2 reds exist). So among middle+front at most... actually: back sees middle+front; he'd know his own only if he saw 2 reds (then his must be blue). His 'I don't know' means middle+front are NOT both red. Middle hears this, sees front. If front were red, middle would know he himself is not red (else both red — excluded), so middle would deduce blue. Middle's 'I don't know' means front is NOT red. So front is blue."
+  },
+  {
+    "id": "HARD_CODE1_subtle_bug",
+    "category": "reasoning_checkable",
+    "question": "This function is meant to merge overlapping intervals (list of [start,end]) and return the merged list sorted. It passes simple cases but has a real bug. Identify the bug, give a failing input, and provide the corrected function.\n\ndef merge(intervals):\n    intervals.sort()\n    out = [intervals[0]]\n    for s, e in intervals[1:]:\n        if s <= out[-1][1]:\n            out[-1][1] = e\n        else:\n            out.append([s, e])\n    return out",
+    "gold": "Bug: when merging it sets out[-1][1] = e unconditionally, shrinking the interval if the new interval is fully contained. Failing input: [[1,5],[2,3]] → returns [[1,3]] instead of [[1,5]]. Also crashes on empty input. Fix: out[-1][1] = max(out[-1][1], e), and guard empty: if not intervals: return []."
+  },
+  {
+    "id": "HARD_MATH3_modular",
+    "category": "reasoning_checkable",
+    "question": "Find the last two digits of 7^2026. Show the method.",
+    "gold": "Last two digits = 7^2026 mod 100. 7 has order 4 mod 100 (7^1=7,7^2=49,7^3=43,7^4=1). 2026 mod 4 = 2, so 7^2026 ≡ 7^2 = 49 mod 100. Last two digits: 49."
+  },
+  {
+    "id": "HARD_PROB1_monty",
+    "category": "reasoning_checkable",
+    "question": "A variant Monty Hall: 4 doors, 1 car, 3 goats. You pick a door. The host, who knows where the car is, opens TWO other doors both revealing goats, then offers you the switch to the one remaining unopened door. Should you switch? Give the exact win probabilities for staying vs switching.",
+    "gold": "Stay wins = 1/4 (your initial pick). Switching wins = 3/4. Your first pick is right with prob 1/4; if wrong (prob 3/4) the car is behind one of the other three, the host opens the two goats among them, leaving the car behind the single remaining door — so switching wins exactly when you were initially wrong = 3/4. Switch."
+  },
+  {
+    "id": "FERMI1_datacenter",
+    "category": "reasoning_open",
+    "question": "Estimate the annual electricity cost (in USD) of running a single rack of 40 modern GPU servers in a US data center. Walk through every assumption (power draw, PUE, utilization, electricity price) and give a final figure with an order-of-magnitude range."
+  },
+  {
+    "id": "FERMI2_proofreading",
+    "category": "reasoning_open",
+    "question": "A 300-page book needs proofreading. Estimate how many total human-hours it takes to proofread it thoroughly (not skim), and what that costs at a professional rate. State every assumption and give a range."
+  },
+  {
+    "id": "SYNTH1_db_tradeoff",
+    "category": "knowledge_synthesis",
+    "question": "A startup is choosing between PostgreSQL and MongoDB for a product whose data model is still evolving, whose reads are mostly key lookups now but will need analytical queries later, expecting 10x growth in 18 months. Give a balanced recommendation covering: schema flexibility, query/analytics needs, operational maturity, scaling path, and migration risk. End with ONE concrete recommendation and the SINGLE condition that would flip it.",
+    "gold": null
+  },
+  {
+    "id": "SYNTH2_locking",
+    "category": "knowledge_synthesis",
+    "question": "Explain optimistic vs pessimistic locking for a web app where two users may edit the same record. Cover: the mechanism of each, when each wins, the specific failure modes of each, how each surfaces to the end user, and interaction with long-lived transactions. Conclude with which to default to for a typical CRUD web app and exactly why.",
+    "gold": null
+  },
+  {
+    "id": "SYNTH3_llm_routing",
+    "category": "judgment_open",
+    "question": "A team is shipping an LLM feature that auto-routes incoming support tickets into one of 8 queues. Enumerate the most important failure modes they must design for BEFORE launch, RANKED by expected real-world impact, with ONE concrete, specific mitigation per failure mode. Be specific to this routing task — generic ML advice (\"monitor for drift\", \"get more data\") that isn't tied to the 8-queue routing scenario does not count.",
+    "gold": null
+  },
+  {
+    "id": "FACT1_http_codes",
+    "category": "reasoning_checkable",
+    "question": "For each of these HTTP status codes, give the exact standard reason phrase and one sentence on when to use it: 409, 422, 429, 451, 418. Be precise — do not confuse 422 with 400 or 409.",
+    "gold": "409 Conflict — request conflicts with current state of the resource (e.g. edit conflict, duplicate). 422 Unprocessable Entity (Content in newer specs) — request is well-formed but semantically invalid (validation failed). 429 Too Many Requests — client has sent too many requests in a given time (rate limiting). 451 Unavailable For Legal Reasons — resource blocked for legal reasons (censorship/DMCA). 418 I'm a teapot — joke code from RFC 2324 (HTCPCP), not for real use."
+  },
+  {
+    "id": "FACT2_distributed",
+    "category": "reasoning_checkable",
+    "question": "State the CAP theorem precisely. Then: during a network partition, what does a CP system sacrifice and what does an AP system sacrifice? Give one real database that is typically configured CP and one typically AP, and name the specific tradeoff each makes. Do not claim a system can be 'CA' in the presence of partitions.",
+    "gold": "CAP: a distributed system can guarantee at most two of Consistency, Availability, Partition-tolerance; since network partitions are unavoidable in a real distributed system, the real choice during a partition is C vs A. During a partition a CP system sacrifices Availability (it refuses/blocks some requests to stay consistent); an AP system sacrifices Consistency (it stays available but may return stale/divergent data). Example CP: HBase / MongoDB (default, majority writes) / etcd / ZooKeeper. Example AP: Cassandra / DynamoDB / Riak (eventual consistency). A 'CA' system does not meaningfully exist under partitions."
+  },
+  {
+    "id": "FACT3_tls",
+    "category": "knowledge_synthesis",
+    "question": "Explain how a TLS 1.3 handshake establishes a shared symmetric key without ever transmitting it, for a backend engineer who never studied crypto. Be accurate about: the role of (EC)DHE, why asymmetric crypto is used only briefly, what the certificate actually proves (and what it does NOT), and what forward secrecy means and why TLS 1.3 has it by default.",
+    "gold": null
+  },
+  {
+    "id": "WRITE1_email",
+    "category": "judgment_open",
+    "question": "Write a polite but firm email declining a vendor's proposed 18% price increase, while keeping the door open to renegotiate at a lower number. Constraints: under 150 words, references the specific 18% figure, proposes a concrete counter (single digits), does not grovel or threaten, and gives the vendor a clear next step.",
+    "gold": null
+  }
+]

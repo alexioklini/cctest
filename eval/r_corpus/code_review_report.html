@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review Report: R-Skripte (ohne lab, bdensatz, ablaufmodellierung)</title>
+<style>
+    @page { margin: 2cm; }
+    body { font-family: 'Calibri', Arial, sans-serif; color: #222222;
+      font-size: 11pt; line-height: 1.5; max-width: 820px;
+      margin: 0 auto; padding: 24px; background: #fff; }
+    h1,h2,h3,h4,h5,h6 { font-family: 'Calibri', Arial, sans-serif;
+      color: #1f3864; line-height: 1.2; margin: 1.1em 0 .4em; }
+    h1 { font-size: 20pt; } h2 { font-size: 16pt; }
+    h3 { font-size: 13pt; }
+    a { color: #2e74b5; }
+    code { font-family: 'Consolas', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    p.figure { text-align: center; } p.figure img { max-width: 100%; height: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #ddd; padding: 5px 9px; text-align: left; }
+    th { background: #1f3864;
+      color: #ffffff; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    .doc-header { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 20px; overflow: hidden; }
+    .doc-footer { border-top: 1px solid #eee; padding-top: 8px; margin-top: 28px; overflow: hidden; }
+    .pagenum::after { content: ""; }
+    @media print { .pagenum::after { content: counter(page); } }
+    </style>
+</head>
+<body>
+<div class="doc-header" style="text-align:right;font-size:9pt;color:#666666"><img class="doc-logo" src="data:image/png;base64,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" alt="" style="max-height:29px;width:auto;float:left;">Wiener Privatbank SE</div>
+<h1>Code Review Report: R-Skripte (ohne lab, bdensatz, ablaufmodellierung)</h1>
+<p><strong>Projekt:</strong> Bodensatz R-Scripte</p>
+<p><strong>Datum:</strong> 2026-06-29</p>
+<p><strong>Review-Umfang:</strong> Alle R-Skripte außer <code>lab<em></code>, <code>bdensatz</em></code>, <code>ablaufmodellierung*</code></p>
+<p>---</p>
+<h2>1. Übersicht der geprüften Skripte</h2>
+<table><thead><tr><th>Skript</th><th>Zeilen</th><th>Zweck</th><th>Kritische Befunde</th></tr></thead><tbody><tr><td><strong>ECL_122025.R</strong></td><td>57</td><td>Berechnung Expected Credit Loss (ECL)</td><td>Hardcoded Pfade, globale Variablen, Performance</td></tr><tr><td><strong>ECL_Hilfsfunktion.R</strong></td><td>141</td><td>ECL-Hilfsfunktionen</td><td>Globale Abhängigkeiten, Redundanz, fehlende Dokumentation</td></tr><tr><td><strong>ECL_Hilfsfunktion_2.R</strong></td><td>189</td><td>ECL-Hilfsfunktionen</td><td>Identisch zu <code>ECL_Hilfsfunktion.R</code>, fehlende <code>bayes</code>-Funktion</td></tr><tr><td><strong>PIT_122025.R</strong></td><td>87</td><td>Point-in-Time PD-Berechnung</td><td>Globale Variablen, fehlende Abhängigkeiten, aktive Plots</td></tr><tr><td><strong>TL_122025.R</strong></td><td>154</td><td>Stage-Allokation von Deals</td><td>Hardcoded Pfade, undokumentierte Logik, Performance</td></tr><tr><td><strong>TTC_122025.R</strong></td><td>149</td><td>Through-the-Cycle PD-Berechnung</td><td>Globale Variablen, Redundanz, aktive Plots</td></tr></tbody></table>
+<p>---</p>
+<h2>2. Detaillierte Befunde pro Skript</h2>
+<h3>2.1 ECL_122025.R</h3>
+<h4><strong>Stärken</strong></h4>
+<p>- Klare Struktur mit Trennung von Initialisierung, Datenladung und Berechnung.</p>
+<p>- Nutzung externer Hilfsfunktionen für Kernlogik.</p>
+<h4><strong>Kritische Probleme</strong></h4>
+<p>1. <strong>Hardcodierte Pfade</strong></p>
+<p>```r</p>
+<p>pfad&lt;-&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung&quot;</p>
+<p>```</p>
+<p>→ <strong>Empfehlung:</strong> Pfade als Parameter oder Umgebungsvariablen übergeben.</p>
+<p>2. <strong>Globale Variablen</strong></p>
+<p>- <code>pdtime</code>, <code>interpol</code>, <code>External_mode</code> werden nicht im Skript definiert.</p>
+<p>→ <strong>Empfehlung:</strong> Als Parameter an Funktionen übergeben oder in Konfigurationsdatei auslagern.</p>
+<p>3. <strong>Fehlende Fehlerbehandlung</strong></p>
+<p>- Keine Prüfung auf <code>NA</code>/<code>NULL</code> in <code>df</code> oder <code>M_cpd</code>.</p>
+<p>→ <strong>Empfehlung:</strong> Input-Validierung hinzufügen (z. B. mit <code>validate</code> aus <code>assertive</code>-Paket).</p>
+<p>4. <strong>Performance</strong></p>
+<p>- Nutzung von <code>mapply</code> mit komplexen Funktionen (<code>get_12M_ECL</code>, <code>ext_LT_ECL</code>, <code>get_LT_ECL</code>).</p>
+<p>→ <strong>Empfehlung:</strong> Vektorisierung prüfen oder Caching von <code>PD_cube</code> erwägen.</p>
+<p>---</p>
+<h3>2.2 ECL_Hilfsfunktion.R</h3>
+<h4><strong>Stärken</strong></h4>
+<p>- Zentrale Logik für ECL-Berechnung (<code>get_12M_ECL</code>, <code>ext_LT_ECL</code>, <code>get_LT_ECL</code>, <code>get_ECL</code>).</p>
+<p>- Unterstützung verschiedener Amortisationsmethoden (<code>Annuity</code>, <code>Linear</code>).</p>
+<h4><strong>Kritische Probleme</strong></h4>
+<p>1. <strong>Globale Abhängigkeiten</strong></p>
+<p>- Funktionen nutzen <code>PD_cube</code>, <code>pdtime</code>, <code>interpol</code> aus dem Kontext.</p>
+<p>→ <strong>Empfehlung:</strong> Globale Variablen als Parameter übergeben.</p>
+<p>2. <strong>Fehlende Dokumentation</strong></p>
+<p>- Keine Docstrings oder Kommentare für Funktionen.</p>
+<p>→ <strong>Empfehlung:</strong> Funktionen mit <code>#&#x27;</code>-Docstrings dokumentieren (z. B. für <code>roxygen2</code>).</p>
+<p>3. <strong>Redundanz</strong></p>
+<p>- Funktion <code>readcsv2</code> ist in <code>ECL_Hilfsfunktion_2.R</code> fast identisch definiert.</p>
+<p>→ <strong>Empfehlung:</strong> Gemeinsames Modul erstellen (z. B. <code>ecl_helpers.R</code>).</p>
+<p>4. <strong>Sicherheit</strong></p>
+<p>- Keine Prüfung auf <code>NA</code>/<code>NULL</code> in Inputs.</p>
+<p>→ <strong>Empfehlung:</strong> Input-Validierung hinzufügen.</p>
+<p>---</p>
+<h3>2.3 ECL_Hilfsfunktion_2.R</h3>
+<h4><strong>Stärken</strong></h4>
+<p>- Unterstützt die gleichen Funktionen wie <code>ECL_Hilfsfunktion.R</code>.</p>
+<h4><strong>Kritische Probleme</strong></h4>
+<p>1. <strong>Fehlende Abhängigkeit</strong></p>
+<p>- Funktion <code>bayes</code> wird in <code>PIT_122025.R</code> referenziert, aber nicht definiert.</p>
+<p>→ <strong>Empfehlung:</strong> <code>bayes</code>-Funktion implementieren oder als Abhängigkeit auflisten.</p>
+<p>2. <strong>Globale Variablen</strong></p>
+<p>- Wie in <code>ECL_Hilfsfunktion.R</code>.</p>
+<p>3. <strong>Formatierungsunterschiede</strong></p>
+<p>- Leichte Unterschiede in Leerzeichen/Operatoren zu <code>ECL_Hilfsfunktion.R</code>.</p>
+<p>→ <strong>Empfehlung:</strong> Gemeinsames Refactoring.</p>
+<p>---</p>
+<h3>2.4 PIT_122025.R</h3>
+<h4><strong>Zweck</strong></h4>
+<p>Berechnet Point-in-Time PD-Kurven aus Through-the-Cycle PD-Kurven unter Verwendung von Skalierungsmethoden (<code>VSA</code> oder <code>Bayesian</code>).</p>
+<h4><strong>Kritische Probleme</strong></h4>
+<p>1. <strong>Globale Variablen</strong></p>
+<p>- <code>pdtime</code>, <code>portPD</code>, <code>scaling</code>, <code>AP</code> werden nicht definiert.</p>
+<p>→ <strong>Empfehlung:</strong> Als Parameter oder Konfiguration übergeben.</p>
+<p>2. <strong>Fehlende Fehlerbehandlung</strong></p>
+<p>- Keine Prüfung auf <code>NA</code>/<code>NULL</code> in Inputs.</p>
+<p>→ <strong>Empfehlung:</strong> Validierung hinzufügen.</p>
+<p>3. <strong>Redundante Exporte</strong></p>
+<p>- Kommentierte <code>write.xlsx</code>-Aufrufe sind unnötig.</p>
+<p>→ <strong>Empfehlung:</strong> Entfernen oder optional machen.</p>
+<p>4. <strong>Aktive Plots</strong></p>
+<p>```r</p>
+<p>plot(marg_PD2[18,],col=&quot;White&quot;)</p>
+<p>```</p>
+<p>→ <strong>Empfehlung:</strong> Plots optional machen (z. B. mit <code>if(interactive())</code>).</p>
+<p>5. <strong>Fehlende <code>bayes</code>-Funktion</strong></p>
+<p>- Wird in Zeile 36 referenziert, aber nicht definiert.</p>
+<p>→ <strong>Empfehlung:</strong> Implementieren oder als Abhängigkeit auflisten.</p>
+<p>---</p>
+<h3>2.5 TL_122025.R</h3>
+<h4><strong>Zweck</strong></h4>
+<p>Stage-Allokation von Deals basierend auf PD-Kurven und Schwellenwerten.</p>
+<h4><strong>Kritische Probleme</strong></h4>
+<p>1. <strong>Hardcodierte Pfade</strong></p>
+<p>```r</p>
+<p>&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Daten_Impairment Test/Daten 202512/ECL_Inputdaten_2025-12_Konzern.csv&quot;</p>
+<p>```</p>
+<p>→ <strong>Empfehlung:</strong> Pfade als Parameter oder Konfiguration übergeben.</p>
+<p>2. <strong>Globale Variablen</strong></p>
+<p>- <code>transferlogic</code>, <code>threshold</code>, <code>rep_date</code> werden nicht definiert.</p>
+<p>→ <strong>Empfehlung:</strong> Dokumentieren und als Parameter übergeben.</p>
+<p>3. <strong>Fehlende Dokumentation</strong></p>
+<p>- Transfer-Logik ist nicht erklärt.</p>
+<p>→ <strong>Empfehlung:</strong> Kommentare und Dokumentation hinzufügen.</p>
+<p>4. <strong>Performance</strong></p>
+<p>- Schleifen über <code>nrow(deals)</code> sind langsam für große Datasets.</p>
+<p>→ <strong>Empfehlung:</strong> Vektorisierung prüfen (z. B. mit <code>dplyr</code> oder <code>data.table</code>).</p>
+<p>5. <strong>Sicherheit</strong></p>
+<p>- Keine Prüfung auf <code>NA</code>/<code>NULL</code> in <code>deals</code> oder <code>df</code>.</p>
+<p>→ <strong>Empfehlung:</strong> Validierung hinzufügen.</p>
+<p>---</p>
+<h3>2.6 TTC_122025.R</h3>
+<h4><strong>Zweck</strong></h4>
+<p>Berechnet Through-the-Cycle PD-Kurven aus Migrationsmatrizen.</p>
+<h4><strong>Kritische Probleme</strong></h4>
+<p>1. <strong>Hardcodierte Pfade</strong></p>
+<p>```r</p>
+<p>df&lt;-&quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung/diverse Dateien/1Y_mm_finapu_2025.csv&quot;</p>
+<p>```</p>
+<p>→ <strong>Empfehlung:</strong> Pfade als Parameter oder Konfiguration übergeben.</p>
+<p>2. <strong>Globale Variablen</strong></p>
+<p>- <code>nyears</code> wird nicht definiert.</p>
+<p>→ <strong>Empfehlung:</strong> Als Parameter oder Konstante definieren.</p>
+<p>3. <strong>Fehlende Fehlerbehandlung</strong></p>
+<p>- Keine Prüfung auf <code>NA</code>/<code>NULL</code> in Inputs.</p>
+<p>→ <strong>Empfehlung:</strong> Validierung hinzufügen.</p>
+<p>4. <strong>Redundanter Code</strong></p>
+<p>- Doppelte Berechnung von <code>lt_cPD_monthly</code> (Zeile 12–13 und 98–108).</p>
+<p>→ <strong>Empfehlung:</strong> Redundanz entfernen.</p>
+<p>5. <strong>Aktive Plots</strong></p>
+<p>- Plots sind aktiv und könnten bei fehlendem Grafikgerät fehlschlagen.</p>
+<p>→ <strong>Empfehlung:</strong> Plots optional machen.</p>
+<p>---</p>
+<h2>3. Allgemeine Empfehlungen für alle Skripte</h2>
+<h3>3.1 Portabilität &amp; Konfiguration</h3>
+<p>- <strong>Problem:</strong> Hardcodierte Pfade und globale Variablen machen die Skripte nicht portabel.</p>
+<p>- <strong>Lösung:</strong></p>
+<p>- Pfade als Parameter oder Umgebungsvariablen übergeben (z. B. über <code>options()</code> oder <code>.Renviron</code>).</p>
+<p>- Globale Variablen in einer Konfigurationsdatei (z. B. <code>config.yml</code>) auslagern.</p>
+<p>- Beispiel für Parameterisierung:</p>
+<p>```r</p>
+<p># In ECL_122025.R</p>
+<p>config &lt;- list(</p>
+<p>pfad = &quot;W:/COLLABORATION/Risk_Public/IFRS 9/Berechnungen_Wertminderung&quot;,</p>
+<p>pdtime = &quot;PD_input_monthly&quot;,</p>
+<p>interpol = &quot;First_order&quot;</p>
+<p>)</p>
+<p>source(paste(config$pfad, &quot;/R codes/ECL_Hilfsfunktion_2.R&quot;, sep=&quot;&quot;))</p>
+<p>```</p>
+<h3>3.2 Fehlerbehandlung &amp; Validierung</h3>
+<p>- <strong>Problem:</strong> Keine Prüfung auf <code>NA</code>/<code>NULL</code> oder ungültige Inputs.</p>
+<p>- <strong>Lösung:</strong></p>
+<p>- Input-Validierung mit Paketen wie <code>assertive</code> oder <code>checkmate</code>:</p>
+<p>```r</p>
+<p>library(checkmate)</p>
+<p>assert_file_exists(pfad)</p>
+<p>assert_matrix(M_cpd)</p>
+<p>```</p>
+<p>- Fehlerbehandlung mit <code>tryCatch</code>:</p>
+<p>```r</p>
+<p>tryCatch({</p>
+<p>df &lt;- read.csv2(pfad, ...)</p>
+<p>}, error = function(e) {</p>
+<p>stop(&quot;Fehler beim Laden der Datei: &quot;, e$message)</p>
+<p>})</p>
+<p>```</p>
+<h3>3.3 Dokumentation</h3>
+<p>- <strong>Problem:</strong> Fehlende Docstrings und Kommentare.</p>
+<p>- <strong>Lösung:</strong></p>
+<p>- Funktionen mit <code>#&#x27;</code>-Docstrings dokumentieren (kompatibel mit <code>roxygen2</code>):</p>
+<p>```r</p>
+<p>#&#x27; Berechnet den 12-Monats-ECL</p>
+<p>#&#x27;</p>
+<p>#&#x27; @param Month_Remaining Restlaufzeit in Monaten</p>
+<p>#&#x27; @param rating Rating des Deals</p>
+<p>#&#x27; @param exposure Exposure des Deals</p>
+<p>#&#x27; @param LGD Loss Given Default</p>
+<p>#&#x27; @param EIR Effective Interest Rate</p>
+<p>#&#x27; @param amort Amortisationsmethode</p>
+<p>#&#x27; @param port Portfolio-ID</p>
+<p>#&#x27; @return 12-Monats-ECL als numerischer Wert</p>
+<p>get_12M_ECL &lt;- function(Month_Remaining, rating, exposure, LGD, EIR, amort, port) {</p>
+<p>...</p>
+<p>}</p>
+<p>```</p>
+<h3>3.4 Performance</h3>
+<p>- <strong>Problem:</strong> Schleifen und <code>mapply</code> können langsam sein.</p>
+<p>- <strong>Lösung:</strong></p>
+<p>- Vektorisierung mit <code>dplyr</code> oder <code>data.table</code> prüfen.</p>
+<p>- Caching von Zwischenergebnissen (z. B. <code>PD_cube</code>).</p>
+<p>- Parallelisierung mit <code>parallel</code> oder <code>future</code>-Paket.</p>
+<h3>3.5 Abhängigkeiten</h3>
+<p>- <strong>Problem:</strong> Fehlende oder undokumentierte Abhängigkeiten (z. B. <code>bayes</code>-Funktion).</p>
+<p>- <strong>Lösung:</strong></p>
+<p>- Alle Abhängigkeiten explizit auflisten (z. B. in <code>DESCRIPTION</code>-Datei für Pakete).</p>
+<p>- Fehlende Funktionen implementieren oder als externe Skripte bereitstellen.</p>
+<h3>3.6 Plots &amp; Exporte</h3>
+<p>- <strong>Problem:</strong> Aktive Plots und redundante Excel-Exporte.</p>
+<p>- <strong>Lösung:</strong></p>
+<p>- Plots optional machen:</p>
+<p>```r</p>
+<p>if (interactive()) {</p>
+<p>plot(...)  # Nur bei interaktiver Session</p>
+<p>}</p>
+<p>```</p>
+<p>- Unnötige Exporte entfernen oder in separate Skripte auslagern.</p>
+<h3>3.7 Refactoring-Vorschläge</h3>
+<p>1. <strong>Gemeinsame Module erstellen:</strong></p>
+<p>- <code>ecl_helpers.R</code> für <code>ECL_Hilfsfunktion.*</code> und <code>ECL_122025.R</code>.</p>
+<p>- <code>pd_helpers.R</code> für PD-Berechnungen (<code>PIT_122025.R</code>, <code>TTC_122025.R</code>).</p>
+<p>- <code>tl_helpers.R</code> für Stage-Allokation (<code>TL_122025.R</code>).</p>
+<p>2. <strong>Funktionen standardisieren:</strong></p>
+<p>- Gleiche Parameter-Namen und -Reihenfolge (z. B. <code>exposure</code>, <code>LGD</code>, <code>EIR</code>).</p>
+<p>- Globale Variablen vermeiden (z. B. <code>PD_cube</code> als Parameter übergeben).</p>
+<p>3. <strong>Tests hinzufügen:</strong></p>
+<p>- Unit-Tests mit <code>testthat</code> für kritische Funktionen (z. B. <code>get_12M_ECL</code>).</p>
+<p>- Beispiel:</p>
+<p>```r</p>
+<p>test_that(&quot;get_12M_ECL returns correct ECL&quot;, {</p>
+<p>expect_equal(get_12M_ECL(12, 1, 1000, 0.5, 0.05, &quot;Linear&quot;, 1), 47.619)</p>
+<p>})</p>
+<p>```</p>
+<p>---</p>
+<h2>4. Priorisierte To-Do-Liste</h2>
+<table><thead><tr><th>Priorität</th><th>Aufgabe</th><th>Verantwortlich</th><th>Status</th></tr></thead><tbody><tr><td><strong>Hoch</strong></td><td>Pfade und globale Variablen parametrisieren</td><td>Entwicklungsteam</td><td>❌</td></tr><tr><td><strong>Hoch</strong></td><td>Fehlerbehandlung und Input-Validierung hinzufügen</td><td>Entwicklungsteam</td><td>❌</td></tr><tr><td><strong>Hoch</strong></td><td>Dokumentation (Docstrings, Kommentare) ergänzen</td><td>Entwicklungsteam</td><td>❌</td></tr><tr><td><strong>Mittel</strong></td><td>Redundanzen in <code>ECL_Hilfsfunktion.*</code> und <code>TTC_122025.R</code> entfernen</td><td>Entwicklungsteam</td><td>❌</td></tr><tr><td><strong>Mittel</strong></td><td>Abhängigkeiten (z. B. <code>bayes</code>) klären und implementieren</td><td>Entwicklungsteam</td><td>❌</td></tr><tr><td><strong>Mittel</strong></td><td>Plots und Exporte optional machen</td><td>Entwicklungsteam</td><td>❌</td></tr><tr><td><strong>Niedrig</strong></td><td>Performance-Optimierungen (Vektorisierung, Parallelisierung) prüfen</td><td>Entwicklungsteam</td><td>❌</td></tr><tr><td><strong>Niedrig</strong></td><td>Unit-Tests für kritische Funktionen schreiben</td><td>Entwicklungsteam</td><td>❌</td></tr></tbody></table>
+<p>---</p>
+<h2>5. Fazit</h2>
+<p>Die geprüften R-Skripte sind <strong>funktional</strong>, enthalten jedoch <strong>erhebliche Verbesserungspotenziale</strong> in den Bereichen:</p>
+<p>- <strong>Portabilität</strong> (Hardcoded Pfade, globale Variablen)</p>
+<p>- <strong>Robustheit</strong> (Fehlerbehandlung, Input-Validierung)</p>
+<p>- <strong>Dokumentation</strong> (Docstrings, Kommentare)</p>
+<p>- <strong>Wartbarkeit</strong> (Redundanzen, Abhängigkeiten)</p>
+<p><strong>Empfehlung:</strong></p>
+<p>1. Refactoring der Skripte gemäß den obigen Empfehlungen.</p>
+<p>2. Einführung von Modulen für gemeinsame Logik.</p>
+<p>3. Ergänzung um Unit-Tests und CI/CD-Pipeline.</p>
+<p>4. Dokumentation der Transfer-Logik und Parameter in einem separaten Dokument (z. B. <code>PARAMETERS.md</code>).</p>
+<p>---</p>
+<p><strong>Review durchgeführt von:</strong> Brain Agent (Main Agent)</p>
+<p><strong>Datum:</strong> 2026-06-29</p>
+<div class="doc-footer" style="text-align:center;font-size:9pt;color:#666666"><div class="doc-autoline">Klassifizierung: Intern</div><div class="doc-autoline">Dieses Dokument wurde mit Unterstützung künstlicher Intelligenz erstellt.</div><div class="doc-pageline">Seite - <span class="pagenum"></span></div></div>
+</body>
+</html>

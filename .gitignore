@@ -102,3 +102,9 @@ diagram_render/node_modules/
 # codebase-memory-mcp binary + per-tenant index caches (per-machine, large)
 .codebase-memory/
 .cbm-cache/
+
+# SQL corpus (real bank SQL/.dbq + result exports with customer data) — local only, never commit
+eval/sql/
+
+# Playwright run artifacts (js_gate smoke)
+test-results/

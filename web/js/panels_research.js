@@ -376,7 +376,7 @@ function renderDeepDone(r) {
       <div style="font-weight:600;font-size:13px;margin:10px 0 4px">Vorgeschlagene Quellen zum Import (${proposed.length}):</div>
       <div style="max-height:300px;overflow:auto;border:1px solid var(--border-200);border-radius:8px;padding:4px 8px">${rows}</div>
       <div style="margin-top:8px;font-size:11px;color:var(--text-400)">${esc(r.coverage_note || '')}</div>
-      ${(r.model || r.cost) ? `<div style="margin-top:4px;font-size:11px;color:var(--text-400)">⚙ ${esc(r.model || '')}${r.cost ? ' · $' + Number(r.cost).toFixed(4) : ''}${r.duration_s ? ' · ' + Math.round(r.duration_s) + ' s' : ''}${(r.tokens_in || r.tokens_out) ? ' · ' + ((r.tokens_in||0)+(r.tokens_out||0)).toLocaleString('de-DE') + ' Tokens' : ''}</div>` : ''}
+      ${(r.model || r.cost) ? `<div style="margin-top:4px;font-size:11px;color:var(--text-400)">⚙ ${esc(r.model || '')}${r.cost ? ' · $' + Number(r.cost).toFixed(4) : ''}${r.duration_s ? ' · ' + Math.round(r.duration_s) + ' s' : ''}${(r.tokens_in || r.tokens_out) ? ' · ' + ((r.tokens_in||0)+(r.tokens_out||0)).toLocaleString('de-DE') + ' Tokens' : ''}${r.cache_read_tokens ? ' · ⚡ ' + Number(r.cache_read_tokens).toLocaleString('de-DE') + ' gecacht' : ''}</div>` : ''}
       <div style="margin-top:12px;display:flex;gap:10px">
         <button class="btn-primary" style="padding:6px 16px;font-size:13px" onclick="researchImportProposed()">Ausgewählte importieren →</button>
         <button class="btn-secondary" style="padding:6px 16px;font-size:13px" onclick="renderResearchForm()">Nur Bericht behalten</button>

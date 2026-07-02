@@ -66,8 +66,9 @@ JUDGE_MODEL_FALLBACK = "mistral-medium-3.5"
 
 CORPUS = os.environ.get(
     "SQL_CORPUS",
-    "/private/tmp/claude-501/-Users-alexander-Documents-dev-cctest/"
-    "ffd7a980-fdf7-4a0e-8849-59d3ffd31d84/scratchpad/sqlcorpus",
+    # The corpus lives under eval/sql/ (real bank SQL/.dbq + result exports;
+    # gitignored — local only). Override with SQL_CORPUS=<path> if it moves.
+    os.path.join(REPO_ROOT, "eval", "sql"),
 )
 
 SQL_EXCERPT_CAP = 6000

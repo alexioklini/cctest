@@ -250,6 +250,7 @@ def _bg_text(messages, system_prompt, model, project_name, agent_id, user_id, pu
             user_id=user_id, agent_id=agent_id, purpose="deep_research", log=False)
         acc["tokens_in"] += m["tokens_in"]
         acc["tokens_out"] += m["tokens_out"]
+        acc["cache_read_tokens"] += m.get("cache_read_tokens", 0)
         acc["cost"] += m["cost"]
         acc["model"] = safe_model
     if res.get("error"):
@@ -447,7 +448,8 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
     import time as _time
     _t0 = _time.time()
     # Seed the per-run usage accumulator (thread-local; _bg_text adds to it).
-    _usage_tls.acc = {"run_id": run_id, "tokens_in": 0, "tokens_out": 0, "cost": 0.0, "model": ""}
+    _usage_tls.acc = {"run_id": run_id, "tokens_in": 0, "tokens_out": 0,
+                      "cache_read_tokens": 0, "cost": 0.0, "model": ""}
 
     fetches_used = 0
     try:
@@ -615,6 +617,7 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
         meta = {"model": _acc.get("model", model),
                 "tokens_in": _acc.get("tokens_in", 0),
                 "tokens_out": _acc.get("tokens_out", 0),
+                "cache_read_tokens": _acc.get("cache_read_tokens", 0),
                 "cost": round(_acc.get("cost", 0.0), 6),
                 "duration_s": round(_time.time() - _t0, 1)}
 
@@ -647,6 +650,7 @@ def _run_research(*, run_id, agent_id, project_name, project_id, project_dir,
             report_output_id=output_id, proposed=json.dumps(proposed),
             coverage_note=coverage_note,
             model=meta["model"], tokens_in=meta["tokens_in"], tokens_out=meta["tokens_out"],
+            cache_read_tokens=meta.get("cache_read_tokens", 0),
             cost=meta["cost"], duration_s=meta["duration_s"],
             progress=json.dumps({"subqueries": len(subqueries), "candidates": len(cand_list),
                                  "fetched": fetches_used, "kept": len(selected)}))
@@ -767,7 +771,8 @@ def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
     # cost_session_id keys each LLM call's cost row to THIS chat session so the
     # chat status-bar session-cost reflects the research spend.
     _usage_tls.acc = {"run_id": f"chat-{session_id}", "cost_session_id": session_id,
-                      "tokens_in": 0, "tokens_out": 0, "cost": 0.0, "model": ""}
+                      "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0,
+                      "cost": 0.0, "model": ""}
     fetches_used = 0
     try:
         # Model precedence (chat Deep Research): the chat's selected model wins —
@@ -930,6 +935,7 @@ def run_research_chat(*, agent_id, session_id, topic, user_id, budget=None,
         meta = {"model": _acc.get("model", model),
                 "tokens_in": _acc.get("tokens_in", 0),
                 "tokens_out": _acc.get("tokens_out", 0),
+                "cache_read_tokens": _acc.get("cache_read_tokens", 0),
                 "cost": round(_acc.get("cost", 0.0), 6),
                 "duration_s": round(_time.time() - _t0, 1)}
 

@@ -396,6 +396,16 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       }
       let progress = '';
       if (tot > 0) progress = ` ${proc}/${tot}`;
+      // During indexing, `tot` is the CHANGED-document count (what actually
+      // needs re-mining), NOT the whole project. Without context "4/145
+      // Dokumente" reads as if the project only has 145 docs. Append the
+      // already-up-to-date count so the number is unambiguous:
+      // "4/145 Dokumente · 258 unverändert".
+      let unchangedStr = '';
+      if (st.mining_phase === 'indexing') {
+        const unchanged = Number(st.mining_unchanged || 0);
+        if (unchanged > 0) unchangedStr = ` · ${unchanged} unverändert`;
+      }
       // ETA: extrapolate from elapsed wall time and processed share. Only
       // show once we've made meaningful progress (>=3%) so an early 0/N
       // doesn't claim "ETA 12 days". phaseStart may be epoch-seconds (float)
@@ -417,11 +427,11 @@ async function refreshProjectSyncStatus(agentId, projectName) {
       }
       // Build label per phase: "Speicher: Inhalte werden verknüpft 235/6994 ·
       // noch ca. 4 Min." or "Speicher: Dokumente werden gelesen 168/258
-      // Dokumente · noch ca. 2 Min.". When no phase counter is live yet, fall
-      // back to a plain "wird aktualisiert".
+      // Dokumente · 258 unverändert · noch ca. 2 Min.". When no phase counter is
+      // live yet, fall back to a plain "wird aktualisiert".
       const headWord = phaseWord || 'wird aktualisiert';
       const unitStr = unit ? ` ${unit}` : '';
-      label = `Speicher: ${headWord}${progress}${unitStr}${eta}`;
+      label = `Speicher: ${headWord}${progress}${unitStr}${unchangedStr}${eta}`;
       chip.title = 'Synchronisierung läuft';
       const sublabelElSync = document.getElementById('project-sync-sublabel');
       if (sublabelElSync) sublabelElSync.textContent = '';

@@ -951,7 +951,10 @@ async function _tcCmdCaveman(tab, arg) {
   if (isNaN(n) || n < 0 || n > 3) { tcPrint(tab, 'Verwendung: /caveman 0-3', 'tc-err'); return; }
   tab.caveman = n;
   if (tab.sessionId) {
-    try { await API.post(`/v1/sessions/${tab.sessionId}/manage`, { action: 'caveman_mode', value: n }); } catch (_) {}
+    // Canonical manage endpoint (session_id in body, level key = `mode`) —
+    // the old `/v1/sessions/<sid>/manage` + `value` shape hit a nonexistent
+    // route, so /caveman never actually persisted server-side.
+    try { await API.post('/v1/sessions/manage', { action: 'caveman_mode', session_id: tab.sessionId, mode: n }); } catch (_) {}
   }
   tcPrint(tab, `Caveman-Stil → <b>${n}</b>`, 'tc-sys');
 }

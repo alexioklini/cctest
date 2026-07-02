@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Code Review: LAB_Berechnung.R</title>
+<style>
+    @page { margin: 2cm; }
+    body { font-family: 'Calibri', Arial, sans-serif; color: #222222;
+      font-size: 11pt; line-height: 1.5; max-width: 820px;
+      margin: 0 auto; padding: 24px; background: #fff; }
+    h1,h2,h3,h4,h5,h6 { font-family: 'Calibri', Arial, sans-serif;
+      color: #1F3864; line-height: 1.2; margin: 1.1em 0 .4em; }
+    h1 { font-size: 20pt; } h2 { font-size: 16pt; }
+    h3 { font-size: 13pt; }
+    a { color: #2E74B5; }
+    code { font-family: 'Consolas', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    p.figure { text-align: center; } p.figure img { max-width: 100%; height: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #ddd; padding: 5px 9px; text-align: left; }
+    th { background: #1F3864;
+      color: #FFFFFF; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    .doc-header { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 20px; overflow: hidden; }
+    .doc-footer { border-top: 1px solid #eee; padding-top: 8px; margin-top: 28px; overflow: hidden; }
+    .pagenum::after { content: ""; }
+    @media print { .pagenum::after { content: counter(page); } }
+    </style>
+</head>
+<body>
+
+<h1>Code Review: LAB_Berechnung.R</h1>
+<p>---</p>
+<h2><strong>Management Summary</strong></h2>
+<table><thead><tr><th><strong>Kriterium</strong></th><th><strong>Bewertung</strong></th><th><strong>Details</strong></th></tr></thead><tbody><tr><td><strong>Funktionalität</strong></td><td>✅ <strong>Funktionsfähig</strong></td><td>Das Skript lädt die Funktion <code>StochastikTool</code> aus <code>Ablaufmodellierung.R</code> und führt sie mit den Daten aus <code>Input_Durchschnittssalden_2025.csv</code> aus.</td></tr><tr><td><strong>Code-Qualität</strong></td><td>⚠️ <strong>Verbesserungspotenzial</strong></td><td>Das Skript ist minimalistisch und enthält keine Fehlerbehandlung, Dokumentation oder Modularität.</td></tr><tr><td><strong>Wartbarkeit</strong></td><td>❌ <strong>Schlecht</strong></td><td>Keine Kommentare, keine Funktionen, keine Struktur. Einmalige Verwendung ohne Erweiterungsmöglichkeiten.</td></tr><tr><td><strong>Robustheit</strong></td><td>❌ <strong>Fehlend</strong></td><td>Keine Eingabevalidierung, keine Fehlerbehandlung, keine Logging-Mechanismen.</td></tr><tr><td><strong>Datenqualität</strong></td><td>✅ <strong>Abhängig von externen Daten</strong></td><td>Die Datenqualität hängt von der externen CSV-Datei ab.</td></tr></tbody></table>
+<p>---</p>
+<h2><strong>1. Funktionale Analyse</strong></h2>
+<h3><strong>1.1 Zweck des Skripts</strong></h3>
+<p>- <strong>Hauptaufgabe</strong>: Das Skript lädt die Funktion <code>StochastikTool</code> aus <code>Ablaufmodellierung.R</code> und führt sie mit den Daten aus <code>Input_Durchschnittssalden_2025.csv</code> aus.</p>
+<p>- <strong>Abhängigkeiten</strong>:</p>
+<p>- <code>Ablaufmodellierung.R</code> (enthält die Funktion <code>StochastikTool</code>).</p>
+<p>- Externe CSV-Datei (<code>Input_Durchschnittssalden_2025.csv</code>).</p>
+<h3><strong>1.2 Ablauf</strong></h3>
+<p>1. <strong>Laden der Funktion</strong>:</p>
+<p>```r</p>
+<p>source(&quot;Ablaufmodellierung.R&quot;)</p>
+<p>```</p>
+<p>2. <strong>Datenimport</strong>:</p>
+<p>```r</p>
+<p>LAB5 = read.csv(&quot;R:/Risikomanagement/Liquidität/Bodensatz/Aktualisierung Bodensätze für 2026/Datenbasis/Input_Durchschnittssalden_2025.csv&quot;, header = TRUE, sep = &quot;;&quot;, dec = &quot;.&quot;, fill = TRUE, stringsAsFactors = FALSE)</p>
+<p>```</p>
+<p>3. <strong>Ausführung</strong>:</p>
+<p>```r</p>
+<p>StochastikTool(LAB5)</p>
+<p>```</p>
+<h3><strong>1.3 Stärken</strong></h3>
+<p>- <strong>Einfachheit</strong>: Das Skript ist kurz und erfüllt seinen Zweck, solange <code>Ablaufmodellierung.R</code> und die CSV-Datei verfügbar sind.</p>
+<p>- <strong>Wiederverwendbarkeit</strong>: Die Logik ist abstrahiert in <code>StochastikTool</code>, sodass das Skript selbst nicht geändert werden muss, wenn sich die Berechnungen ändern.</p>
+<p>---</p>
+<h2><strong>2. Code-Qualität &amp; Struktur</strong></h2>
+<h3><strong>2.1 Stärken</strong></h3>
+<p>- <strong>Keine offensichtlichen Fehler</strong>: Das Skript enthält keine Syntaxfehler und führt die gewünschte Funktion aus.</p>
+<h3><strong>2.2 Schwächen</strong></h3>
+<table><thead><tr><th><strong>Problem</strong></th><th><strong>Beschreibung</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Keine Dokumentation</strong></td><td>Es gibt keine Kommentare oder Beschreibungen, was das Skript tut oder warum es existiert.</td><td>Kommentare am Anfang des Skripts hinzufügen: Zweck, Abhängigkeiten, Autor, Datum.</td></tr><tr><td><strong>Keine Fehlerbehandlung</strong></td><td>Falls <code>Ablaufmodellierung.R</code> oder die CSV-Datei nicht gefunden wird, stürzt das Skript ab.</td><td>Try-Catch-Blöcke oder <code>file.exists()</code>-Prüfungen hinzufügen.</td></tr><tr><td><strong>Keine Modularität</strong></td><td>Das Skript ist nicht in Funktionen unterteilt und kann nicht wiederverwendet oder getestet werden.</td><td>In eine Funktion <code>run_lab_calculation()</code> auslagern und diese in <code>Ablaufmodellierung.R</code> aufnehmen.</td></tr><tr><td><strong>Keine Rückgabewerte</strong></td><td>Das Skript gibt keine Rückgabewerte oder Log-Informationen zurück.</td><td>Ergebnis der <code>StochastikTool</code>-Funktion speichern und zurückgeben oder in eine Datei schreiben.</td></tr><tr><td><strong>Hardgecodete Pfade</strong></td><td>Der Pfad zur CSV-Datei ist hardgecoded und nicht anpassbar.</td><td>Pfad als Parameter oder Umgebungsvariable übergeben.</td></tr><tr><td><strong>Keine Logging-Mechanismen</strong></td><td>Es gibt keine Möglichkeit, den Ablauf oder Fehler zu protokollieren.</td><td><code>message()</code> oder <code>cat()</code> für Logging verwenden.</td></tr></tbody></table>
+<p>---</p>
+<h2><strong>3. Robustheit &amp; Fehlerbehandlung</strong></h2>
+<h3><strong>3.1 Aktueller Zustand</strong></h3>
+<p>- <strong>Keine Prüfungen</strong>: Das Skript geht davon aus, dass alle Abhängigkeiten (Funktion, CSV-Datei) vorhanden sind.</p>
+<p>- <strong>Keine Rückmeldung</strong>: Falls die CSV-Datei nicht gefunden wird, gibt es keine hilfreiche Fehlermeldung.</p>
+<h3><strong>3.2 Empfehlungen</strong></h3>
+<h4><strong>3.2.1 Eingabevalidierung</strong></h4>
+<pre><code>if (!file.exists(&quot;Ablaufmodellierung.R&quot;)) {
+  stop(&quot;Die Datei &#x27;Ablaufmodellierung.R&#x27; wurde nicht gefunden. Bitte überprüfen Sie den Pfad.&quot;)
+}
+
+if (!file.exists(&quot;R:/Risikomanagement/Liquidität/Bodensatz/Aktualisierung Bodensätze für 2026/Datenbasis/Input_Durchschnittssalden_2025.csv&quot;)) {
+  stop(&quot;Die CSV-Datei wurde nicht gefunden. Bitte überprüfen Sie den Pfad oder die Datei.&quot;)
+}</code></pre>
+<h4><strong>3.2.2 Fehlerbehandlung mit Try-Catch</strong></h4>
+<pre><code>tryCatch({
+  source(&quot;Ablaufmodellierung.R&quot;)
+  LAB5 &lt;- read.csv(&quot;R:/Risikomanagement/Liquidität/Bodensatz/Aktualisierung Bodensätze für 2026/Datenbasis/Input_Durchschnittssalden_2025.csv&quot;, header = TRUE, sep = &quot;;&quot;, dec = &quot;.&quot;, fill = TRUE, stringsAsFactors = FALSE)
+  result &lt;- StochastikTool(LAB5)
+  message(&quot;Berechnung erfolgreich abgeschlossen.&quot;)
+  return(result)
+}, error = function(e) {
+  message(&quot;Fehler bei der Ausführung: &quot;, e$message)
+  return(NULL)
+})</code></pre>
+<p>---</p>
+<h2><strong>4. Wartbarkeit &amp; Erweiterbarkeit</strong></h2>
+<h3><strong>4.1 Aktueller Zustand</strong></h3>
+<p>- <strong>Keine Erweiterbarkeit</strong>: Das Skript kann nicht einfach angepasst oder erweitert werden.</p>
+<p>- <strong>Keine Tests</strong>: Es gibt keine Möglichkeit, das Skript zu testen, ohne es manuell auszuführen.</p>
+<h3><strong>4.2 Empfehlungen</strong></h3>
+<h4><strong>4.2.1 Modularisierung</strong></h4>
+<p>Das Skript sollte in eine Funktion umgewandelt werden:</p>
+<pre><code>run_lab_calculation &lt;- function(csv_path = &quot;R:/Risikomanagement/Liquidität/Bodensatz/Aktualisierung Bodensätze für 2026/Datenbasis/Input_Durchschnittssalden_2025.csv&quot;) {
+  # Eingabevalidierung
+  if (!file.exists(&quot;Ablaufmodellierung.R&quot;)) {
+    stop(&quot;Die Datei &#x27;Ablaufmodellierung.R&#x27; wurde nicht gefunden.&quot;)
+  }
+  if (!file.exists(csv_path)) {
+    stop(&quot;Die CSV-Datei wurde nicht gefunden.&quot;)
+  }
+
+  # Datenimport
+  LAB5 &lt;- read.csv(csv_path, header = TRUE, sep = &quot;;&quot;, dec = &quot;.&quot;, fill = TRUE, stringsAsFactors = FALSE)
+
+  # Ausführung
+  result &lt;- StochastikTool(LAB5)
+  message(&quot;Berechnung erfolgreich abgeschlossen.&quot;)
+  return(result)
+}</code></pre>
+<h4><strong>4.2.2 Integration in <code>Ablaufmodellierung.R</code></strong></h4>
+<p>Die Funktion <code>run_lab_calculation()</code> sollte in <code>Ablaufmodellierung.R</code> aufgenommen werden, um die Wiederverwendbarkeit zu erhöhen.</p>
+<p>---</p>
+<h2><strong>5. Datenqualität &amp; Abhängigkeiten</strong></h2>
+<h3><strong>5.1 Abhängigkeiten</strong></h3>
+<table><thead><tr><th><strong>Abhängigkeit</strong></th><th><strong>Typ</strong></th><th><strong>Bewertung</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><code>Ablaufmodellierung.R</code></td><td>Funktion</td><td>✅ <strong>Verfügbar</strong></td><td>Keine Aktion erforderlich.</td></tr><tr><td><code>Input_Durchschnittssalden_2025.csv</code></td><td>Daten</td><td>⚠️ <strong>Extern</strong></td><td>Pfad als Parameter übergeben oder Umgebungsvariable nutzen.</td></tr></tbody></table>
+<h3><strong>5.2 Datenqualität</strong></h3>
+<p>- <strong>CSV-Format</strong>: Das Skript geht davon aus, dass die CSV-Datei korrekt formatiert ist (Header, Semikolon als Trennzeichen, Punkt als Dezimaltrennzeichen).</p>
+<p>- <strong>Empfehlung</strong>: Formatierung der CSV-Datei in der Dokumentation des Skripts beschreiben.</p>
+<p>---</p>
+<h2><strong>6. Performance</strong></h2>
+<h3><strong>6.1 Aktueller Zustand</strong></h3>
+<p>- <strong>Keine Performance-Probleme</strong>: Das Skript führt nur eine einfache Operation aus (Aufruf von <code>StochastikTool</code>).</p>
+<h3><strong>6.2 Empfehlungen</strong></h3>
+<p>Falls die CSV-Datei sehr groß ist, könnte eine effizientere Lesefunktion verwendet werden:</p>
+<pre><code>LAB5 &lt;- read.csv2(csv_path, header = TRUE)  # Nutzt standardmäßig Semikolon als Trennzeichen</code></pre>
+<p>---</p>
+<h2><strong>7. Dokumentation &amp; Benutzerfreundlichkeit</strong></h2>
+<h3><strong>7.1 Aktueller Zustand</strong></h3>
+<p>- <strong>Keine Dokumentation</strong>: Es gibt keine Beschreibung des Zwecks, der Abhängigkeiten oder der Nutzung des Skripts.</p>
+<h3><strong>7.2 Empfehlungen</strong></h3>
+<h4><strong>7.2.1 Skript-Dokumentation</strong></h4>
+<pre><code>#&#x27; Run LAB Berechnung
+#&#x27;
+#&#x27; This function loads the `StochastikTool` from `Ablaufmodellierung.R` and executes it
+#&#x27; with the data from the provided CSV file.
+#&#x27;
+#&#x27; @param csv_path Character, path to the CSV file containing the input data. Default is set to the current working directory.
+#&#x27; @return The result of the `StochastikTool` function or NULL if an error occurs.
+#&#x27; @examples
+#&#x27; result &lt;- run_lab_calculation()
+run_lab_calculation &lt;- function(csv_path = &quot;Input_Durchschnittssalden_2025.csv&quot;) {
+  ...
+}</code></pre>
+<h4><strong>7.2.2 README-Datei</strong></h4>
+<p>Eine <code>README.md</code> im Projektverzeichnis sollte folgende Informationen enthalten:</p>
+<p>- <strong>Zweck des Skripts</strong></p>
+<p>- <strong>Abhängigkeiten</strong> (Funktionen, Pakete, Daten)</p>
+<p>- <strong>Anleitung zur Nutzung</strong></p>
+<p>- <strong>Beispielaufruf</strong></p>
+<p>- <strong>Hinweise zur Fehlerbehandlung</strong></p>
+<p>---</p>
+<h2><strong>8. Sicherheit</strong></h2>
+<h3><strong>8.1 Aktueller Zustand</strong></h3>
+<p>- <strong>Keine Sicherheitsrisiken</strong>: Das Skript führt keine gefährlichen Operationen aus.</p>
+<h3><strong>8.2 Empfehlungen</strong></h3>
+<p>- <strong>Pfade prüfen</strong>: Falls die Skripte in einem unsicheren Umfeld ausgeführt werden, sollten Pfade validiert werden, um <strong>Path Traversal</strong>-Angriffe zu vermeiden.</p>
+<p>- <strong>Datenvalidierung</strong>: Die CSV-Daten sollten auf Plausibilität geprüft werden (z.B. keine negativen Salden).</p>
+<p>---</p>
+<h2><strong>9. Fazit &amp; Priorisierte Empfehlungen</strong></h2>
+<h3><strong>9.1 Zusammenfassung</strong></h3>
+<table><thead><tr><th><strong>Priorität</strong></th><th><strong>Empfehlung</strong></th><th><strong>Umsetzung</strong></th></tr></thead><tbody><tr><td><strong>Hoch</strong></td><td>Skript in eine Funktion umwandeln (<code>run_lab_calculation</code>).</td><td>Funktion erstellen und in <code>Ablaufmodellierung.R</code> integrieren.</td></tr><tr><td><strong>Hoch</strong></td><td>Eingabevalidierung hinzufügen (Pfade, Dateien).</td><td><code>file.exists()</code>-Prüfungen und Try-Catch-Blöcke implementieren.</td></tr><tr><td><strong>Mittel</strong></td><td>Dokumentation hinzufügen (Kommentare, README, Roxygen).</td><td>Skript und Projektverzeichnis dokumentieren.</td></tr><tr><td><strong>Mittel</strong></td><td>Fehlerbehandlung verbessern (Try-Catch, Logging).</td><td>Robustere Fehlerbehandlung implementieren.</td></tr><tr><td><strong>Niedrig</strong></td><td>Pfade als Parameter oder Umgebungsvariablen übergeben.</td><td>Flexibilität erhöhen.</td></tr></tbody></table>
+<p>---</p>
+<h2><strong>10. Beispiel für eine überarbeitete Version</strong></h2>
+<h3><strong>10.1 Überarbeitetes Skript</strong></h3>
+<pre><code>#&#x27; Run LAB Berechnung
+#&#x27;
+#&#x27; This function loads the `StochastikTool` from `Ablaufmodellierung.R` and executes it
+#&#x27; with the data from the provided CSV file.
+#&#x27;
+#&#x27; @param csv_path Character, path to the CSV file containing the input data.
+#&#x27; @return The result of the `StochastikTool` function or NULL if an error occurs.
+#&#x27; @examples
+#&#x27; result &lt;- run_lab_calculation(&quot;Input_Durchschnittssalden_2025.csv&quot;)
+run_lab_calculation &lt;- function(csv_path = &quot;Input_Durchschnittssalden_2025.csv&quot;) {
+  # Eingabevalidierung
+  if (!file.exists(&quot;Ablaufmodellierung.R&quot;)) {
+    stop(&quot;Die Datei &#x27;Ablaufmodellierung.R&#x27; wurde nicht gefunden. Bitte überprüfen Sie den Pfad.&quot;)
+  }
+  if (!file.exists(csv_path)) {
+    stop(&quot;Die CSV-Datei &#x27;&quot;, csv_path, &quot;&#x27; wurde nicht gefunden. Bitte überprüfen Sie den Pfad oder die Datei.&quot;)
+  }
+
+  # Datenimport
+  LAB5 &lt;- read.csv2(csv_path, header = TRUE)
+
+  # Ausführung
+  tryCatch({
+    source(&quot;Ablaufmodellierung.R&quot;)
+    result &lt;- StochastikTool(LAB5)
+    message(&quot;Berechnung erfolgreich abgeschlossen. Ergebnis gespeichert.&quot;)
+    return(result)
+  }, error = function(e) {
+    message(&quot;Fehler bei der Ausführung: &quot;, e$message)
+    return(NULL)
+  })
+}
+
+# Aufruf der Funktion (optional)
+# result &lt;- run_lab_calculation()</code></pre>
+<p>---</p>
+<h2><strong>11. Versionshistorie</strong></h2>
+<table><thead><tr><th><strong>Version</strong></th><th><strong>Datum</strong></th><th><strong>Autor</strong></th><th><strong>Änderungen</strong></th></tr></thead><tbody><tr><td>1.0</td><td>29.06.2026</td><td>KI-Assistent</td><td>Initiale Erstellung des Code Reviews.</td></tr><tr><td>1.1</td><td><em>Datum</em></td><td><em>Autor</em></td><td>Überarbeitete Version des Skripts (nach Umsetzung der Empfehlungen).</td></tr></tbody></table>
+<p>---</p>
+<p><strong>📌 Hinweis</strong>: Dieses Review wurde automatisch mit dem Brain Agent erstellt. Bei Fragen oder für weitere Unterstützung wenden Sie sich bitte an das Entwicklungsteam.</p>
+<div class="doc-footer" style="text-align:center;font-size:9pt;color:#666666"><div class="doc-autoline">Klassifizierung: Intern</div><div class="doc-autoline">Dieses Dokument wurde mit Unterstützung künstlicher Intelligenz erstellt.</div></div>
+</body>
+</html>

@@ -118,13 +118,20 @@ def render_metadata_footer(meta: dict) -> str:
     dur = meta.get("duration_s") or 0
     dur_str = f"{int(dur // 60)} min {int(dur % 60)} s" if dur >= 60 else f"{dur:.1f} s"
     ti, to = meta.get("tokens_in", 0), meta.get("tokens_out", 0)
+    cr = meta.get("cache_read_tokens", 0) or 0
     cost = meta.get("cost", 0)
+    # cache_read is billed at the discounted rate (~0.1×) and is SEPARATE from
+    # tokens_in (which keeps fresh input + cache_creation at full price); only
+    # surface the line when the provider actually reported cache hits.
+    tokens_line = f"- **Tokens:** {ti:,} Eingabe · {to:,} Ausgabe"
+    if cr:
+        tokens_line += f" · {cr:,} ⚡ gecacht (~0,1×)"
     return (
         "\n\n---\n\n## Metadaten\n"
         f"- **Modell:** {meta.get('model', '—')}\n"
         f"- **Erstellt:** {when}\n"
         f"- **Dauer:** {dur_str}\n"
-        f"- **Tokens:** {ti:,} Eingabe · {to:,} Ausgabe\n"
+        f"{tokens_line}\n"
         f"- **Kosten:** ${cost:.4f}\n")
 
 

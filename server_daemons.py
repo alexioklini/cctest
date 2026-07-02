@@ -1688,6 +1688,22 @@ def _project_sync_loop(srv):
         # mempalace schema bump). That self-corrects on the file's next real edit
         # and can be forced via Full-Resync; the steady-state no-op cost is what
         # matters here.
+        def _doc_key(fp):
+            # Map a chunk file path to its uploaded-document key; fall back to
+            # the path itself for non-chunk files (so they still count as 1 doc).
+            try:
+                k = engine.IngestManager._key_from_filename(os.path.basename(fp))
+            except Exception:
+                k = None
+            return k or fp
+
+        # Grand total of DISTINCT documents on disk (changed + unchanged), in the
+        # same doc-key space as total_docs below. Captured BEFORE the pre-filter
+        # narrows `files` to the changed set, so the UI can show
+        # "N need updating · M already up to date" instead of a bare N that reads
+        # like the whole project.
+        total_all_docs = len({_doc_key(f) for f in files})
+        unchanged_docs = 0
         try:
             _col = _get_drawers_col(palace_path, create=False)
             if _col is not None:
@@ -1717,6 +1733,11 @@ def _project_sync_loop(srv):
                           f"{len(_changed)}/{len(files)} file(s) changed, "
                           f"{len(files) - len(_changed)} unchanged skipped",
                           flush=True)
+                # Unchanged DOCUMENT count = grand total minus the docs that
+                # survived to the changed set (chunk-count differences collapse
+                # to the same doc key, so compute in doc-key space, not file
+                # count).
+                unchanged_docs = total_all_docs - len({_doc_key(f) for f in _changed})
                 files = _changed
         except Exception as _e:
             # Best-effort optimisation — on any error fall through to the full
@@ -1726,20 +1747,25 @@ def _project_sync_loop(srv):
         if not files:
             return 0  # nothing changed → mine() not needed at all
 
-        def _doc_key(fp):
-            # Map a chunk file path to its uploaded-document key; fall back to
-            # the path itself for non-chunk files (so they still count as 1 doc).
-            try:
-                k = engine.IngestManager._key_from_filename(os.path.basename(fp))
-            except Exception:
-                k = None
-            return k or fp
-
         total_docs = len({_doc_key(f) for f in files})
         filed = 0
-        if progress_cb:
-            try: progress_cb(0, total_docs, 0)
-            except Exception: pass
+
+        def _emit(done, total, drawers):
+            # Forward optional total_all/unchanged so the UI can distinguish
+            # "changed docs being mined" from "docs already up to date on disk".
+            # Older callbacks that only take (done, total, filed) still work.
+            if not progress_cb:
+                return
+            try:
+                progress_cb(done, total, drawers,
+                            total_all=total_all_docs, unchanged=unchanged_docs)
+            except TypeError:
+                try: progress_cb(done, total, drawers)
+                except Exception: pass
+            except Exception:
+                pass
+
+        _emit(0, total_docs, 0)
         # ONE mine() over ALL changed files — NOT per-batch. mp_miner.mine()
         # runs a wing-WIDE entity-link rebuild (hallways + cross-wing topic +
         # entity tunnels) at the END of every call, and that rebuild scans the
@@ -1771,9 +1797,7 @@ def _project_sync_loop(srv):
                 print(f"[project-sync] mine failed {folder} "
                       f"({len(files)} file(s)): {type(e).__name__}: {e}",
                       flush=True)
-            if progress_cb:
-                try: progress_cb(total_docs, total_docs, filed)
-                except Exception: pass
+            _emit(total_docs, total_docs, filed)
         else:
             seen_docs: set = set()
             for i in range(0, len(files), batch_size):
@@ -1794,9 +1818,7 @@ def _project_sync_loop(srv):
                           flush=True)
                 for f in batch:
                     seen_docs.add(_doc_key(f))
-                if progress_cb:
-                    try: progress_cb(len(seen_docs), total_docs, filed)
-                    except Exception: pass
+                _emit(len(seen_docs), total_docs, filed)
         return filed
 
     def _run_kg_for(wing: str, source_prefix: str, item_set_fn,
@@ -2550,14 +2572,26 @@ def _project_sync_loop(srv):
                                 # mining_done/total counter after each batch so
                                 # the client polling /sync-status sees the bar
                                 # advance instead of a frozen "syncing".
-                                def _mine_prog(done, total, filed):
-                                    srv._project_sync_set_live(
-                                        agent_id, proj_name,
+                                def _mine_prog(done, total, filed,
+                                               total_all=None, unchanged=None):
+                                    # mining_total = changed docs being mined;
+                                    # mining_total_all = all docs on disk;
+                                    # mining_unchanged = already-up-to-date docs.
+                                    # The UI shows "done/total · unchanged
+                                    # unverändert" so `total` no longer reads as
+                                    # the whole project.
+                                    _live = dict(
                                         state="syncing",
                                         mining_phase="indexing",
                                         mining_done=done,
                                         mining_total=total,
                                         mining_drawers=filed)
+                                    if total_all is not None:
+                                        _live["mining_total_all"] = total_all
+                                    if unchanged is not None:
+                                        _live["mining_unchanged"] = unchanged
+                                    srv._project_sync_set_live(
+                                        agent_id, proj_name, **_live)
                                     if _run_id:
                                         _sync_log.step_update(
                                             chats_db_path, _run_id, "indexing",
@@ -2871,12 +2905,19 @@ def _project_sync_loop(srv):
                         # per-file file_already_mined() skip-check inside mine()
                         # (the folder/binary-project hotspot). respect_gitignore
                         # stays True for user dirs.
-                        def _folder_prog(done, total, filed_so_far):
-                            srv._project_sync_set_live(
-                                agent_id, proj_name, state="syncing",
+                        def _folder_prog(done, total, filed_so_far,
+                                         total_all=None, unchanged=None):
+                            _live = dict(
+                                state="syncing",
                                 current_folder=fpath, mining_phase="indexing",
                                 mining_done=done, mining_total=total,
                                 mining_drawers=filed_so_far)
+                            if total_all is not None:
+                                _live["mining_total_all"] = total_all
+                            if unchanged is not None:
+                                _live["mining_unchanged"] = unchanged
+                            srv._project_sync_set_live(
+                                agent_id, proj_name, **_live)
                         try:
                             folder_filed = _mine_batched(
                                 fpath, wing, "brain-project-sync",

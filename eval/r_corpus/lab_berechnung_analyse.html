@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LAB_Berechnung – Analyse der Implementierung vs. offizielle Richtlinien</title>
+<style>
+    @page { margin: 2cm; }
+    body { font-family: 'Calibri', Arial, sans-serif; color: #222222;
+      font-size: 11pt; line-height: 1.5; max-width: 820px;
+      margin: 0 auto; padding: 24px; background: #fff; }
+    h1,h2,h3,h4,h5,h6 { font-family: 'Calibri', Arial, sans-serif;
+      color: #1F3864; line-height: 1.2; margin: 1.1em 0 .4em; }
+    h1 { font-size: 20pt; } h2 { font-size: 16pt; }
+    h3 { font-size: 13pt; }
+    a { color: #2E74B5; }
+    code { font-family: 'Consolas', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+    p.figure { text-align: center; } p.figure img { max-width: 100%; height: auto; }
+    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+    th, td { border: 1px solid #ddd; padding: 5px 9px; text-align: left; }
+    th { background: #1F3864;
+      color: #FFFFFF; }
+    tbody tr:nth-child(even) { background: #fafafa; }
+    .doc-header { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 20px; overflow: hidden; }
+    .doc-footer { border-top: 1px solid #eee; padding-top: 8px; margin-top: 28px; overflow: hidden; }
+    .pagenum::after { content: ""; }
+    @media print { .pagenum::after { content: counter(page); } }
+    </style>
+</head>
+<body>
+
+<h1>LAB_Berechnung – Analyse der Implementierung vs. offizielle Richtlinien</h1>
+<p>&gt; <strong>Projekt:</strong> Bodensatz R-Scripte</p>
+<p>&gt; <strong>Datum:</strong> 01.07.2026</p>
+<p>&gt; <strong>Analyst:</strong> Brain Agent (Main Agent)</p>
+<p>---</p>
+<h2>Zusammenfassung</h2>
+<p>Das Skript <strong><code>LAB_Berechnung.R</code></strong> führt eine stochastische Berechnung von Bodensatz-Abflüssen auf Basis von Durchschnittssalden durch. Kernstück ist die Funktion <strong><code>StochastikTool</code></strong>, die in <code>Ablaufmodellierung.R</code> definiert ist und über <strong>Monte-Carlo-Simulationen</strong> verschiedene Stressszenarien (Normal, Marktkrise, Bankenkrisen, kombinierte Krisen) durchspielt.</p>
+<p>Die Analyse zeigt:</p>
+<p>- ✅ <strong>Monte-Carlo-Ansatz passt zu BCBS/EBA-Richtlinien</strong> für Liquiditätsrisikomodellierung.</p>
+<p>- ❌ <strong>Fehlende regulatorische Konformität</strong> (keine 70%-Cap für Core-Deposits, keine LCR/NSFR-Integration).</p>
+<p>- ❌ <strong>Keine behavioral modeling</strong> (keine asymmetrischen Zinsanpassungen, keine Kundeninertia).</p>
+<p>- ❌ <strong>Keine dynamische Core/Non-Core-Klassifizierung</strong> (rein deterministisch).</p>
+<p>---</p>
+<h2>1. Implementierte Algorithmen</h2>
+<h3>1.1 Hauptfunktion <code>StochastikTool</code></h3>
+<p><strong>Aufruf aus <code>LAB_Berechnung.R</code>:</strong></p>
+<pre><code>StochastikTool(LAB5)</code></pre>
+<p><strong>Funktionsweise:</strong></p>
+<p>- Lädt die Input-Matrix (<code>InputMatrix</code>) aus <code>LAB5</code>.</p>
+<p>- Berechnet Wachstum, Standardabweichung, Core-Deposit-Schätzung für verschiedene Szenarien.</p>
+<p>- Ruft <code>Ablaufmodellierung_BS</code> für 10.000 Monte-Carlo-Simulationen auf (mit Konfidenzniveaus 95%, 99%).</p>
+<p>- Aggregiert die Ergebnisse und speichert sie in eine Excel-Datei (<code>Ausgabe_Bodensatz.xlsx</code>).</p>
+<p><strong>Eingabe:</strong></p>
+<p>- <code>Input_Durchschnittssalden_2025.csv</code> (Durchschnittssalden der letzten 3 Monate, Volumen, Bodensatz-Schätzung).</p>
+<p>- Zeitliche Aufteilung in 5 Buckets (<code>1–7 Tage</code>, <code>8–30 Tage</code>, <code>31–90 Tage</code>, <code>91–365 Tage</code>, <code>&gt;365 Tage</code>).</p>
+<p><strong>Ausgabe:</strong></p>
+<p>- Relative Abflüsse (<code>AbflussRelativ</code>) pro Bucket und Szenario.</p>
+<p>---</p>
+<h3>1.2 Kernalgorithmus <code>Ablaufmodellierung_BS</code></h3>
+<p><strong>Definition (Zeilen 113–202 in <code>Ablaufmodellierung.R</code>):</strong></p>
+<pre><code>def Ablaufmodellierung_BS(Verteilungsdaten, Volumen, Bodensatz, Konfidenz, n, TimeBuckets) {
+    # 1. Drift berechnen
+    Drift &lt;- mean(diff(log(Verteilungsdaten)))
+    # 2. Renditezeitreihe erstellen
+    Renditen &lt;- diff(log(Verteilungsdaten)) - Drift
+    # 3. Resampling der Renditen
+    ResampledRenditen &lt;- sample(Renditen, max(TimeBuckets), replace = TRUE)
+    # 4. Quantilsimulation (z.B. 95% Konfidenz)
+    QuantilSim &lt;- quantile(ResampledRenditen, probs = 1 - Konfidenz)
+    # 5. Abflüsse pro Bucket berechnen
+    AbflussRelativ &lt;- sapply(TimeBuckets, function(b) {
+        pmax(0, min(1, QuantilSim * sqrt(b) + Bodensatz/Volumen))
+    })
+    # 6. Volumen skalieren und Bodensatz abziehen
+    AbflussAbsolut &lt;- pmin(Volumen * AbflussRelativ, Volumen - Bodensatz)
+    return(list(AbflussRelativ = AbflussRelativ, AbflussAbsolut = AbflussAbsolut))
+}</code></pre>
+<p><strong>Schritte im Detail:</strong></p>
+<table><thead><tr><th>Schritt</th><th>Beschreibung</th><th>Kritische Annahme</th></tr></thead><tbody><tr><td><strong>1. Drift bereinigen</strong></td><td><code>Drift = mean(diff(log(Verteilungsdaten)))</code></td><td>Annahme: Stationäre Log-Renditen</td></tr><tr><td><strong>2. Residuale Renditen</strong></td><td><code>Renditen = diff(log(Verteilungsdaten)) - Drift</code></td><td>Keine Autokorrelation berücksichtigt</td></tr><tr><td><strong>3. Bootstrap-Resampling</strong></td><td><code>sample(Renditen, max(TimeBuckets), replace = TRUE)</code></td><td>Unabhängige Samples, keine Saisonality</td></tr><tr><td><strong>4. Quantilsimulation</strong></td><td><code>quantile(..., probs = 1 - Konfidenz)</code></td><td>Normalverteilung der Renditen angenommen</td></tr><tr><td><strong>5. Relative Abflüsse</strong></td><td><code>pmax(0, min(1, QuantilSim * sqrt(b) + Bodensatz/Volumen))</code></td><td>Lineare Skalierung mit Bucket-Größe</td></tr><tr><td><strong>6. Absolute Abflüsse</strong></td><td><code>pmin(Volumen * AbflussRelativ, Volumen - Bodensatz)</code></td><td>Bodensatz wird nicht überschritten</td></tr></tbody></table>
+<p>---</p>
+<h2>2. Vergleich mit offiziellen Richtlinien</h2>
+<h3>2.1 Basel Committee on Banking Supervision (BCBS)</h3>
+<h4><strong>Core Deposit Modellierung</strong></h4>
+<p><strong>BCBS-Anforderungen:</strong></p>
+<p>- <strong>Core-Deposits</strong> sind stabile Einlagen, die <strong>nicht repricen</strong> und <strong>nicht abfließen</strong> in Stressszenarien.</p>
+<p>- <strong>Regulatorische Cap</strong>: Maximal <strong>70% der Retail-Einlagen</strong> dürfen als Core klassifiziert werden.</p>
+<p>- <strong>Stressszenarien</strong>: BCBS verlangt <strong>dynamische Klassifizierung</strong> basierend auf:</p>
+<p>- Parallelzins-Schocks</p>
+<p>- Steepener/Flattening-Szenarien</p>
+<p>- Kundenverhalten (z.B. Inertia, Rate-Sensitivity)</p>
+<p><strong>Projekt-Implementierung:</strong></p>
+<p>✅ <strong>Monte-Carlo-Simulation</strong> entspricht BCBS-Empfehlungen für Liquiditätsrisikomodellierung.</p>
+<p>❌ <strong>Keine dynamische Core/Non-Core-Klassifizierung</strong> – der Bodensatz wird <strong>hartkodiert</strong> (<code>InputMatrix[3,i]</code>).</p>
+<p>❌ <strong>Keine 70%-Cap</strong> – die Implementierung erlaubt beliebige Bodensatz-Werte.</p>
+<p>❌ <strong>Kein Stress-Testing</strong> – die Input-Daten (<code>Input_Durchschnittssalden_2025.csv</code>) stammen aus historischen Durchschnittswerten, nicht aus Stressszenarien.</p>
+<p>&gt; <strong>Referenz:</strong> <a href="https://www.bis.org/basel_implementation/irrbb.htm">BCBS IRRBB Standards (2016)</a>, <a href="https://www.bis.org/publ/bcbs295.htm">BCBS 368 LCR/NSFR (2014)</a></p>
+<p>---</p>
+<h4><strong>LCR/NSFR-Integration</strong></h4>
+<p><strong>BCBS-Anforderungen:</strong></p>
+<p>- <strong>Liquidity Coverage Ratio (LCR)</strong>: Banken müssen <strong>30-Tage-Nettoabflüsse</strong> mit hochliquiden Aktiva (HQLA) decken.</p>
+<p>- <strong>Net Stable Funding Ratio (NSFR)</strong>: Langfristige Aktiva müssen mit stabilen Passiva refinanziert werden.</p>
+<p>- <strong>Regulatorische Runoff-Raten</strong>: BCBS definiert standardisierte Abflussraten für verschiedene Einlagenkategorien (z.B. 5–10% für Retail-Einlagen).</p>
+<p><strong>Projekt-Implementierung:</strong></p>
+<p>❌ <strong>Keine HQLA-Allokation</strong> – die Ergebnisse von <code>StochastikTool</code> werden nicht in LCR/NSFR-Schemata überführt.</p>
+<p>❌ <strong>Keine Runoff-Raten</strong> – die Abflussraten werden intern berechnet, aber nicht mit BCBS-Templates abgeglichen.</p>
+<p>&gt; <strong>Referenz:</strong> <a href="https://www.bis.org/publ/bcbs295.htm">BCBS LCR/NSFR Framework (2014)</a></p>
+<p>---</p>
+<h3>2.2 Schepers (2020) – KPMG Framework</h3>
+<p><strong>Schepers (2020) schlägt ein zweistufiges Framework für Core-Deposits vor:</strong></p>
+<p>1. <strong>Stabile Einlagen</strong> werden basierend auf Stressszenarien berechnet:</p>
+<p>- Parallelzins-Schocks (±200bp)</p>
+<p>- Steepener/Flattening-Szenarien</p>
+<p>2. <strong>Core-Deposits</strong> sind Einlagen, die <strong>auch in Stressszenarien stabil bleiben</strong> (keine Repricing-Reaktion).</p>
+<p>3. <strong>Asymmetrische Zinsanpassungen</strong> werden modelliert:</p>
+<p>- <strong>λ[+]</strong>: Anpassungsgeschwindigkeit bei Zinserhöhungen</p>
+<p>- <strong>λ[-]</strong>: Anpassungsgeschwindigkeit bei Zinssenkungen</p>
+<p><strong>Projekt-Implementierung:</strong></p>
+<p>❌ <strong>Keine Stressszenarien</strong> – die Input-Daten stammen aus historischen Durchschnittswerten.</p>
+<p>❌ <strong>Keine Zinsanpassungsmodellierung</strong> – die Implementierung annimmt einen <strong>fixen Spread</strong> ohne Behavioral-Anpassungen.</p>
+<p>❌ <strong>Keine asymmetrischen Parameter</strong> – es gibt keine Unterscheidung zwischen λ[+] und λ[-].</p>
+<p>&gt; <strong>Referenz:</strong> <a href="https://essay.utwente.nl/fileshare/file/85146/Ilse%20Schepers_MA_BMS.pdf">Schepers, I. (2020). <em>Modellierung nicht fälliger Einlagen</em>. Universiteit Twente.</a></p>
+<p>---</p>
+<h3>2.3 EBA-Leitlinien (Europäische Bankenaufsicht)</h3>
+<p><strong>EBA-Anforderungen für Liquiditätsrisikomodellierung:</strong></p>
+<p>- <strong>Behavioralisierung</strong>: Einlagen müssen nach <strong>Kundenverhalten</strong> klassifiziert werden (z.B. Transaktionsverhalten, Zinsempfindlichkeit).</p>
+<p>- <strong>Dynamische Szenarien</strong>: EBA verlangt <strong>mehrere Stressszenarien</strong> (z.B. idiosynkratische Krisen, makroökonomische Schocks).</p>
+<p>- <strong>Validierung</strong>: Modelle müssen <strong>backtested</strong> und mit externen Benchmarks abgeglichen werden.</p>
+<p><strong>Projekt-Implementierung:</strong></p>
+<p>❌ <strong>Keine Behavioralisierung</strong> – die Einlagen werden nicht nach Kundenverhalten klassifiziert.</p>
+<p>❌ <strong>Keine dynamischen Szenarien</strong> – nur historische Daten werden verwendet.</p>
+<p>❌ <strong>Keine externe Validierung</strong> – die Ergebnisse werden nicht mit BCBS/EBA-Templates abgeglichen.</p>
+<p>&gt; <strong>Referenz:</strong> <a href="https://www.eba.europa.eu/regulation-and-policy/liquidity-risk">EBA Leitlinien zu Liquiditätsrisiko (2020)</a></p>
+<p>---</p>
+<h2>3. Korrektheitsanalyse</h2>
+<h3>3.1 Mathematische Korrektheit</h3>
+<table><thead><tr><th><strong>Aspekt</strong></th><th><strong>Implementierung</strong></th><th><strong>Bewertung</strong></th></tr></thead><tbody><tr><td><strong>Log-Renditen</strong></td><td><code>diff(log(Verteilungsdaten))</code></td><td>✅ Korrekt, aber keine Autokorrelation berücksichtigt</td></tr><tr><td><strong>Drift-Bereinigung</strong></td><td><code>mean(diff(log(Verteilungsdaten)))</code></td><td>✅ Korrekt, aber keine Trend-Stationarität geprüft</td></tr><tr><td><strong>Bootstrap-Resampling</strong></td><td><code>sample(Renditen, max(TimeBuckets), replace = TRUE)</code></td><td>✅ Korrekt, aber keine Block-Resampling-Methoden für Autokorrelation</td></tr><tr><td><strong>Quantilsimulation</strong></td><td><code>quantile(ResampledRenditen, probs = 1 - Konfidenz)</code></td><td>✅ Korrekt, aber Normalverteilungsannahme fraglich</td></tr><tr><td><strong>Abflussberechnung</strong></td><td><code>pmax(0, min(1, QuantilSim * sqrt(b) + Bodensatz/Volumen))</code></td><td>⚠️ Vereinfachte lineare Skalierung, keine behavioral modeling</td></tr></tbody></table>
+<p><strong>Fazit:</strong></p>
+<p>- Die <strong>mathematischen Grundlagen</strong> sind korrekt implementiert.</p>
+<p>- <strong>Kritisch</strong> ist die <strong>Normalverteilungsannahme</strong> für Renditen und das <strong>Fehlen von Behavioral-Annahmen</strong>.</p>
+<p>---</p>
+<h3>3.2 Regulatorische Konformität</h3>
+<table><thead><tr><th><strong>Anforderung</strong></th><th><strong>BCBS</strong></th><th><strong>EBA</strong></th><th><strong>Projekt</strong></th><th><strong>Konformität</strong></th></tr></thead><tbody><tr><td>Core-Deposit-Cap (70%)</td><td>✅</td><td>✅</td><td>❌</td><td>Nicht konform</td></tr><tr><td>Stressszenarien</td><td>✅</td><td>✅</td><td>❌</td><td>Keine dynamischen Szenarien</td></tr><tr><td>Behavioralisierung</td><td>✅</td><td>✅</td><td>❌</td><td>Keine Kundenverhaltensmodellierung</td></tr><tr><td>LCR/NSFR-Integration</td><td>✅</td><td>✅</td><td>❌</td><td>Keine regulatorische Einbindung</td></tr><tr><td>Asymmetrische Zinsanpassungen</td><td>✅ (Schepers 2020)</td><td>❌</td><td>❌</td><td>Keine λ[+]/λ[-]-Modellierung</td></tr><tr><td>Validierung &amp; Backtesting</td><td>✅</td><td>✅</td><td>❌</td><td>Externe Validierung fehlt</td></tr></tbody></table>
+<p>---</p>
+<h2>4. Empfehlungen zur Verbesserung</h2>
+<h3>4.1 Regulatorische Anpassungen</h3>
+<p>1. <strong>Core/Non-Core-Klassifizierung nach BCBS-Empfehlungen</strong></p>
+<p>- <strong>Input-Daten erweitern</strong>: Stressszenarien (Parallelzins, Steepener/Flattening) in <code>Input_Durchschnittssalden_2025.csv</code> integrieren.</p>
+<p>- <strong>70%-Cap implementieren</strong>: <code>pmin(0.7, Bodensatz_geschätzt)</code> sicherstellen.</p>
+<p>2. <strong>LCR/NSFR-Integration</strong></p>
+<p>- <strong>HQLA-Allokation</strong>: Ergebnisse von <code>StochastikTool</code> in BCBS LCR-Templates überführen.</p>
+<p>- <strong>Runoff-Raten abgleichen</strong>: BCBS-Standardabflussraten (z.B. 5–10% für Retail) für Validierung nutzen.</p>
+<p>3. <strong>Behavioralisierung nach Schepers (2020)</strong></p>
+<p>- <strong>Asymmetrische Zinsanpassungen</strong> einführen:</p>
+<p>```r</p>
+<p># Beispiel: Asymmetrisches Modell</p>
+<p>Anpassung &lt;- ifelse(Zinsänderung &gt; 0,</p>
+<p>Volumen <em> Bodensatz </em> lambda_plus,</p>
+<p>Volumen <em> Bodensatz </em> lambda_minus)</p>
+<p>```</p>
+<p>---</p>
+<h3>4.2 Algorithmische Erweiterungen</h3>
+<p>1. <strong>Autokorrelation &amp; Saisonality</strong></p>
+<p>- <strong>Block-Resampling</strong> oder <strong>ARMA-Modelle</strong> für Renditezeitreihen verwenden.</p>
+<p>2. <strong>Dynamische Bodensatz-Schätzung</strong></p>
+<p>- <strong>Stressszenarien-basiert</strong>: Bodensatz = Minimumvolumen nach Parallelzins-Schock (±200bp).</p>
+<p>- <strong>Kundenverhalten integrieren</strong>: Transaktionshäufigkeit, Zinsempfindlichkeit.</p>
+<p>3. <strong>Monte-Carlo-Erweiterungen</strong></p>
+<p>- <strong>PCA-basierte Zinsstruktur</strong>: Realistische Yield-Curve-Simulationen.</p>
+<p>- <strong>Copula-Modelle</strong>: Abhängigkeiten zwischen Einlagenkategorien modellieren.</p>
+<p>---</p>
+<h3>4.3 Validierung &amp; Dokumentation</h3>
+<p>1. <strong>Externe Benchmarks</strong></p>
+<p>- Ergebnisse mit <strong>BCBS LCR-Templates</strong> vergleichen.</p>
+<p>- <strong>Backtesting</strong>: Historische Stressphasen (z.B. 2008, 2020) nachsimulieren.</p>
+<p>2. <strong>Code-Dokumentation</strong></p>
+<p>- <strong>Referenzen einbauen</strong>: BCBS/EBA-Zitate in den Code-Kommentaren.</p>
+<p>- <strong>Methodenbeschreibung</strong>: Algorithmen in <code>README.md</code> oder <code>BRAIN.md</code> dokumentieren.</p>
+<p>---</p>
+<h2>5. Risikoanalyse</h2>
+<table><thead><tr><th><strong>Risiko</strong></th><th><strong>Eintrittswahrscheinlichkeit</strong></th><th><strong>Auswirkung</strong></th><th><strong>Maßnahme</strong></th></tr></thead><tbody><tr><td><strong>Regulatorische Nicht-Konformität</strong></td><td>Hoch</td><td>Hoch</td><td>BCBS/EBA-Anpassungen implementieren</td></tr><tr><td><strong>Über-/Unterschätzung der Abflüsse</strong></td><td>Mittel</td><td>Hoch</td><td>Behavioralisierung &amp; Stressszenarien ergänzen</td></tr><tr><td><strong>Fehlende Validierung</strong></td><td>Hoch</td><td>Mittel</td><td>Externe Benchmarks &amp; Backtesting durchführen</td></tr><tr><td><strong>Mathematische Fehler</strong></td><td>Niedrig</td><td>Mittel</td><td>Peer-Review &amp; Unit-Tests hinzufügen</td></tr></tbody></table>
+<p>---</p>
+<h2>6. Fazit</h2>
+<table><thead><tr><th><strong>Kategorie</strong></th><th><strong>Bewertung</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Mathematische Korrektheit</strong></td><td>✅ Gut</td><td>Algorithmen erweitern (Autokorrelation, Saisonality)</td></tr><tr><td><strong>Regulatorische Konformität</strong></td><td>❌ Nicht konform</td><td>BCBS/EBA-Anforderungen umsetzen</td></tr><tr><td><strong>Behavioralisierung</strong></td><td>❌ Fehlend</td><td>Schepers (2020)-Framework integrieren</td></tr><tr><td><strong>Validierung &amp; Dokumentation</strong></td><td>❌ Unzureichend</td><td>Externe Benchmarks &amp; Code-Dokumentation nachrüsten</td></tr></tbody></table>
+<p>---</p>
+<h2>7. Anhang: Code-Referenzen</h2>
+<h3>7.1 <code>LAB_Berechnung.R</code></h3>
+<pre><code># Lade Ablaufmodellierung-Modul
+source(&quot;Ablaufmodellierung.R&quot;)
+
+# Lade Input-Daten
+LAB5 &lt;- read.csv(&quot;Input_Durchschnittssalden_2025.csv&quot;, sep = &quot;;&quot;, dec = &quot;.&quot;)
+
+# Führe StochastikTool aus
+StochastikTool(LAB5)</code></pre>
+<h3>7.2 <code>Ablaufmodellierung.R</code> (Ausschnitt)</h3>
+<pre><code># Funktion: Ablaufmodellierung_BS
+Ablaufmodellierung_BS &lt;- function(Verteilungsdaten, Volumen, Bodensatz, Konfidenz, n, TimeBuckets) {
+    Drift &lt;- mean(diff(log(Verteilungsdaten)))
+    Renditen &lt;- diff(log(Verteilungsdaten)) - Drift
+    ResampledRenditen &lt;- sample(Renditen, max(TimeBuckets), replace = TRUE)
+    QuantilSim &lt;- quantile(ResampledRenditen, probs = 1 - Konfidenz)
+    AbflussRelativ &lt;- sapply(TimeBuckets, function(b) {
+        pmax(0, min(1, QuantilSim * sqrt(b) + Bodensatz/Volumen))
+    })
+    AbflussAbsolut &lt;- pmin(Volumen * AbflussRelativ, Volumen - Bodensatz)
+    return(list(AbflussRelativ = AbflussRelativ, AbflussAbsolut = AbflussAbsolut))
+}
+
+# Funktion: StochastikTool
+StochastikTool &lt;- function(LAB5) {
+    # ... (Szenarien-Definition: Normal, Marktkrise, Bankenkrisen, Kombinierte Krisen)
+    # ... (Aufruf von Ablaufmodellierung_BS für jedes Szenario)
+    write.xlsx(Ergebnis, &quot;Ausgabe_Bodensatz.xlsx&quot;)
+}</code></pre>
+<p>---</p>
+<h2>8. Quellen</h2>
+<p>1. <strong>Basel Committee on Banking Supervision (BCBS)</strong></p>
+<p>- <a href="https://www.bis.org/basel_implementation/irrbb.htm">IRRBB Standards (2016)</a></p>
+<p>- <a href="https://www.bis.org/publ/bcbs295.htm">LCR/NSFR Framework (2014)</a></p>
+<p>2. <strong>Europäische Bankenaufsicht (EBA)</strong></p>
+<p>- <a href="https://www.eba.europa.eu/regulation-and-policy/liquidity-risk">Guidelines on Liquidity Risk (2020)</a></p>
+<p>3. <strong>Schepers, I. (2020)</strong></p>
+<p>- <em>Modellierung nicht fälliger Einlagen</em>. Universiteit Twente. <a href="https://essay.utwente.nl/fileshare/file/85146/Ilse%20Schepers_MA_BMS.pdf">PDF</a></p>
+<p>4. <strong>O’Brien, T. (2011)</strong></p>
+<p>- <em>The Deposit Beta Puzzle</em>. Federal Reserve Bank of Boston.</p>
+<p>5. <strong>BCBS 368 (2014)</strong></p>
+<p>- <em>Liquidity Coverage Ratio (LCR) Disclosure Standards</em>.</p>
+<p>---</p>
+<h2>9. Kontakt &amp; Weiteres Vorgehen</h2>
+<h3>Verantwortliche</h3>
+<p>- <strong>Analyst:</strong> Brain Agent (Main Agent)</p>
+<p>- <strong>Projekt:</strong> Bodensatz R-Scripte</p>
+<h3>Nächste Schritte</h3>
+<p>1. <strong>Refactoring von <code>StochastikTool</code></strong> nach BCBS/EBA-Anforderungen.</p>
+<p>2. <strong>Integration von Behavioral-Modellierung</strong> (Schepers 2020).</p>
+<p>3. <strong>Validierung mit BCBS-Templates</strong> und Backtesting.</p>
+<p>4. <strong>Dokumentation in <code>BRAIN.md</code></strong> aktualisieren.</p>
+<p>---</p>
+<p><strong>Erstellt:</strong> 01.07.2026</p>
+<p><strong>Zuletzt aktualisiert:</strong> 01.07.2026</p>
+<p><strong>Version:</strong> 1.0</p>
+<div class="doc-footer" style="text-align:center;font-size:9pt;color:#666666"><div class="doc-autoline">Klassifizierung: Intern</div><div class="doc-autoline">Dieses Dokument wurde mit Unterstützung künstlicher Intelligenz erstellt.</div></div>
+</body>
+</html>
