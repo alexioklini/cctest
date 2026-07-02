@@ -3541,7 +3541,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 live.emit("goal_verdict",
                                           {"fulfilled": False, "status": "active",
                                            "iteration": _goal_iter, "max": _goal_max,
-                                           "reasoning": _gv.get("reasoning", "")})
+                                           "reasoning": _gv.get("reasoning", ""),
+                                           "instruction": _gv["continue_instruction"]})
                                 # Rollback scope narrows to THIS iteration: a later
                                 # cancel/error must not undo persisted iterations.
                                 _msg_count_before = len(session.messages)

@@ -604,6 +604,12 @@ function _tcActivityCard(e) {
       : v === 'judge_error' ? 'Prüfung fehlgeschlagen — Durchlauf beendet'
       : 'Beendet';
     if (v === 'capped' || v === 'judge_error') dot = 'bg-st-error';
+    // Judge verdict payload: why the goal is(n't) met + what the model was
+    // told for the next iteration (only present on verdict 'active').
+    if (t.reasoning) body = 'Begründung: ' + t.reasoning;
+    if (t.instruction) {
+      body += (body ? '\n' : '') + 'Anweisung für die nächste Iteration: ' + t.instruction;
+    }
   } else if (t.kind === 'goal_round') {
     title = '🎯 Zusätzliche Iteration' + iterBit;
     line = running ? 'Der Agent arbeitet weiter am Ziel …' : 'Abgeschlossen';

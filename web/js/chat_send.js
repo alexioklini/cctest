@@ -1157,7 +1157,7 @@ function buildStreamCallbacks(chat, isActive) {
       goal_verdict: (d) => {
         chat.goalStatus = d.status || chat.goalStatus;
         chat._goalIteration = d.iteration || chat._goalIteration;
-        try { ChatTurnControl.goalVerdict(chat, d.status || '', d.iteration || 0); } catch(e){}
+        try { ChatTurnControl.goalVerdict(chat, d.status || '', d.iteration || 0, d.reasoning || '', d.instruction || ''); } catch(e){}
         if (!isActive()) return;
         setStreamStatus(chat, 'label', '');
         if (d.status === 'fulfilled' && typeof showToast === 'function') {

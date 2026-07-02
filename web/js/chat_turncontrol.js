@@ -244,12 +244,17 @@ const ChatTurnControl = {
     this._activityRefresh();
   },
 
-  goalVerdict(chat, status, iteration) {
+  goalVerdict(chat, status, iteration, reasoning, instruction) {
     chat = chat || state.activeChat;
     if (!chat) return;
     const e = this._activityArr(chat).slice().reverse()
       .find(x => x.kind === 'goal_judge' && x.status === 'running');
-    if (e) { e.status = 'done'; e.verdict = status || ''; if (iteration) e.iteration = iteration; }
+    if (e) {
+      e.status = 'done'; e.verdict = status || '';
+      if (iteration) e.iteration = iteration;
+      e.reasoning = reasoning || '';
+      e.instruction = instruction || '';
+    }
     this._activityRefresh();
   },
 

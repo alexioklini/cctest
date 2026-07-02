@@ -187,7 +187,8 @@ streaming call, per-USER history, fixed read-only tool set. See
   visible user message (`metadata.goal_continue`) and the turn re-runs, until
   fulfilled / judged impossible / iteration cap. New SSE events:
   `goal_judge_start {iteration, max}` · `goal_verdict {fulfilled, status:
-  active|fulfilled|capped|judge_error, iteration, max, reasoning}` ·
+  active|fulfilled|capped|judge_error, iteration, max, reasoning,
+  instruction (v9.267.0, only on status=active: the continue-instruction)}` ·
   `goal_continue {text, iteration, max, assistant_text, text_rounds}`
   (= iteration boundary: client closes the current assistant bubble). The
   single terminal `done` carries `goal {status, iteration, max, reasoning}`.

@@ -231,7 +231,10 @@ erfüllt ist:
   „Ziel: Iteration 2/5“. Zusätzlich zeigt der **Aktivität-Tab** im rechten
   Panel die Goal-Aktivität als Karten: die **geplante Ziel-Prüfung** (läuft
   nach Abschluss der Antwort), die **laufende Prüfung**, ihr **Ergebnis**
-  und jede **zusätzliche Iteration** samt Judge-Anweisung.
+  und jede **zusätzliche Iteration** samt Judge-Anweisung. Die
+  Ergebnis-Karte enthält dabei die **Begründung des Prüf-Modells** (warum
+  das Ziel (noch) nicht erreicht ist) und — bei einer Fortsetzung — die
+  **konkrete Anweisung an den Assistenten für den nächsten Durchlauf**.
 - **Erfüllt** → der Durchlauf endet, der Knopf wird grün („Ziel erreicht“),
   und weitere Nachrichten werden nicht mehr geprüft, bis Sie ein neues Ziel
   setzen oder das alte löschen.
@@ -1227,7 +1230,10 @@ des Chats: eine **eingefügte Klarstellung** (erst „Wartet auf das nächste
 Rundenende“, nach dem Einfügen „In Runde N übernommen“) und die
 **Goal-Modus-Aktivität** (bei aktivem Ziel während einer Antwort die *geplante*
 Ziel-Prüfung als zukünftige Aufgabe, dann die laufende Prüfung, ihr Ergebnis und
-jede zusätzliche Iteration mit der Judge-Anweisung).
+jede zusätzliche Iteration mit der Judge-Anweisung). Die Ergebnis-Karte der
+Ziel-Prüfung zeigt die Begründung des Prüf-Modells und bei „noch nicht
+erreicht" zusätzlich die Anweisung, die der Assistent für die nächste
+Iteration erhalten hat.
 
 **Vollansicht, Kopieren und Herunterladen** eines Tool-Ergebnisses passieren hier
 im Panel. Im Chat selbst steht pro Tool-Aufruf nur noch eine **kompakte Zeile**

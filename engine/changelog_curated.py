@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.267.0",
+        "date": "2026-07-02",
+        "title": "Ziel-Prüfung erklärt ihre Entscheidung",
+        "body": "Im Goal-Modus zeigt die Ziel-Prüfungs-Karte im Aktivität-Tab "
+                "des rechten Panels jetzt, WARUM das Ziel noch nicht erreicht "
+                "ist — und welche konkrete Anweisung der Assistent für den "
+                "nächsten Durchlauf erhalten hat. Auch bei erreichtem oder "
+                "abgebrochenem Ziel sehen Sie die Begründung des Prüf-Modells "
+                "direkt in der Karte.",
+        "audience": "user",
+        "versions": ["9.267.0"],
+    },
+    {
         "version": "9.266.0",
         "date": "2026-07-02",
         "title": "Riesige Excel-Exporte, Format-Vergleich, Rückgängig",
