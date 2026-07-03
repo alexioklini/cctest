@@ -5663,6 +5663,14 @@ class ChatHandlerMixin:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.flush()  # Ensure headers are pushed before streaming
+        # SSE has no content framing — without an explicit close after the
+        # terminal event the client can never see end-of-response: the fetch
+        # reader blocks on read() forever, streamChat never returns, and the
+        # client-side safety net never runs (verified on the wire: `done`
+        # arrived at 2.6s, the connection was still open 117s later). Closing
+        # also stops each turn from leaking one server thread parked on the
+        # keep-alive socket waiting for a next request that never comes.
+        self.close_connection = True
 
         # Wait for warmup if in progress (after SSE headers so client stays connected)
         if session._warmup_active:
@@ -5781,6 +5789,9 @@ class ChatHandlerMixin:
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.flush()
+        # Same close-after-terminal rule as the POST /v1/chat stream: the
+        # client must see EOF after done/error/idle (see comment there).
+        self.close_connection = True
         live = getattr(session, "live_stream", None) if session else None
         if live is None:
             try:

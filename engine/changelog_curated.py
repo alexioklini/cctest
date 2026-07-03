@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.276.2",
+        "date": "2026-07-03",
+        "title": "Chat erkennt das Antwort-Ende zuverlässig",
+        "body": "Bisher konnte es passieren, dass eine Antwort im Chat scheinbar "
+                "nie fertig wurde — der Ladeindikator lief weiter, obwohl der "
+                "Server längst fertig war, und erst ein Neuladen zeigte das "
+                "Ergebnis. Ursache war eine unterbrochene Verbindung (z. B. "
+                "nach Standby oder Netzwechsel), die der Browser nicht als tot "
+                "erkennen konnte. Jetzt schließt der Server den Datenstrom nach "
+                "jeder Antwort sauber, und der Browser erkennt eine tote "
+                "Verbindung nach spätestens 45 Sekunden selbst — die Antwort "
+                "erscheint dann automatisch, ohne Neuladen.",
+        "audience": "user",
+        "versions": ["9.276.2"],
+    },
+    {
         "version": "9.276.0",
         "date": "2026-07-03",
         "title": "Auto-Modellwahl: beste Intelligenz fürs Geld",

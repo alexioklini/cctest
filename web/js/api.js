@@ -536,6 +536,27 @@ class API {
 
   // Memory
 
+  // Read one SSE chunk, but treat prolonged byte-silence as a dead stream.
+  // The server emits a keepalive comment every 5s for the whole life of a
+  // turn, so 45s without a single byte means the connection is half-dead
+  // (tunnel drop, laptop sleep/wake, network switch): reader.read() would
+  // otherwise block forever, the turn end would never render, and the
+  // caller's safety net would never run — the "turn ende wird nicht erkannt,
+  // erst ein reload zeigt alles erledigt" failure mode. Throws
+  // Error('sse-stalled') on silence; the caller aborts + recovers.
+  static async _readOrStall(reader) {
+    const STALL_MS = 45000;
+    let timer;
+    const readP = reader.read();
+    readP.catch(() => {}); // pre-arm: the later abort() rejects this read
+    try {
+      return await Promise.race([
+        readP,
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('sse-stalled')), STALL_MS); }),
+      ]);
+    } finally { clearTimeout(timer); }
+  }
+
   // SSE Streaming Chat
   static async streamChat(sessionId, message, callbacks, model, files, images, gdprAction) {
     if (this._abortController) this._abortController.abort();
@@ -605,7 +626,17 @@ class API {
 
       let lastEventType = null;
       while (true) {
-        const {done, value} = await reader.read();
+        let chunk;
+        try { chunk = await API._readOrStall(reader); }
+        catch (stallErr) {
+          if (stallErr && stallErr.message === 'sse-stalled') {
+            console.warn('[SSE] chat stream stalled >45s — aborting dead connection (safety net recovers)');
+            try { this._abortController.abort(); } catch (e) {}
+            break;
+          }
+          throw stallErr;
+        }
+        const {done, value} = chunk;
         if (done) break;
         buffer += decoder.decode(value, {stream: true});
 
@@ -694,7 +725,22 @@ class API {
         }
       };
       while (true) {
-        const {done, value} = await reader.read();
+        let chunk;
+        try { chunk = await API._readOrStall(reader); }
+        catch (stallErr) {
+          if (stallErr && stallErr.message === 'sse-stalled') {
+            // Dead connection, but the worker may still be running. Re-attach
+            // on a fresh connection — the LiveStream replays every event of
+            // the turn (including a done we missed), so nothing is lost. Not
+            // a tight loop: another stall costs 45s before the next retry,
+            // and a truly dead server fails the fetch → error path ends it.
+            console.warn('[SSE] attach stream stalled >45s — re-attaching on a fresh connection');
+            try { this._streamController.abort(); } catch (e) {}
+            return API.attachStream(sessionId, callbacks);
+          }
+          throw stallErr;
+        }
+        const {done, value} = chunk;
         if (done) break;
         buffer += decoder.decode(value, {stream: true});
         const lines = buffer.split('\n');

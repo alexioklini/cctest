@@ -55,6 +55,14 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
   lost or duplicated across the attach boundary.
 - `GET /v1/chat/stream?session_id=X` reattaches any number of tabs.
   Client disconnect on the reattach endpoint NEVER cancels the worker.
+- **Connection lifecycle** (9.276.2): both chat SSE handlers set
+  `close_connection` so the client sees EOF right after the terminal
+  done/error/idle (SSE has no content framing — without the close, the
+  reader blocked forever and each turn leaked a server thread + socket).
+  Client side, `API._readOrStall` treats 45s of byte-silence (server
+  keepalives come every 5s) as a dead connection: streamChat aborts and
+  lets the safety net recover; attachStream re-attaches on a fresh
+  connection (LiveStream replay redelivers everything incl. a missed done).
 - Incremental persistence: `sessions.streaming_text` / `streaming_meta`
   written by event_callback (~0.4s throttle); cleared in worker `finally`.
 - **Brain-restart recovery**: the in-process loop dies WITH Brain (no
