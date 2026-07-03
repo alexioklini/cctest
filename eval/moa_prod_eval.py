@@ -142,7 +142,7 @@ def _delete_session(token, sid):
 
 def phase_gen(args):
     token = _mint_token()
-    with open(os.path.join(REPO_ROOT, "eval", "moa_questions.json")) as f:
+    with open(os.path.join(REPO_ROOT, "eval", args.questions)) as f:
         questions = json.load(f)
     if args.only:
         want = {x.strip() for x in args.only.split(",") if x.strip()}
@@ -319,6 +319,9 @@ def main():
     ap.add_argument("--arms", default="")
     ap.add_argument("--workers", type=int, default=5)
     ap.add_argument("--timeout", type=int, default=300)
+    ap.add_argument("--questions", default="moa_prod_questions.json",
+                    help="question file under eval/ (default: the 15 originals "
+                         "+ 3 live web-research questions)")
     args = ap.parse_args()
     if args.phase == "gen":
         phase_gen(args)
