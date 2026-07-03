@@ -9,10 +9,13 @@ import brain as engine
 from engine import model_bench
 
 # Live benchmark progress (single-run gate). Polled by GET
-# /v1/models/benchmark/status. Reset on each new run.
+# /v1/models/benchmark/status. Reset on each new run. cells_* count
+# (model × task_type) cells so single-model runs still show movement.
 _BENCH_PROGRESS = {
     "running": False, "done": 0, "total": 0,
-    "current_model": "", "started": 0.0, "judge": "", "errors": [],
+    "current_model": "", "current_task": "",
+    "cells_done": 0, "cells_total": 0,
+    "started": 0.0, "judge": "", "errors": [],
 }
 _BENCH_LOCK = threading.Lock()
 
@@ -21,21 +24,32 @@ def _run_benchmark_bg(targets, judge_model, task_types, config_path):
     """Background worker: benchmark each target model, persist results into
     config.json as they complete. Override blocks are preserved per cell."""
     import handlers.sidecar_proxy as sidecar_proxy
+    n_tasks = len(model_bench.effective_task_types(task_types))
     with _BENCH_LOCK:
         _BENCH_PROGRESS.update({
             "running": True, "done": 0, "total": len(targets),
-            "current_model": "", "started": time.time(),
+            "current_model": "", "current_task": "",
+            "cells_done": 0, "cells_total": len(targets) * n_tasks,
+            "started": time.time(),
             "judge": judge_model, "errors": [],
         })
     try:
-        for mid in targets:
+        for m_idx, mid in enumerate(targets):
             with _BENCH_LOCK:
                 _BENCH_PROGRESS["current_model"] = mid
+                _BENCH_PROGRESS["current_task"] = ""
+
+            def _cell_progress(task, done_cells, _base=m_idx * n_tasks):
+                with _BENCH_LOCK:
+                    _BENCH_PROGRESS["current_task"] = task
+                    _BENCH_PROGRESS["cells_done"] = _base + done_cells
+
             try:
                 measured = model_bench.benchmark_model(
                     mid, judge_model,
                     background_call=sidecar_proxy.background_call,
-                    task_types=task_types)
+                    task_types=task_types,
+                    progress_cb=_cell_progress)
             except Exception as e:
                 with _BENCH_LOCK:
                     _BENCH_PROGRESS["errors"].append(f"{mid}: {e}")
@@ -69,6 +83,8 @@ def _run_benchmark_bg(targets, judge_model, task_types, config_path):
         with _BENCH_LOCK:
             _BENCH_PROGRESS["running"] = False
             _BENCH_PROGRESS["current_model"] = ""
+            _BENCH_PROGRESS["current_task"] = ""
+            _BENCH_PROGRESS["cells_done"] = _BENCH_PROGRESS["cells_total"]
 
 
 class ProvidersHandlerMixin:

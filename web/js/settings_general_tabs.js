@@ -378,6 +378,9 @@ async function _genTab_models(C) {
       const fmtSel = sel.closest('div').parentElement.querySelector('.mdl-thinking-format');
       if (fmtSel) _mdlPopulateThinkingLevel(fmtSel.value || 'none', sel, sel.dataset.current || '');
     });
+    // Attach to a benchmark that is already running (page reload / tab
+    // switch mid-run) — silent no-op when idle.
+    _pollBenchmark(true);
 }
 
 // Per-model benchmark table inside the detail panel: one row per task type
@@ -429,21 +432,40 @@ async function runBenchmark(mid) {
   } catch (e) { showToast('Benchmark-Start fehlgeschlagen: ' + (e.message||e), true); }
 }
 
-function _pollBenchmark() {
-  const el = document.getElementById('bench-progress');
+// Poll benchmark progress into #bench-progress (bar + model/task detail).
+// resumeOnly=true (models-tab render) attaches to an already-running run and
+// stays silent if none is running — so a reload/tab-switch mid-benchmark
+// still shows live progress. The element is re-queried every tick because
+// switchGeneralTab re-renders the tab (a captured node would go stale).
+function _pollBenchmark(resumeOnly) {
+  if (_pollBenchmark._active) return;  // one poll loop, no matter how often triggered
+  _pollBenchmark._active = true;
   const tick = async () => {
+    const el = document.getElementById('bench-progress');
     let s;
     try { s = await API.get('/v1/models/benchmark/status'); }
-    catch (e) { if (el) el.textContent = ''; return; }
+    catch (e) { _pollBenchmark._active = false; if (el) el.textContent = ''; return; }
     if (s.running) {
-      if (el) el.textContent = `Benchmark: ${s.done}/${s.total} · ${modelShortName(s.current_model||'', false)}`;
+      if (el) {
+        const total = s.cells_total || 0, done = s.cells_done || 0;
+        const pct = total ? Math.round(done / total * 100) : 0;
+        const what = [modelShortName(s.current_model || '', false), s.current_task].filter(Boolean).join(' · ');
+        el.innerHTML = `<span style="display:inline-flex;align-items:center;gap:8px">
+          <span style="width:12px;height:12px;border:2px solid var(--border-100);border-top-color:var(--accent-main-100,#6c7fd8);border-radius:50%;animation:spin 0.8s linear infinite;flex:none"></span>
+          <span style="display:inline-block;width:110px;height:6px;border-radius:3px;background:var(--bg-200);overflow:hidden;vertical-align:middle"><span style="display:block;height:100%;width:${pct}%;background:var(--accent-main-100,#6c7fd8);transition:width .5s"></span></span>
+          <span style="color:var(--text-200)">Benchmark läuft: ${done}/${total}${s.total > 1 ? ` · Modell ${Math.min(s.done + 1, s.total)}/${s.total}` : ''} · ${esc(what)}</span>
+        </span>`;
+      }
       setTimeout(tick, 2000);
     } else {
+      _pollBenchmark._active = false;
+      if (resumeOnly && !tick._sawRunning) { if (el) el.textContent = ''; return; }
       if (el) el.textContent = s.errors && s.errors.length ? `Fertig (${s.errors.length} Fehler)` : 'Fertig';
       // Reload fresh config so the benchmark tables repopulate.
       API.getModelsConfig().then(d => { state.modelsConfig = d; switchGeneralTab('models'); });
       showToast('Benchmark abgeschlossen');
     }
+    tick._sawRunning = tick._sawRunning || s.running;
   };
   tick();
 }

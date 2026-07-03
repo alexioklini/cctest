@@ -352,16 +352,33 @@ def benchmark_cell(model: str, task_type: str, judge_model: str,
     return out
 
 
+def effective_task_types(task_types: list[str] | None = None) -> list[str]:
+    """The task types a benchmark run will actually execute (callers use this
+    to size progress totals before the run starts)."""
+    return [t for t in (task_types or TASK_TYPES) if t in BENCH_PROMPTS]
+
+
 def benchmark_model(model: str, judge_model: str, *, background_call,
                     task_types: list[str] | None = None,
-                    timeout_s: float = 60.0) -> dict:
+                    timeout_s: float = 60.0,
+                    progress_cb=None) -> dict:
     """Benchmark one model across all (or the given) task types.
 
     Returns {task_type: cell_result} — the `measured` block per cell. The caller
     merges this into config.json under models.<id>.benchmark.<task>.measured,
     preserving any existing `override`.
+
+    `progress_cb(task_type, done_cells)` (optional) fires before each cell so
+    live progress can surface per task, not just per model.
     """
-    types = [t for t in (task_types or TASK_TYPES) if t in BENCH_PROMPTS]
-    return {t: benchmark_cell(model, t, judge_model,
-                              background_call=background_call, timeout_s=timeout_s)
-            for t in types}
+    types = effective_task_types(task_types)
+    out = {}
+    for i, t in enumerate(types):
+        if progress_cb:
+            try:
+                progress_cb(t, i)
+            except Exception:
+                pass
+        out[t] = benchmark_cell(model, t, judge_model,
+                                background_call=background_call, timeout_s=timeout_s)
+    return out

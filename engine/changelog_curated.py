@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.273.0",
+        "date": "2026-07-03",
+        "title": "Benchmark-Läufe zeigen jetzt Live-Fortschritt",
+        "body": "Wenn Sie in den Allgemeinen Einstellungen unter „Modelle“ einen "
+                "Benchmark starten, sehen Sie jetzt direkt neben den Schaltflächen "
+                "einen Fortschrittsbalken mit dem gerade getesteten Modell und "
+                "Aufgabentyp — statt wie bisher minutenlang ohne Rückmeldung zu "
+                "warten. Die Anzeige überlebt auch einen Tab-Wechsel oder das "
+                "erneute Öffnen der Einstellungen: Läuft noch ein Benchmark, wird "
+                "der Fortschritt automatisch wieder angezeigt.",
+        "audience": "admin",
+        "versions": ["9.273.0"],
+    },
+    {
         "version": "9.272.0",
         "date": "2026-07-03",
         "title": "Keine erfundenen Quellen, keine unnötigen Verweigerungen",
