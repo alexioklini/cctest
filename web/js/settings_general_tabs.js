@@ -49,7 +49,7 @@ async function _genTab_server(C) {
           })()}
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        ${SEC('MoA (Mixture of Agents)', 'Das „🧬 MoA (Smart)"-Modell im Verfasser: mehrere Referenzmodelle entwerfen parallel (ohne Tools) je einen Antwort-Entwurf, das per Auto-Routing gewählte Modell prüft die Entwürfe und führt sie zur finalen Antwort zusammen. Die Matrix unten legt PRO AUFGABENTYP fest, welche Modelle Entwürfe liefern: Spalte ohne Häkchen = für diesen Aufgabentyp läuft KEIN Fan-out (die Anfrage verhält sich wie „Smart (Cloud)"); Häkchen = genau diese Modelle sind die Kandidaten (das am besten geeignete Top-N tritt an; das Modell, das gerade selbst antwortet, wird automatisch ausgelassen). Tipp: Programmierung/Mathematik/Schnell leer lassen — dort bringt der Fan-out nachweislich nichts. Benötigt Klassifikator-Modus „LLM" oder „Hybrid". Jeder Entwurf ist ein eigener kostenpflichtiger Modell-Aufruf.')}
+        ${SEC('Experten-Gremium (MoA)', 'Das „🧬 Experten-Gremium"-Modell im Verfasser: mehrere Experten-Modelle arbeiten parallel (ohne Tools) der Antwort zu, das per Auto-Routing gewählte Modell führt ihre Beiträge zur finalen Antwort zusammen. Die Matrix unten legt PRO AUFGABENTYP fest, welche Modelle im Gremium sitzen: Spalte ohne Häkchen = für diesen Aufgabentyp tritt KEIN Gremium an (die Anfrage verhält sich wie „Smart (Cloud)"); Häkchen = genau diese Modelle sind die Kandidaten (das am besten geeignete Top-N tritt an; das Modell, das gerade selbst antwortet, wird automatisch ausgelassen). Der BEITRAGS-MODUS pro Spalte bestimmt, WAS die Experten liefern: „Antwort" = vollständiger Antwort-Entwurf (stark bei Wissens-/Urteilsfragen), „Ansatz" = nur die Herangehensweise — Schritte, Quellen, Fallstricke — die das antwortende Modell dann mit seinen Tools ausführt (stark bei Recherche/Orchestrierung, wo tool-lose Experten nichts Endgültiges beantworten können). Tipp: Programmierung/Mathematik/Schnell leer lassen — dort bringt das Gremium nachweislich nichts. Benötigt Klassifikator-Modus „LLM" oder „Hybrid". Jeder Experten-Beitrag ist ein eigener kostenpflichtiger Modell-Aufruf.')}
         ${(() => {
           const mo = srv.moa || {};
           const vocab = mo.task_type_vocab || ['coding','math','research','analysis','reporting','creative','orchestration','agentic','fast'];
@@ -67,8 +67,19 @@ async function _genTab_server(C) {
           const isOn = (tt, mid) => hasTp
             ? ((tp[tt] || []).includes(mid))
             : (legacyGate.includes(tt) && legacyPool.includes(mid));
+          const modes = mo.task_modes || {};
           const th = vocab.map(tt =>
             `<th style="padding:4px 6px;font-size:11px;color:var(--text-200);font-weight:600;white-space:nowrap;text-align:center" title="${esc(tt)}">${esc(ttDe[tt]||tt)}</th>`).join('');
+          // Second header row: per-column contribution mode (answer|plan).
+          const thMode = vocab.map(tt => {
+            const md = modes[tt] === 'plan' ? 'plan' : 'answer';
+            return `<th style="padding:2px 4px;text-align:center">
+              <select class="form-select moa-mode-sel" data-tt="${esc(tt)}" title="Beitrags-Modus für ${esc(ttDe[tt]||tt)}" style="font-size:10.5px;padding:1px 2px;width:100%">
+                <option value="answer" ${md==='answer'?'selected':''}>Antwort</option>
+                <option value="plan" ${md==='plan'?'selected':''}>Ansatz</option>
+              </select>
+            </th>`;
+          }).join('');
           const rows = cloudModels.map(([id]) => {
             const cells = vocab.map(tt =>
               `<td style="text-align:center;padding:3px 6px"><input type="checkbox" class="moa-tp-cb" data-tt="${esc(tt)}" data-mid="${esc(id)}" ${isOn(tt, id)?'checked':''}></td>`).join('');
@@ -79,27 +90,30 @@ async function _genTab_server(C) {
           }).join('');
           return `<div style="${G('10px')}">
             <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-100)">
-              <input type="checkbox" id="moa-enabled" ${mo.enabled?'checked':''}> MoA aktiviert (blendet das 🧬-Modell im Verfasser ein)
+              <input type="checkbox" id="moa-enabled" ${mo.enabled?'checked':''}> Experten-Gremium aktiviert (blendet das 🧬-Modell im Verfasser ein)
             </label>
-            <div style="font-size:12px;color:var(--text-200);font-weight:600">Referenz-Matrix: welches Modell entwirft bei welchem Aufgabentyp</div>
+            <div style="font-size:12px;color:var(--text-200);font-weight:600">Gremium-Matrix: welches Modell tritt bei welchem Aufgabentyp an — und ob es eine Antwort oder einen Ansatz beisteuert</div>
             <div style="overflow-x:auto;border:1px solid var(--border-100);border-radius:8px;padding:8px;background:var(--bg-100)">
               ${cloudModels.length ? `<table style="border-collapse:collapse;min-width:100%">
-                <thead><tr><th style="text-align:left;padding:4px 8px 4px 0;font-size:11px;color:var(--text-200)">Modell</th>${th}</tr></thead>
+                <thead>
+                  <tr><th style="text-align:left;padding:4px 8px 4px 0;font-size:11px;color:var(--text-200)">Modell</th>${th}</tr>
+                  <tr><th style="text-align:left;padding:2px 8px 2px 0;font-size:10px;color:var(--text-300)">Beitrags-Modus</th>${thMode}</tr>
+                </thead>
                 <tbody>${rows}</tbody>
               </table>` : '<span style="font-size:12px;color:var(--text-300)">Keine Cloud-Modelle aktiviert.</span>'}
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
-              <label style="font-size:12px;color:var(--text-200)">Max. Referenzen
+              <label style="font-size:12px;color:var(--text-200)">Max. Experten je Anfrage
                 <input class="form-input" id="moa-max-refs" type="number" min="1" max="5" value="${parseInt(mo.max_references)||3}" style="width:100%;margin-top:4px">
               </label>
-              <label style="font-size:12px;color:var(--text-200)">Max. Tokens je Entwurf
+              <label style="font-size:12px;color:var(--text-200)">Max. Tokens je Beitrag
                 <input class="form-input" id="moa-ref-tokens" type="number" min="64" max="4000" value="${parseInt(mo.reference_max_tokens)||600}" style="width:100%;margin-top:4px">
               </label>
-              <label style="font-size:12px;color:var(--text-200)">Timeout je Referenz (s)
+              <label style="font-size:12px;color:var(--text-200)">Timeout je Experte (s)
                 <input class="form-input" id="moa-ref-timeout" type="number" min="5" max="600" value="${parseInt(mo.reference_timeout_s)||60}" style="width:100%;margin-top:4px">
               </label>
             </div>
-            <div><button class="btn-secondary" onclick="saveMoaConfig()">MoA speichern</button></div>
+            <div><button class="btn-secondary" onclick="saveMoaConfig()">Experten-Gremium speichern</button></div>
           </div>`;
         })()}
         ${SEC('Eingabefeld-Standards (global)', 'GLOBALE Vorgabe, mit der ein NEUER Chat startet: Denk-Stufe, Caveman-Modus und Gedächtnis-Modus. Jeder Nutzer kann das pro Konto übersteuern (Benutzereinstellungen → Memory → „Eingabefeld-Standards“, „Server-Standard verwenden“ = erbt diesen Wert hier). Gilt nur für frische Chats — beim Wiederöffnen wird der eigene gespeicherte Stand des Chats wiederhergestellt. (Der Gedächtnis-Standard ist derselbe Wert wie in MemPalace → Classifier.)')}
@@ -2616,9 +2630,15 @@ async function saveMoaConfig() {
     const tt = cb.dataset.tt, mid = cb.dataset.mid;
     (taskPools[tt] = taskPools[tt] || []).push(mid);
   });
+  // Per-column contribution mode (Antwort|Ansatz) from the matrix's 2nd header row.
+  const taskModes = {};
+  document.querySelectorAll('.moa-mode-sel').forEach(sel => {
+    taskModes[sel.dataset.tt] = sel.value === 'plan' ? 'plan' : 'answer';
+  });
   const body = {moa: {
     enabled: !!document.getElementById('moa-enabled')?.checked,
     task_pools: taskPools,
+    task_modes: taskModes,
     max_references: Math.max(1, Math.min(5, parseInt(document.getElementById('moa-max-refs')?.value) || 3)),
     reference_max_tokens: parseInt(document.getElementById('moa-ref-tokens')?.value) || 600,
     reference_timeout_s: parseInt(document.getElementById('moa-ref-timeout')?.value) || 60,
@@ -2632,7 +2652,7 @@ async function saveMoaConfig() {
     if (state.serverInfo) {
       state.serverInfo.moa_enabled = !!(eff.enabled && (tpAny || (eff.reference_pool || []).length));
     }
-    showToast('MoA-Einstellungen gespeichert');
+    showToast('Experten-Gremium gespeichert');
   } catch (e) {
     showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
   }

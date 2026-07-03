@@ -133,7 +133,7 @@ function toolDescribe(name, args) {
     execute_command: () => `Befehl ausführen: \`${(a.command || '').substring(0, 60)}${(a.command || '').length > 60 ? '...' : ''}\``,
     python_exec: () => `Python ausführen (${(a.code || '').split('\n').length} Zeilen)`,
     web_fetch: () => { try { return `Webseite abrufen: ${a.url ? new URL(a.url).hostname : '...'}`; } catch(e) { return `Webseite abrufen: ${a.url || '...'}`; } },
-    moa_reference: () => `🧬 MoA-Referenz: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
+    moa_reference: () => `🧬 Experte: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}${a.mode === 'plan' ? ' (Ansatz)' : ''}`,
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     run_background_task: () => a.title ? `Hintergrundaufgabe: ${a.title}` : 'Hintergrundaufgabe starten',
@@ -744,7 +744,7 @@ function renderSyntheticGdprCall(msg, idx) {
     anonymise_read: 'Tool-Ausgabe anonymisiert',
     deanonymise_text: 'Antwort wiederhergestellt',
     deanonymise_file: 'Datei wiederhergestellt',
-    moa_reference: 'MoA-Referenz',
+    moa_reference: 'Experte',
   };
   const title = titleMap[kind] || kind;
 
@@ -771,13 +771,15 @@ function renderSyntheticGdprCall(msg, idx) {
   } else if (kind === 'deanonymise_file') {
     summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' wiederhergestellt';
   } else if (kind === 'moa_reference') {
-    // Dispatch args carry the planned model; the done result carries the model
-    // that actually ran (GDPR may have swapped it) + the draft size.
+    // Dispatch args carry the planned model + contribution mode; the done
+    // result carries the model that actually ran (GDPR may have swapped it),
+    // the draft size and the mode ("answer" = Antwort, "plan" = Ansatz).
     const mdl = result.model || msg.args?.model || '';
     const mName = mdl ? modelShortName(mdl, false) : 'Modell';
-    if (status === 'pending') summary = `${mName} entwirft …`;
+    const mMode = (result.mode || msg.args?.mode) === 'plan' ? ' · Ansatz' : '';
+    if (status === 'pending') summary = `${mName} arbeitet zu …`;
     else if (status === 'error') summary = `${mName}: ${String(result.error || 'fehlgeschlagen').slice(0, 120)}`;
-    else summary = `${mName} · ${result.chars ?? 0} Zeichen`;
+    else summary = `${mName} · ${result.chars ?? 0} Zeichen${mMode}`;
   }
 
   // Status icon: green check / spinner / red x.
@@ -797,9 +799,9 @@ function renderSyntheticGdprCall(msg, idx) {
   // GDPR kinds, DNA for MoA reference drafts.
   const isMoa = kind === 'moa_reference';
   const shieldBadge = isMoa
-    ? ('<span class="tool-badge-synthetic" title="Mixture of Agents — Referenz-Entwurf" '
+    ? ('<span class="tool-badge-synthetic" title="Experten-Gremium (Mixture of Agents) — Beitrag eines Experten-Modells" '
       + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
-      + 'background:rgba(79,70,229,.12);color:#4f46e5;letter-spacing:.02em;">MOA</span>')
+      + 'background:rgba(79,70,229,.12);color:#4f46e5;letter-spacing:.02em;">GREMIUM</span>')
     : ('<span class="tool-badge-synthetic" title="Serverseitige Datenschutz-Operation" '
       + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
       + 'background:rgba(4,120,87,.12);color:#047857;letter-spacing:.02em;">DATENSCHUTZ</span>');
@@ -812,7 +814,7 @@ function renderSyntheticGdprCall(msg, idx) {
   if (isMoa && moaDraft) {
     return `
     <details class="tool-block tool-block-synthetic${done ? ' has-result' : ''}">
-      <summary class="tool-block-header" style="cursor:pointer;list-style:none" title="Klick: Entwurf des Referenzmodells anzeigen">
+      <summary class="tool-block-header" style="cursor:pointer;list-style:none" title="Klick: Beitrag des Experten-Modells anzeigen">
         ${iconHtml}
         <span class="tool-name">🧬 ${esc(title)}${summary ? ': ' + esc(summary) : ''}</span>
         ${shieldBadge}

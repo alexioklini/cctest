@@ -695,7 +695,8 @@ Once a feedback row exists, user and admin exchange short one-line messages
   `chat_summary_model`, `classifier_model`, `auto_route_classifier_mode`,
   `gdpr_scanner{…}` and (9.268.0) `moa{enabled, task_pools (9.269.0 matrix:
   {task_type: [model ids]}, replaces the legacy reference_pool +
-  gate_task_types pair), max_references, reference_max_tokens,
+  gate_task_types pair), task_modes (9.271.0: {task_type: 'answer'|'plan'}),
+  max_references, reference_max_tokens,
   reference_timeout_s}` — the MoA virtual model. Task types are validated
   against the classifier enum, models against known+enabled models (400 on
   typos); empty task_pools columns are dropped. `GET /v1/services →

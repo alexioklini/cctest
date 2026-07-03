@@ -959,11 +959,11 @@ function toggleModelDropdown(event) {
   };
   if (!localOnly) _addAutoItem('auto-cloud', '✨ Smart (Cloud)');
   _addAutoItem('auto-local', '✨ Smart (Lokal)');
-  // MoA (Mixture of Agents): Smart routing + classification-gated reference
-  // fan-out. Cloud-only (references are cloud models) → hidden under the GDPR
-  // local-only lock, and hidden entirely while the admin has MoA disabled or
-  // the reference pool is empty (server /v1/status → moa_enabled).
-  if (!localOnly && state.serverInfo?.moa_enabled) _addAutoItem('moa', '🧬 MoA (Smart)');
+  // Experten-Gremium (MoA / Mixture of Agents): Smart routing +
+  // classification-gated reference fan-out. Cloud-only (references are cloud
+  // models) → hidden under the GDPR local-only lock, and hidden entirely while
+  // the admin has it disabled or the pool is empty (/v1/status → moa_enabled).
+  if (!localOnly && state.serverInfo?.moa_enabled) _addAutoItem('moa', '🧬 Experten-Gremium');
 
   for (const [mid, cfg] of enabledModels) {
     const item = document.createElement('div');

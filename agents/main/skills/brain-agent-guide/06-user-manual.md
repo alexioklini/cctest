@@ -287,19 +287,24 @@ nur lokale Modelle). Der Verfasser zeigt weiter „✨ Smart (…)"; welches Mod
 gerade arbeitet, steht in der Status-Zeile am Anfang der laufenden Antwort
 (siehe unten) und im Tooltip.
 
-**🧬 MoA (Smart)** (Mixture of Agents, v9.268.0): erscheint in der Liste, wenn
-ein Admin MoA aktiviert und einen Referenz-Pool gepflegt hat (Einstellungen →
-Server → „MoA (Mixture of Agents)"). Verhält sich wie Smart (Cloud) — plus:
-bei geeigneten Aufgabentypen (standardmäßig Recherche, Analyse, Berichte,
-Kreatives, Orchestrierung) entwerfen mehrere Referenzmodelle **parallel und
-ohne Tools** je einen Antwort-Vorschlag; das automatisch gewählte Smart-Modell
-prüft die Entwürfe, gleicht Widersprüche ab und formuliert die finale Antwort
-mit vollem Werkzeugzugriff. Jeder Entwurf erscheint live als eigene
-🧬-Karte im Chat (Modell, Größe, Dauer; Fehler einzelner Referenzen brechen
-die Anfrage nie ab) — **ein Klick auf die Karte klappt den vollständigen
-Entwurfstext auf** (seit 9.270.0; enthielt die Anfrage anonymisierte Daten,
-zeigt der Entwurf die Ersatzwerte). Dieselben Karten stehen auch im
-**Aktivität-Tab des rechten Panels**, ebenfalls mit Entwurfstext. Bei Aufgaben, wo mehrere Meinungen nichts bringen
+**🧬 Experten-Gremium** (MoA / Mixture of Agents, v9.268.0; umbenannt +
+Beitrags-Modi 9.271.0): erscheint in der Liste, wenn ein Admin das Gremium
+aktiviert und die Matrix gepflegt hat (Einstellungen → Server →
+„Experten-Gremium (MoA)"). Verhält sich wie Smart (Cloud) — plus: bei
+geeigneten Aufgabentypen arbeiten mehrere Experten-Modelle **parallel und
+ohne Tools** der Antwort zu; das automatisch gewählte Smart-Modell führt die
+Beiträge zusammen und formuliert die finale Antwort mit vollem
+Werkzeugzugriff. Je Aufgabentyp liefern die Experten entweder eine
+**Antwort** (vollständiger Entwurf — stark bei Wissens-/Urteilsfragen; das
+Smart-Modell prüft und synthetisiert) oder einen **Ansatz** (nur die
+Herangehensweise: Schritte, Quellen, Fallstricke — stark bei Recherche/
+Orchestrierung; das Smart-Modell wählt die beste Kombination und führt sie
+mit seinen Tools aus). Jeder Beitrag erscheint live als eigene 🧬-Karte im
+Chat (Modell, Größe, Dauer, ggf. „· Ansatz"; Fehler einzelner Experten
+brechen die Anfrage nie ab) — **ein Klick auf die Karte klappt den
+vollständigen Beitragstext auf** (seit 9.270.0; enthielt die Anfrage
+anonymisierte Daten, zeigt der Beitrag die Ersatzwerte). Dieselben Karten
+stehen auch im **Aktivität-Tab des rechten Panels**, ebenfalls mit Text. Bei Aufgaben, wo mehrere Meinungen nichts bringen
 (z. B. Programmierung, Mathematik, schnelle Kurzanfragen), wird der Fan-out
 automatisch übersprungen — die Anfrage läuft dann exakt wie Smart (Cloud),
 ohne Zusatzkosten. Wissenswert: Jeder Entwurf ist ein eigener
@@ -1373,17 +1378,21 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   zurück — eine Anfrage hängt nie daran. Diese Einstellung steuert nur die
   **Modellwahl**; die **Werkzeug-Optimierung** ist davon getrennt und wird pro
   Agent geschaltet (siehe Agent-Einstellungen → Token-Optimierung).
-  Direkt darunter: **MoA (Mixture of Agents)** (9.268.0, Matrix seit 9.269.0)
-  — schaltet das „🧬 MoA (Smart)"-Modell im Verfasser frei und konfiguriert es
-  über eine **Matrix „Modell × Aufgabentyp"**: Zeilen sind die aktivierten
+  Direkt darunter: **Experten-Gremium (MoA)** (9.268.0, Matrix seit 9.269.0,
+  Beitrags-Modi + Umbenennung 9.271.0) — schaltet das
+  „🧬 Experten-Gremium"-Modell im Verfasser frei und konfiguriert es über
+  eine **Matrix „Modell × Aufgabentyp"**: Zeilen sind die aktivierten
   Cloud-Modelle, Spalten die Aufgabentypen des Klassifikators (Recherche,
   Analyse, Berichte, …). Pro Spalte haken Sie an, welche Modelle bei diesem
-  Aufgabentyp Entwürfe liefern; eine Spalte ohne Häkchen heißt: für diesen Typ
-  läuft kein Fan-out (die Anfrage verhält sich wie „Smart (Cloud)"). Das
-  Modell, das die Anfrage gerade selbst beantwortet, wird als Referenz
-  automatisch ausgelassen. Dazu: max. Referenzen (1–5), max. Tokens je Entwurf
-  und Timeout je Referenz. Komplett leere Matrix oder deaktiviert = der
-  🧬-Eintrag verschwindet aus dem Verfasser.
+  Aufgabentyp antreten; eine Spalte ohne Häkchen heißt: für diesen Typ tritt
+  kein Gremium an (die Anfrage verhält sich wie „Smart (Cloud)"). Die zweite
+  Kopfzeile wählt je Spalte den **Beitrags-Modus**: „Antwort" (vollständiger
+  Entwurf) oder „Ansatz" (nur Herangehensweise, das antwortende Modell führt
+  aus — Voreinstellung bei Recherche/Orchestrierung/Agentisch). Das Modell,
+  das die Anfrage gerade selbst beantwortet, wird automatisch ausgelassen.
+  Dazu: max. Experten je Anfrage (1–5), max. Tokens je Beitrag und Timeout je
+  Experte. Komplett leere Matrix oder deaktiviert = der 🧬-Eintrag
+  verschwindet aus dem Verfasser.
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost).

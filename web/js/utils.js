@@ -230,7 +230,7 @@ function modelShortName(modelId, withProvider = true) {
   if (!modelId) return '';
   if (modelId === 'auto-cloud' || modelId === 'auto') return '✨ Smart (Cloud)';  // 'auto' = legacy alias
   if (modelId === 'auto-local') return '✨ Smart (Lokal)';
-  if (modelId === 'moa') return '🧬 MoA (Smart)';
+  if (modelId === 'moa') return '🧬 Experten-Gremium';
   const cfg = state.modelsConfig?.models?.[modelId];
   let name = '';
   // Check display_name first (user-configurable), then shortname
@@ -278,7 +278,7 @@ function modelDescription(modelId) {
   if (!modelId) return '';
   if (modelId === 'auto-local') return 'Wählt für jede Nachricht automatisch das am besten passende LOKALE Modell';
   if (modelId === 'auto-cloud' || modelId === 'auto') return 'Wählt für jede Nachricht automatisch das am besten passende CLOUD-Modell';
-  if (modelId === 'moa') return 'Mixture of Agents: bei geeigneten Aufgabentypen entwerfen mehrere Modelle parallel, das Smart-Modell führt die Entwürfe zur Antwort zusammen';
+  if (modelId === 'moa') return 'Experten-Gremium (Mixture of Agents): bei geeigneten Aufgabentypen steuern mehrere Modelle parallel Antworten oder Lösungsansätze bei, das Smart-Modell führt die Beiträge zur Antwort zusammen';
   const cfg = state.modelsConfig?.models?.[modelId];
   const desc = (cfg?.description || '').trim();
   if (desc) return desc;

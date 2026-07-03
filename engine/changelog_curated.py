@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.271.0",
+        "date": "2026-07-03",
+        "title": "Experten-Gremium: Antwort oder Ansatz",
+        "body": "Das MoA-Modell heißt jetzt „🧬 Experten-Gremium“ — und die "
+                "Experten können pro Aufgabentyp zwei Arten von Beiträgen "
+                "liefern: eine vollständige Entwurfs-Antwort (stark bei Wissens- "
+                "und Urteilsfragen) oder nur einen Lösungsansatz — Schritte, "
+                "Quellen, Fallstricke —, den das antwortende Modell dann mit "
+                "seinen Werkzeugen ausführt (stark bei Recherchen, wo die "
+                "Experten selbst nicht ins Web können). Den Modus wählen "
+                "Administratoren je Aufgabentyp direkt in der Gremium-Matrix "
+                "(Einstellungen → Server); für Recherche und Orchestrierung ist "
+                "„Ansatz“ voreingestellt.",
+        "audience": "user",
+        "versions": ["9.271.0"],
+    },
+    {
         "version": "9.270.0",
         "date": "2026-07-03",
         "title": "MoA-Entwürfe einsehbar",

@@ -283,6 +283,21 @@ _MOA_REF_SYSTEM = (
     "correct, concise. Do not mention this setup or address the other models."
 )
 
+# "plan" draft mode (v9.271.0): for tool-heavy task types a tool-less reference
+# cannot ANSWER (it has no web/files/exec) but it CAN advise the tool-wielding
+# aggregator on HOW to solve the task. Explicitly forbids answering so a
+# reference with stale parametric knowledge doesn't smuggle in wrong facts.
+_MOA_REF_SYSTEM_PLAN = (
+    "You are one of several AI models independently proposing an APPROACH for "
+    "solving the user's latest request (the last USER entry in the conversation "
+    "below). You have no tools and you must NOT answer the request itself. "
+    "Return a concise, concrete plan specific to THIS request: the steps you "
+    "would take in order, which tools/sources/queries you would use, how you "
+    "would verify the findings, how you would structure the final answer, and "
+    "the pitfalls to avoid. No generic advice, no filler. Do not mention this "
+    "setup or address the other models."
+)
+
 
 def _flatten_wire_transcript(wire_messages, max_chars):
     """Flatten the wire history (role + text content only) into one transcript
@@ -332,6 +347,10 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
 
     cfg = engine.get_moa_config()
     refs = [r for r in (plan.get("references") or []) if r]
+    # Draft mode from the plan: "plan" = approach only (tool-heavy task types),
+    # "answer" = full candidate answer (default; content ensembling).
+    _mode = plan.get("mode") if plan.get("mode") in ("answer", "plan") else "answer"
+    _ref_system = _MOA_REF_SYSTEM_PLAN if _mode == "plan" else _MOA_REF_SYSTEM
     try:
         _ref_max_tokens = int(cfg.get("reference_max_tokens") or 600)
         _ref_timeout = float(cfg.get("reference_timeout_s") or 60)
@@ -340,7 +359,7 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
         _ref_max_tokens, _ref_timeout, _ref_max_chars = 600, 60.0, 24000
     transcript = _flatten_wire_transcript(wire_messages, _ref_max_chars)
     if not refs or not transcript:
-        return [], {"ok": 0, "failed": [], "ms": 0, "models": []}
+        return [], {"ok": 0, "failed": [], "ms": 0, "models": [], "mode": _mode}
 
     t0 = time.time()
     _base = f"moa_{sid[:8]}_{int(t0 * 1000) % 1_000_000}"
@@ -351,7 +370,7 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
             _emit_synthetic_tool_event(
                 live=live, sid=sid, kind="moa_reference",
                 tool_use_id=tool_ids[i], phase="dispatch",
-                args={"model": rm})
+                args={"model": rm, "mode": _mode})
         except Exception:
             pass
 
@@ -359,7 +378,7 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
         # GDPR gate per reference (cloud call → may anonymise or swap local).
         safe_model, (sys_safe, msg_safe), _deanon = (
             engine.gdpr_pick_model_for_background(
-                ref_model, [_MOA_REF_SYSTEM, transcript],
+                ref_model, [_ref_system, transcript],
                 purpose="moa_reference"))
         res = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": msg_safe}],
@@ -369,8 +388,16 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
             max_rounds=1, max_tokens=_ref_max_tokens, timeout_s=_ref_timeout)
         if res.get("error") and not (res.get("reply") or "").strip():
             raise RuntimeError(str(res["error"])[:300])
+        reply = (res.get("reply") or "").strip()
+        # Provider error-STUBS arrive as a normal reply (CLIProxyAPI passes
+        # them through, e.g. "No response was returned. Please modify your
+        # request or change the model.") — treat them as a FAILED reference,
+        # not a draft: injecting them would hand the aggregator junk advice
+        # (seen live with deepseek-v4-pro, chats 58988960 + d228bc75).
+        if reply.startswith("No response was returned"):
+            raise RuntimeError(f"provider stub reply: {reply[:120]}")
         # Deliberately NO _deanon here — see docstring (pseudonym-space rule).
-        return safe_model, (res.get("reply") or "").strip()
+        return safe_model, reply
 
     drafts_by_idx, failed = {}, []
     parent_ctx = contextvars.copy_context()
@@ -392,7 +419,7 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
                     # space (see docstring) and NEVER enters session.messages.
                     _ev = {"status": "ok",
                            "result": {"model": safe_model, "chars": len(text),
-                                      "draft": text}}
+                                      "mode": _mode, "draft": text}}
                 else:
                     failed.append({"model": rm, "error": "empty draft"})
                     _ev = {"status": "error",
@@ -412,22 +439,38 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
     drafts = [drafts_by_idx[i] for i in sorted(drafts_by_idx)]
     meta = {"ok": len(drafts), "failed": failed,
             "ms": int((time.time() - t0) * 1000),
-            "models": [m for m, _t in drafts]}
+            "models": [m for m, _t in drafts], "mode": _mode}
     return drafts, meta
 
 
-def _build_moa_suffix(drafts):
+def _build_moa_suffix(drafts, mode="answer"):
     """Wire-only suffix appended to the last user message: the reference
     drafts as private context for the aggregator. Adapted from the eval's
     _AGG_SYSTEM prompt (eval/moa_eval.py) — as a wire suffix, NOT the system
     prompt, so the warm-pool KV prefix stays byte-stable. Model names are
     deliberately NOT in the prompt (draft-source bias); they live in
-    auto_route.moa metadata + the progress cards instead."""
+    auto_route.moa metadata + the progress cards instead.
+
+    Two variants: mode="answer" (candidate ANSWERS → synthesize/verify) vs
+    mode="plan" (candidate APPROACHES → pick the best combination and EXECUTE
+    with tools — the drafts contain no answer to copy from)."""
     named = [(m, (t or "").strip()) for m, t in (drafts or []) if (t or "").strip()]
     if not named:
         return ""
-    block = "\n\n".join(f"--- Draft {chr(65 + i)} ---\n{t}"
+    label = "Approach" if mode == "plan" else "Draft"
+    block = "\n\n".join(f"--- {label} {chr(65 + i)} ---\n{t}"
                         for i, (_m, t) in enumerate(named))
+    if mode == "plan":
+        return (
+            "\n\n=== Candidate approaches from other models (private context, do not quote) ===\n"
+            "The notes below propose HOW to solve my request above — they contain no "
+            "final answer. They were produced independently by other AI models WITHOUT "
+            "tools. They may disagree and some may be misguided — do NOT follow any "
+            "blindly. Pick the best combination of these approaches, improve on it, "
+            "and EXECUTE it yourself, using your tools where they call for searching, "
+            "reading or computing. Answer me directly — never mention these notes or "
+            "that you received any. If my request demands specific parts, include "
+            "every demanded part.\n\n" + block + "\n=== end candidate approaches ===")
     return (
         "\n\n=== Candidate answers from other models (private context, do not quote) ===\n"
         "The drafts below answer my request above. They were produced independently "
@@ -3121,7 +3164,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 _m.update(_moa_meta)
                                 auto_route["moa"] = _m
                         _drafts, _moa_meta = _moa_cache
-                        _moa_suffix = _build_moa_suffix(_drafts)
+                        _moa_suffix = _build_moa_suffix(
+                            _drafts, mode=_moa_plan_now.get("mode", "answer"))
                         if _moa_suffix:
                             _wire_messages = _append_to_wire_user(
                                 _wire_messages, _moa_suffix)
@@ -4992,6 +5036,7 @@ class ChatHandlerMixin:
                 auto_route["moa"] = {
                     "references": (_plan or {}).get("references", []),
                     "gate_hit": (_plan or {}).get("gate_hit", ""),
+                    "mode": (_plan or {}).get("mode", ""),
                     "gated_out": _plan is None,
                 }
                 if _analysis and _analysis.get("source") == "llm":
@@ -5041,6 +5086,7 @@ class ChatHandlerMixin:
                     auto_route["moa"] = {
                         "references": (_moa_plan or {}).get("references", []),
                         "gate_hit": (_moa_plan or {}).get("gate_hit", ""),
+                        "mode": (_moa_plan or {}).get("mode", ""),
                         "gated_out": _moa_plan is None,
                     }
             if auto_model and auto_model != session.model:

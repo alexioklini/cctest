@@ -168,7 +168,13 @@ family (`model_family` — mistral/gemma/qwen/claude/…, nearest capability), t
 SAME locality (cloud→cloud / local→local), **NEVER cloud→local**, else the
 configured `default_model`, else the first candidate.
 
-### MoA virtual model (🧬 Mixture of Agents, v9.268.0)
+### MoA virtual model (🧬 "Experten-Gremium", Mixture of Agents, v9.268.0)
+
+User-facing name since 9.271.0: **Experten-Gremium** (composer entry
+"🧬 Experten-Gremium", cards "Experte" + GREMIUM badge, Settings section
+"Experten-Gremium (MoA)"). Internal ids deliberately UNCHANGED: directive
+`moa`, config block `moa.*`, card kind `moa_reference`, cost_purpose
+`moa_reference`, `/v1/status → moa_enabled`.
 
 `moa` is a FOURTH composer directive next to `auto`/`auto-cloud`/`auto-local`
 (`_parse_auto_directive` → cloud pool; NOT a `config.json → models` entry). It
@@ -228,9 +234,21 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   `auto_route.moa` into the done event + `msg_metadata.auto_route`.
   Dropdown entry `🧬 MoA (Smart)` is gated on `/v1/status → moa_enabled` and
   hidden under the GDPR local-only lock (references are cloud).
+- **Draft mode** (`moa.task_modes {task_type: "answer"|"plan"}`, v9.271.0;
+  defaults research/orchestration/agentic → "plan"): what references RETURN.
+  "answer" = full candidate answer (Hermes original; content ensembling — the
+  eval-backed win on synthesis/judgment). "plan" = APPROACH only (steps,
+  sources, verification, structure, pitfalls; the reference system prompt
+  FORBIDS answering so stale parametric knowledge can't smuggle in wrong
+  facts) — for tool-heavy types where tool-less references can't answer but
+  can advise; the aggregator suffix then says "pick the best combination of
+  these approaches and EXECUTE it with your tools". Mode rides
+  `resolve_moa_plan → plan.mode`, the cards (args/result.mode, "· Ansatz")
+  and `auto_route.moa.mode`.
 - **Config** `config.json → moa` {enabled, task_pools (the matrix),
-  max_references, reference_max_tokens (600), reference_timeout_s (60),
-  reference_input_max_chars (24000); legacy: reference_pool, gate_task_types}
+  task_modes, max_references, reference_max_tokens (600),
+  reference_timeout_s (60), reference_input_max_chars (24000); legacy:
+  reference_pool, gate_task_types}
   — Settings → Server → "MoA (Mixture of Agents)" renders a scrollable
   model × task_type checkbox MATRIX (rows = enabled cloud models, columns =
   the 9 classifier task_types; first open without task_pools seeds from
