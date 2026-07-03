@@ -338,6 +338,10 @@
             "tps": 149.1,
             "n": 3,
             "ts": "2026-06-03T15:03:41Z"
+          },
+          "override": {
+            "capability": 45,
+            "_note": "Admin-Override 2026-07-03: synthetischer Bench (97) überschätzt small für GEGROUNDETE research-Fragen — Policies-Eval (KG-Real-Policies, 3 Reps, Opus-Gold) maß small/auto retrieval 0.70-0.82 vs medium 0.957±0.03. capability<Floor(50) → research routet auf medium. Nur research; analysis/fast unverändert (Kosten)."
           }
         },
         "analysis": {
