@@ -6,9 +6,10 @@ Two behaviors guarded here, both regressions we actually hit:
    The bug: chat 641f89ef routed a trivial "fast" turn to mistral-medium over
    mistral-small because Medium's measured throughput was 11.5 tok/s vs Small's
    11.2 — a 0.3-tok/s (noise-sized, n=2) difference that PREEMPTED the cost axis
-   where Small is ~20× cheaper. Intent: two capability-tied cloud models whose
-   speeds are within one bucket must tie on speed and let COST decide; a model
-   that is genuinely (>~15%) faster still wins on speed.
+   where Small is ~20× cheaper. Since v9.276.0 speed ranks BELOW cost entirely
+   (intelligence-per-buck), and capability is banded: within the band of the
+   pool's best model the cheaper one wins; below the band a model loses no
+   matter how cheap/fast (TestCapabilityBand — the Opus/GLM/Medium example).
 
 2. DETERMINISTIC SCORING (engine.model_bench._deterministic_score): prompts with
    an objective answer are graded 0/100 by code, not the LLM judge — so the
@@ -49,34 +50,106 @@ class TestTpsBucket(unittest.TestCase):
 
 
 class TestRankKeyTiebreak(unittest.TestCase):
-    """The rank key is (capable?, local?, -tps_bucket, cost, prio). With speed
-    bucketed, a within-bucket speed tie must fall through to cost."""
+    """The rank key is (capable?, local?, out_of_band?, cost, -cap,
+    -tps_bucket, prio) — intelligence-per-buck (v9.276.0): within the
+    capability band of the pool's best model, the CHEAPER one wins; below the
+    band a model is out of the running no matter how cheap or fast."""
 
-    def _key(self, cap, local, tps, cost, prio):
+    def _key(self, cap, local, tps, cost, prio, top_cap=None, complexity=None):
         # Build a key matching brain._bench_rank_key's tuple shape directly,
         # so the test is independent of config.json contents.
         has_cap = cap >= 30
-        return (0 if has_cap else 1, 1 if local else 0,
-                -brain._tps_bucket(tps), cost, -prio)
+        out_of_band = 0
+        if top_cap is not None and cap < top_cap - brain._cap_band_width(complexity):
+            out_of_band = 1
+        return (0 if has_cap else 1, 1 if local else 0, out_of_band,
+                cost, -cap, -brain._tps_bucket(tps), -prio)
 
     def test_cheap_wins_when_speed_ties(self):
-        # Both cloud, both capable, speeds within a bucket (11.2 vs 11.5):
-        # the cheaper one must sort first.
-        medium = self._key(100, False, 11.5, 9.0, 60)   # 1.5+7.5
-        small = self._key(100, False, 11.2, 0.4, 45)    # 0.1+0.3
+        # Both cloud, both capable, same band, speeds within a bucket
+        # (11.2 vs 11.5): the cheaper one must sort first.
+        medium = self._key(100, False, 11.5, 9.0, 60, top_cap=100)   # 1.5+7.5
+        small = self._key(100, False, 11.2, 0.4, 45, top_cap=100)    # 0.1+0.3
         self.assertLess(small, medium, "cheap model must win a within-bucket speed tie")
 
-    def test_genuinely_faster_wins_over_cheaper(self):
-        # If the pricier model is meaningfully faster (different bucket), speed
-        # leads cost (the user's stated capable→fast→cheap order).
-        fast_pricey = self._key(100, False, 200.0, 9.0, 60)
-        slow_cheap = self._key(100, False, 11.0, 0.4, 45)
-        self.assertLess(fast_pricey, slow_cheap)
+    def test_cheaper_beats_faster_in_band(self):
+        # Intelligence-per-buck: cost now leads speed. A capability-tied,
+        # meaningfully faster but 20×-pricier model must LOSE to the cheap one.
+        fast_pricey = self._key(100, False, 200.0, 9.0, 60, top_cap=100)
+        slow_cheap = self._key(100, False, 11.0, 0.4, 45, top_cap=100)
+        self.assertLess(slow_cheap, fast_pricey,
+                        "the buck ranks before the tok/s")
 
     def test_cloud_beats_local_even_if_local_faster(self):
-        cloud = self._key(100, False, 11.0, 9.0, 60)
-        local_fast = self._key(100, True, 160.0, 0.0, 45)
+        cloud = self._key(100, False, 11.0, 9.0, 60, top_cap=100)
+        local_fast = self._key(100, True, 160.0, 0.0, 45, top_cap=100)
         self.assertLess(cloud, local_fast, "no local model outranks a capable cloud model")
+
+
+class TestCapabilityBand(unittest.TestCase):
+    """The intelligence-per-buck example that motivated the band (v9.276.0):
+    Opus-class cap 95 at $100, GLM-class cap 90 at $10, Medium-class cap 78 at
+    $10 → GLM must win (in the leader's band, 10× cheaper); Medium must NOT
+    win despite the identical price (out of band = not nearly-as-smart)."""
+
+    def _key(self, cap, cost, top_cap, complexity=None, tps=50.0, prio=0):
+        out_of_band = 1 if cap < top_cap - brain._cap_band_width(complexity) else 0
+        return (0, 0, out_of_band, cost, -cap, -brain._tps_bucket(tps), -prio)
+
+    def test_band_width_by_complexity(self):
+        self.assertEqual(brain._cap_band_width("high"), 5)
+        self.assertEqual(brain._cap_band_width("medium"), 15)
+        self.assertEqual(brain._cap_band_width(None), 15)
+        self.assertEqual(brain._cap_band_width("low"), 25)
+
+    def test_near_frontier_cheap_beats_frontier_and_cheap_weak(self):
+        opus = self._key(95, 100.0, top_cap=95)
+        glm = self._key(90, 10.0, top_cap=95)
+        medium = self._key(78, 10.0, top_cap=95)
+        best = min(opus, glm, medium)
+        self.assertEqual(best, glm, "best intelligence-per-buck must win")
+        # And the weak model must rank behind BOTH in-band models.
+        self.assertGreater(medium, opus, "out-of-band model must not beat the leader")
+
+    def test_high_complexity_narrows_band_to_frontier(self):
+        # With a 7-point gap and the 'high' band width of 5, the runner-up
+        # falls out of the band and the frontier model wins despite its price.
+        opus = self._key(95, 100.0, top_cap=95, complexity="high")
+        glm = self._key(88, 10.0, top_cap=95, complexity="high")
+        self.assertLess(opus, glm)
+
+    def test_equal_cost_in_band_prefers_smarter(self):
+        # Raw capability breaks exact cost ties within the band.
+        smarter = self._key(90, 10.0, top_cap=95, complexity="low")
+        weaker = self._key(78, 10.0, top_cap=95, complexity="low")
+        self.assertLess(smarter, weaker)
+
+    def test_pick_by_benchmark_end_to_end(self):
+        """Drive brain._pick_by_benchmark itself (not a hand-built tuple) with
+        stubbed benchmark cells, so the top-cap anchoring + sort wiring is
+        exercised, not just the key math."""
+        cells = {
+            "opus": {"capability": 95, "tps": 40},
+            "glm": {"capability": 88, "tps": 50},
+            "medium": {"capability": 78, "tps": 60},
+        }
+        costs = {"opus": 100.0, "glm": 10.0, "medium": 10.0}
+        orig_cell = brain.bench_cell_value
+        orig_cost = brain._model_total_cost
+        orig_local = brain.is_model_local
+        brain.bench_cell_value = lambda m, t: cells.get(m)
+        brain._model_total_cost = lambda m: costs[m]
+        brain.is_model_local = lambda m: False
+        try:
+            pick = brain._pick_by_benchmark(list(cells), "research", "medium")
+            self.assertEqual(pick, "glm")
+            # high complexity: glm (90 < 95-5) drops out of the band → opus.
+            pick_high = brain._pick_by_benchmark(list(cells), "research", "high")
+            self.assertEqual(pick_high, "opus")
+        finally:
+            brain.bench_cell_value = orig_cell
+            brain._model_total_cost = orig_cost
+            brain.is_model_local = orig_local
 
 
 class TestDeterministicScoring(unittest.TestCase):

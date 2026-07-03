@@ -219,74 +219,101 @@
       "benchmark": {
         "coding": {
           "measured": {
-            "capability": 100,
-            "tps": 81.5,
+            "tps": 57.2,
             "n": 4,
-            "ts": "2026-06-03T15:04:58Z"
+            "ts": "2026-07-03T16:24:17Z",
+            "capability": 71,
+            "source": "artificialanalysis",
+            "raw": 46.9,
+            "official_name": "Mistral Medium 3.5"
           }
         },
         "math": {
           "measured": {
-            "capability": 80,
-            "tps": 108.8,
+            "tps": 99.6,
             "n": 5,
-            "ts": "2026-06-03T15:05:10Z"
+            "ts": "2026-07-03T16:24:31Z",
+            "capability": 81,
+            "source": "lmarena",
+            "raw": 1430.43,
+            "official_name": "mistral-medium-3.5"
           }
         },
         "research": {
           "measured": {
-            "capability": 97,
-            "tps": 68.4,
+            "tps": 67.0,
             "n": 3,
-            "ts": "2026-06-03T15:05:57Z"
+            "ts": "2026-07-03T16:25:19Z",
+            "capability": 80,
+            "source": "artificialanalysis",
+            "raw": 29.9,
+            "official_name": "Mistral Medium 3.5"
           }
         },
         "analysis": {
           "measured": {
-            "capability": 96,
-            "tps": 49.3,
+            "tps": 97.8,
             "n": 3,
-            "ts": "2026-06-03T15:06:55Z"
+            "ts": "2026-07-03T16:25:47Z",
+            "capability": 80,
+            "source": "artificialanalysis",
+            "raw": 29.9,
+            "official_name": "Mistral Medium 3.5"
           }
         },
         "reporting": {
           "measured": {
-            "capability": 97,
-            "tps": 49,
+            "tps": 43.1,
             "n": 3,
-            "ts": "2026-06-03T15:07:02Z"
+            "ts": "2026-07-03T16:25:50Z",
+            "capability": 80,
+            "source": "lmarena",
+            "raw": 1420.47,
+            "official_name": "mistral-medium-3.5"
           }
         },
         "creative": {
           "measured": {
-            "capability": 97,
-            "tps": 34.2,
+            "tps": 40.4,
             "n": 3,
-            "ts": "2026-06-03T15:07:09Z"
+            "ts": "2026-07-03T16:25:53Z",
+            "capability": 78,
+            "source": "lmarena",
+            "raw": 1394.68,
+            "official_name": "mistral-medium-3.5"
           }
         },
         "orchestration": {
           "measured": {
-            "capability": 98,
-            "tps": 82.4,
+            "tps": 76.7,
             "n": 3,
-            "ts": "2026-06-03T15:07:41Z"
+            "ts": "2026-07-03T16:26:21Z",
+            "capability": 79,
+            "source": "lmarena",
+            "raw": 1430.52,
+            "official_name": "mistral-medium-3.5"
           }
         },
         "agentic": {
           "measured": {
-            "capability": 87,
-            "tps": 65.4,
+            "tps": 82.2,
             "n": 3,
-            "ts": "2026-06-03T15:07:59Z"
+            "ts": "2026-07-03T16:26:29Z",
+            "capability": 79,
+            "source": "lmarena",
+            "raw": 1430.52,
+            "official_name": "mistral-medium-3.5"
           }
         },
         "fast": {
           "measured": {
-            "capability": 100,
-            "tps": 9.9,
+            "tps": 9.6,
             "n": 4,
-            "ts": "2026-06-03T15:08:00Z"
+            "ts": "2026-07-03T16:26:31Z",
+            "capability": 78,
+            "source": "lmarena",
+            "raw": 1426.58,
+            "official_name": "mistral-medium-3.5"
           }
         }
       },
@@ -318,25 +345,31 @@
       "benchmark": {
         "coding": {
           "measured": {
-            "capability": 100,
-            "tps": 131.6,
+            "tps": 132.6,
             "n": 4,
-            "ts": "2026-06-03T15:03:13Z"
+            "ts": "2026-07-03T17:33:02Z",
+            "capability": 48,
+            "source": "artificialanalysis",
+            "raw": 26.6,
+            "official_name": "Mistral Small 4 (Reasoning)"
           }
         },
         "math": {
           "measured": {
-            "capability": 80,
-            "tps": 171.6,
+            "tps": 168.2,
             "n": 5,
-            "ts": "2026-06-03T15:03:19Z"
+            "ts": "2026-07-03T17:33:09Z",
+            "capability": 50,
+            "source": "lmarena",
+            "raw": 1338.94,
+            "official_name": "mistral-small-2506"
           }
         },
         "research": {
           "measured": {
-            "tps": 147.5,
+            "tps": 149.5,
             "n": 3,
-            "ts": "2026-07-03T15:30:25Z",
+            "ts": "2026-07-03T17:33:29Z",
             "capability": 63,
             "source": "artificialanalysis",
             "raw": 19.6,
@@ -349,49 +382,64 @@
         },
         "analysis": {
           "measured": {
-            "capability": 95,
-            "tps": 151.7,
+            "tps": 147.1,
             "n": 3,
-            "ts": "2026-06-03T15:04:02Z"
+            "ts": "2026-07-03T17:33:50Z",
+            "capability": 63,
+            "source": "artificialanalysis",
+            "raw": 19.6,
+            "official_name": "Mistral Small 4 (Reasoning)"
           }
         },
         "reporting": {
           "measured": {
-            "capability": 99,
-            "tps": 86.1,
+            "tps": 66.5,
             "n": 3,
-            "ts": "2026-06-03T15:04:06Z"
+            "ts": "2026-07-03T17:33:52Z",
+            "capability": 53,
+            "source": "lmarena",
+            "raw": 1339.21,
+            "official_name": "mistral-small-2506"
           }
         },
         "creative": {
           "measured": {
-            "capability": 97,
-            "tps": 55.4,
+            "tps": 46.5,
             "n": 3,
-            "ts": "2026-06-03T15:04:09Z"
+            "ts": "2026-07-03T17:33:54Z",
+            "capability": 55,
+            "source": "lmarena",
+            "raw": 1325.15,
+            "official_name": "mistral-small-2506"
           }
         },
         "orchestration": {
           "measured": {
-            "capability": 97,
-            "tps": 152.3,
+            "tps": 152.8,
             "n": 3,
-            "ts": "2026-06-03T15:04:23Z"
+            "ts": "2026-07-03T17:34:07Z",
+            "capability": 58,
+            "source": "lmarena",
+            "raw": 1366.92,
+            "official_name": "mistral-small-2506"
           }
         },
         "agentic": {
           "measured": {
-            "capability": 68,
-            "tps": 100.1,
+            "tps": 104.7,
             "n": 3,
-            "ts": "2026-06-03T15:04:31Z"
+            "ts": "2026-07-03T17:34:10Z",
+            "capability": 58,
+            "source": "lmarena",
+            "raw": 1366.92,
+            "official_name": "mistral-small-2506"
           }
         },
         "fast": {
           "measured": {
             "tps": 11.6,
             "n": 4,
-            "ts": "2026-07-03T15:17:12Z",
+            "ts": "2026-07-03T17:34:11Z",
             "capability": 55,
             "source": "lmarena",
             "raw": 1357.67,
@@ -1928,7 +1976,108 @@
       "max_context": 1048576,
       "max_output": 131072,
       "cost_input": 0.435,
-      "cost_output": 0.87
+      "cost_output": 0.87,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 62.6,
+            "n": 4,
+            "ts": "2026-07-03T15:39:43Z",
+            "capability": 87,
+            "source": "artificialanalysis",
+            "raw": 59.4,
+            "official_name": "DeepSeek V4 Pro (Reasoning, Max Effort)"
+          }
+        },
+        "math": {
+          "measured": {
+            "tps": 60.2,
+            "n": 5,
+            "ts": "2026-07-03T15:40:05Z",
+            "capability": 86,
+            "source": "lmarena",
+            "raw": 1443.18,
+            "official_name": "deepseek-v4-pro"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 45.4,
+            "n": 3,
+            "ts": "2026-07-03T15:41:13Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 44.3,
+            "official_name": "DeepSeek V4 Pro (Reasoning, Max Effort)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 43.1,
+            "n": 3,
+            "ts": "2026-07-03T15:42:25Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 44.3,
+            "official_name": "DeepSeek V4 Pro (Reasoning, Max Effort)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 41.0,
+            "n": 3,
+            "ts": "2026-07-03T15:42:46Z",
+            "capability": 91,
+            "source": "lmarena",
+            "raw": 1451.99,
+            "official_name": "deepseek-v4-pro"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 42.4,
+            "n": 3,
+            "ts": "2026-07-03T15:43:22Z",
+            "capability": 90,
+            "source": "lmarena",
+            "raw": 1441.58,
+            "official_name": "deepseek-v4-pro"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 48.3,
+            "n": 3,
+            "ts": "2026-07-03T15:44:20Z",
+            "capability": 92,
+            "source": "lmarena",
+            "raw": 1473.1,
+            "official_name": "deepseek-v4-pro"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 58.0,
+            "n": 3,
+            "ts": "2026-07-03T15:45:13Z",
+            "capability": 92,
+            "source": "lmarena",
+            "raw": 1473.1,
+            "official_name": "deepseek-v4-pro"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 23.4,
+            "n": 4,
+            "ts": "2026-07-03T15:45:21Z",
+            "capability": 90,
+            "source": "lmarena",
+            "raw": 1457.08,
+            "official_name": "deepseek-v4-pro"
+          }
+        }
+      }
     },
     "deepseek-v4-flash": {
       "enabled": true,
@@ -1949,7 +2098,108 @@
       "warmup": false,
       "max_output": 131072,
       "cost_input": 0.14,
-      "cost_output": 0.28
+      "cost_output": 0.28,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 74.1,
+            "n": 4,
+            "ts": "2026-07-03T15:35:07Z",
+            "capability": 82,
+            "source": "artificialanalysis",
+            "raw": 56.2,
+            "official_name": "DeepSeek V4 Flash (Reasoning, Max Effort)"
+          }
+        },
+        "math": {
+          "measured": {
+            "tps": 70.2,
+            "n": 5,
+            "ts": "2026-07-03T15:35:29Z",
+            "capability": 78,
+            "source": "lmarena",
+            "raw": 1425.97,
+            "official_name": "deepseek-v4-flash"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 62.9,
+            "n": 3,
+            "ts": "2026-07-03T15:36:18Z",
+            "capability": 94,
+            "source": "artificialanalysis",
+            "raw": 40.3,
+            "official_name": "DeepSeek V4 Flash (Reasoning, Max Effort)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 63.1,
+            "n": 3,
+            "ts": "2026-07-03T15:37:07Z",
+            "capability": 94,
+            "source": "artificialanalysis",
+            "raw": 40.3,
+            "official_name": "DeepSeek V4 Flash (Reasoning, Max Effort)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 50.9,
+            "n": 3,
+            "ts": "2026-07-03T15:37:15Z",
+            "capability": 83,
+            "source": "lmarena",
+            "raw": 1429.25,
+            "official_name": "deepseek-v4-flash"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 42.6,
+            "n": 3,
+            "ts": "2026-07-03T15:37:27Z",
+            "capability": 84,
+            "source": "lmarena",
+            "raw": 1410.84,
+            "official_name": "deepseek-v4-flash"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 68.2,
+            "n": 3,
+            "ts": "2026-07-03T15:38:03Z",
+            "capability": 84,
+            "source": "lmarena",
+            "raw": 1449.73,
+            "official_name": "deepseek-v4-flash"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 49.9,
+            "n": 3,
+            "ts": "2026-07-03T15:38:34Z",
+            "capability": 84,
+            "source": "lmarena",
+            "raw": 1449.73,
+            "official_name": "deepseek-v4-flash"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 24.1,
+            "n": 4,
+            "ts": "2026-07-03T15:38:40Z",
+            "capability": 82,
+            "source": "lmarena",
+            "raw": 1435.74,
+            "official_name": "deepseek-v4-flash"
+          }
+        }
+      }
     },
     "voxtral-mini-2507": {
       "enabled": true,
@@ -2259,74 +2509,101 @@
       "benchmark": {
         "coding": {
           "measured": {
-            "capability": 100,
-            "tps": 73.5,
+            "tps": 69.3,
             "n": 4,
-            "ts": "2026-07-03T13:42:26Z"
+            "ts": "2026-07-03T15:48:45Z",
+            "capability": 92,
+            "source": "artificialanalysis",
+            "raw": 68.8,
+            "official_name": "GLM-5.2 (max)"
           }
         },
         "math": {
           "measured": {
-            "capability": 100,
-            "tps": 58.8,
+            "tps": 70.4,
             "n": 5,
-            "ts": "2026-07-03T13:43:09Z"
+            "ts": "2026-07-03T15:49:19Z",
+            "capability": 93,
+            "source": "lmarena",
+            "raw": 1471.57,
+            "official_name": "glm-5.2 (max)"
           }
         },
         "research": {
           "measured": {
-            "capability": 40,
-            "tps": 59.2,
+            "tps": 71.5,
             "n": 3,
-            "ts": "2026-07-03T13:44:07Z"
+            "ts": "2026-07-03T15:50:02Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 51.1,
+            "official_name": "GLM-5.2 (max)"
           }
         },
         "analysis": {
           "measured": {
-            "capability": 23,
-            "tps": 64.4,
+            "tps": 73.3,
             "n": 3,
-            "ts": "2026-07-03T13:44:56Z"
+            "ts": "2026-07-03T15:50:45Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 51.1,
+            "official_name": "GLM-5.2 (max)"
           }
         },
         "reporting": {
           "measured": {
-            "capability": 95,
-            "tps": 67.7,
+            "tps": 78.9,
             "n": 3,
-            "ts": "2026-07-03T13:45:27Z"
+            "ts": "2026-07-03T15:51:06Z",
+            "capability": 95,
+            "source": "lmarena",
+            "raw": 1466.42,
+            "official_name": "glm-5.2 (max)"
           }
         },
         "creative": {
           "measured": {
-            "capability": 93,
-            "tps": 56.7,
+            "tps": 57.2,
             "n": 3,
-            "ts": "2026-07-03T13:45:55Z"
+            "ts": "2026-07-03T15:51:37Z",
+            "capability": 92,
+            "source": "lmarena",
+            "raw": 1444.59,
+            "official_name": "glm-5.2 (max)"
           }
         },
         "orchestration": {
           "measured": {
-            "capability": 62,
-            "tps": 73.9,
+            "tps": 74.2,
             "n": 3,
-            "ts": "2026-07-03T13:46:32Z"
+            "ts": "2026-07-03T15:52:14Z",
+            "capability": 88,
+            "source": "lmarena",
+            "raw": 1463.73,
+            "official_name": "glm-5.2 (max)"
           }
         },
         "agentic": {
           "measured": {
-            "capability": 58,
-            "tps": 69.9,
+            "tps": 81.9,
             "n": 3,
-            "ts": "2026-07-03T13:47:14Z"
+            "ts": "2026-07-03T15:52:53Z",
+            "capability": 88,
+            "source": "lmarena",
+            "raw": 1463.73,
+            "official_name": "glm-5.2 (max)"
           }
         },
         "fast": {
           "measured": {
-            "capability": 100,
-            "tps": 40.8,
+            "tps": 63.1,
             "n": 4,
-            "ts": "2026-07-03T13:47:24Z"
+            "ts": "2026-07-03T15:52:58Z",
+            "capability": 93,
+            "source": "lmarena",
+            "raw": 1468.66,
+            "official_name": "glm-5.2 (max)"
           }
         }
       }
@@ -2351,7 +2628,108 @@
       "max_output": 262144,
       "cost_input": 0.8,
       "cost_output": 3.4,
-      "cost_cache_read": 0.16
+      "cost_cache_read": 0.16,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 60.8,
+            "n": 4,
+            "ts": "2026-07-03T16:00:17Z",
+            "capability": 80,
+            "source": "artificialanalysis",
+            "raw": 56.0,
+            "official_name": "Kimi K2.6"
+          }
+        },
+        "math": {
+          "measured": {
+            "tps": 51.5,
+            "n": 5,
+            "ts": "2026-07-03T16:01:17Z",
+            "capability": 97,
+            "source": "lmarena",
+            "raw": 1484.54,
+            "official_name": "kimi-k2.6"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 51.8,
+            "n": 3,
+            "ts": "2026-07-03T16:03:49Z",
+            "capability": 96,
+            "source": "artificialanalysis",
+            "raw": 42.8,
+            "official_name": "Kimi K2.6"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 43.3,
+            "n": 3,
+            "ts": "2026-07-03T16:06:07Z",
+            "capability": 96,
+            "source": "artificialanalysis",
+            "raw": 42.8,
+            "official_name": "Kimi K2.6"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 44.9,
+            "n": 3,
+            "ts": "2026-07-03T16:06:44Z",
+            "capability": 92,
+            "source": "lmarena",
+            "raw": 1456.56,
+            "official_name": "kimi-k2.6"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 43.7,
+            "n": 3,
+            "ts": "2026-07-03T16:08:06Z",
+            "capability": 88,
+            "source": "lmarena",
+            "raw": 1432.17,
+            "official_name": "kimi-k2.6"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 37.1,
+            "n": 3,
+            "ts": "2026-07-03T16:09:29Z",
+            "capability": 86,
+            "source": "lmarena",
+            "raw": 1458.33,
+            "official_name": "kimi-k2.6"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 47.9,
+            "n": 3,
+            "ts": "2026-07-03T16:12:11Z",
+            "capability": 86,
+            "source": "lmarena",
+            "raw": 1458.33,
+            "official_name": "kimi-k2.6"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 28.2,
+            "n": 4,
+            "ts": "2026-07-03T16:12:23Z",
+            "capability": 91,
+            "source": "lmarena",
+            "raw": 1461.37,
+            "official_name": "kimi-k2.6"
+          }
+        }
+      }
     }
   },
   "nodes": {},

@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.276.0",
+        "date": "2026-07-03",
+        "title": "Auto-Modellwahl: beste Intelligenz fürs Geld",
+        "body": "Die ✨ Auto-Modellwahl wählt jetzt gezielt das Modell mit dem "
+                "besten Verhältnis aus Fähigkeit und Preis: Unter den Modellen, "
+                "die nahezu so leistungsfähig sind wie das beste verfügbare, "
+                "gewinnt das günstigste — ein Spitzenmodell zum Bruchteil des "
+                "Preises schlägt damit sowohl das teuerste als auch ein "
+                "deutlich schwächeres, gleich billiges Modell. Bei besonders "
+                "anspruchsvollen Aufgaben wird der Kreis automatisch enger "
+                "gezogen (nur Top-Modelle), bei einfachen weiter — das senkt "
+                "die Kosten, ohne Qualität zu opfern.",
+        "audience": "admin",
+        "versions": ["9.276.0"],
+    },
+    {
         "version": "9.275.0",
         "date": "2026-07-03",
         "title": "Modell-Benchmarks aus offiziellen Leaderboards",

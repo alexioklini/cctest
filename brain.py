@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.275.1"
+VERSION = "9.276.0"
 VERSION_DATE = "2026-07-03"
 CHANGELOG = [
+    ("9.276.0", "2026-07-03", "feat(Auto-Route): Intelligenz-pro-Euro-Ranking — Fähigkeit ist jetzt ein BAND relativ zum stärksten Kandidaten, nicht mehr nur ein Floor (User-Auftrag: 'best intelligence for the buck … opus highest capability/highest cost, glm 95% of opus at 10% cost, mistral-medium 50% of opus at glm-price → choose glm'). PROBLEM vorher: _bench_rank_key behandelte capability als reinen Floor — Opus/GLM/Medium galten alle als 'capable enough', das Ranking fiel auf tps-Bucket→Kosten durch, und zwischen GLM und Medium (gleicher Preis) entschied tps-RAUSCHEN bzw. statische Priorität; der 40-Punkte-Fähigkeitsvorsprung von GLM zählte NULL. Der Floor-only-Ansatz stammte aus 9.60.1, als der EIGENE Judge-Benchmark nicht vertrauenswürdig war (2B-Modell mit cap 98) — seit 9.275.0 sind die Werte offizielle Leaderboard-PERZENTILE, auf denen man ranken darf. NEU: (1) _bench_top_cap(candidates, task, floor) = höchste capability unter den Floor-qualifizierten Kandidaten (Band-Anker, über den GANZEN Pool, nicht pro Lokalitätsklasse — Lokalität sortiert eh zuerst). (2) _CAP_BAND_WIDTHS {high:5, medium:15, low:25} + _cap_band_width(complexity): Complexity steuert jetzt ZWEI Stellschrauben — Floor (±20, unverändert) UND Bandbreite (high = nur Near-Frontier konkurriert, low = billige Modelle gewinnen öfter). Band-relativ-zum-Besten statt roher capability/cost-Quotient, weil Perzentile zwischen Refreshes um ein paar Punkte wackeln (ein Quotient kippt Picks auf dem Wackler) und Quotienten bei $0-lokal/unbepreisten Modellen explodieren. (3) _bench_rank_key-Tupel NEU: (capable?, local?, out_of_band?, cost, -cap, -tps_bucket, prio) — im Band gewinnt das BILLIGSTE Modell, rohe capability bricht nur exakte Kosten-Gleichstände (bei gleichem Preis gewinnt das klügere), Speed ist von Platz 3 auf Platz 6 gerutscht (der Euro schlägt das tok/s; tps-Bucketing bleibt als später Tie-Break). Cloud-vor-Lokal und Floor-Semantik UNVERÄNDERT. (4) resolve_moa_plan reiht Referenzen mit demselben Band-Ranking (top_cap über den Referenz-Pool). Beispiel verifiziert: Opus(95/$100)+GLM(88..90/$10)+Medium(78/$10) → GLM (im Band des Leaders, 10× billiger; Medium trotz gleichen Preises AUS dem Band = nicht annähernd-so-klug); high-complexity (Band 5) → Opus. tests/test_auto_route_ranking.py: TestRankKeyTiebreak auf neue Tupel-Form + Policy (Ex-Test 'faster wins over cheaper' INVERTIERT — cheap schlägt jetzt fast), NEU TestCapabilityBand (Bandbreiten, das Opus/GLM/Medium-Beispiel als Key-Math UND end-to-end durch _pick_by_benchmark mit gestubbten Zellen, high-Verengung, Kosten-Gleichstand→klüger) — 19/19 grün. py_compile OK. Skill 05 + SKILL.md 1.121.0 im selben Commit. Kein Schema-/Config-/GUI-Touch (Bandbreiten sind Code-Konstanten wie der Floor). Server-Restart nötig. KURATIERTER Eintrag (admin)."),
     ("9.275.1", "2026-07-03", "fix(Benchmark-Matching): Release-Date-bewusstes Alias-Matching in engine/bench_official.py — mit dem frisch hinterlegten AA-Key zeigte der erste echte AA-Abgleich zwei Matching-Fehler: (1) 'mistral-small-latest' traf AAs URALT-Eintrag 'Mistral Small (Sep '24)' (II 4.7 → Perzentil 16, hätte analysis unter den Floor gedrückt) — AA parkt die ÄLTESTE Release unter dem nackten Familien-Slug ('mistral-small'), der Exakt-Match-Shortcut griff also genau falsch; (2) 'devstral-latest' matchte NICHTS (Devstral-Einträge heißen devstral-2/-small/-medium — kein Datums-Token, die Familie-per-YYMM-Heuristik sah sie nicht). FIX: _norm2 liefert (norm, is_alias) — is_alias=True wenn die ID ein 'latest'-Token trug; _match_model: bei ALIAS-IDs schließt ein Exakt-Treffer nicht mehr kurz, sondern es gewinnt der NEUESTE Eintrag aus allen '<name>-*'-Prefix-Treffern (Sortierung: release_date (AA, neu im Index-Eintrag) > YYMM-Datums-Token im Namen (LMArena) > Intelligence-Index als Tie-Break);VERSIONS-GEPINNTE IDs matchen weiter exakt zuerst; gepinnte IDs ohne Exakt-Treffer fallen auf die Familie zurück (statt der alten nur-Datums-Token-Suche). Ergebnis (live nach Restart verifiziert, research-Zelle mistral-small): 'Mistral Small 4 (Reasoning)' raw 19.6 → capability 63 (vorher 16/Sep-'24), tps 147.5 intern; devstral-latest → 'Devstral 2' (alle 9 Tasks aus AA), glm-5.2 matcht jetzt zusätzlich 'glm-5.2 (max)' auf LMArena, codestral bleibt korrekt intern (steht auf keinem Leaderboard). AA-Key des Users via POST /v1/services/server gespeichert (config.json, gitignored — Key landet NIE im Repo). Achtung Betriebsregel: Matcher-Änderungen brauchen Server-Restart BEVOR ein Benchmark-Lauf sie nutzt (der erste Verifikationslauf lief noch mit altem Code aus dem Speicher). py_compile OK. KEIN eigener kuratierter Eintrag (Fix der 9.275.0-Funktion; dort in versions ergänzt)."),
     ("9.275.0", "2026-07-03", "feat(Benchmark): Fähigkeits-Prozente kommen jetzt von OFFIZIELLEN Leaderboards statt vom eigenen Prompt+Judge-Benchmark (User-Auftrag: 'get rid of our own benchmarks … percentage comes from official sources but speed from internal real tests'). NEU engine/bench_official.py: (1) QUELLEN — Artificial Analysis Data API (kostenloser Key, config.json → benchmark_official.artificialanalysis_api_key, 1000 req/Tag, Attribution in der GUI) liefert Intelligence/Coding/Math/Agentic-Indizes; LMArena über das offizielle HF-Dataset lmarena-ai/leaderboard-dataset (CC-BY-4.0, KEIN Auth, datasets-server /filter-API) liefert Kategorie-Elo (coding/math/hard_prompts/instruction_following/creative_writing/multi_turn/overall). Pro Aufgabentyp eine Quellen-Präferenzkette (TASK_SOURCE_MAP: checkbare Skills → AA-Indizes, Geschmacks-/Format-Aufgaben → Arena-Elo). (2) NORMALISIERUNG = PERZENTIL innerhalb der GESAMTEN Leaderboard-Verteilung (~364 Arena-Modelle) — bewusst NICHT Min-Max über den eigenen Pool (der erste Wurf tat das und pinnte mistral-small auf 35 = unter den Router-Floor 50 für ALLES; Perzentile: small ~55, medium ~78, Frontier ~90 — Floor-Semantik + Kosten-Ökonomie bleiben erhalten). (3) NAMENS-MATCHING config-ID → Leaderboard-Eintrag: normalisiert (Provider-Präfix, -latest, Quant-/Instruct-Suffixe, YYMM-Datums-Tails), exakt > Familie-mit-neuestem-Datum; explizites per-Modell-Override models.<id>.official_names {artificialanalysis, lmarena} gewinnt (GUI 'Zuordnung'-Inputs); getroffener offizieller Name + Rohwert landen auf der measured-Zelle (Tooltip in der Gemessen-Spalte). (4) CACHE agents/main/bench_official_cache.json (24h TTL, pro Quelle; Fetch-Fehler → stale Cache → interner Fallback, blockiert NIE; gitignored). SPEED bleibt INTERN: model_bench.benchmark_cell(measure_only=True) = Seed-Test — beantwortet alle Prompts für echte tps, aber kein Check/Judge-Call; benchmark_model(official_cells=…) mischt offizielle capability + source/raw/official_name in die measured-Zelle; Modelle/Tasks ohne Leaderboard-Daten laufen unverändert durch den internen Judge-Benchmark (source='internal' — bewusst als Fallback BEHALTEN, lokale Fine-Tunes/oMLX-Modelle stehen auf keinem Leaderboard). handlers/providers._run_benchmark_bg holt die Leaderboard-Daten VOR der Modellschleife (Progress 'Leaderboard-Daten laden…', Quell-Fehler in errors, Judge-Pflicht bleibt für den Fallback). Router (bench_cell_value/_bench_rank_key) UNVERÄNDERT — liest capability/tps wie bisher; Overrides bleiben sticky (der research-45-Override auf mistral-small aus 9.272.3 wirkt weiter). NEUE Endpoint-Felder: POST /v1/services/server {benchmark_aa_api_key} (leer = Key löschen), GET /v1/models/config → benchmark_official.aa_key_set (nur Admin, nie der Key selbst). GUI Modelle-Tab: AA-Key-Eingabe + Quellen-Attributionszeile oben (AA-ToS verlangen Attribution); Benchmark-Tabelle zeigt pro Zelle Quellen-Badge (AA/Arena/intern); 'Zuordnung'-Inputs pro Modell (saveBenchmarkOverrides speichert sie mit). Live verifiziert (ohne Server): LMArena-Fetch 364 Coding-Modelle ~9s, Matching trifft mistral-medium-3.5/mistral-small-2506/deepseek-v4-pro+flash/kimi-k2.6, Perzentile plausibel; Devstral/Codestral/lokale Modelle korrekt ungematcht (AA-Key bzw. interner Fallback). py_compile OK; js_gate GRÜN (net-globals 1834→1835, +1 saveBenchAAKey, Baseline im selben Commit; Smoke 4/5 + 1 flaky Retry). Skill 01/05/06 + SKILL.md 1.119.0 im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (admin)."),
     ("9.274.1", "2026-07-03", "chore(GUI+Doku): tote Sidecar-Sektion aus Allgemeine Einstellungen → Server entfernt (User-Auftrag: 'remove sidecar, its not needed anymore'). Der Sidecar-Subprozess wurde in v9.247.0 gelöscht (Loop läuft in-process), /v1/sidecar/status|restart sind serverseitig 404 — die Settings zeigten aber weiter einen 'Sidecar'-Monitor mit Neustart-Knopf, der nur fehlschlagen konnte. ENTFERNT: settings_general_tabs.js Sidecar-SEC-Block + der /v1/sidecar/status-Fetch; settings_general.js restartSidecar (Global 1835→1834, .globals-count.baseline im selben Commit angepasst — bewusstes Entfernen, kein Split-Verstoß); Kommentare (_renderSupervisorStatus 'searxng + crawl4ai', Header). DOKU-DRIFT-BEREINIGUNG brain-agent-guide (die 9.247.0-Migration hatte die Skill NICHT nachgezogen — Brainy hätte Nutzern den Neustart eines nicht existenten Prozesses empfohlen): 05-internals Architektur-Diagramm + 'Agentic loop' auf in-process umgeschrieben (llm_loop.py, direkter TOOL_DISPATCH, Cancel via cancel_token/cancel_turn, Restart-Recovery ohne Event-Log-Re-Attach), Supervised subprocesses 3→2, 8 weitere Prosa-Stellen; 02-tools Dispatch-Pfad; 01-api /v1/sidecar/*- und /v1/tools/call-Endpoints raus (beide 404), 'sidecar turn'-Prosa; 03-storage pi-sidecar.log als DEAD markiert, sidecar/-Verzeichniszeile raus; 04-recipes Sidecar-Restart-Rezept raus + GEFAHRENFIX: das Rezept empfahl 'launchctl kickstart -k' (SIGKILL — korrumpiert MemPalace-Writes, siehe PreToolUse-Hook) → jetzt graceful 'launchctl kill SIGTERM'; pi-sidecar.log-Tail durch inprocess-loop-grep ersetzt; 06-user-manual Server-Tab-Beschreibung + tote Sidecar-FAQ raus; SKILL.md Trigger/Dateitabelle. js_gate GRÜN (net-globals 1834 = neue Baseline, Smoke 5/5 nach 1 flaky Retry). py_compile OK. Server-Restart nur für Versionsanzeige. KURATIERTER Eintrag (admin, klein)."),
@@ -11743,6 +11744,30 @@ def _complexity_floor(complexity: str | None) -> int:
     return max(0, min(100, base))
 
 
+# Capability BAND width (percentile points below the strongest capable
+# candidate) per task complexity. Within the band models are "nearly as smart
+# as the best" and compete on COST; below it a model is out of the running no
+# matter how cheap (intelligence-per-buck: a model at 50 % of the leader's
+# capability must not win just because it matches the runner-up's price).
+# `high` narrows the band (only near-frontier competes), `low` widens it
+# (cheap models win more often). Band-relative-to-top rather than a raw
+# capability/cost ratio because leaderboard percentiles wobble a few points
+# between refreshes (a ratio flips picks on that wobble) and because ratios
+# blow up on $0 local / unpriced models.
+_CAP_BAND_WIDTHS = {"high": 5, "medium": 15, "low": 25}
+_CAP_BAND_DEFAULT = 15
+
+
+def _cap_band_width(complexity: str | None) -> int:
+    return _CAP_BAND_WIDTHS.get(complexity or "", _CAP_BAND_DEFAULT)
+
+
+def _bench_cap(model: str, task_type: str) -> float:
+    """Effective capability (0-100) for (model, task_type); 0 when unbenchmarked."""
+    cap = (bench_cell_value(model, task_type) or {}).get("capability")
+    return float(cap) if isinstance(cap, (int, float)) else 0.0
+
+
 # Relative width of a speed band. Two models whose tps differ by less than this
 # fraction of the faster one are treated as equally fast (the difference is
 # benchmark noise, not a real speed advantage) and the ranking falls through to
@@ -11768,22 +11793,28 @@ def _tps_bucket(tps: float) -> int:
 
 
 def _bench_rank_key(model: str, task_type: str, floor: int,
-                    complexity: str | None) -> tuple:
-    """Sort key for the CAPABLE-ENOUGH → cloud → fast → cheap ordering, best first.
+                    complexity: str | None, top_cap: float | None = None) -> tuple:
+    """Sort key for the CAPABLE → cloud → CAPABILITY-BAND → cheap ordering,
+    best first (intelligence-per-buck, v9.276.0).
 
-    Capability is a FLOOR, not a maximand: a model is either capable enough
-    (>= floor) or not. We deliberately do NOT rank by raw capability — that
-    would always crown the single highest-scoring model (e.g. mistral-medium)
-    and never let a cheaper/faster but still-capable model win. `complexity`
-    only MOVES the floor (high raises it so fewer models qualify, low lowers
-    it), via `_complexity_floor`.
+    Capability acts twice, both times bucketed, never as a raw maximand:
+    1. FLOOR — a model is either capable enough (>= floor) or not; `complexity`
+       MOVES the floor via `_complexity_floor`.
+    2. BAND — `top_cap` (the highest capability among floor-qualified
+       candidates, computed by the caller over the pool) defines a band of
+       width `_cap_band_width(complexity)` below the leader. In-band models
+       ("nearly as smart as the best") sort ahead of out-of-band ones, and
+       WITHIN the band the cheaper model wins — so a near-frontier model at
+       10 % of the frontier price beats both the frontier (same band, cheaper)
+       and a half-as-capable model at the same price (out of band). Raw
+       capability only breaks exact cost ties (at equal price the smarter
+       model wins). We still do NOT sort by raw capability above cost — that
+       would always crown the single top-scoring model.
 
     Among the capable set CLOUD sorts ahead of LOCAL — the same "never prefer
     cloud→local" rule `_fallback_walk` enforces, applied here at the PRIMARY
-    pick (a free/fast local model must not outrank a capable cloud model on a
-    near-tied, and least-trustworthy, benchmark). Within one locality class the
-    order is the user's stated priority: speed (THROUGHPUT tok/s, negated so
-    highest tps wins), then cost, then static priority."""
+    pick. Speed is a late tiebreak (bucketed via `_tps_bucket` so noise can't
+    decide) — the buck ranks before the tok/s."""
     cell = bench_cell_value(model, task_type) or {}
     cap = cell.get("capability")
     cap = cap if isinstance(cap, (int, float)) else 0
@@ -11793,29 +11824,39 @@ def _bench_rank_key(model: str, task_type: str, floor: int,
     tps = tps if isinstance(tps, (int, float)) and tps > 0 else 0.0
     cost = _model_total_cost(model)
     prio = -(_models_config.get(model, {}).get("priority") or 0)
-    # Speed is BUCKETED before it ranks: a raw tps compare let a noise-sized
-    # delta (e.g. 11.5 vs 11.2 tok/s — within run-to-run variance, n=2) decide
-    # the pick and PREEMPT the much larger cost axis, so a 20×-pricier model won
-    # a "fast" task by 0.3 tok/s. `_tps_bucket` snaps tps to a coarse band so
-    # only a MEANINGFULLY faster model wins on speed; models within one band tie
-    # here and fall through to cost (then static priority). Order is the user's
-    # stated policy: capable-enough → cloud → fast(bucketed) → cheap → priority.
-    return (0 if has_cap else 1, local, -_tps_bucket(tps), cost, prio)
+    out_of_band = 0
+    if top_cap is not None and cap < top_cap - _cap_band_width(complexity):
+        out_of_band = 1
+    return (0 if has_cap else 1, local, out_of_band, cost, -cap,
+            -_tps_bucket(tps), prio)
 
 
 def _pick_by_benchmark(candidates: list[str], task_type: str | None,
                        complexity: str | None = None) -> str | None:
     """Among candidates with a benchmark for this task type, return the best by
-    capable→fast→cheap (complexity-adjusted floor). None when no candidate has
-    been benchmarked for the task (caller then falls back to the tier heuristic)."""
+    capable → cloud → capability-band → cheap (complexity-adjusted floor and
+    band width). None when no candidate has been benchmarked for the task
+    (caller then falls back to the tier heuristic)."""
     if not task_type:
         return None
     scored = [m for m in candidates if bench_cell_value(m, task_type) is not None]
     if not scored:
         return None
     floor = _complexity_floor(complexity)
-    scored.sort(key=lambda m: _bench_rank_key(m, task_type, floor, complexity))
+    top_cap = _bench_top_cap(scored, task_type, floor)
+    scored.sort(key=lambda m: _bench_rank_key(m, task_type, floor, complexity,
+                                              top_cap=top_cap))
     return scored[0]
+
+
+def _bench_top_cap(candidates: list[str], task_type: str, floor: int) -> float | None:
+    """Highest capability among floor-qualified candidates — the band anchor
+    for `_bench_rank_key`. None when nobody clears the floor (band inert; the
+    ranking degrades to the floor/locality/cost order). Computed over the whole
+    pool, not per locality class: locality sorts first anyway, and percentile
+    leaders are effectively always cloud."""
+    caps = [c for c in (_bench_cap(m, task_type) for m in candidates) if c >= floor]
+    return max(caps) if caps else None
 
 
 def _fallback_walk(picked: str, candidates: list[str], task_type: str | None) -> str:
@@ -11918,7 +11959,8 @@ def _resolve_auto_model_tiered(purpose: str | None,
          model, so it doesn't constrain the pool). Falls back to the full set
          when no enabled model matches.
       2. Benchmark ranking — when a candidate has measured data for the task
-         type, rank capable→fast→cheap (capability floor nudged by complexity).
+         type, rank capable → cloud → capability-band → cheap (floor and band
+         width nudged by complexity).
       3. Tier — the purpose's baseline tier (`_PURPOSE_TIER`), then SHIFTED by
          `complexity` along `_TIER_LADDER` (high→up, low→down, medium→same):
            - "reasoning" → first model with thinking_format != "none"
@@ -11969,11 +12011,12 @@ def _resolve_auto_model_tiered(purpose: str | None,
             candidates = vision  # raw-image capability wins
 
     # Benchmark ranking (the measured path): if any candidate has been
-    # benchmarked for the task, rank capable→fast→cheap and take the best. The
-    # capability floor folds in the tier intent (a reasoning task simply scores
-    # higher on capable models), so we rank over the WHOLE candidate pool, not
-    # a tier-filtered slice. Complexity nudges the floor: a 'high'-complexity
-    # task demands a stronger model, 'low' tolerates a weaker/cheaper one.
+    # benchmarked for the task, rank capable → cloud → capability-band → cheap
+    # and take the best. The capability floor folds in the tier intent (a
+    # reasoning task simply scores higher on capable models), so we rank over
+    # the WHOLE candidate pool, not a tier-filtered slice. Complexity nudges
+    # the floor AND the band width: a 'high'-complexity task demands a stronger
+    # model and only near-frontier picks, 'low' tolerates a weaker/cheaper one.
     bench_task = (task_types or [None])[0] if task_types else None
     if bench_task is None and purpose:
         # keyword mode has no task_types — fall back to the legacy heuristic
@@ -12131,8 +12174,8 @@ def resolve_moa_plan(analysis: dict | None, aggregator: str,
     collapses after enabled+ACL+aggregator filtering. Otherwise returns
       {references: [ids best-first], gate_hit, task_types, complexity}
     with references ranked by the SAME `_bench_rank_key` ordering auto-route
-    uses (capable→cloud→fast→cheap on the primary task_type), aggregator
-    excluded so a model never advises itself.
+    uses (capable → cloud → capability-band → cheap on the primary task_type),
+    aggregator excluded so a model never advises itself.
     """
     cfg = get_moa_config()
     if not cfg.get("enabled"):
@@ -12181,7 +12224,9 @@ def resolve_moa_plan(analysis: dict | None, aggregator: str,
     complexity = analysis.get("complexity")
     floor = _complexity_floor(complexity)
     bench_task = task_types[0]  # primary task type, most-important-first
-    pool.sort(key=lambda m: _bench_rank_key(m, bench_task, floor, complexity))
+    top_cap = _bench_top_cap(pool, bench_task, floor)
+    pool.sort(key=lambda m: _bench_rank_key(m, bench_task, floor, complexity,
+                                            top_cap=top_cap))
     try:
         n = int(cfg.get("max_references") or 3)
     except (TypeError, ValueError):

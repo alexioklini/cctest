@@ -145,20 +145,23 @@ reasoning}` over two closed vocabularies that map onto existing machinery:
    markdown and readable by any text model, so they don't narrow the pool).
 2. **ACL** — narrow to the caller's allowed models.
 3. **Benchmark ranking** (the measured path) — if any candidate has a benchmark
-   for the turn's first task_type, rank **capable-enough → cloud → fast → cheap**
-   (`_bench_rank_key`): capability is a FLOOR, not a maximand — a model either
-   clears a complexity-adjusted floor (base 50, `high` +20, `low` −20) or not; we
-   do NOT rank by raw capability (that would always crown the single top-scoring
-   model and never let a cheaper/faster still-capable model win). Among the
-   capable set, **CLOUD sorts ahead of LOCAL** (the same `never cloud→local` rule
-   the fallback walk enforces, applied at the primary pick — a free/fast local
-   model must not outrank a capable cloud model on a near-tied, least-trustworthy
-   benchmark), then **BUCKETED** throughput (`_tps_bucket` — tps snapped to a
-   coarse log band, rel-width 0.15, so a model must be ≥~15 % faster to win on
-   speed; near-tied speeds fall through to cost — this stops a 0.3-tok/s
-   measurement-noise difference from preempting a 20× cost gap), then lower
-   `cost_input+cost_output`, then static priority. Complexity only MOVES the
-   floor. `bench_cell_value` reads `override ?? measured`.
+   for the turn's first task_type, rank **capable → cloud → capability-band →
+   cheap** (`_bench_rank_key`, intelligence-per-buck since v9.276.0). Capability
+   acts twice, both times bucketed, never as a raw maximand: (a) **FLOOR** — a
+   model either clears a complexity-adjusted floor (base 50, `high` +20, `low`
+   −20) or not; (b) **BAND** — among floor-qualified candidates the strongest
+   one anchors a band (`_cap_band_width`: `high` 5, `medium` 15, `low` 25
+   percentile points); models inside the band ("nearly as smart as the best")
+   sort ahead of those below it, and WITHIN the band the **cheapest**
+   (`cost_input+cost_output`) wins — so a near-frontier model at a tenth of the
+   frontier price beats both the frontier model and a half-as-capable one at
+   the same price. Raw capability only breaks exact cost ties (equal price →
+   the smarter model). Among the capable set, **CLOUD sorts ahead of LOCAL**
+   (the same `never cloud→local` rule the fallback walk enforces, applied at
+   the primary pick), and speed is a late tiebreak (BUCKETED throughput,
+   `_tps_bucket`, rel-width 0.15 — noise can't decide; the buck ranks before
+   the tok/s). Complexity moves BOTH the floor and the band width.
+   `bench_cell_value` reads `override ?? measured`.
    See **Model benchmark** below.
 4. **Tier heuristic** (no benchmark for the task) — the purpose's baseline tier
    (`_PURPOSE_TIER`) **shifted by complexity** along `_TIER_LADDER` [fast,
