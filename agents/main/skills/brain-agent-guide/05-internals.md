@@ -293,10 +293,13 @@ Since v9.275.0 the two halves of a benchmark cell come from DIFFERENT places:
   full leaderboard distribution** (pool-independent; mid-field commercial
   ≈55, frontier ≈90 — calibrated to the router's floor 50 ±20). Model
   identity resolves by normalized-name matching (provider prefix, `-latest`,
-  quant/instruct suffixes, YYMM date tails stripped; family match picks the
-  newest date); a per-model `official_names {artificialanalysis, lmarena}`
-  override (the "Zuordnung" inputs in the GUI) wins when the auto-match is
-  wrong. Fetched payloads cache in `agents/main/bench_official_cache.json`
+  quant/instruct suffixes stripped): version-PINNED ids match exactly;
+  rolling ALIAS ids (`-latest`) pick the NEWEST family entry — AA
+  `release_date`, else the YYMM date token in the name (9.275.1: AA parks
+  its oldest release under the bare family slug, so an exact hit must not
+  short-circuit an alias). A per-model `official_names {artificialanalysis,
+  lmarena}` override (the "Zuordnung" inputs in the GUI) wins when the
+  auto-match is wrong. Fetched payloads cache in `agents/main/bench_official_cache.json`
   (24h TTL per source; fetch failure → stale cache → internal fallback).
 - **Speed = INTERNAL seed test** (`engine/model_bench.py`,
   `measure_only=True`): the tiered prompt set (`BENCH_TASKS`) still runs on

@@ -43,7 +43,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "Modelle ohne Leaderboard-Eintrag (z. B. lokale Modelle) werden "
                 "wie bisher intern getestet.",
         "audience": "admin",
-        "versions": ["9.275.0"],
+        "versions": ["9.275.0", "9.275.1"],
     },
     {
         "version": "9.274.1",

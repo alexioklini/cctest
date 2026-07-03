@@ -198,12 +198,22 @@ _STRIP_TOKENS = {
 
 
 def _norm(name: str) -> str:
+    return _norm2(name)[0]
+
+
+def _norm2(name: str) -> tuple[str, bool]:
+    """(normalized name, is_alias). is_alias=True when the id carried a
+    'latest' token — a rolling alias whose true version only the provider
+    knows, so matching must prefer the NEWEST leaderboard entry of the family
+    instead of an exact-name hit (AA keeps its oldest entry under the bare
+    family name, e.g. slug 'mistral-small' = the Sep-'24 model)."""
     s = (name or "").lower()
     if "/" in s:
         s = s.rsplit("/", 1)[-1]
     s = s.replace("_", "-").replace(".", "-").replace(" ", "-")
-    parts = [p for p in s.split("-") if p and p not in _STRIP_TOKENS]
-    return "-".join(parts)
+    raw_parts = [p for p in s.split("-") if p]
+    parts = [p for p in raw_parts if p not in _STRIP_TOKENS]
+    return "-".join(parts), "latest" in raw_parts
 
 
 _DATE_TOKEN = re.compile(r"^\d{4}$")  # YYMM release tails (2506, 2508, ...)
@@ -249,8 +259,10 @@ def _build_aa_index(aa_data: list[dict]) -> tuple[dict[str, dict], dict[str, lis
         for k, v in metrics.items():
             dists.setdefault(k, []).append(v)
         entry = {"name": m.get("name") or m.get("slug") or m.get("id") or "?",
-                 "metrics": metrics}
-        ii = metrics.get("artificial_analysis_intelligence_index", 0)
+                 "metrics": metrics,
+                 "release": str(m.get("release_date") or ""),
+                 "ii": metrics.get("artificial_analysis_intelligence_index", 0.0)}
+        ii = entry["ii"]
         for key in {_norm(m.get("slug") or ""), _norm(m.get("name") or "")}:
             if not key:
                 continue
@@ -278,23 +290,45 @@ def _build_lmarena_index(lm_data: dict[str, dict[str, float]]) -> tuple[dict[str
 
 def _match_model(mid: str, mcfg: dict, index: dict[str, dict],
                  source_label: str) -> dict | None:
-    """Resolve one config model against one source index. Explicit
-    `official_names` override > exact normalized match > family match
-    (same name modulo a trailing release-date token; newest date wins)."""
+    """Resolve one config model against one source index.
+
+    Explicit `official_names` override > exact normalized match (for
+    version-PINNED ids) > newest family member. For rolling ALIAS ids
+    (`-latest`) an exact hit does NOT short-circuit — AA parks its OLDEST
+    release under the bare family name (slug 'mistral-small' = Sep '24), so
+    the alias picks the newest among all `<name>-*` entries instead:
+    `release_date` (AA) beats the YYMM date token in the name (LMArena),
+    intelligence index breaks remaining ties."""
     override = ((mcfg.get("official_names") or {}).get(source_label) or "").strip()
     if override:
         return index.get(_norm(override))  # explicit: exact or nothing
-    candidates = [c for c in (_norm(mcfg.get("base_model_id") or ""), _norm(mid)) if c]
-    for c in candidates:
-        if c in index:
-            return index[c]
-    for c in candidates:
-        fam, _ = _family(c)
-        if not fam:
+    candidates = []
+    for raw in (mcfg.get("base_model_id") or "", mid):
+        c, is_alias = _norm2(raw)
+        if c and (c, is_alias) not in candidates:
+            candidates.append((c, is_alias))
+    for c, is_alias in candidates:
+        exact = index.get(c)
+        if exact is not None and not is_alias:
+            return exact
+        pool = {k: v for k, v in index.items() if k.startswith(c + "-")}
+        if exact is not None:
+            pool[c] = exact
+        if not pool:
+            # pinned id absent from the source (e.g. our YYMM name vs their
+            # scheme): fall back to the whole family, newest wins below.
+            fam, _ = _family(c)
+            if fam and fam != c:
+                pool = {k: v for k, v in index.items()
+                        if k == fam or k.startswith(fam + "-")}
+        if not pool:
             continue
-        hits = [(k, v) for k, v in index.items() if _family(k)[0] == fam]
-        if hits:
-            return max(hits, key=lambda kv: _family(kv[0])[1])[1]
+        if len(pool) == 1:
+            return next(iter(pool.values()))
+        return max(pool.items(),
+                   key=lambda kv: (kv[1].get("release") or "",
+                                   _family(kv[0])[1],
+                                   kv[1].get("ii") or 0.0))[1]
     return None
 
 

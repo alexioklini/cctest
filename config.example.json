@@ -334,10 +334,13 @@
         },
         "research": {
           "measured": {
-            "capability": 97,
-            "tps": 149.1,
+            "tps": 147.5,
             "n": 3,
-            "ts": "2026-06-03T15:03:41Z"
+            "ts": "2026-07-03T15:30:25Z",
+            "capability": 63,
+            "source": "artificialanalysis",
+            "raw": 19.6,
+            "official_name": "Mistral Small 4 (Reasoning)"
           },
           "override": {
             "capability": 45,
