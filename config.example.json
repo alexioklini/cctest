@@ -4705,6 +4705,7 @@
       "orchestration": "plan",
       "agentic": "plan",
       "fast": "answer"
-    }
+    },
+    "task_aggregators": {}
   }
 }

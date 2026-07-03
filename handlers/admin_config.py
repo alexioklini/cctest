@@ -930,6 +930,29 @@ class AdminConfigHandlers:
                         return
                     out_tm[tt] = md
                 mo["task_modes"] = out_tm
+            # Per-task fixed aggregator/orchestrator: {task_type: model_id}.
+            # ""/"auto" values are dropped (= auto-route pick, the default).
+            if "task_aggregators" in moa_in:
+                ta_in = moa_in["task_aggregators"] or {}
+                if not isinstance(ta_in, dict):
+                    self._send_json({"error": "moa.task_aggregators must be an object {task_type: model_id}"}, 400)
+                    return
+                valid_tt = set(engine._TASK_TYPES)
+                out_ta = {}
+                for tt, mid in ta_in.items():
+                    if tt not in valid_tt:
+                        self._send_json({"error": f"moa.task_aggregators: unknown task_type '{tt}' "
+                                                  f"(valid: {', '.join(sorted(valid_tt))})"}, 400)
+                        return
+                    if not isinstance(mid, str) or not mid.strip() or mid.strip().lower() == "auto":
+                        continue
+                    mid = mid.strip()
+                    mcfg = (engine._models_config or {}).get(mid) or {}
+                    if not mcfg.get("enabled"):
+                        self._send_json({"error": f"moa.task_aggregators.{tt}: unknown or disabled model '{mid}'"}, 400)
+                        return
+                    out_ta[tt] = mid
+                mo["task_aggregators"] = out_ta
             for key, lo, hi in (("max_references", 1, 5),
                                 ("reference_max_tokens", 64, 4000),
                                 ("reference_timeout_s", 5, 600),

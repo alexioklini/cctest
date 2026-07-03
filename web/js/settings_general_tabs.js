@@ -49,7 +49,7 @@ async function _genTab_server(C) {
           })()}
           <button class="btn-secondary" onclick="API.post('/v1/services/server',{auto_route_classifier_mode:document.getElementById('srv-auto-route-mode').value}).then(()=>showToast('Auto-Routing aktualisiert')).catch(e=>showToast('Fehlgeschlagen',true))">Setzen</button>
         </div>
-        ${SEC('Experten-Gremium (MoA)', 'Das „🧬 Experten-Gremium"-Modell im Verfasser: mehrere Experten-Modelle arbeiten parallel (ohne Tools) der Antwort zu, das per Auto-Routing gewählte Modell führt ihre Beiträge zur finalen Antwort zusammen. Die Matrix unten legt PRO AUFGABENTYP fest, welche Modelle im Gremium sitzen: Spalte ohne Häkchen = für diesen Aufgabentyp tritt KEIN Gremium an (die Anfrage verhält sich wie „Smart (Cloud)"); Häkchen = genau diese Modelle sind die Kandidaten (das am besten geeignete Top-N tritt an; das Modell, das gerade selbst antwortet, wird automatisch ausgelassen). Der BEITRAGS-MODUS pro Spalte bestimmt, WAS die Experten liefern: „Antwort" = vollständiger Antwort-Entwurf (stark bei Wissens-/Urteilsfragen), „Ansatz" = nur die Herangehensweise — Schritte, Quellen, Fallstricke — die das antwortende Modell dann mit seinen Tools ausführt (stark bei Recherche/Orchestrierung, wo tool-lose Experten nichts Endgültiges beantworten können). Tipp: Programmierung/Mathematik/Schnell leer lassen — dort bringt das Gremium nachweislich nichts. Benötigt Klassifikator-Modus „LLM" oder „Hybrid". Jeder Experten-Beitrag ist ein eigener kostenpflichtiger Modell-Aufruf.')}
+        ${SEC('Experten-Gremium (MoA)', 'Das „🧬 Experten-Gremium"-Modell im Verfasser: mehrere Experten-Modelle arbeiten parallel (ohne Tools) der Antwort zu, das per Auto-Routing gewählte Modell führt ihre Beiträge zur finalen Antwort zusammen. Die Matrix unten legt PRO AUFGABENTYP fest, welche Modelle im Gremium sitzen: Spalte ohne Häkchen = für diesen Aufgabentyp tritt KEIN Gremium an (die Anfrage verhält sich wie „Smart (Cloud)"); Häkchen = genau diese Modelle sind die Kandidaten (das am besten geeignete Top-N tritt an; das Modell, das gerade selbst antwortet, wird automatisch ausgelassen). Der BEITRAGS-MODUS pro Spalte bestimmt, WAS die Experten liefern: „Antwort" = vollständiger Antwort-Entwurf (stark bei Wissens-/Urteilsfragen), „Ansatz" = nur die Herangehensweise — Schritte, Quellen, Fallstricke — die das antwortende Modell dann mit seinen Tools ausführt (stark bei Recherche/Orchestrierung, wo tool-lose Experten nichts Endgültiges beantworten können). Der ORCHESTRATOR pro Spalte bestimmt, WER die Beiträge zusammenführt: „Auto (Smart)" = das per Auto-Routing gewählte Modell (Standard), oder ein FESTES Modell, das für diesen Aufgabentyp immer die finale Antwort erstellt (es wird automatisch aus dem Gremium der Spalte ausgelassen, damit es sich nicht selbst berät). Tipp: Programmierung/Mathematik/Schnell leer lassen — dort bringt das Gremium nachweislich nichts. Benötigt Klassifikator-Modus „LLM" oder „Hybrid". Jeder Experten-Beitrag ist ein eigener kostenpflichtiger Modell-Aufruf.')}
         ${(() => {
           const mo = srv.moa || {};
           const vocab = mo.task_type_vocab || ['coding','math','research','analysis','reporting','creative','orchestration','agentic','fast'];
@@ -68,6 +68,7 @@ async function _genTab_server(C) {
             ? ((tp[tt] || []).includes(mid))
             : (legacyGate.includes(tt) && legacyPool.includes(mid));
           const modes = mo.task_modes || {};
+          const aggs = mo.task_aggregators || {};
           const th = vocab.map(tt =>
             `<th style="padding:4px 6px;font-size:11px;color:var(--text-200);font-weight:600;white-space:nowrap;text-align:center" title="${esc(tt)}">${esc(ttDe[tt]||tt)}</th>`).join('');
           // Second header row: per-column contribution mode (answer|plan).
@@ -77,6 +78,19 @@ async function _genTab_server(C) {
               <select class="form-select moa-mode-sel" data-tt="${esc(tt)}" title="Beitrags-Modus für ${esc(ttDe[tt]||tt)}" style="font-size:10.5px;padding:1px 2px;width:100%">
                 <option value="answer" ${md==='answer'?'selected':''}>Antwort</option>
                 <option value="plan" ${md==='plan'?'selected':''}>Ansatz</option>
+              </select>
+            </th>`;
+          }).join('');
+          // Third header row: per-column orchestrator/aggregator — "auto"
+          // (the auto-route pick, default) or a fixed model.
+          const thAgg = vocab.map(tt => {
+            const cur = aggs[tt] || 'auto';
+            const opts = [`<option value="auto" ${cur==='auto'?'selected':''}>Auto (Smart)</option>`]
+              .concat(cloudModels.map(([id]) =>
+                `<option value="${esc(id)}" ${cur===id?'selected':''}>${esc(modelShortName(id))}</option>`));
+            return `<th style="padding:2px 4px;text-align:center">
+              <select class="form-select moa-agg-sel" data-tt="${esc(tt)}" title="Orchestrator für ${esc(ttDe[tt]||tt)}: Auto = das per Smart-Routing gewählte Modell führt zusammen; ein festes Modell übernimmt stattdessen immer" style="font-size:10.5px;padding:1px 2px;width:100%;max-width:110px">
+                ${opts.join('')}
               </select>
             </th>`;
           }).join('');
@@ -98,6 +112,7 @@ async function _genTab_server(C) {
                 <thead>
                   <tr><th style="text-align:left;padding:4px 8px 4px 0;font-size:11px;color:var(--text-200)">Modell</th>${th}</tr>
                   <tr><th style="text-align:left;padding:2px 8px 2px 0;font-size:10px;color:var(--text-300)">Beitrags-Modus</th>${thMode}</tr>
+                  <tr><th style="text-align:left;padding:2px 8px 2px 0;font-size:10px;color:var(--text-300)">Orchestrator</th>${thAgg}</tr>
                 </thead>
                 <tbody>${rows}</tbody>
               </table>` : '<span style="font-size:12px;color:var(--text-300)">Keine Cloud-Modelle aktiviert.</span>'}
@@ -2657,10 +2672,17 @@ async function saveMoaConfig() {
   document.querySelectorAll('.moa-mode-sel').forEach(sel => {
     taskModes[sel.dataset.tt] = sel.value === 'plan' ? 'plan' : 'answer';
   });
+  // Per-column orchestrator from the 3rd header row; 'auto' entries are
+  // simply absent (= auto-route pick).
+  const taskAggs = {};
+  document.querySelectorAll('.moa-agg-sel').forEach(sel => {
+    if (sel.value && sel.value !== 'auto') taskAggs[sel.dataset.tt] = sel.value;
+  });
   const body = {moa: {
     enabled: !!document.getElementById('moa-enabled')?.checked,
     task_pools: taskPools,
     task_modes: taskModes,
+    task_aggregators: taskAggs,
     max_references: Math.max(1, Math.min(5, parseInt(document.getElementById('moa-max-refs')?.value) || 3)),
     reference_max_tokens: parseInt(document.getElementById('moa-ref-tokens')?.value) || 600,
     reference_timeout_s: parseInt(document.getElementById('moa-ref-timeout')?.value) || 60,

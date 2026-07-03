@@ -1390,6 +1390,12 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   Entwurf) oder „Ansatz" (nur Herangehensweise, das antwortende Modell führt
   aus — Voreinstellung bei Recherche/Orchestrierung/Agentisch). Das Modell,
   das die Anfrage gerade selbst beantwortet, wird automatisch ausgelassen.
+  Die dritte
+  Kopfzeile wählt je Spalte den **Orchestrator** (9.274.0): „Auto (Smart)" =
+  das per Auto-Routing gewählte Modell führt die Beiträge zusammen
+  (Standard), oder ein FESTES Modell, das für diesen Aufgabentyp immer die
+  finale Antwort erstellt (es wird automatisch aus dem Gremium der Spalte
+  ausgelassen, damit es sich nicht selbst berät).
   Dazu: max. Experten je Anfrage (1–5), max. Tokens je Beitrag und Timeout je
   Experte. Komplett leere Matrix oder deaktiviert = der 🧬-Eintrag
   verschwindet aus dem Verfasser.

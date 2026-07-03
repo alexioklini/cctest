@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.274.0",
+        "date": "2026-07-03",
+        "title": "Experten-Gremium: Orchestrator pro Aufgabentyp wählbar",
+        "body": "In der Gremium-Matrix (Einstellungen → Server) können Sie jetzt "
+                "je Aufgabentyp festlegen, welches Modell die Experten-Beiträge "
+                "zur finalen Antwort zusammenführt: „Auto (Smart)“ überlässt die "
+                "Wahl wie bisher dem intelligenten Routing, oder Sie pinnen ein "
+                "festes Modell — etwa Ihr stärkstes Modell für Recherche-Fragen. "
+                "Das fest gewählte Modell wird automatisch aus dem Gremium der "
+                "Spalte ausgelassen, damit es sich nicht selbst berät.",
+        "audience": "admin",
+        "versions": ["9.274.0"],
+    },
+    {
         "version": "9.273.0",
         "date": "2026-07-03",
         "title": "Benchmark-Läufe zeigen jetzt Live-Fortschritt",

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.273.0"
+VERSION = "9.274.0"
 VERSION_DATE = "2026-07-03"
 CHANGELOG = [
+    ("9.274.0", "2026-07-03", "feat(Experten-Gremium): FESTER ORCHESTRATOR pro Aufgabentyp (User-Wunsch: 'in moa matrix config we need for the orchestrator two settings per type: current is auto, but also enable the possibility to set the orchestrator model fixed'). Bisher war der Aggregator IMMER der Auto-Route-Pick; jetzt kann der Admin ihn je Matrix-Spalte auf ein festes Modell pinnen. NEU config.json → moa.task_aggregators {task_type: model_id} (fehlend/''/'auto' = Auto-Route, unverändert). MECHANIK: (1) brain.resolve_moa_plan prüft task_aggregators[gate_hit] — gültig (enabled + ACL-erlaubt; sonst STILLER Fallback auf auto, der Fan-out darf nie an einem entfernten Modell scheitern) → effective_aggregator ersetzt den übergebenen Pick bei der Referenz-EXKLUSION (der Auto-Pick darf dann selbst Referenz sein; das fixe Modell berät sich nie selbst) und der Plan trägt aggregator=<model|None>. (2) handlers/chat.py FRESH-Branch: Plan-aggregator überschreibt auto_model VOR Provider-Switch/Tool-Stash/Freeze-Logik (alles Downstream folgt automatisch; auto_route.model/reason zeigen 'Experten-Gremium: festes Orchestrator-Modell'). (3) FROZEN-Branch (Cache-Freeze, Turns 2+): der feste Orchestrator GEWINNT über den Freeze (explizite Admin-Entscheidung schlägt Cache-Ökonomie) — Session wechselt aufs fixe Modell (Provider/max_context/_auto_tool_groups aus _cache_freeze_groups[fix] falls vorhanden), und ist das fixe Modell selbst cache-priced, WANDERT der Freeze darauf (session._cache_freeze_model=fix) statt pro Turn zurückzupendeln. (4) admin_config validiert task_aggregators strikt (task_type gegen _TASK_TYPES, Modell enabled; ''/'auto'-Werte werden gedroppt). (5) GUI Settings→Server Gremium-Matrix: DRITTE Kopfzeile 'Orchestrator' mit Dropdown je Spalte ('Auto (Smart)' + aktivierte Cloud-Modelle); saveMoaConfig sendet task_aggregators (nur nicht-auto); Sektions-Beschreibung erweitert. auto_route.moa.aggregator in beiden Branches für Audit. py_compile OK; js_gate GRÜN (net-globals unverändert 1835; 1 Lauf mit 2 flaky login-timeouts, Re-Run 5/5). Skill 05/06 + SKILL.md 1.117.0 im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (admin)."),
     ("9.273.0", "2026-07-03", "feat(Benchmark-GUI): sichtbarer Live-Fortschritt für Modell-Benchmarks in Allgemeine Einstellungen → Modelle (User-Report: 'when a model is benchmarked … there is no gui that a benchmark is running and its progress'). Das Backend meldete Fortschritt bisher nur pro MODELL (done/total) — ein Einzel-Modell-Benchmark stand damit minutenlang auf '0/1'; und der #bench-progress-Span wurde nur vom Klick-gestarteten Poll befüllt (Tab-Wechsel/Reload mitten im Lauf → keinerlei Anzeige, veraltete Element-Referenz nach Re-Render). DREI Teile: (1) BACKEND ZELL-GRANULARITÄT — engine/model_bench.py: benchmark_model bekommt optionalen progress_cb(task_type, done_cells) (feuert vor jeder Zelle, exception-safe) + neuer Helfer effective_task_types() (Task-Liste vorab für Totals); handlers/providers.py: _BENCH_PROGRESS um current_task/cells_done/cells_total erweitert (Zelle = Modell × Aufgabentyp), _run_benchmark_bg verdrahtet den cb pro Modell (Basis-Offset m_idx*n_tasks), finally räumt current_task + setzt cells_done=cells_total. GET /v1/models/benchmark/status liefert die neuen Felder automatisch mit (dict-Snapshot). (2) FRONTEND ANZEIGE — settings_general_tabs.js _pollBenchmark: Fortschrittsbalken (110px, width=cells_done/cells_total) + Spinner (inline-Style, globales @keyframes spin) + Text 'Benchmark läuft: a/b · Modell x/y · <modell> · <task>'; Element wird JEDEN Tick frisch per getElementById aufgelöst (switchGeneralTab re-rendert den Tab — eine einmal gefangene Node ginge stale); Doppel-Poll-Guard via _pollBenchmark._active (Funktions-Property, kein neues Global — net-globals-Invariante). (3) RESUME — _genTab_models ruft am Render-Ende _pollBenchmark(true) (resumeOnly): läuft ein Benchmark, hängt sich die Anzeige sofort dran (Reload/Tab-Wechsel mitten im Lauf zeigt jetzt Fortschritt); läuft keiner, still (kein 'Fertig'-Toast beim bloßen Tab-Öffnen — tick._sawRunning unterscheidet die Fälle). py_compile OK, js_gate GRÜN (net-globals unverändert 1835, Smoke 5/5). Skill 01-api.md (Status-Felder) im selben Commit. Server-Restart nötig (providers.py/model_bench.py). KURATIERTER Eintrag (admin-sichtbar)."),
     ("9.272.3", "2026-07-03", "feat(routing): Grounding-Fragen (task_type=research) routen auf mistral-medium — datengetrieben aus der Guard-Nachmessung (Policies-Eval, je 3 Reps gegen Opus-Gold): medium+Guard retrieval 0.957±0.025 (bester je gemessener Wert; Juni 0.67) vs auto/small 0.70-0.82; der Juni-Befund 'route grounding Qs to mistral-medium' ([[feedback_eval_single_run_noise]]) damit belastbar bestätigt. MECHANIK (kein neuer Code — der vorgesehene Admin-Hebel): config.json → models[mistral-small].benchmark.research.override = {capability: 45} — der synthetische Bench misst small=medium=97 (Q&A-Prompts, kein echtes gegroundetes Retrieval) und ließ small per tps+cost gewinnen; der Override drückt small unter den komplexitätsjustierten Floor (50) → _pick_by_benchmark wählt medium für research. NUR research; analysis/fast/coding unverändert (Kostendisziplin — medium ist 10×). Dazu Klassifikator-Beispiel geflippt: 'What minimum password length does our policy require?' → task_types=['research'] statt ['fast'] ('internal-document lookups are retrieval work, never fast') — P1-Passwort-Frage scorte auf dem fast-Pfad 0.17-0.68; interne Dokument-Lookups sind präzisionskritische Retrieval-Arbeit. Verifiziert: auto-route wählt für Policy-Fragen jetzt medium (Probe + 3 Eval-Reps F+R). py_compile OK. Server-Restart nötig. KEIN kuratierter Eintrag (Routing-Tuning; nutzersichtbar nur als bessere Antworten)."),
     ("9.272.2", "2026-07-03", "fix(Zitat-Disziplin): Bahn-(a)-HARD-GUARD gegen die Refusal-Bucket-Regression aus 9.272.0. BEFUND (Policies-Eval 2026-07-03, 3 Reps/Arm gegen Juni-Opus-Gold): expected-refuse-Fragen ('Welche Schwellenwerte nennt UNSERE Geldwäsche-Richtlinie' — Korpus enthält sie nicht) fielen von 0.913 (Juni) auf 0.523 (auto Juli) — die Bahn-(b)-Erlaubnis der Zwei-Bahnen-Disziplin schwächte den Verweigerungs-Druck auch für Bahn-(a)-Fragen: Brain antwortete substantiell ('Unsere Richtlinie verweist explizit auf das FM-GwG…') statt 'nicht gefunden' (Juni-Antworten). Gegenläufig stieg der retrieval-Bucket 0.672→0.821 (Antworten vollständiger, wo Quellen DA sind) — der Gewinn soll bleiben, die Regression weg. FIX (REFUSAL-Default in brain.py + config.json-Kopie): expliziter HARD GUARD in Bahn (a) — fragt die Frage nach dem Inhalt UNSERER/der eigenen Dokumente/Richtlinien/Policies und findet das Retrieval nichts Spezifisches, ist die KERNANTWORT immer 'nicht gefunden / in den Quellen nicht spezifiziert'; Allgemeinwissen ersetzt die Dokumente NIE und wird ihnen NIE zugeschrieben ('unsere Richtlinie verweist auf …' ohne Fundstelle = Fabrikation); allgemeiner Kontext nur klar GETRENNT UNTER der Nicht-gefunden-Aussage, gelabelt. Bahn (b) zusätzlich eingegrenzt ('applies only when the question is NOT about the user's own documents/policies/data'). Nachmessung: eval/run.py --only F1-F3+R1-R3, auto×3 gegen dasselbe Gold — Ziel: refusal-Bucket zurück Richtung 0.9 OHNE retrieval-Rückfall. py_compile OK. Server-Restart nötig. KEIN kuratierter Eintrag (Feinschliff der 9.272.0-Änderung; deren kuratierter Eintrag deckt das Verhalten ab)."),
@@ -12078,6 +12079,12 @@ _MOA_DEFAULTS: dict = {
     # Missing task_type → "answer".
     "task_modes": {"research": "plan", "orchestration": "plan",
                    "agentic": "plan"},
+    # PER-TASK fixed aggregator/orchestrator (v9.274.0): {task_type: model_id}.
+    # Missing/empty/"auto" → the aggregator is whatever auto-route picked for
+    # the turn (the original behavior). A configured model REPLACES the auto
+    # pick whenever the fan-out gates in on that task type — the admin's
+    # explicit choice of who synthesizes for this kind of work.
+    "task_aggregators": {},
 }
 
 
@@ -12151,8 +12158,20 @@ def resolve_moa_plan(analysis: dict | None, aggregator: str,
             return None
         pool_cfg = [m for m in cfg.get("reference_pool") or [] if isinstance(m, str)]
     enabled = set(get_enabled_models())
+    # Fixed aggregator for the winning gate type (task_aggregators matrix row):
+    # replaces the auto-route pick as this turn's orchestrator. Invalid /
+    # disabled / ACL-blocked config values fall back to auto silently (the
+    # fan-out must never break because a fixed model was removed).
+    _agg_cfg = (cfg.get("task_aggregators") or {}).get(hits[0]) or ""
+    fixed_aggregator = None
+    if (isinstance(_agg_cfg, str) and _agg_cfg.strip()
+            and _agg_cfg.strip().lower() != "auto"):
+        _cand = _agg_cfg.strip()
+        if _cand in enabled and (not allowed_models or _cand in allowed_models):
+            fixed_aggregator = _cand
+    effective_aggregator = fixed_aggregator or aggregator
     pool = [m for m in dict.fromkeys(pool_cfg)  # de-dup, keep order
-            if m in enabled and m != aggregator
+            if m in enabled and m != effective_aggregator
             and (not allowed_models or m in allowed_models)]
     if not pool:
         return None
@@ -12171,6 +12190,9 @@ def resolve_moa_plan(analysis: dict | None, aggregator: str,
     if mode not in ("answer", "plan"):
         mode = "answer"
     return {"references": pool[:n], "gate_hit": hits[0], "mode": mode,
+            # None = keep the auto-route pick; a model id = the caller must
+            # run the turn on THIS model instead (admin-fixed orchestrator).
+            "aggregator": fixed_aggregator,
             "task_types": task_types, "complexity": complexity}
 
 

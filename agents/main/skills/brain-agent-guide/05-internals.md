@@ -245,14 +245,24 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   these approaches and EXECUTE it with your tools". Mode rides
   `resolve_moa_plan → plan.mode`, the cards (args/result.mode, "· Ansatz")
   and `auto_route.moa.mode`.
+- **Fixed orchestrator** (`moa.task_aggregators {task_type: model_id}`,
+  v9.274.0; missing/"auto" = auto-route pick, the default): pins WHO
+  synthesizes per task type. When the fan-out gates in on that type,
+  `resolve_moa_plan` returns `plan.aggregator` and the send handler switches
+  the turn to that model (references exclude it, so it never advises
+  itself). Wins over the cache-freeze too: on a frozen session the turn
+  switches, and if the fixed model is itself cache-priced the freeze moves
+  onto it. Invalid/disabled/ACL-blocked values silently fall back to auto.
 - **Config** `config.json → moa` {enabled, task_pools (the matrix),
-  task_modes, max_references, reference_max_tokens (600),
+  task_modes, task_aggregators, max_references, reference_max_tokens (600),
   reference_timeout_s (60), reference_input_max_chars (24000); legacy:
   reference_pool, gate_task_types}
   — Settings → Server → "MoA (Mixture of Agents)" renders a scrollable
   model × task_type checkbox MATRIX (rows = enabled cloud models, columns =
   the 9 classifier task_types; first open without task_pools seeds from
-  legacy pool × gate). Saved via `POST /v1/services/server {moa:{…}}`, which
+  legacy pool × gate; header rows below the column titles pick the per-column
+  contribution mode (Antwort/Ansatz) and orchestrator (Auto/fixed model)).
+  Saved via `POST /v1/services/server {moa:{…}}`, which
   validates task_types against the classifier enum and models against enabled
   models (a typo would otherwise silently disable MoA); empty columns are
   dropped on save.

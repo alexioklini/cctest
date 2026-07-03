@@ -5059,12 +5059,35 @@ class ChatHandlerMixin:
                 except Exception:
                     _analysis = None
                 _plan = engine.resolve_moa_plan(_analysis, _frozen, allowed_models=_allowed)
+                # Admin-fixed orchestrator wins over the freeze: the admin
+                # explicitly pinned who synthesizes this task type. Switch the
+                # turn to that model; if it is itself cache-priced, move the
+                # freeze onto it so later turns stabilize there instead of
+                # ping-ponging back to the old frozen pick.
+                _fixed_agg = (_plan or {}).get("aggregator") or ""
+                if _fixed_agg and _fixed_agg != _frozen:
+                    _fp2 = self._resolve_provider(_fixed_agg)
+                    with session.lock:
+                        session.model = _fixed_agg
+                        session.api_key = _fp2["api_key"]
+                        session.base_url = _fp2["base_url"]
+                        session.max_context = engine.get_model_max_context(_fixed_agg)
+                        session._auto_tool_groups = _cache_freeze_groups(session).get(_fixed_agg)
+                        session._auto_route_model = _fixed_agg
+                        if engine.model_is_cache_priced(_fixed_agg):
+                            session._cache_freeze_model = _fixed_agg
+                    auto_route["model"] = _fixed_agg
+                    auto_route["reason"] = (
+                        f"Experten-Gremium: festes Orchestrator-Modell für "
+                        f"'{(_plan or {}).get('gate_hit', '')}'")
+                    auto_route.pop("frozen", None)
                 with session.lock:
                     session._moa_plan = _plan
                 auto_route["moa"] = {
                     "references": (_plan or {}).get("references", []),
                     "gate_hit": (_plan or {}).get("gate_hit", ""),
                     "mode": (_plan or {}).get("mode", ""),
+                    "aggregator": (_plan or {}).get("aggregator") or "",
                     "gated_out": _plan is None,
                 }
                 if _analysis and _analysis.get("source") == "llm":
@@ -5110,11 +5133,24 @@ class ChatHandlerMixin:
             if want_moa and auto_model:
                 _moa_plan = engine.resolve_moa_plan(
                     auto_analysis, auto_model, allowed_models=allowed)
+                # Admin-fixed orchestrator for the gate-hit task type: the plan
+                # names the model that must RUN this turn (references already
+                # exclude it). Override the auto pick BEFORE the provider switch
+                # + freeze logic below so everything downstream follows.
+                _fixed_agg = (_moa_plan or {}).get("aggregator") or ""
+                if _fixed_agg and _fixed_agg != auto_model:
+                    auto_model = _fixed_agg
+                    if auto_route is not None:
+                        auto_route["model"] = _fixed_agg
+                        auto_route["reason"] = (
+                            f"Experten-Gremium: festes Orchestrator-Modell für "
+                            f"'{(_moa_plan or {}).get('gate_hit', '')}'")
                 if auto_route is not None:
                     auto_route["moa"] = {
                         "references": (_moa_plan or {}).get("references", []),
                         "gate_hit": (_moa_plan or {}).get("gate_hit", ""),
                         "mode": (_moa_plan or {}).get("mode", ""),
+                        "aggregator": (_moa_plan or {}).get("aggregator") or "",
                         "gated_out": _moa_plan is None,
                     }
             if auto_model and auto_model != session.model:
