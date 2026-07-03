@@ -511,6 +511,13 @@ async function tcSend(tab, text) {
 }
 
 // Shared SSE frame reader (event:/data: lines, isolates callback exceptions).
+// Stall watchdog (9.277.0, mirrors API._readOrStall): the server emits a
+// keepalive every 5s for the whole life of a turn, so 45s of byte-silence
+// means the connection is half-dead (tunnel drop, sleep/wake) — reader.read()
+// would otherwise block forever and the finally-finalize in the callers would
+// never run (the bodensatz case: turn finished server-side, spinner ran on).
+// On stall: abort the fetch and return; the caller finalizes, and the LAST
+// persisted state is one openSession/chat-history refresh away.
 async function _tcReadSSE(tab, resp, cbs) {
   if (!resp.ok || !resp.body) { _tcFinishTurn(tab, tab._live); tcPrint(tab, 'Server-Fehler.', 'tc-err'); return; }
   const reader = resp.body.getReader();
@@ -524,8 +531,27 @@ async function _tcReadSSE(tab, resp, cbs) {
       ev = null;
     }
   };
+  const STALL_MS = 45000;
   for (;;) {
-    const { value, done } = await reader.read();
+    let chunk;
+    let timer;
+    const readP = reader.read();
+    readP.catch(() => {});  // pre-arm: the abort below rejects the pending read
+    try {
+      chunk = await Promise.race([
+        readP,
+        new Promise((_, rej) => { timer = setTimeout(() => rej(new Error('sse-stalled')), STALL_MS); }),
+      ]);
+    } catch (stallErr) {
+      if (stallErr && stallErr.message === 'sse-stalled') {
+        console.warn('[tc-sse] stream stalled >45s — aborting dead connection');
+        try { if (tab._abort) tab._abort.abort(); } catch (_) {}
+        try { reader.cancel(); } catch (_) {}
+        break;
+      }
+      throw stallErr;
+    } finally { clearTimeout(timer); }
+    const { value, done } = chunk;
     if (done) break;
     buf += dec.decode(value, { stream: true });
     const lines = buf.split('\n'); buf = lines.pop();

@@ -306,6 +306,35 @@ def run_turn(
             _pause_gate = engine._turn_pause_gate(sid) if sid else None
             _drain_inj = engine._turn_drain_injections(sid) if sid else None
             _progress_cb = engine._turn_progress_cb(sid) if sid else None
+
+            # Undefer-after-discovery (9.277.0): when a mid-turn tool_search
+            # discovered a tool that is NOT yet declared on the wire, rebuild
+            # the tool array (resolve_active_tools un-hides discovered deferred
+            # names) so the model can call it from the next round. Returns None
+            # on the hot path (nothing new discovered) so the prompt prefix
+            # stays byte-stable for turns that never search.
+            _declared_names = {(t.get("function", {}) or {}).get("name", "")
+                               for t in (_tools or [])}
+
+            def _tools_refresh():
+                discovered = engine.get_request_context()._discovered_tools or set()
+                if not (set(discovered) - _declared_names):
+                    return None
+                _tb2: dict = {}
+                new_tools = _build_tool_list_openai(
+                    purpose=purpose, agent_id=tool_context.get("agent_id") or None,
+                    mcp_manager=getattr(engine, "_mcp_manager", None), breakdown=_tb2)
+                new_allowed = _dispatchable_allowed_tools(new_tools, _tb2)
+                for t in new_tools:
+                    _declared_names.add((t.get("function", {}) or {}).get("name", ""))
+                # Also absorb the discovered names themselves: if one of them
+                # can't be declared even after the rebuild (edge: state changed
+                # mid-turn), it must not re-trigger a rebuild every round.
+                _declared_names.update(discovered)
+                tool_context["allowed_tools"] = new_allowed
+                engine.get_request_context().allowed_tools = new_allowed
+                return new_tools, new_allowed
+
             summary = llm_loop.run_loop(
                 model=model, system_prompt=system_prompt, messages=messages,
                 tools=_tools, allowed_tools=allowed_tools,
@@ -317,7 +346,7 @@ def run_turn(
                 emit=event_callback, is_cancelled=_is_cancelled,
                 tool_use_id_setter=_set_tool_use_id,
                 pause_gate=_pause_gate, drain_injections=_drain_inj,
-                progress_cb=_progress_cb)
+                progress_cb=_progress_cb, tools_refresh=_tools_refresh)
             final_text = summary.get("final_text", "") or ""
             if summary.get("stop_reason") == "cancelled":
                 cancelled = True

@@ -1474,8 +1474,9 @@ TOOL_DEFINITIONS = [
         "name": "tool_search",
         "description": (
             "Search for available tools by name or description. Use this when you need a "
-            "tool that isn't in your current tool list. Returns matching tool schemas that "
-            "will be available on subsequent turns. Useful when MCP tools are deferred."
+            "tool that isn't in your current tool list. Every returned tool is immediately "
+            "callable: call it directly in your next step, exactly like your other tools. "
+            "Only callable tools are returned (disabled tools never appear)."
         ),
         "input_schema": {
             "type": "object",

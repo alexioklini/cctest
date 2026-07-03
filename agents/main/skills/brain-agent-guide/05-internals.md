@@ -43,6 +43,16 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
   AND a watcher thread closes the stream socket mid-generation. Background
   turns register a `turn_id → Event` in `sidecar_proxy`;
   `sidecar_proxy.cancel_turn(turn_id)` trips it.
+- **Stream stability (9.277.0)** — reinstates what the deleted Anthropic SDK
+  provided implicitly: a stream that ends WITHOUT the `[DONE]` marker is a
+  TRUNCATED partial, not a finished answer — the loop auto-resumes it
+  (partial as assistant turn + continue-nudge, max 2 attempts, events
+  `stream_resumed`/`stream_truncated`; torn tool calls dropped, continuation
+  text joined into the same segment). Connect-phase failures retry twice
+  (only before the first byte; retry-safe statuses 408/425/429/5xx; event
+  `stream_retry`). A provider error inside the 200-SSE stream surfaces as a
+  real error instead of the empty-round nudge loop. A content round without
+  a usage object logs a loud under-count line.
 - **`AskUserQuestion`**: blocks via `_pending_answers[session_id] +
   Event`. Unblocked by `POST /v1/chat/answer`.
 

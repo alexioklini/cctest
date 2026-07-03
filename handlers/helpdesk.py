@@ -432,6 +432,10 @@ class HelpdeskHandlerMixin:
         self.send_header("X-Accel-Buffering", "no")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
+        # SSE close-after-terminal rule (9.277.0, same as chat SSE): without
+        # an explicit close the client never sees end-of-response (SSE has no
+        # content framing) and each stream leaks a server thread + socket.
+        self.close_connection = True
         try:
             self.wfile.flush()
         except OSError:

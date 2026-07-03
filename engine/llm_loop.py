@@ -55,6 +55,43 @@ EMPTY_NUDGE_MAX = 3
 EMPTY_GIVEUP_TEXT = ("No response was returned. Please modify your "
                      "request or change the model.")
 
+# ── Stream-stability knobs (9.277.0) ─────────────────────────────────────────
+# The Anthropic SDK (deleted with the sidecar, v9.247.0) silently provided
+# incomplete-stream detection and connection retries; the bare urllib loop
+# replaced it with nothing — a mid-generation upstream drop was accepted as a
+# FINISHED answer (the user had to type "continue" by hand), and any transient
+# connect flake hard-errored the turn. These reinstate both behaviors.
+STREAM_RESUME_MAX = 2   # auto-continue attempts after a truncated stream
+CONNECT_RETRIES = 2     # extra connect attempts (only before any byte arrived)
+_RESUME_NUDGE = (
+    "Your previous reply was cut off by a connection error mid-stream. "
+    "Continue your answer EXACTLY where it stopped — do not repeat anything "
+    "you already wrote, do not apologize, do not summarize; continue "
+    "seamlessly from the last character.")
+
+
+def _is_retryable_connect_error(e: Exception) -> bool:
+    """Connect-phase errors worth retrying: transient network failures and
+    retry-safe HTTP statuses. Other 4xx (auth, bad request) fail immediately."""
+    import http.client
+    import urllib.error
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code in (408, 425, 429, 500, 502, 503, 504)
+    return isinstance(e, (urllib.error.URLError, http.client.HTTPException,
+                          ConnectionError, TimeoutError, OSError))
+
+
+def _http_error_body(e: Exception) -> str:
+    """Best-effort body snippet of an HTTPError for diagnosable turn errors
+    (the provider's actual complaint instead of a bare status line)."""
+    try:
+        import urllib.error
+        if isinstance(e, urllib.error.HTTPError):
+            return (e.read() or b"")[:500].decode("utf-8", "replace").strip()
+    except Exception:
+        pass
+    return ""
+
 
 def _visible_text(text: str) -> str:
     if not text:
@@ -284,7 +321,7 @@ def build_openai_payload(
 
 class _RoundResult:
     __slots__ = ("text", "reasoning", "tool_calls", "usage", "finish_reason",
-                 "raw_bytes")
+                 "raw_bytes", "got_done", "error_payload")
 
     def __init__(self):
         self.text = ""
@@ -293,6 +330,15 @@ class _RoundResult:
         self.usage: dict = {}
         self.finish_reason = ""
         self.raw_bytes = 0
+        # True iff the stream terminated properly ([DONE] marker seen). False
+        # means the upstream socket ended mid-generation — the round result is
+        # a TRUNCATED partial, not a finished answer (the "user must type
+        # continue" failure mode; run_loop auto-resumes it).
+        self.got_done = False
+        # A provider error delivered INSIDE the 200-SSE stream
+        # (`data: {"error": ...}`). Previously silently skipped (no `choices`)
+        # → surfaced as the misleading empty-after-nudges give-up text.
+        self.error_payload = None
 
 
 def _drain_openai_stream(resp, emit_delta: Callable[[str, str], None],
@@ -302,8 +348,26 @@ def _drain_openai_stream(resp, emit_delta: Callable[[str, str], None],
 
     Accumulates tool_calls by their `index` (OpenAI streams function.name once,
     then function.arguments in fragments). Returns the assembled _RoundResult.
+
+    A socket death mid-stream returns the PARTIAL result (got_done False)
+    instead of raising — the caller distinguishes truncation from a finished
+    round via `rr.got_done` and auto-resumes. Only the byte-bound guard raises.
     """
     rr = _RoundResult()
+    try:
+        _drain_openai_stream_inner(resp, emit_delta, round_no, rr)
+    except RuntimeError:
+        raise  # byte-bound guard — a runaway stream must still kill the round
+    except Exception:
+        # Upstream socket died mid-generation (reset, tunnel drop, provider
+        # kill, cancel-watcher close). rr holds everything received so far;
+        # got_done stays False → run_loop treats the round as TRUNCATED.
+        pass
+    return rr
+
+
+def _drain_openai_stream_inner(resp, emit_delta, round_no: int,
+                               rr: _RoundResult) -> None:
     buf = b""
     for raw in resp:
         rr.raw_bytes += len(raw)
@@ -321,11 +385,18 @@ def _drain_openai_stream(resp, emit_delta: Callable[[str, str], None],
                 continue
             payload = s[5:].strip()
             if payload == "[DONE]":
-                return rr
+                rr.got_done = True
+                return
             try:
                 ev = json.loads(payload)
             except Exception:
                 continue
+            if isinstance(ev, dict) and ev.get("error") and not ev.get("choices"):
+                # Provider error inside the 200-SSE stream — surface it instead
+                # of draining to an empty round (which would read as "the model
+                # said nothing" and trigger the nudge loop).
+                rr.error_payload = ev.get("error")
+                return
             u = ev.get("usage")
             if u:
                 rr.usage = u
@@ -371,7 +442,8 @@ def _drain_openai_stream(resp, emit_delta: Callable[[str, str], None],
                         slot["name"] = fn["name"]
                     if fn.get("arguments"):
                         slot["args"] += fn["arguments"]
-    return rr
+    # Stream ended (EOF) without a [DONE] marker: rr.got_done stays False —
+    # the caller treats the round as truncated.
 
 
 # ---------- Tool dispatch (direct, in-process) ----------
@@ -448,6 +520,7 @@ def run_loop(
     pause_gate: Callable[[], None] | None = None,
     drain_injections: Callable[[], list[str]] | None = None,
     progress_cb: Callable[[dict], None] | None = None,
+    tools_refresh: Callable[[], tuple[list[dict], list[str]] | None] | None = None,
 ) -> dict:
     """Drive one turn's rounds. `emit(type, data)` fires Brain-vocabulary events;
     `is_cancelled()` is polled between rounds and after each stream drain.
@@ -466,6 +539,14 @@ def run_loop(
       tool executing now + when it started, tools already completed, partial-text
       length) so a concurrent "btw" side-call can report what the agent is doing
       right now. Pure sink for data the loop already computes — cheap.
+    - `tools_refresh()` is called at each round boundary (after round 1). When it
+      returns `(new_tools, new_allowed)` the wire tool array + dispatch whitelist
+      are REPLACED for the remaining rounds — the undefer-after-discovery hook:
+      a tool_search hit mid-turn gets DECLARED to the model from the next round,
+      so strict function-callers (glm-5.2) can actually use what they found
+      (chat 2cb5a9dd). Returning None means "no change" (the common case — the
+      caller must only return a value when a NEW tool was discovered, so the
+      prompt prefix stays byte-stable otherwise).
 
     Returns a summary dict shaped like the old sidecar `done` payload:
       {final_text, text_segments, stop_reason, rounds, tool_calls_total,
@@ -489,6 +570,13 @@ def run_loop(
     final_stop_reason = ""
     forced_tool_input: dict | None = None
     empty_nudges = 0
+    resume_attempts = 0
+    # True when the PREVIOUS round was a truncated stream whose partial text
+    # is the tail of text_segments — the resumed round's text is then joined
+    # into the SAME segment (the model continues mid-sentence; a "\n\n"
+    # separator would tear the paragraph). Matches the client's live view,
+    # which concatenates text_delta events without separators anyway.
+    resume_join_next = False
 
     allowed_set = set(allowed_tools or [])
 
@@ -540,6 +628,21 @@ def run_loop(
                 loop_messages.append({"role": "user", "content": _inj})
                 emit("injected_message", {"round": round_no, "text": _inj})
 
+        # Undefer-after-discovery: re-declare the tool array when a mid-turn
+        # tool_search found something new (see docstring). Only ever REPLACES
+        # when the caller signals a change, so the prompt prefix stays stable
+        # on turns that discover nothing.
+        if tools_refresh is not None and round_idx > 0 and not forced_tool:
+            try:
+                _refreshed = tools_refresh()
+            except Exception:
+                _refreshed = None
+            if _refreshed:
+                tools, _new_allowed = _refreshed
+                allowed_set = set(_new_allowed or [])
+                emit("tools_redeclared", {
+                    "round": round_no, "n_tools": len(tools or [])})
+
         _report_progress(round=round_no, phase="round_start", active_tool=None)
 
         payload = build_openai_payload(
@@ -580,10 +683,29 @@ def run_loop(
                     return
 
         try:
-            req = urllib.request.Request(
-                endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                headers=headers, method="POST")
-            resp = urllib.request.urlopen(req, timeout=1800)
+            # Connect phase with bounded retry (F3, 9.277.0): a transient
+            # network flake or retry-safe HTTP status gets CONNECT_RETRIES
+            # fresh attempts with linear backoff. Safe because NOTHING has
+            # streamed yet — no duplicate deltas possible. Errors after the
+            # first byte are handled as truncation by the drain instead.
+            _payload_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            _attempt = 0
+            while True:
+                try:
+                    req = urllib.request.Request(
+                        endpoint, data=_payload_bytes, headers=headers, method="POST")
+                    resp = urllib.request.urlopen(req, timeout=1800)
+                    break
+                except Exception as ce:
+                    if (is_cancelled() or _attempt >= CONNECT_RETRIES
+                            or not _is_retryable_connect_error(ce)):
+                        raise
+                    _attempt += 1
+                    emit("stream_retry", {
+                        "round": round_no, "attempt": _attempt,
+                        "max": CONNECT_RETRIES,
+                        "error": f"{type(ce).__name__}: {ce}"[:300]})
+                    time.sleep(float(_attempt))  # 1s, then 2s
             _wt = threading.Thread(target=_watch, daemon=True,
                                    name=f"llm-loop-cancel-{round_no}")
             _wt.start()
@@ -594,7 +716,11 @@ def run_loop(
                 final_stop_reason = "cancelled"
                 emit("cancelled", {"round": round_no, "phase": "stream"})
                 break
-            emit("error", {"message": f"{type(e).__name__}: {e}",
+            _msg = f"{type(e).__name__}: {e}"
+            _body = _http_error_body(e)
+            if _body:
+                _msg += f" — {_body}"
+            emit("error", {"message": _msg,
                            "round": round_no,
                            "traceback": traceback.format_exc()[-2000:]})
             final_stop_reason = "api_error"
@@ -604,6 +730,17 @@ def run_loop(
 
         if _thinking_started["v"]:
             emit("thinking_done", {"tool_round": round_no})
+
+        # --- provider error inside the 200-SSE stream (F5) ---
+        if rr.error_payload is not None:
+            try:
+                _perr = json.dumps(rr.error_payload, ensure_ascii=False)[:500]
+            except Exception:
+                _perr = str(rr.error_payload)[:500]
+            emit("error", {"message": f"provider error: {_perr}",
+                           "round": round_no})
+            final_stop_reason = "api_error"
+            break
 
         # --- usage: split cache_read from full-price input (the v9.245.0 split) ---
         u = rr.usage or {}
@@ -623,6 +760,14 @@ def run_loop(
                 "cache_read_tokens": cached,
                 "tool_round": round_no,
             })
+        elif rr.text or rr.tool_calls:
+            # F6: a round produced content but no usage object (typically a
+            # truncated stream that died before the final usage chunk). The
+            # cost ledger will under-count this round — loud audit signal per
+            # the v9.90.0 complete-coverage rule, no fabricated numbers.
+            print(f"[inprocess-loop] round {round_no}: no usage on stream "
+                  f"({'truncated' if not rr.got_done else 'complete'}) — "
+                  f"cost row under-counts this round", flush=True)
 
         # --- assemble content + tool calls ---
         tool_uses = []
@@ -646,9 +791,51 @@ def run_loop(
 
         round_visible = _visible_text(rr.text)
         if round_visible:
-            text_segments.append(round_visible)
-            text_round_segments.append({"round": round_no, "text": round_visible})
+            if resume_join_next and text_segments:
+                # Continuation of a truncated round: extend its segment.
+                text_segments[-1] = text_segments[-1] + round_visible
+                if text_round_segments:
+                    text_round_segments[-1]["text"] += round_visible
+            else:
+                text_segments.append(round_visible)
+                text_round_segments.append({"round": round_no, "text": round_visible})
             final_text = "\n\n".join(text_segments)
+        resume_join_next = False
+
+        # --- truncated stream (F2, 9.277.0): ended without [DONE] ---
+        # The upstream socket died mid-generation. Pre-9.277.0 this was
+        # silently accepted as a FINISHED answer (stop_reason "") and the user
+        # had to type "continue" by hand. Auto-resume instead: append the
+        # partial as the assistant turn plus a continue nudge, capped.
+        if not rr.got_done and not forced_tool:
+            if is_cancelled():
+                final_stop_reason = "cancelled"
+                emit("cancelled", {"round": round_no, "phase": "stream"})
+                break
+            rounds.append({
+                "round": round_no, "stop_reason": "truncated",
+                "content_chars": len(rr.text), "tool_uses": 0,
+            })
+            if resume_attempts < STREAM_RESUME_MAX:
+                resume_attempts += 1
+                emit("stream_resumed", {
+                    "round": round_no, "attempt": resume_attempts,
+                    "max": STREAM_RESUME_MAX,
+                    "partial_chars": len(rr.text or "")})
+                # Torn tool calls are unusable (half-streamed args) — the
+                # assistant turn carries only the partial TEXT; the model
+                # re-issues any tool calls it still wants on the resume round.
+                loop_messages.append({"role": "assistant",
+                                      "content": rr.text or " "})
+                loop_messages.append({"role": "user", "content": _RESUME_NUDGE})
+                resume_join_next = bool(round_visible)
+                continue
+            # Resumes exhausted: keep the partial as the final answer, but
+            # flag it loudly instead of pretending the turn finished cleanly.
+            emit("stream_truncated", {
+                "round": round_no, "attempts": resume_attempts})
+            final_stop_reason = "stream_truncated"
+            break
 
         # --- append the assistant turn to the wire history ---
         assistant_msg: dict[str, Any] = {"role": "assistant"}

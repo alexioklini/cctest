@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.277.0",
+        "date": "2026-07-03",
+        "title": "Abgerissene Antworten setzen sich selbst fort",
+        "body": "Wenn die Verbindung zum KI-Anbieter mitten in einer Antwort "
+                "abreißt, setzt der Assistent die Antwort jetzt automatisch an "
+                "genau der Abbruchstelle fort — das manuelle „weiter“/„continue“ "
+                "entfällt. Kurze Netzwerk-Aussetzer beim Verbindungsaufbau "
+                "werden automatisch erneut versucht, echte Anbieter-Fehler "
+                "klar angezeigt statt als leere Antwort versteckt. Zusätzlich "
+                "findet der Assistent nachgeladene Werkzeuge jetzt zuverlässig: "
+                "Einmal entdeckt, bleiben sie für die ganze Unterhaltung "
+                "nutzbar — auch bei Modellen, die ihre Werkzeugliste streng "
+                "auslegen.",
+        "audience": "user",
+        "versions": ["9.277.0"],
+    },
+    {
         "version": "9.276.2",
         "date": "2026-07-03",
         "title": "Chat erkennt das Antwort-Ende zuverlässig",

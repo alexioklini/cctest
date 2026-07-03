@@ -60,6 +60,18 @@ full schema — chat 2cb5a9dd, glm-5.2 hunted the disabled exa_search for a
 whole turn. tool_search now filters by the turn's dispatch whitelist, so
 discovery ⇔ callability.)
 
+**Discovery becomes DECLARATION (9.277.0).** A `tool_search` hit is (a)
+re-declared on the wire mid-turn — `run_loop`'s `tools_refresh` hook rebuilds
+the tool array + dispatch whitelist at the next round boundary when a new name
+was discovered (event `tools_redeclared`), so strict function-callers (glm)
+that only ever call declared tools can use the find in the SAME turn — and
+(b) persisted per SESSION (`session._discovered_tools`, seeded onto the
+request context each turn, merged back at turn end), so later turns declare it
+from the start. This also survives the cache-priced turn-1 tool freeze: the
+resolver's discovered-exemption applies to the union of static deferral and
+the frozen classifier trim. Monotonic growth only — one prefix-cache miss per
+discovery, then byte-stable again.
+
 **Two layers reach the model: the wire schema and the admin prose overlay.**
 Each tool's wire schema (the `description` + `input_schema` on the `tools` array)
 defaults to code (`engine/tool_schemas.py → TOOL_DEFINITIONS`).

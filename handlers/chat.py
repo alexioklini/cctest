@@ -2367,6 +2367,16 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
 
             # Reset per-request state (prevents cross-session leaks in pooled threads)
             engine.reset_tool_dedup()
+            # Seed this turn's discovered-tools set from the SESSION so a
+            # tool_search discovery survives across turns (9.277.0). Without
+            # this the set lived only on the per-turn request context — every
+            # turn forgot the previous turn's discoveries, so a deferred tool
+            # a strict function-caller (glm-5.2, chat 2cb5a9dd) had located
+            # via tool_search was never DECLARED on any later request and
+            # stayed uncallable for it. Merged back at turn end.
+            with session.lock:
+                _sess_discovered = set(getattr(session, "_discovered_tools", None) or set())
+            engine.get_request_context()._discovered_tools = _sess_discovered
             # Per-turn artifact accumulator shared with the tool-DISPATCH thread.
             # File-write events fire in brain._after_file_write on that separate
             # thread (its event_callback is make_artifact_event_callback), so the
@@ -4072,6 +4082,19 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # paused turn can never leave its gate closed.
                 try:
                     engine.turn_control_clear(sid)
+                except Exception:
+                    pass
+                # Merge this turn's tool_search discoveries back onto the
+                # session (counterpart of the turn-start seed) so the NEXT
+                # turn declares them on the wire. Monotonic growth only — a
+                # discovery permanently extends the session's declared set
+                # (one prefix-cache miss on the next turn, then stable again).
+                try:
+                    _turn_discovered = engine.get_request_context()._discovered_tools or set()
+                    if _turn_discovered:
+                        with session.lock:
+                            _have = set(getattr(session, "_discovered_tools", None) or set())
+                            session._discovered_tools = _have | set(_turn_discovered)
                 except Exception:
                     pass
                 # If the worker died without emitting a terminal event (e.g. a
