@@ -4710,5 +4710,10 @@
       "fast": "answer"
     },
     "task_aggregators": {}
+  },
+  "benchmark_official": {
+    "artificialanalysis_api_key": "YOUR_API_KEY",
+    "cache_ttl_hours": 24,
+    "enabled": true
   }
 }
