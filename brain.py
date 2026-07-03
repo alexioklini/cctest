@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.271.1"
+VERSION = "9.272.0"
 VERSION_DATE = "2026-07-03"
 CHANGELOG = [
+    ("9.272.0", "2026-07-03", "fix(Zitat-Disziplin): Refusal-Krankheit + fabrizierte Quellen — die zwei dominanten Fehlermuster BEIDER Arme im Produktions-Eval (2026-07-03: FERMI2 3/3 auto-Refusals 'keine Quellen abrufbar'; [Quelle: erfundene.md — \"…\"]-Klammern mit erfundenen RFC-Verbatims/Statistiken quer durch die offenen Fragen). WURZEL: die GROUNDED-ANSWER-Disziplin feuert seit dem dynamischen Trigger auf fast jedem Turn (Retrieval-Tools fast immer aktiv), ihr REFUSAL-Text verbot Trainingswissen KATEGORISCH ('Do NOT fill gaps with training-data knowledge … say so plainly') — geschrieben für Compliance-/Policy-Fragen, angewendet auf 'Erkläre TLS 1.3'. Das Modell hat zwei Auswege: verweigern oder das Zitatformat mit erfundenen Quellen bedienen (dasselbe Muster, wegen dessen v8.40.0 den Re-Round entfernte — die Anreizstruktur im Prompt blieb). EBENE 1 — DISZIPLIN-TEXTE (brain.py-Defaults + config.json research_mode_disciplines, dort lagen byte-identische Kopien der alten Defaults → beide angehoben): REFUSAL bekommt ZWEI BAHNEN — (a) source-bound (Dokumente/Policies/Compliance/Live-Daten): unverändert streng, nur aus abgerufener Evidenz; (b) GENERAL KNOWLEDGE (Lehrbuch/Standards/Schätzungen aus eigenen Annahmen): normal beantworten, OHNE Klammern, mit einmaligem 'beruht auf allgemeinem Fachwissen'-Hinweis; explizit: NIE die Aufgabe verweigern, nur weil das Retrieval leer war, wenn Bahn (b) sie beantworten kann. CITATION bekommt die Anti-Fabrikations-Hardline vorangestellt (Klammern NUR für tatsächlich diesen Turn Abgerufenes; erfundene Datei/erfundenes 'Verbatim'/erfundene Statistik/generische Autorität = Fabrikation, schlimmer als ein unzitierter Satz; nichts abgerufen → keine Klammern; nie Drafts/Notizen/die Konversation selbst zitieren). PRECISION scope-genoted auf Bahn (a). EBENE 2 — DETERMINISTISCHER VALIDATOR-BACKSTOP: neu brain.strip_fabricated_citations(text) (String-Chirurgie via _CITATION_BARE_RE, entfernt Klammern, räumt Doppel-Spaces/leere Bullets auf, Claims bleiben); der Worker (handlers/chat.py, im Citation-Validator-Block) strippt, wenn der Turn NACHWEISLICH nichts abgerufen hat — kein Retrieval-Tool-Call UND keine kuratierten Web-Quellen UND validated=0 (kein einziges Zitat verifizierte gegen irgendeine Session-Quelle) UND total_brackets>0 — und hängt eine reload-stabile ehrliche Notiz an ('beruht auf allgemeinem Fachwissen … N unbelegte Quellenangaben automatisch entfernt'); metadata.citation_validation.fabricated_stripped=N. BEWUSST konservativ: ein verifiziertes Zitat oder irgendein Retrieval-Signal → kein Strip (der bestehende Warn-Pfad übernimmt); KEIN LLM, KEIN Re-Round (v8.40.0-Fehlermodus strukturell ausgeschlossen — wir bitten das Modell nicht umzuschreiben, wir entfernen falsche Dekoration). EBENE 3 (Trigger ans Klassifikator-Intent koppeln) bewusst ZURÜCKGESTELLT. Ziel-Messung: Regressions-Subset des Produktions-Evals (Refusal-Fragen FERMI2/FACT1/FACT3/SYNTH2/WRITE1) — Refusals + Fabrikations-Klammern sollen gegen 0 gehen. py_compile OK. Server-Restart nötig. KURATIERTER Eintrag."),
     ("9.271.1", "2026-07-03", "fix(classifier steering): Fermi-/Schätzfragen klassifizieren jetzt als 'analysis' statt 'math'. BEFUND aus dem Produktions-Eval (eval/moa_prod_eval.py, 2026-07-03): die beiden FERMI-Fragen ('Estimate ... state every assumption ... give a range') wurden als task_type=math eingestuft → beim Experten-Gremium gated-out, obwohl der Juni-Eval (eval/moa_eval.py) zeigte, dass Draft-Ensembling genau bei offener Schätzarbeit hilft (reasoning_open moa_SMD 0.906 vs baseline_M 0.829) — nur bei PRÜFBAREM Rechnen schadet es. FIX in _STRUCTURED_CLASSIFY_SYSTEM: 'math' ist jetzt explizit 'EXACT calculation with a single checkable result ... NOT estimation from assumptions', 'analysis' nennt 'order-of-magnitude ESTIMATION from stated assumptions (Fermi problems, cost/effort estimates)' ausdrücklich. Wirkung: Schätzfragen treffen das Gremium-Gate (analysis-Spalte) und bekommen Referenz-Drafts; echtes Rechnen bleibt gated-out. Betrifft nur die Klassifikator-SEMANTIK (Enum/Schema unverändert, _TASK_TYPE_TIER: beide Typen sind reasoning-Tier → Modellwahl praktisch unverändert). py_compile OK. Server-Restart nötig. KEIN kuratierter Eintrag (Routing-Feinschliff, unsichtbar)."),
     ("9.271.0", "2026-07-03", "feat(MoA Hybrid-Modus + Umbenennung 'Experten-Gremium'): (A) BEITRAGS-MODUS pro Aufgabentyp (User-Vorschlag: Referenzen sollen bei tool-lastigen Aufgaben nur die HERANGEHENSWEISE liefern statt einer Vollantwort — der Aggregator wählt die beste Kombination und führt aus). NEU config.json → moa.task_modes {task_type: 'answer'|'plan'}, Default research/orchestration/agentic='plan', Rest 'answer'. Begründung aus dem Eval 2026-06-27: Antwort-Ensembling gewinnt NUR bei Synthese/Judgment (Inhalt der Drafts zählt), verliert bei tool-lastigen Aufgaben (tool-lose Referenzen können Live-Recherche nicht beantworten — der Alex-Klinsky-Fall, 73-Zeichen-Draft) und kann via falscher Fakten entgleisen; ein ANSATZ (Schritte/Quellen/Verifikation/Struktur/Fallstricke, explizit OHNE Antwort) ist dort verwertbare Beratung und injiziert keine Fakten. Mechanik: resolve_moa_plan liefert mode für den Gate-Treffer; _run_moa_references wählt _MOA_REF_SYSTEM_PLAN (verbietet das Beantworten, verlangt request-spezifische konkrete Schritte) vs _MOA_REF_SYSTEM; _build_moa_suffix(mode) hat eine Plan-Variante ('Candidate approaches … pick the best combination, improve on it, and EXECUTE it yourself using your tools' statt 'verify/synthesize'; Labels Approach A/B); mode fließt in Dispatch-args, Done-result, auto_route.moa und die Karten (Summary-Suffix '· Ansatz', toolDescribe '(Ansatz)'). admin_config validiert task_modes (Enum-Keys, answer|plan). Settings-Matrix: zweite Kopfzeile 'Beitrags-Modus' mit Antwort/Ansatz-Dropdown je Spalte; saveMoaConfig sendet task_modes. (B) UMBENENNUNG (User-Wunsch): das Feature heißt für Nutzer jetzt 'Experten-Gremium' — Composer '🧬 Experten-Gremium' (statt 'MoA (Smart)'), Karten-Titel 'Experte' + GREMIUM-Badge (statt 'MoA-Referenz'/MOA), Settings-Sektion 'Experten-Gremium (MoA)', Beschreibungstexte entsprechend; INTERNE IDs bewusst UNVERÄNDERT (Direktive 'moa', config-Block moa.*, kind moa_reference, cost_purpose moa_reference, /v1/status moa_enabled) — Umbenennen dort bräche Config/DB/Metadata-Kompatibilität ohne Nutzernutzen. (C) STUB-FILTER: Provider-Fehlertexte, die als normale Antwort durchgereicht werden (CLIProxyAPI: 'No response was returned. Please modify your request or change the model.' — live von deepseek-v4-pro gesehen, Chats 58988960 + d228bc75, wurde als 73-Zeichen-'Draft' injiziert), gelten jetzt als FEHLGESCHLAGENE Referenz (Karte status=error) statt als Beitrag. Live verifiziert: research-Turn → mode=plan (Draft = nummerierter Suchplan, kein Antwortversuch; Karte '· Ansatz'), analysis-Turn → mode=answer (Vollantwort-Draft wie bisher); Settings-Matrix zeigt Dropdowns, Save validiert. js_gate GRÜN; py_compile OK. Skill 05/06 + SKILL.md 1.114.0 im selben Commit. Server-Restart nötig. KURATIERTER Eintrag."),
     ("9.270.0", "2026-07-03", "feat(MoA Sichtbarkeit): Referenz-Entwürfe einsehbar + MoA im Aktivität-Tab des rechten Panels (User-Frage: 'werden diese auch im right panel angezeigt und sieht man den output des referenz llm calls' — beides war NEIN). (1) DRAFT PERSISTIERT: _run_moa_references legt den vollen Entwurfstext als result.draft auf die synthetische Done-Karte (klein — durch reference_max_tokens gecappt; bleibt bewusst im Pseudonym-Raum der Wire, nie in session.messages → das LLM sieht die Karte weiterhin nicht). (2) CHAT-KARTE AUFKLAPPBAR: renderSyntheticGdprCall rendert MoA-Karten mit draft als <details> — Klick zeigt den kompletten Referenz-Entwurf (pre-wrap Body); GDPR-Karten bleiben statisch wie gehabt. toolDescribe kennt moa_reference ('🧬 MoA-Referenz: <Modell>'). (3) RECHTES PANEL: _syncToolEntries (panels_background.js) nimmt synthetische moa_reference-Rows jetzt als Aktivitäts-Einträge auf (GDPR-Kinds bleiben chat-only) — eine Karte pro Referenz, expandierbar, Body = Entwurfstext statt JSON-Blob ({model,chars,draft} wird auf draft reduziert). (4) ZWEI VORBESTANDSBUGS GEFIXT, die synthetische Rows im Aktivität-Tab rissen: (a) _toolEntriesFromMetadata prüfte 'gibt es tool_call-Rows' OHNE synthetic auszunehmen — ein Chat mit GDPR-/MoA-Karten verlor nach Reload seine ECHTE Tool-Liste im Panel (synthetische Rows persistieren als tool_call-Messages und unterdrückten die Metadata-Rekonstruktion); jetzt zählt der Guard nur nicht-synthetische Rows. (b) _collectActivityEntries nahm 'sync ODER metadata' — mit MoA-Rows im sync-Set wäre metadata wieder unterdrückt worden; jetzt concat (der interne Guard verhindert Doppel-Listung: live existieren echte Rows → metadata liefert []). Live verifiziert (Playwright-DOM-Probe, neuer MoA-Turn): Chat-Karte klappt auf und zeigt den Draft; Aktivität-Tab listet die 🧬-Einträge mit Entwurfstext; Reload-Pfad zeigt beides weiter. js_gate GRÜN. py_compile OK. Server-Restart nötig (chat.py). KURATIERTER Eintrag."),
@@ -860,19 +861,33 @@ PLAN_MODE_PROMPT = (
 # retrieval. Keep these byte-identical to config.json → research_mode_disciplines;
 # tests/test_websearch_escalation_gating.py guards the tool-agnostic property.
 _RESEARCH_MODE_DISCIPLINE_REFUSAL_DEFAULT = (
-    "**REFUSAL DISCIPLINE — never assert unproven facts**:\n"
-    "State a fact only when it is backed by evidence you actually retrieved this "
-    "turn (a source you read, a result you got back). Do NOT fill gaps with "
-    "training-data knowledge, plausible guesses, or assumptions — for compliance, "
-    "policy, factual or audit questions an unsupported claim is a fabrication "
-    "hazard. If, after a genuine attempt to retrieve it, the information is not "
-    "available, say so plainly — name what is missing and, where useful, suggest "
-    "how the user could provide or locate it. A clear 'this could not be found' is "
-    "always better than an invented answer."
+    "**REFUSAL DISCIPLINE — never assert unproven SPECIFICS**:\n"
+    "Decide per claim which lane it is in:\n"
+    "(a) SOURCE-BOUND — anything about the user's documents, projects, policies, "
+    "internal rules, compliance/audit facts, contracts, or live/current data "
+    "(prices, versions, news, availability): state it ONLY when it is backed by "
+    "evidence you actually retrieved this turn (a source you read, a result you "
+    "got back). Do NOT fill such gaps with training-data knowledge, plausible "
+    "guesses, or assumptions — there an unsupported claim is a fabrication "
+    "hazard. If, after a genuine retrieval attempt, the information is not "
+    "available, say so plainly — name what is missing and, where useful, how the "
+    "user could provide or locate it. A clear 'this could not be found' beats an "
+    "invented answer.\n"
+    "(b) GENERAL KNOWLEDGE — established technical/textbook concepts, standards, "
+    "well-known methods, and order-of-magnitude estimates built from assumptions "
+    "you state yourself: answer these normally from your own knowledge, WITHOUT "
+    "[Quelle:]-brackets, and mark it ONCE (at the top or bottom): 'Hinweis: "
+    "beruht auf allgemeinem Fachwissen, nicht auf abgerufenen Quellen.'\n"
+    "NEVER refuse a task merely because retrieval returned nothing when lane (b) "
+    "can answer it. An empty search means: answer the general parts from lane "
+    "(b) and say 'nicht gefunden' for the lane-(a) specifics — it never means "
+    "refusing the whole task, and never means asking the user to supply sources "
+    "for textbook knowledge."
 )
 
 _RESEARCH_MODE_DISCIPLINE_PRECISION_DEFAULT = (
-    "**PRECISION DISCIPLINE — no plausible-sounding filler**:\n"
+    "**PRECISION DISCIPLINE — no plausible-sounding filler** (applies to "
+    "lane-(a) claims drawn from retrieved sources):\n"
     "When the retrieved source does not give a concrete value (interval, "
     "frequency, threshold, count, deadline, length, duration), write `nicht "
     "spezifiziert` — never substitute a plausible default like 'regelmäßig', "
@@ -885,7 +900,16 @@ _RESEARCH_MODE_DISCIPLINE_PRECISION_DEFAULT = (
 )
 
 _RESEARCH_MODE_DISCIPLINE_CITATION_DEFAULT = (
-    "**CITATION DISCIPLINE — per-claim, not per-block**:\n"
+    "**CITATION DISCIPLINE — per-claim, not per-block; NEVER fabricate**:\n"
+    "[Quelle: …]-brackets are EXCLUSIVELY for content you actually retrieved "
+    "THIS turn (or a file this conversation genuinely read). A bracket naming a "
+    "file you never read, a 'verbatim' quote reconstructed from memory, an "
+    "invented statistic, or a generic authority ('Branchenstandard', 'Best "
+    "Practices', a plausible RFC/spec sentence you did not fetch) is a "
+    "FABRICATION — strictly worse than an uncited sentence and worse than no "
+    "answer. If you retrieved nothing this turn, write NO brackets at all (lane "
+    "(b) of the refusal discipline applies). Never cite drafts, private notes, "
+    "or this conversation itself as a source.\n"
     "EVERY factual sentence and EVERY bullet point that came from a retrieved "
     "source must carry its OWN reference right after the claim, in the form "
     "[Quelle: <kurzer Quellenname> — \"<wörtliches Zitat 10-25 Wörter>\"]. One "
@@ -13423,6 +13447,37 @@ def validate_citations_in_response(text: str, session_id: str | None = None,
             )
         out["annotation"] = "\n".join(lines)
     return out
+
+
+def strip_fabricated_citations(text: str) -> tuple[str, int]:
+    """Remove ALL [Quelle: …] brackets from `text` — used by the worker when a
+    turn retrieved NOTHING (no retrieval tool called, no curated web sources,
+    no session file matched a single quote): in that situation every bracket
+    is by definition fabricated decoration (the v8.40.0 lesson: models satisfy
+    the citation FORMAT by inventing sources). Deterministic string surgery —
+    no LLM, no re-round; the claims themselves stay untouched.
+
+    Returns (cleaned_text, n_removed). Cleans up the residue a removed bracket
+    leaves behind: doubled spaces, space before punctuation, empty table
+    'Quelle' cells stay as empty cells (harmless), lines that consisted ONLY
+    of a bracket collapse to empty and are pruned if they were list items.
+    """
+    if not text or "[Quelle:" not in text:
+        return text, 0
+    n = len(_CITATION_BARE_RE.findall(text))
+    if not n:
+        return text, 0
+    cleaned = _CITATION_BARE_RE.sub("", text)
+    # Residue cleanup, line-wise: collapse doubled spaces, trim trailing
+    # whitespace, drop bullets that are now empty ("- " with nothing left).
+    out_lines = []
+    for line in cleaned.splitlines():
+        line = re.sub(r"[ \t]{2,}", " ", line).rstrip()
+        line = re.sub(r"\s+([.,;:!?])", r"\1", line)
+        if re.fullmatch(r"\s*(?:[-*+•]|\d+[.)])\s*", line):
+            continue  # bullet that held only a bracket
+        out_lines.append(line)
+    return "\n".join(out_lines), n
 
 
 # Public message-cleanup helper used by both send_message's main path and

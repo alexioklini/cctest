@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.272.0",
+        "date": "2026-07-03",
+        "title": "Keine erfundenen Quellen, keine unnötigen Verweigerungen",
+        "body": "Zwei ärgerliche Verhaltensmuster sind behoben: Der Assistent "
+                "verweigerte gelegentlich Antworten auf allgemeine Fachfragen "
+                "(„keine Quellen abrufbar“), und er schmückte Antworten mit "
+                "Quellenangaben, deren Dokumente oder Zitate es gar nicht gab. "
+                "Jetzt gilt: Fragen zu Ihren Dokumenten, Richtlinien und "
+                "aktuellen Daten werden weiterhin nur mit echten Belegen "
+                "beantwortet — allgemeines Fachwissen beantwortet der Assistent "
+                "aber direkt und kennzeichnet es als solches, statt zu "
+                "verweigern. Quellenangaben ohne tatsächlich abgerufene Quelle "
+                "werden zusätzlich automatisch entfernt und transparent "
+                "ausgewiesen.",
+        "audience": "user",
+        "versions": ["9.272.0"],
+    },
+    {
         "version": "9.271.0",
         "date": "2026-07-03",
         "title": "Experten-Gremium: Antwort oder Ansatz",

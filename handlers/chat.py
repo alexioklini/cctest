@@ -3542,6 +3542,34 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     (t or {}).get("name") for t in (_partial_tools or [])
                                 ]
                                 _retrieval_called = engine.turn_has_retrieval_tools(_called_tool_names)
+                                # FABRICATION STRIP (v9.272.0): when the turn
+                                # retrieved NOTHING — no retrieval tool call, no
+                                # curated web sources, and not a single quote
+                                # verified against anything this session read —
+                                # every [Quelle:…] bracket is invented decoration
+                                # (models satisfy the citation FORMAT when the
+                                # discipline is active but retrieval came up
+                                # empty). Deterministically remove the brackets
+                                # (claims stay), append an honest reload-stable
+                                # note, and record it in metadata. Conservative
+                                # by design: one verified quote or any retrieval
+                                # signal → no strip (the warning path handles
+                                # partially-grounded replies instead).
+                                if (not _retrieval_called
+                                        and not _web_sources_used
+                                        and int(_val.get("verified", 0) or 0) == 0
+                                        and int(_val.get("total_brackets", 0) or 0) > 0):
+                                    _stripped, _n_fab = engine.strip_fabricated_citations(reply)
+                                    if _n_fab:
+                                        reply = (_stripped.rstrip()
+                                                 + "\n\n---\n\n> ℹ️ **Hinweis**: Diese "
+                                                   "Antwort beruht auf allgemeinem "
+                                                   "Fachwissen — in diesem Durchlauf "
+                                                   "wurden keine Quellen abgerufen. "
+                                                 + f"{_n_fab} unbelegte Quellenangabe"
+                                                 + ("n wurden" if _n_fab != 1 else " wurde")
+                                                 + " automatisch entfernt.")
+                                        _cv_meta["fabricated_stripped"] = _n_fab
                                 if _retrieval_called and engine.citation_reround_needed(_val):
                                     _uncited = int(_val.get("uncited_claims", 0) or 0)
                                     _ctotal = int(_val.get("claim_total", 0) or 0)

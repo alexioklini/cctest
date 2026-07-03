@@ -1468,7 +1468,31 @@ against, auto-continuing until fulfilled — like Claude Code's `/goal`.
 
 The research-mode discipline (REFUSAL + PRECISION + per-claim CITATION,
 `render_research_mode_disciplines()` — always all three together) + the citation
-validator. TWO mutually-exclusive modes, chosen by the auto-route classifier mode
+validator. **v9.272.0 — two-lane semantics + fabrication strip** (fix for the
+two dominant failure modes the 2026-07-03 production eval exposed: refusing
+general-knowledge questions "for lack of sources", and decorating answers with
+invented `[Quelle: …]` brackets):
+- The REFUSAL text now has TWO LANES: (a) source-bound claims (documents,
+  policies, compliance, live data) stay strictly evidence-only; (b) GENERAL
+  KNOWLEDGE (textbook concepts, standards, estimates from stated assumptions)
+  is answered normally WITHOUT brackets + a one-line "beruht auf allgemeinem
+  Fachwissen" note — refusing a task because retrieval came up empty is
+  explicitly forbidden when lane (b) can answer. CITATION starts with an
+  anti-fabrication hardline (brackets ONLY for actually-retrieved content;
+  an invented file/quote/statistic is worse than an uncited sentence).
+  Defaults in brain.py; the byte-identical copies saved in
+  `config.json → research_mode_disciplines` were lifted in the same change.
+- **Deterministic fabrication strip** (`brain.strip_fabricated_citations`,
+  called in the worker's validator block): when a turn provably retrieved
+  NOTHING (no retrieval tool call, no curated web sources, zero verified
+  quotes) but the reply carries brackets, the brackets are string-stripped
+  (claims stay), an honest reload-stable note is appended, and
+  `metadata.citation_validation.fabricated_stripped=N` records it. No LLM, no
+  re-round — structurally immune to the v8.40.0 re-round failure (which
+  REWROTE refusals into fake citations). One verified quote or any retrieval
+  signal → no strip (the existing warning path handles partial grounding).
+
+TWO mutually-exclusive modes, chosen by the auto-route classifier mode
 (`brain.classifier_is_llm()` = mode in {llm, hybrid}):
 
 - **LLM / hybrid mode → DYNAMIC (effective-tools-driven).** The trigger is the
