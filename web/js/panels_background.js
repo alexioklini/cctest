@@ -436,7 +436,13 @@ function _syncToolEntries() {
   const out = [];
   for (let i = 0; i < msgs.length; i++) {
     const m = msgs[i];
-    if (!m || m.role !== 'tool_call' || m.synthetic) continue;
+    if (!m || m.role !== 'tool_call') continue;
+    // Synthetic rows: GDPR ops stay chat-only (they have their own Datenschutz
+    // display), but MoA reference drafts DO belong in the Aktivität tab — they
+    // are real per-turn LLM activity (one card per reference, expandable to
+    // the draft text).
+    const isMoaRef = m.synthetic && (m.kind || m.name) === 'moa_reference';
+    if (m.synthetic && !isMoaRef) continue;
     // Pair with its result (match by tool_use_id, else name; don't cross turns).
     let result = null, resTs = null;
     for (let j = i + 1; j < msgs.length; j++) {
@@ -447,6 +453,12 @@ function _syncToolEntries() {
         if (idMatch || nameMatch) { result = n.result; resTs = n._ts; break; }
       }
       if (n.role === 'assistant' || n.role === 'user') break;
+    }
+    // MoA entries: surface the DRAFT TEXT as the expandable result body
+    // (the {model, chars, draft} object would render as JSON noise).
+    if (isMoaRef && result && typeof result === 'object') {
+      result = result.draft || result.error
+        || (result.model ? `${result.model} · ${result.chars || 0} Zeichen` : null);
     }
     out.push({
       kind: 'tool',
@@ -468,8 +480,12 @@ function _syncToolEntries() {
 function _toolEntriesFromMetadata() {
   const chat = state.activeChat;
   if (!chat || !Array.isArray(chat.messages)) return [];
-  // Only use this when there are NO live tool_call rows (avoid double-listing).
-  if (chat.messages.some(m => m && m.role === 'tool_call')) return [];
+  // Only use this when there are NO live REAL tool_call rows (avoid
+  // double-listing). Synthetic rows (GDPR cards, MoA references) must NOT
+  // suppress the reconstruction — they persist as tool_call messages across
+  // reload, so counting them here made any chat containing them lose its
+  // real-tool listing in the Aktivität tab after a reload.
+  if (chat.messages.some(m => m && m.role === 'tool_call' && !m.synthetic)) return [];
   const out = [];
   let seq = 0;
   for (const m of chat.messages) {
@@ -633,8 +649,12 @@ function _tcActivityCard(e) {
 
 // The unified, sorted activity list for the current session.
 function _collectActivityEntries() {
+  // Always merge both sources: _toolEntriesFromMetadata self-guards (returns []
+  // while real live tool_call rows exist), so live turns list the live rows and
+  // reloaded chats get the metadata reconstruction — and synthetic MoA rows
+  // (which persist across reload in _syncToolEntries) never suppress either.
   const sync = _syncToolEntries();
-  const synced = sync.length ? sync : _toolEntriesFromMetadata();
+  const synced = sync.concat(_toolEntriesFromMetadata());
   // Drop run_background_task tool-CALL entries: they're just the trigger for
   // background tasks, which already appear (grouped) via _bgEntries. Showing the
   // spawning call too double-lists every fan-out (the call rows AND the resulting

@@ -2179,26 +2179,6 @@
       "warmup": true,
       "warmup_mode": "minimal"
     },
-    "voxtral-mini-tts-mellon-greek-2606-solutions": {
-      "enabled": true,
-      "shortname": "voxtral-mini-tts-mellon-greek-2606-solutions",
-      "display_name": "voxtral-mini-tts-mellon-greek-2606-solutions",
-      "icon": "🎤",
-      "priority": 45,
-      "capabilities": [
-        "tts"
-      ],
-      "thinking_format": "none",
-      "max_context": 32768,
-      "max_output": 4096,
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_audio_backfilled": true,
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "labs-leanstral-1-5-1": {
       "enabled": true,
       "shortname": "labs-leanstral-1-5-1",

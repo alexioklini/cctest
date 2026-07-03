@@ -296,7 +296,10 @@ ohne Tools** je einen Antwort-Vorschlag; das automatisch gewählte Smart-Modell
 prüft die Entwürfe, gleicht Widersprüche ab und formuliert die finale Antwort
 mit vollem Werkzeugzugriff. Jeder Entwurf erscheint live als eigene
 🧬-Karte im Chat (Modell, Größe, Dauer; Fehler einzelner Referenzen brechen
-die Anfrage nie ab). Bei Aufgaben, wo mehrere Meinungen nichts bringen
+die Anfrage nie ab) — **ein Klick auf die Karte klappt den vollständigen
+Entwurfstext auf** (seit 9.270.0; enthielt die Anfrage anonymisierte Daten,
+zeigt der Entwurf die Ersatzwerte). Dieselben Karten stehen auch im
+**Aktivität-Tab des rechten Panels**, ebenfalls mit Entwurfstext. Bei Aufgaben, wo mehrere Meinungen nichts bringen
 (z. B. Programmierung, Mathematik, schnelle Kurzanfragen), wird der Fan-out
 automatisch übersprungen — die Anfrage läuft dann exakt wie Smart (Cloud),
 ohne Zusatzkosten. Wissenswert: Jeder Entwurf ist ein eigener

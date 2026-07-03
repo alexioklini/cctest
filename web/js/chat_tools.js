@@ -133,6 +133,7 @@ function toolDescribe(name, args) {
     execute_command: () => `Befehl ausführen: \`${(a.command || '').substring(0, 60)}${(a.command || '').length > 60 ? '...' : ''}\``,
     python_exec: () => `Python ausführen (${(a.code || '').split('\n').length} Zeilen)`,
     web_fetch: () => { try { return `Webseite abrufen: ${a.url ? new URL(a.url).hostname : '...'}`; } catch(e) { return `Webseite abrufen: ${a.url || '...'}`; } },
+    moa_reference: () => `🧬 MoA-Referenz: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     run_background_task: () => a.title ? `Hintergrundaufgabe: ${a.title}` : 'Hintergrundaufgabe starten',
@@ -802,6 +803,25 @@ function renderSyntheticGdprCall(msg, idx) {
     : ('<span class="tool-badge-synthetic" title="Serverseitige Datenschutz-Operation" '
       + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
       + 'background:rgba(4,120,87,.12);color:#047857;letter-spacing:.02em;">DATENSCHUTZ</span>');
+
+  // MoA reference card WITH a persisted draft: expandable — click shows the
+  // reference model's full draft text (the private context the aggregator
+  // got). Note: the draft may show pseudonymised values (it deliberately
+  // stays in the wire's pseudonym space — GDPR).
+  const moaDraft = isMoa ? String(result.draft || '') : '';
+  if (isMoa && moaDraft) {
+    return `
+    <details class="tool-block tool-block-synthetic${done ? ' has-result' : ''}">
+      <summary class="tool-block-header" style="cursor:pointer;list-style:none" title="Klick: Entwurf des Referenzmodells anzeigen">
+        ${iconHtml}
+        <span class="tool-name">🧬 ${esc(title)}${summary ? ': ' + esc(summary) : ''}</span>
+        ${shieldBadge}
+        ${timing}
+      </summary>
+      <div style="white-space:pre-wrap;font-size:12px;line-height:1.5;padding:8px 12px;color:var(--text-200);border-top:1px solid var(--border-100)">${esc(moaDraft)}</div>
+    </details>
+  `;
+  }
 
   // Title line ONLY — the per-finding detail table (Bereich/Treffer/Kategorien/
   // Mapping-ID) was dropped at the user's request: the summary already says what

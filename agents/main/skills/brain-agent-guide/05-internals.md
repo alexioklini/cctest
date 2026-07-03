@@ -218,7 +218,12 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   conversation flow like real tool cards, NOT inside the Datenschutz
   collapsible and independent of the showGdprDetails toggle (9.269.1: the
   privacy bucket's counter-gated early-return swallowed MoA-only turns
-  entirely); plan + ground truth
+  entirely). 9.270.0: the done card persists the FULL draft as
+  `result.draft` (capped by reference_max_tokens; stays in the wire's
+  pseudonym space, never in session.messages) — the chat card is an
+  expandable `<details>` showing the draft, and the same entries appear in
+  the right panel's Aktivität tab (`_syncToolEntries` admits synthetic
+  moa_reference rows; GDPR kinds stay chat-only); plan + ground truth
   (references/gate_hit/gated_out + ok/failed/ms/models) ride
   `auto_route.moa` into the done event + `msg_metadata.auto_route`.
   Dropdown entry `🧬 MoA (Smart)` is gated on `/v1/status → moa_enabled` and

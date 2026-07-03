@@ -385,8 +385,14 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
                 safe_model, text = fut.result()
                 if text:
                     drafts_by_idx[i] = (safe_model, text)
+                    # `draft` = the full reference text, persisted on the done
+                    # card so the chat card + Aktivität tab can show WHAT the
+                    # reference contributed (audit view; small — capped by
+                    # reference_max_tokens). Stays in the wire's pseudonym
+                    # space (see docstring) and NEVER enters session.messages.
                     _ev = {"status": "ok",
-                           "result": {"model": safe_model, "chars": len(text)}}
+                           "result": {"model": safe_model, "chars": len(text),
+                                      "draft": text}}
                 else:
                     failed.append({"model": rm, "error": "empty draft"})
                     _ev = {"status": "error",

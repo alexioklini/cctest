@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.270.0",
+        "date": "2026-07-03",
+        "title": "MoA-Entwürfe einsehbar",
+        "body": "Die 🧬-Karten der MoA-Referenzmodelle lassen sich jetzt "
+                "aufklappen: Ein Klick zeigt den vollständigen Antwort-Entwurf, "
+                "den das jeweilige Modell beigesteuert hat. Dieselben Karten "
+                "erscheinen zusätzlich im Aktivität-Tab des rechten Panels — "
+                "ebenfalls mit dem Entwurfstext. Außerdem behoben: Nach dem "
+                "Neuladen eines Chats mit Datenschutz- oder MoA-Karten fehlte "
+                "im Aktivität-Tab die Liste der ausgeführten Werkzeuge.",
+        "audience": "user",
+        "versions": ["9.270.0"],
+    },
+    {
         "version": "9.269.0",
         "date": "2026-07-02",
         "title": "MoA: Matrix „Modell × Aufgabentyp“",
