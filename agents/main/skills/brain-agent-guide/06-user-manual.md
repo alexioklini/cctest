@@ -1414,6 +1414,19 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   hier gewählten (meist günstigeren) Modell; leer = bleiben auf diesem Modell.
   **✨ Auto** klassifiziert stattdessen die Absicht jedes Leaf-Tasks und wählt
   je Task das passende Modell (gesteuert über Server → Auto-Routing).
+  **Benchmark** (steuert das Ranking der ✨-Auto-Modellwahl; seit 9.275.0):
+  Die **Fähigkeit (%)** je Aufgabentyp stammt aus **offiziellen Leaderboards**
+  — Artificial Analysis (Indizes; braucht den kostenlosen API-Key im Feld
+  oben im Tab) und LMArena (Kategorie-Elo, ohne Key) — als Perzentil der
+  gesamten Leaderboard-Verteilung; die **Geschwindigkeit (tok/s)** wird beim
+  Benchmark-Lauf weiterhin real auf der eigenen Umgebung gemessen
+  (Seed-Test). Jede Zelle zeigt ein Quellen-Badge (**AA** / **Arena** /
+  **intern**); der Tooltip nennt das zugeordnete offizielle Modell und den
+  Rohwert. Modelle ohne Leaderboard-Eintrag (z. B. lokale Modelle) werden wie
+  früher intern per Prompt+Judge getestet. Trifft die automatische Zuordnung
+  das falsche Leaderboard-Modell, pinnen die **„Zuordnung"**-Felder unter der
+  Tabelle den exakten offiziellen Namen; die **Override**-Spalten schlagen
+  weiterhin jede Messung und überleben neue Läufe.
 - **Service-Modelle** — eine zentrale Stelle für die Modellzuordnung aller
   Hintergrunddienste: Server-Standardmodell, Bildbeschreibung (Anhänge),
   Chat-Zusammenfassung, **Prompt-Klassifikation (Auto-Routing)**,

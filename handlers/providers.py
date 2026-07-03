@@ -6,7 +6,7 @@ import threading
 import time
 
 import brain as engine
-from engine import model_bench
+from engine import bench_official, model_bench
 
 # Live benchmark progress (single-run gate). Polled by GET
 # /v1/models/benchmark/status. Reset on each new run. cells_* count
@@ -22,17 +22,46 @@ _BENCH_LOCK = threading.Lock()
 
 def _run_benchmark_bg(targets, judge_model, task_types, config_path):
     """Background worker: benchmark each target model, persist results into
-    config.json as they complete. Override blocks are preserved per cell."""
+    config.json as they complete. Override blocks are preserved per cell.
+
+    Capability comes from OFFICIAL leaderboard data where available
+    (engine/bench_official.py); the prompt run then only measures speed
+    (seed test). Uncovered cells fall back to the internal prompt+judge
+    benchmark. A source-fetch failure is recorded as a progress error and the
+    whole run degrades to the internal path — never blocks."""
     import handlers.sidecar_proxy as sidecar_proxy
     n_tasks = len(model_bench.effective_task_types(task_types))
     with _BENCH_LOCK:
         _BENCH_PROGRESS.update({
             "running": True, "done": 0, "total": len(targets),
-            "current_model": "", "current_task": "",
+            "current_model": "", "current_task": "Leaderboard-Daten laden…",
             "cells_done": 0, "cells_total": len(targets) * n_tasks,
             "started": time.time(),
             "judge": judge_model, "errors": [],
         })
+    official = {}
+    try:
+        bo = {}
+        try:
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    bo = (json.load(f).get("benchmark_official") or {})
+        except Exception:
+            bo = {}
+        if bo.get("enabled", True):
+            cache_path = os.path.join(os.path.dirname(config_path),
+                                      "agents", "main", "bench_official_cache.json")
+            official, meta = bench_official.compute_official_benchmarks(
+                engine._models_config or {},
+                api_key=(bo.get("artificialanalysis_api_key") or "").strip() or None,
+                cache_path=cache_path,
+                ttl_hours=float(bo.get("cache_ttl_hours", 24)))
+            with _BENCH_LOCK:
+                for e in meta.get("errors") or []:
+                    _BENCH_PROGRESS["errors"].append(f"Quelle: {e}")
+    except Exception as e:
+        with _BENCH_LOCK:
+            _BENCH_PROGRESS["errors"].append(f"Leaderboard-Daten: {e}")
     try:
         for m_idx, mid in enumerate(targets):
             with _BENCH_LOCK:
@@ -49,7 +78,8 @@ def _run_benchmark_bg(targets, judge_model, task_types, config_path):
                     mid, judge_model,
                     background_call=sidecar_proxy.background_call,
                     task_types=task_types,
-                    progress_cb=_cell_progress)
+                    progress_cb=_cell_progress,
+                    official_cells=official.get(mid))
             except Exception as e:
                 with _BENCH_LOCK:
                     _BENCH_PROGRESS["errors"].append(f"{mid}: {e}")
@@ -471,10 +501,17 @@ class ProvidersHandlerMixin:
             if not is_admin:
                 entry = {k: entry[k] for k in _SAFE_FIELDS if k in entry}
             models[mid] = entry
-        self._send_json({
+        payload = {
             "models": models,
             "capabilities": list(engine.CAPABILITY_VALUES),
-        })
+        }
+        if is_admin:
+            # Key presence only (never the key) — GUI shows set/unset state.
+            bo = server_config.get("benchmark_official", {}) or {}
+            payload["benchmark_official"] = {
+                "aa_key_set": bool((bo.get("artificialanalysis_api_key") or "").strip()),
+            }
+        self._send_json(payload)
 
     def _handle_models_config_save(self):
         """POST /v1/models/config — save/update/sync models configuration."""

@@ -1,18 +1,26 @@
 """Model capability + speed benchmark for auto-routing.
 
 Measures each enabled model against the auto-route task types (coding, math,
-research, analysis, reporting, creative, orchestration, agentic, fast). For a
-(model x task_type) cell it runs a small fixed prompt set, judges each answer
-0-100 with the SERVER DEFAULT MODEL as judge, and records the mean capability%
-plus the mean answer latency. Results persist into `config.json -> models.<id>.
-benchmark` so the router (`brain._resolve_auto_model_tiered`) can rank by
-capability -> speed -> cost instead of guessing from priority.
+research, analysis, reporting, creative, orchestration, agentic, fast).
+
+SPLIT since v9.275.0: CAPABILITY comes from OFFICIAL leaderboard data
+(engine/bench_official.py — Artificial Analysis indices + LMArena Elo,
+pool-normalized to 0-100) wherever the model is covered; the prompt run here
+then only measures SPEED (the "seed test", measure_only). Models/tasks absent
+from every official source fall back to the full internal cell: answer every
+prompt, judge 0-100 with the SERVER DEFAULT MODEL (deterministic checks where
+the prompt has one), tagged source="internal". Results persist into
+`config.json -> models.<id>.benchmark` so the router
+(`brain._resolve_auto_model_tiered`) can rank by capability -> speed -> cost
+instead of guessing from priority.
 
 Storage shape (per model config entry):
     "benchmark": {
         "<task_type>": {
             "measured": {"capability": 0-100, "tps": float, "n": int,
-                         "ts": "<iso>"},
+                         "ts": "<iso>",
+                         "source": "artificialanalysis"|"lmarena"|"internal",
+                         "raw": float, "official_name": str},  # official only
             "override": {"capability": 0-100, "tps": float}   # optional
         },
         ...
@@ -270,14 +278,21 @@ def _now_iso() -> str:
 
 
 def benchmark_cell(model: str, task_type: str, judge_model: str,
-                   *, background_call, timeout_s: float = 60.0) -> dict:
+                   *, background_call, timeout_s: float = 60.0,
+                   measure_only: bool = False) -> dict:
     """Run one (model x task_type) cell: answer every prompt, score each
     (deterministic check where the prompt has one, else LLM judge), average.
     `background_call` is injected (handlers.sidecar_proxy.background_call) to
     keep this module import-cycle-free and unit-testable.
 
-    Returns {capability: 0-100, tps: float, n: int, ts, error?}. On total
-    failure (model errored on every prompt) returns capability 0 + error note.
+    `measure_only=True` = the SPEED SEED RUN (v9.275.0): answers every prompt
+    to measure real tps but skips all scoring (no deterministic check, no
+    judge call) — used when the cell's capability comes from an official
+    leaderboard (engine/bench_official.py); the caller merges that in.
+
+    Returns {capability: 0-100, tps: float, n: int, ts, error?} (capability
+    omitted in measure_only mode). On total failure (model errored on every
+    prompt) returns capability 0 + error note.
     """
     items = BENCH_TASKS.get(task_type) or []
     if not items:
@@ -313,6 +328,8 @@ def benchmark_cell(model: str, task_type: str, judge_model: str,
         _out_tok = int((ans.get("usage_total") or {}).get("output_tokens") or 0)
         if _out_tok > 0:
             throughputs.append(_out_tok / _secs)
+        if measure_only:
+            continue  # speed seed run — throughput collected, no scoring
         if not reply:
             scores.append(0)
             continue
@@ -340,6 +357,13 @@ def benchmark_cell(model: str, task_type: str, judge_model: str,
         sc = _parse_score(judged.get("reply") or "")
         scores.append(sc if sc is not None else 0)
 
+    if measure_only:
+        tps = round(sum(throughputs) / len(throughputs), 1) if throughputs else 0
+        out = {"tps": tps, "n": len(throughputs), "ts": _now_iso()}
+        if errors:
+            out["error"] = "; ".join(errors[:3])
+        return out
+
     if not scores:
         return {"capability": 0, "tps": 0, "n": 0, "ts": _now_iso(),
                 "error": "; ".join(errors[:3]) or "no scored prompts"}
@@ -361,12 +385,20 @@ def effective_task_types(task_types: list[str] | None = None) -> list[str]:
 def benchmark_model(model: str, judge_model: str, *, background_call,
                     task_types: list[str] | None = None,
                     timeout_s: float = 60.0,
-                    progress_cb=None) -> dict:
+                    progress_cb=None,
+                    official_cells: dict | None = None) -> dict:
     """Benchmark one model across all (or the given) task types.
 
     Returns {task_type: cell_result} — the `measured` block per cell. The caller
     merges this into config.json under models.<id>.benchmark.<task>.measured,
     preserving any existing `override`.
+
+    `official_cells` (v9.275.0, from engine/bench_official.py) carries
+    per-task {"capability", "source", "raw", "official_name"} from public
+    leaderboards. Tasks present there run the SPEED SEED only (measure_only —
+    real tps, no judge) and take capability from the official value; tasks
+    absent fall back to the full internal prompt+judge cell, tagged
+    source="internal".
 
     `progress_cb(task_type, done_cells)` (optional) fires before each cell so
     live progress can surface per task, not just per model.
@@ -379,6 +411,19 @@ def benchmark_model(model: str, judge_model: str, *, background_call,
                 progress_cb(t, i)
             except Exception:
                 pass
-        out[t] = benchmark_cell(model, t, judge_model,
-                                background_call=background_call, timeout_s=timeout_s)
+        official = (official_cells or {}).get(t)
+        if official and official.get("capability") is not None:
+            cell = benchmark_cell(model, t, judge_model,
+                                  background_call=background_call,
+                                  timeout_s=timeout_s, measure_only=True)
+            cell["capability"] = int(official["capability"])
+            for k in ("source", "raw", "official_name"):
+                if official.get(k) is not None:
+                    cell[k] = official[k]
+        else:
+            cell = benchmark_cell(model, t, judge_model,
+                                  background_call=background_call,
+                                  timeout_s=timeout_s)
+            cell["source"] = "internal"
+        out[t] = cell
     return out

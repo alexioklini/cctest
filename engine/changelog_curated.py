@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.275.0",
+        "date": "2026-07-03",
+        "title": "Modell-Benchmarks aus offiziellen Leaderboards",
+        "body": "Die Fähigkeits-Bewertung der Modelle (Grundlage der ✨ "
+                "Auto-Modellwahl) stammt jetzt aus offiziellen, laufend "
+                "gepflegten Quellen — Artificial Analysis und LMArena — statt "
+                "aus dem eigenen Mini-Test: objektiver, breiter abgestützt und "
+                "immer auf aktuellem Stand. Die Geschwindigkeit wird weiterhin "
+                "auf Ihrer eigenen Umgebung real gemessen. Im Modelle-Tab sehen "
+                "Sie pro Wert die Quelle; ein optionaler (kostenloser) "
+                "Artificial-Analysis-API-Key erweitert die Abdeckung, und "
+                "Modelle ohne Leaderboard-Eintrag (z. B. lokale Modelle) werden "
+                "wie bisher intern getestet.",
+        "audience": "admin",
+        "versions": ["9.275.0"],
+    },
+    {
         "version": "9.274.1",
         "date": "2026-07-03",
         "title": "Aufgeräumt: Sidecar-Bereich entfernt",

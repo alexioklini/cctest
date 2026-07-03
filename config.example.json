@@ -386,10 +386,13 @@
         },
         "fast": {
           "measured": {
-            "capability": 100,
-            "tps": 12,
+            "tps": 11.6,
             "n": 4,
-            "ts": "2026-06-03T15:04:33Z"
+            "ts": "2026-07-03T15:17:12Z",
+            "capability": 55,
+            "source": "lmarena",
+            "raw": 1357.67,
+            "official_name": "mistral-small-2506"
           }
         }
       },

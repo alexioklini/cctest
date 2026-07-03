@@ -248,9 +248,14 @@ async function _genTab_models(C) {
     let html = `<div style="${G('6px')}">
       <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
         <button class="btn-secondary" onclick="this.disabled=true;this.textContent='Synchronisiere…';API.post('/v1/models/config',{action:'sync'}).then(()=>{showToast('Synchronisiere…');setTimeout(()=>API.getModelsConfig().then(d=>{state.modelsConfig=d;switchGeneralTab('models');showToast('Synchronisiert')}),3000)}).catch(e=>{showToast('Fehlgeschlagen',true);this.disabled=false;this.textContent='Von Providern synchronisieren'})">Von Providern synchronisieren</button>
-        <button class="btn-secondary" onclick="runBenchmark()" title="Misst Fähigkeit (0-100 %, bewertet vom Server-Standardmodell) und Geschwindigkeit jedes aktivierten Modells pro Aufgabentyp. Das Ranking (fähig → schnell → günstig) steuert die ✨ Auto-Modellwahl.">Benchmark: alle aktivierten</button>
+        <button class="btn-secondary" onclick="runBenchmark()" title="Fähigkeit (0-100 %) kommt von offiziellen Leaderboards (Artificial Analysis · LMArena, pool-normalisiert); der lokale Prompt-Lauf misst nur noch die Geschwindigkeit (Seed-Test). Modelle ohne Leaderboard-Daten fallen auf den internen Judge-Benchmark zurück. Das Ranking (fähig → schnell → günstig) steuert die ✨ Auto-Modellwahl.">Benchmark: alle aktivierten</button>
         <span id="bench-progress" style="font-size:11px;color:var(--text-400)"></span>
-      </div>`;
+        <span style="display:inline-flex;gap:4px;align-items:center;margin-left:auto">
+          <input id="bench-aa-key" type="password" placeholder="${state.modelsConfig?.benchmark_official?.aa_key_set ? 'AA-Key gespeichert — neuer Key…' : 'Artificial-Analysis-API-Key'}" style="width:210px;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)" title="Kostenloser API-Key von artificialanalysis.ai (1000 Anfragen/Tag) — liefert die offiziellen Fähigkeits-Indizes. Leer speichern = Key löschen (dann nur LMArena + interner Fallback).">
+          <button class="btn-secondary" style="padding:2px 8px;font-size:10px" onclick="saveBenchAAKey(this)">Key speichern</button>
+        </span>
+      </div>
+      <div style="font-size:10px;color:var(--text-500);margin:-6px 0 12px 0">Fähigkeits-Daten: <a href="https://artificialanalysis.ai" target="_blank" rel="noopener" style="color:inherit">Artificial Analysis</a> · <a href="https://lmarena.ai" target="_blank" rel="noopener" style="color:inherit">LMArena</a> (CC-BY-4.0) — Geschwindigkeit: lokal gemessen</div>`;
     for (const prov of provKeys) {
       const models = byProvider[prov];
       const provId = `mdl-prov-${prov.replace(/[^a-zA-Z0-9]/g,'_')}`;
@@ -391,31 +396,40 @@ async function _genTab_models(C) {
 }
 
 // Per-model benchmark table inside the detail panel: one row per task type
-// with measured capability%/latency and editable admin overrides (override
+// with measured capability%/tps and editable admin overrides (override
 // wins over measured at routing time + survives the next benchmark run).
+// Capability cells carry a source badge (AA = Artificial Analysis, Arena =
+// LMArena, intern = prompt+judge fallback); tooltip shows the matched
+// official model name + raw score. The two Zuordnung inputs pin the official
+// name per source when the auto-match picked the wrong leaderboard entry.
 function _mdlBenchmarkSection(mid, cfg) {
   const TASK_TYPES = ['coding','math','research','analysis','reporting','creative','orchestration','agentic','fast'];
   const bench = cfg.benchmark || {};
+  const SRC_BADGE = { artificialanalysis: 'AA', lmarena: 'Arena', internal: 'intern' };
   const rows = TASK_TYPES.map(t => {
     const cell = bench[t] || {};
     const m = cell.measured || {};
     const ov = cell.override || {};
+    const badge = SRC_BADGE[m.source] ? ` <span style="font-size:9px;padding:0 4px;border:1px solid var(--border-100);border-radius:6px;color:var(--text-400)">${SRC_BADGE[m.source]}</span>` : '';
     const measTxt = (m.capability != null)
-      ? `${m.capability}% · ${m.tps||0} tok/s${m.n?` · n=${m.n}`:''}${m.error?` ⚠`:''}`
+      ? `${m.capability}%${badge} · ${m.tps||0} tok/s${m.n?` · n=${m.n}`:''}${m.error?` ⚠`:''}`
       : '<span style="color:var(--text-500)">—</span>';
+    const tip = [m.official_name ? `${m.source}: ${m.official_name}${m.raw!=null?` (roh ${m.raw})`:''}` : '', m.error || ''].filter(Boolean).join(' · ');
     const inS = `width:60px;padding:1px 4px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)`;
     return `<tr data-bench-task="${t}">
       <td style="padding:2px 6px;font-size:11px;color:var(--text-200)">${t}</td>
-      <td style="padding:2px 6px;font-size:11px;color:var(--text-300)" title="${esc(m.error||'')}">${measTxt}</td>
+      <td style="padding:2px 6px;font-size:11px;color:var(--text-300)" title="${esc(tip)}">${measTxt}</td>
       <td style="padding:2px 6px"><input class="mdl-bench-ov-cap" type="number" min="0" max="100" value="${ov.capability??''}" placeholder="auto" style="${inS}" title="Override Fähigkeit %"></td>
       <td style="padding:2px 6px"><input class="mdl-bench-ov-tps" type="number" min="0" step="0.1" value="${ov.tps??''}" placeholder="auto" style="${inS}" title="Override Durchsatz tok/s"></td>
     </tr>`;
   }).join('');
-  return `<div style="grid-column:1/-1;margin-top:6px;border-top:1px solid var(--border-100);padding-top:8px">
+  const on = cfg.official_names || {};
+  const mapS = `flex:1;min-width:150px;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)`;
+  return `<div style="grid-column:1/-1;margin-top:6px;border-top:1px solid var(--border-100);padding-top:8px" data-bench-sec="${esc(mid)}">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-      <label class="form-label" style="font-size:11px;margin:0">Benchmark <span style="color:var(--text-400);font-weight:400">(Fähigkeit % bewertet vom Server-Standardmodell · Geschwindigkeit · Override schlägt Messung)</span></label>
+      <label class="form-label" style="font-size:11px;margin:0">Benchmark <span style="color:var(--text-400);font-weight:400">(Fähigkeit % von offiziellen Leaderboards, Geschwindigkeit lokal gemessen · Override schlägt Messung)</span></label>
       <button class="btn-secondary" style="padding:1px 8px;font-size:10px;margin-left:auto" onclick="runBenchmark('${esc(mid)}')" title="Nur dieses Modell über alle Aufgabentypen benchmarken">Dieses Modell benchmarken</button>
-      <button class="btn-secondary" style="padding:1px 8px;font-size:10px" onclick="saveBenchmarkOverrides('${esc(mid)}',this)" title="Overrides dieses Modells speichern">Overrides speichern</button>
+      <button class="btn-secondary" style="padding:1px 8px;font-size:10px" onclick="saveBenchmarkOverrides('${esc(mid)}',this)" title="Overrides + Leaderboard-Zuordnung dieses Modells speichern">Overrides speichern</button>
     </div>
     <table data-bench-model="${esc(mid)}" style="width:100%;border-collapse:collapse">
       <thead><tr style="font-size:10px;color:var(--text-400);text-align:left">
@@ -424,7 +438,29 @@ function _mdlBenchmarkSection(mid, cfg) {
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+      <label style="font-size:10px;color:var(--text-400);flex:none" title="Nur nötig, wenn die automatische Zuordnung (Tooltip in der Gemessen-Spalte) das falsche Leaderboard-Modell trifft. Exakter Modellname/Slug der Quelle; leer = automatisch.">Zuordnung</label>
+      <input class="mdl-bench-aa-name" value="${esc(on.artificialanalysis||'')}" placeholder="Artificial-Analysis-Name (auto)" style="${mapS}">
+      <input class="mdl-bench-arena-name" value="${esc(on.lmarena||'')}" placeholder="LMArena-Name (auto)" style="${mapS}">
+    </div>
   </div>`;
+}
+
+// Save the Artificial-Analysis API key (empty = clear). Stored server-side in
+// config.json → benchmark_official.artificialanalysis_api_key; never echoed
+// back — the GET only reports set/unset.
+async function saveBenchAAKey(btn) {
+  const inp = document.getElementById('bench-aa-key');
+  if (!inp) return;
+  try {
+    btn.disabled = true;
+    const r = await API.post('/v1/services/server', { benchmark_aa_api_key: inp.value.trim() });
+    if (state.modelsConfig) state.modelsConfig.benchmark_official = { aa_key_set: !!r.benchmark_aa_key_set };
+    inp.value = '';
+    inp.placeholder = r.benchmark_aa_key_set ? 'AA-Key gespeichert — neuer Key…' : 'Artificial-Analysis-API-Key';
+    showToast(r.benchmark_aa_key_set ? 'AA-Key gespeichert' : 'AA-Key entfernt');
+  } catch (e) { showToast('Speichern fehlgeschlagen: ' + (e.message||e), true); }
+  finally { btn.disabled = false; }
 }
 
 // Trigger a benchmark (one model when mid given, else all enabled) and poll
@@ -501,6 +537,18 @@ async function saveBenchmarkOverrides(mid, btn) {
       if (Object.keys(cell).length) bench[task] = cell; else delete bench[task];
     });
     mc[mid] = { ...mc[mid], benchmark: bench };
+    // Leaderboard-Zuordnung (explicit official names per source; empty = auto)
+    const sec = Array.from(document.querySelectorAll('[data-bench-sec]'))
+      .find(d => d.dataset.benchSec === mid);
+    if (sec) {
+      const on = {};
+      const aa = sec.querySelector('.mdl-bench-aa-name')?.value?.trim();
+      const ar = sec.querySelector('.mdl-bench-arena-name')?.value?.trim();
+      if (aa) on.artificialanalysis = aa;
+      if (ar) on.lmarena = ar;
+      if (Object.keys(on).length) mc[mid].official_names = on;
+      else delete mc[mid].official_names;
+    }
     await API.post('/v1/models/config', { action: 'save', models: mc });
     state.modelsConfig.models = mc;
     showToast('Overrides gespeichert');

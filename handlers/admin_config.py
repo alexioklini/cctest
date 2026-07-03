@@ -569,6 +569,26 @@ class AdminConfigHandlers:
                 return
             result["attachment_image_model"] = aim
 
+        # --- Artificial-Analysis API key (official benchmark capability source) ---
+        # Empty value clears the key (benchmark then runs LMArena + internal
+        # fallback only). Read at benchmark time from config.json →
+        # benchmark_official.artificialanalysis_api_key (engine/bench_official.py).
+        if "benchmark_aa_api_key" in body:
+            key = str(body["benchmark_aa_api_key"] or "").strip()
+            server_config.setdefault("benchmark_official", {})["artificialanalysis_api_key"] = key
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config.setdefault("benchmark_official", {})["artificialanalysis_api_key"] = key
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["benchmark_aa_key_set"] = bool(key)
+
         # --- Chat summary model ---
         # Background LLM that generates the per-chat synopsis surfaced as
         # hover tooltip + collapsible block. Empty = auto-pick (cheapest

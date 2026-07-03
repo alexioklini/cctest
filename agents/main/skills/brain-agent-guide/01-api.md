@@ -400,15 +400,21 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 
 - `GET /v1/models` — flat list of enabled models (with display name,
   provider, capabilities)
-- `GET /v1/models/config` — full per-model config (admin)
+- `GET /v1/models/config` — full per-model config (admin; also
+  `benchmark_official: {aa_key_set}` — whether the Artificial-Analysis API
+  key is configured, never the key itself)
 - `POST /v1/models/config` — save model config; supports `action: "sync"`
   to pull from provider's `/models`, `action: "full_resync"` to clear
   deletion tombstones first, `action: "benchmark"` (optional `model_id` /
-  `task_type`) to run the capability+speed benchmark in the background
+  `task_type`) to run the benchmark in the background — capability % from
+  official leaderboards (Artificial Analysis + LMArena, cached 24h), speed
+  from the internal seed run; uncovered models fall back to the internal
+  prompt+judge benchmark (see 05-internals "Model benchmark")
 - `GET /v1/models/benchmark/status` — live benchmark progress
   (`{running, done, total, current_model, current_task, cells_done,
   cells_total, errors}`; a cell = model × task type, so single-model runs
-  still show movement)
+  still show movement; `current_task` shows "Leaderboard-Daten laden…"
+  during the source fetch, source errors land in `errors`)
 - `GET /v1/providers` — provider list with status
 - `POST /v1/providers` — `{action: "save"|"delete"|"test", ...}`
 - `POST /v1/providers/test` — `{base_url, api_key, ...}` probe
@@ -693,7 +699,10 @@ Once a feedback row exists, user and admin exchange short one-line messages
   `/services/server` also persists `config.default_model` (the
   Settings → Server → Standardmodell dropdown; 9.21.4), plus
   `chat_summary_model`, `classifier_model`, `auto_route_classifier_mode`,
-  `gdpr_scanner{…}` and (9.268.0) `moa{enabled, task_pools (9.269.0 matrix:
+  `gdpr_scanner{…}`, (9.275.0) `benchmark_aa_api_key` (Artificial-Analysis
+  API key for the official-leaderboard benchmark; empty string clears it;
+  stored in `config.benchmark_official.artificialanalysis_api_key`) and
+  (9.268.0) `moa{enabled, task_pools (9.269.0 matrix:
   {task_type: [model ids]}, replaces the legacy reference_pool +
   gate_task_types pair), task_modes (9.271.0: {task_type: 'answer'|'plan'}),
   max_references, reference_max_tokens,

@@ -278,25 +278,47 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
 
 ### Model benchmark (capability + speed ranking)
 
-`engine/model_bench.py` measures each model per task type so the router ranks on
-evidence, not config priority. Admin triggers it from **Settings → Models** — a
-per-model "Dieses Modell benchmarken" button and a top-level "Benchmark: alle
-aktivierten". Each (model × task_type): run a **TIERED** prompt set (`BENCH_TASKS`,
-3-5 prompts easy→hard so weak and strong models score differently — the prior
-2-trivial-prompt set scored every model 95-100 and discriminated nobody), score
-each answer 0-100. Scoring is **HYBRID**: prompts with an objective answer carry a
-deterministic `check` (exact/regex/all-substrings/`pyfunc` — `pyfunc` EXECS the
-returned code in a restricted-builtins sandbox and runs assert-cases) scored 0/100
-by code (no judge call, zero judge variance); only open-ended prompts use the
-**server `default_model`** as LLM judge. Store mean capability% + mean throughput
-(`tps`, tokens/sec — length-independent speed).
-Persists to `config.json → models.<id>.benchmark.<task> = {measured, override?}`
-with `measured = {capability, tps, n, ts}`. An admin **override** (editable
-cap%/tps in the same table) wins over `measured` at routing time and survives the next
-benchmark run (which only rewrites `measured`). Endpoints: `POST
-/v1/models/config {action:"benchmark", model_id?, task_type?}` (background, admin)
-+ `GET /v1/models/benchmark/status` (live progress). No benchmark for a task →
-the tier heuristic (step 5) applies, so the feature ships dark.
+Since v9.275.0 the two halves of a benchmark cell come from DIFFERENT places:
+
+- **Capability % = OFFICIAL leaderboards** (`engine/bench_official.py`):
+  **Artificial Analysis** Data API (intelligence/coding/math/agentic indices;
+  needs the free API key in `config.json → benchmark_official.
+  artificialanalysis_api_key`, saved via the Models-tab input; their ToS
+  require the attribution line the GUI shows) and **LMArena** category Elo
+  (coding/math/hard_prompts/instruction_following/creative_writing/multi_turn/
+  overall) from the official HF dataset `lmarena-ai/leaderboard-dataset`
+  (CC-BY-4.0, no auth). Per task type a source preference chain
+  (`TASK_SOURCE_MAP`: checkable skills → AA indices; taste/format tasks →
+  Arena Elo). The stored capability is the model's **PERCENTILE within the
+  full leaderboard distribution** (pool-independent; mid-field commercial
+  ≈55, frontier ≈90 — calibrated to the router's floor 50 ±20). Model
+  identity resolves by normalized-name matching (provider prefix, `-latest`,
+  quant/instruct suffixes, YYMM date tails stripped; family match picks the
+  newest date); a per-model `official_names {artificialanalysis, lmarena}`
+  override (the "Zuordnung" inputs in the GUI) wins when the auto-match is
+  wrong. Fetched payloads cache in `agents/main/bench_official_cache.json`
+  (24h TTL per source; fetch failure → stale cache → internal fallback).
+- **Speed = INTERNAL seed test** (`engine/model_bench.py`,
+  `measure_only=True`): the tiered prompt set (`BENCH_TASKS`) still runs on
+  YOUR hardware/providers to measure real mean throughput (`tps`,
+  tokens/sec), but no scoring happens for officially-covered cells.
+
+**Internal fallback**: models/tasks absent from every official source (local
+fine-tunes, oMLX models, brand-new releases) run the full legacy cell —
+answer + HYBRID scoring (deterministic `check`s exact/regex/all/`pyfunc`
+sandbox, else the **server `default_model`** as LLM judge, which is why a
+default model is still required to start a run) — tagged `source:"internal"`.
+Persists to `config.json → models.<id>.benchmark.<task> = {measured,
+override?}` with `measured = {capability, tps, n, ts, source, raw?,
+official_name?}`. An admin **override** (editable cap%/tps in the same table)
+wins over `measured` at routing time and survives the next benchmark run
+(which only rewrites `measured`). Endpoints: `POST /v1/models/config
+{action:"benchmark", model_id?, task_type?}` (background, admin) + `GET
+/v1/models/benchmark/status` (live progress; first phase shows
+"Leaderboard-Daten laden…"); `POST /v1/services/server {benchmark_aa_api_key}`
+saves/clears the AA key, `GET /v1/models/config → benchmark_official.
+aa_key_set` (admin) reports key presence. No benchmark for a task → the tier
+heuristic (step 4) applies, so the feature ships dark.
 
 **Classifier-driven tool DEFERRAL** (a SEPARATE axis from model selection):
 tool optimization runs whenever the per-agent flag `token_config.optimize_tools`
