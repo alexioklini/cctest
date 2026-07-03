@@ -53,7 +53,12 @@ on an attachment turn that the classifier had deferred; chat f2168652.)
 
 Deferred tools are hidden from the initial list, dispatchable, and surfaced via
 `tool_search`. Disabled tools are neither in-prompt, tool_search-able, nor
-dispatchable (never in the base set).
+dispatchable (never in the base set). (The tool_search half of that sentence
+was drift until 9.276.1: discovery searched the raw TOOL_DEFINITIONS catalog
+with no state check, so a globally-inactive tool was still advertised with
+full schema — chat 2cb5a9dd, glm-5.2 hunted the disabled exa_search for a
+whole turn. tool_search now filters by the turn's dispatch whitelist, so
+discovery ⇔ callability.)
 
 **Two layers reach the model: the wire schema and the admin prose overlay.**
 Each tool's wire schema (the `description` + `input_schema` on the `tools` array)

@@ -95,6 +95,14 @@ class RequestContext:
     tool_round: object = None
     _tool_results_tokens: int = 0
     _discovered_tools: object = None
+    # This turn's dispatch whitelist (in_prompt ∪ deferred tool names), set by
+    # sidecar_proxy (run_turn / _apply_bg_context) from the same list the loop
+    # enforces at dispatch. Read by brain._tool_search so discovery only
+    # surfaces tools that are actually CALLABLE this turn — a globally-inactive
+    # tool (e.g. a disabled search provider) must not be advertised to the
+    # model (chat 2cb5a9dd: tool_search served the disabled exa_search as top
+    # match and glm-5.2 spiraled hunting a tool that could never dispatch).
+    allowed_tools: object = None
     # Per-turn tool exclusion. Names listed here are dropped from the resolved
     # tool set for this turn (resolve_active_tools subtracts them), even when
     # otherwise enabled. Set on the chat worker's request context; read by the

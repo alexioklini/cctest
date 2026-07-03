@@ -2447,7 +2447,104 @@
       "is_local": true,
       "auto_lcm": true,
       "warmup": true,
-      "warmup_mode": "minimal"
+      "warmup_mode": "minimal",
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 20.0,
+            "n": 4,
+            "ts": "2026-07-03T17:52:50Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 23.5,
+            "n": 5,
+            "ts": "2026-07-03T17:53:36Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 24.4,
+            "n": 3,
+            "ts": "2026-07-03T17:55:42Z",
+            "capability": 68,
+            "source": "artificialanalysis",
+            "raw": 22.0,
+            "official_name": "Gemma 4 12B (Reasoning)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 24.1,
+            "n": 3,
+            "ts": "2026-07-03T17:57:31Z",
+            "capability": 68,
+            "source": "artificialanalysis",
+            "raw": 22.0,
+            "official_name": "Gemma 4 12B (Reasoning)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 18.4,
+            "n": 3,
+            "ts": "2026-07-03T17:57:38Z",
+            "capability": 68,
+            "source": "artificialanalysis",
+            "raw": 22.0,
+            "official_name": "Gemma 4 12B (Reasoning)"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 17.1,
+            "n": 3,
+            "ts": "2026-07-03T17:57:44Z",
+            "capability": 68,
+            "source": "artificialanalysis",
+            "raw": 22.0,
+            "official_name": "Gemma 4 12B (Reasoning)"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 24.3,
+            "n": 3,
+            "ts": "2026-07-03T17:59:04Z",
+            "capability": 68,
+            "source": "artificialanalysis",
+            "raw": 22.0,
+            "official_name": "Gemma 4 12B (Reasoning)"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 22.2,
+            "n": 3,
+            "ts": "2026-07-03T17:59:22Z",
+            "capability": 68,
+            "source": "artificialanalysis",
+            "raw": 22.0,
+            "official_name": "Gemma 4 12B (Reasoning)"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 5.0,
+            "n": 4,
+            "ts": "2026-07-03T17:59:25Z",
+            "capability": 68,
+            "source": "artificialanalysis",
+            "raw": 22.0,
+            "official_name": "Gemma 4 12B (Reasoning)"
+          }
+        }
+      }
     },
     "labs-leanstral-1-5-1": {
       "enabled": true,
@@ -4995,7 +5092,7 @@
     "max_rounds": 6,
     "system_prompt": "Du bist Brainy 🧠 — der freundliche, kompetente Helpdesk-Assistent von brain-agent. Du hilfst dem angemeldeten Nutzer direkt im Chat: bei allgemeinen Fragen zur App UND zur aktuellen Sitzung. Du bist NICHT der normale Chat-Agent — du bist ein eigenständiger Helfer mit Insider-Wissen über brain-agent.\n\nPersönlichkeit: warm, geduldig, permanent hilfsbereit, leicht verspielt, niemals herablassend. Antworte kurz und konkret. Sprich den Nutzer freundlich und auf Deutsch an (außer der Nutzer schreibt in einer anderen Sprache — dann passe dich an).\n\nVorgehen:\n1. Lade ZUERST den Skill `brain-agent-guide` mit dem Tool use_skill — er enthält die komplette Bedienungsanleitung, FAQ, Rezepte, API, Tools, Speicherorte und Interna von brain-agent. Stütze deine Antworten darauf, statt zu raten.\n2. Für Fragen zur laufenden Sitzung nutze helpdesk_session_info. Für persönliche/zugeschnittene Hilfe helpdesk_user_context (wer ist der Nutzer) und helpdesk_user_activity (was hat er bisher gemacht — Chats, Projekte, Schedules).\n3. Gib konkrete, umsetzbare Tipps und nenne, WO in der Oberfläche etwas zu finden ist (Tab, Button, Einstellung).\n\nGrenzen: Du bist rein lesend. Du kannst nichts ändern, nichts senden, keine Befehle ausführen und keine Dateien schreiben. Wenn der Nutzer eine Aktion ausführen will, erkläre ihm Schritt für Schritt, wie ER sie selbst durchführt. Wenn du etwas nicht sicher weißt, sag es ehrlich und verweise auf die passende Stelle in der App.\n\nTon & Humor: Du darfst trocken-charmant sein, mit Augenzwinkern. WICHTIG: Die Antwort selbst bleibt immer korrekt und sachlich — Witz kommt obendrauf, nie statt der Antwort und nie auf Kosten der Genauigkeit. Wenn die Daten eine augenzwinkernde Pointe hergeben (z.B. der Nutzer hat 7-mal nach dem Wetter gefragt), hänge HÖCHSTENS einen lockeren Schlusssatz an — etwa: „Vielleicht mal eine neue Frage ausdenken? Wird langsam zur Gewohnheit. ☂️\". Setze das sparsam ein (nicht bei jeder Antwort, sonst nutzt es sich ab), und NIE bei Fehlern, bei Datenschutz/PII-Themen oder wenn der Nutzer gestresst/frustriert wirkt — dann hilf einfach ruhig und sachlich. Die Pointe ist eine augenzwinkernde Beobachtung zum erkannten Muster selbst (z.B. „denk dir mal eine andere Frage aus, das wird öde ☂️\") — NICHT ein proaktives Feature-Angebot oder ein erfundener Tipp. Erfinde dafür keine Funktionen; wenn du eine App-Funktion nennst, muss sie real und durch den brain-agent-guide-Skill gedeckt sein.\n\nBeispiele für den richtigen Schluss (Frage: „Wie oft habe ich nach dem Wetter gefragt?\", 7 Treffer):\n✅ GUT: „Du hast 7-mal nach dem Wetter gefragt. Vielleicht mal eine andere Frage ausdenken — wird langsam zur Gewohnheit. ☂️\"\n❌ FALSCH (erfundenes Feature-Angebot): „… Soll ich dir zeigen, wie du Wetterdaten speichern kannst? Nutze die Artifacts-Funktion!\" — verboten: das ist eine ausgedachte Funktion und kein Witz.\n❌ FALSCH (proaktives Hilfsangebot statt Pointe): „… Möchtest du, dass ich dir etwas anderes heraussuche?\" — die Spitze kommentiert das MUSTER, sie bietet keine Zusatzaktion an.\nDie Schlusszeile ist eine kurze, selbstironische Beobachtung zum Muster — sonst nichts."
   },
-  "default_model": "CLIProxyAPI/mistral-medium-3.5",
+  "default_model": "glm-5.2",
   "warmup": {
     "pool_depth": 10
   },
@@ -5010,7 +5107,7 @@
   "studio_model": "CLIProxyAPI/mistral-small-latest",
   "audio_overview_model": "CLIProxyAPI/mistral-small-latest",
   "code_graph_model": "CLIProxyAPI/mistral-small-latest",
-  "deep_research_model": "CLIProxyAPI/mistral-medium-3.5",
+  "deep_research_model": "glm-5.2",
   "wiki_gate_model": "CLIProxyAPI/mistral-small-latest",
   "composer_defaults": {
     "thinking_level": "none",
@@ -5053,6 +5150,7 @@
         "glm-5.2",
         "CLIProxyAPI/mistral-medium-3.5",
         "kimi-k2.6",
+        "deepseek-v4-flash",
         "CLIProxyAPI/mistral-small-latest",
         "deepseek-v4-pro"
       ],
@@ -5061,7 +5159,16 @@
         "CLIProxyAPI/mistral-medium-3.5",
         "kimi-k2.6",
         "deepseek-v4-flash",
-        "CLIProxyAPI/mistral-small-latest"
+        "CLIProxyAPI/mistral-small-latest",
+        "deepseek-v4-pro"
+      ],
+      "reporting": [
+        "glm-5.2",
+        "CLIProxyAPI/mistral-medium-3.5",
+        "kimi-k2.6",
+        "deepseek-v4-flash",
+        "CLIProxyAPI/mistral-small-latest",
+        "deepseek-v4-pro"
       ],
       "creative": [
         "glm-5.2",
@@ -5071,12 +5178,8 @@
       "orchestration": [
         "glm-5.2",
         "CLIProxyAPI/mistral-medium-3.5",
-        "CLIProxyAPI/mistral-small-latest"
-      ],
-      "reporting": [
         "kimi-k2.6",
-        "deepseek-v4-flash",
-        "CLIProxyAPI/mistral-small-latest"
+        "deepseek-v4-pro"
       ]
     },
     "task_modes": {
@@ -5090,11 +5193,22 @@
       "agentic": "plan",
       "fast": "answer"
     },
-    "task_aggregators": {}
+    "task_aggregators": {
+      "coding": "glm-5.2",
+      "math": "glm-5.2",
+      "research": "glm-5.2",
+      "analysis": "glm-5.2",
+      "reporting": "glm-5.2",
+      "creative": "glm-5.2",
+      "orchestration": "glm-5.2",
+      "agentic": "glm-5.2",
+      "fast": "glm-5.2"
+    }
   },
   "benchmark_official": {
     "artificialanalysis_api_key": "YOUR_API_KEY",
     "cache_ttl_hours": 24,
     "enabled": true
-  }
+  },
+  "goal_judge_model": "glm-5.2"
 }

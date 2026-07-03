@@ -142,6 +142,8 @@ def _apply_bg_context(ctx: dict) -> None:
     tl.session_id = tl.current_session_id
     tl.current_turn_id = ctx.get("turn_id") or ""
     tl.current_bg_task = bool(ctx.get("bg_task", False))
+    # Dispatch whitelist for tool_search (same list the loop enforces).
+    tl.allowed_tools = ctx.get("allowed_tools") or None
     tl.current_user_id = ctx.get("user_id") or ""
     tl.current_team_ids = list(ctx.get("team_ids") or [])
     tl.project = ctx.get("project") or ""
@@ -214,6 +216,10 @@ def run_turn(
         mcp_manager=getattr(engine, "_mcp_manager", None), breakdown=_tb)
     allowed_tools = _dispatchable_allowed_tools(_tools, _tb)
     tool_context["allowed_tools"] = allowed_tools
+    # Mirror the whitelist onto the worker's request context so tool_search
+    # only surfaces tools that are actually dispatchable this turn (a disabled
+    # tool must not be discoverable — chat 2cb5a9dd).
+    engine.get_request_context().allowed_tools = allowed_tools
     _log_wire_tools(_tools, turn_id=turn_id, purpose=purpose,
                     agent_id=tool_context.get("agent_id") or None, model=model)
 
