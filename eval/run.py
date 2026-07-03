@@ -93,11 +93,18 @@ def brain_create_session(base_url: str, token: str, agent: str, project: str, mo
 
 
 def brain_chat(base_url: str, token: str, session_id: str, message: str, timeout: float,
-               thinking: str | None = None) -> dict:
+               thinking: str | None = None, model: str | None = None) -> dict:
     """POST /v1/chat and drain SSE until 'done'. Returns the done-event data plus
-    a list of tool-call summaries lifted from 'tool_*' events."""
+    a list of tool-call summaries lifted from 'tool_*' events.
+
+    `model` is passed per-turn — REQUIRED for routing directives ('auto',
+    'auto-cloud', 'auto-local', 'moa'): the send handler only routes/fans-out
+    when the directive arrives as the composer model of the turn; a directive
+    that only sits on the session (create-time) is not re-evaluated."""
     url = base_url.rstrip("/") + "/v1/chat"
     body = {"session_id": session_id, "message": message}
+    if model:
+        body["model"] = model
     if thinking and thinking != "none":
         body["thinking"] = thinking
     data = json.dumps(body).encode("utf-8")
@@ -501,7 +508,7 @@ def main() -> int:
                                            brain_model)
                 done = brain_chat(brain_cfg["base_url"], brain_token, sid,
                                   q["question"], brain_cfg["timeout_seconds"],
-                                  thinking=args.thinking)
+                                  thinking=args.thinking, model=brain_model)
                 done["_session_id"] = sid
                 done["_elapsed_s"] = round(time.time() - t0, 2)
                 with open(brain_path, "w", encoding="utf-8") as f:
