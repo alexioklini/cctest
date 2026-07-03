@@ -4,9 +4,8 @@
 async function _genTab_server(C) {
   /* ─── SERVER ─── */
     try {
-      const [svc, sc, sx, sxe, c4] = await Promise.all([
+      const [svc, sx, sxe, c4] = await Promise.all([
         API.getServices(),
-        API.get('/v1/sidecar/status').catch(() => null),
         API.get('/v1/searxng/status').catch(() => null),
         API.get('/v1/searxng/engines').catch(() => null),
         API.get('/v1/crawl4ai/status').catch(() => null),
@@ -173,13 +172,6 @@ async function _genTab_server(C) {
             <button class="btn-secondary" onclick="saveComposerDefaults()">Standards speichern</button>
           </div>`;
         })()}
-        ${SEC('Sidecar')}
-        ${_renderSupervisorStatus(sc, {
-          restartFn: 'restartSidecar',
-          restartLabel: 'Sidecar neu starten',
-          note: 'Laufende Durchläufe schlagen mit einem Sidecar-Fehler fehl.',
-          disabledHint: 'sidecar.auto_start=false',
-        })}
         ${SEC('Websuche (SearXNG)')}
         ${_renderSupervisorStatus(sx, {
           restartFn: 'restartSearxng',

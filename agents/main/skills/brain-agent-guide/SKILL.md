@@ -8,8 +8,8 @@ metadata:
   #   reconciled against — a drift indicator. The pre-push hook warns when it
   #   falls behind brain.VERSION (override with SKILL_DOC_OK=1). Keep both in
   #   sync with the change that touches the skill.
-  skill_version: 1.117.0
-  brain_agent_version: 9.274.0
+  skill_version: 1.118.0
+  brain_agent_version: 9.274.1
 ---
 
 # Brain-Agent Operator Guide
@@ -37,7 +37,7 @@ Load it whenever the user:
 - Asks you to **perform** an operation on their behalf: create/run/edit a
   scheduled task, list/search chats, inspect a session, check costs,
   query the KG, tail a log, restart a service, dump a DB table, etc.
-- Asks how brain-agent works internally (architecture, sidecar, MemPalace,
+- Asks how brain-agent works internally (architecture, LLM loop, MemPalace,
   GDPR scanner, scheduler, …)
 - Reports a problem and you need to know where the relevant log / DB /
   endpoint / UI control lives.
@@ -97,7 +97,7 @@ have a filename, resolve it under
 | `02-tools.md` | Every agent tool name + when to reach for it. Groups, purposes, the `use_skill` / `tool_search` flow, dispatch path. |
 | `03-storage.md` | Disk layout (`agents/<id>/…`, artifacts, schedules, MemPalace, projects, attachments), SQLite DB locations + schemas (chats, schedules, costs, auth, traces, audit, context, code-graph). |
 | `04-recipes.md` | Operator recipes — call the API / SQLite from inside an agent turn: list projects, create+run a schedule, inspect chats, check costs/quotas, search MemPalace, manage models/providers, restart services, debug from logs. |
-| `05-internals.md` | Architecture: sidecar loop, warm pool, provider queue, GDPR scanner, MemPalace daemons, project sync, KG extraction, scheduler internals. |
+| `05-internals.md` | Architecture: in-process LLM loop, warm pool, provider queue, GDPR scanner, MemPalace daemons, project sync, KG extraction, scheduler internals. |
 
 ## First step for every task
 

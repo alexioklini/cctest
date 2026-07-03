@@ -333,7 +333,7 @@ streaming call, per-USER history, fixed read-only tool set. See
   for the progress display → `{state: idle|generating|done|error|cancelled,
   elapsed, error?}`. `idle` = no run started this server process.
 - `POST .../projects/<name>/init-cancel` — Code Mode only: abort an in-flight
-  init (cancels the run's sidecar turn) → `{status: cancelling|not_running,
+  init (cancels the run's in-flight LLM turn) → `{status: cancelling|not_running,
   cancelled}`. Manage-gated.
 - `GET .../ingested` — list ingested files under an agent
 - `POST /v1/files/rename {path, to}` / `POST /v1/files/delete {path}` /
@@ -463,8 +463,6 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 - `GET /v1/tools/config` / `POST` — integration knobs (API keys, etc.)
 - `GET /v1/tools/status` — per-tool diagnostic
 - `GET /v1/tools/breakdown?agent=` — token cost per tool
-- `POST /v1/tools/call` — **localhost+nonce only**, sidecar→Brain dispatch
-  (do not call manually)
 - `GET /v1/tools/result?session_id=&tool_use_id=` — full, **uncapped**
   tool-result text (ownership-checked, path-traversal-guarded). When a
   tool result exceeds the in-context budget (>50KB) it is spilled to
@@ -706,7 +704,6 @@ Once a feedback row exists, user and admin exchange short one-line messages
   `GET /v1/status → moa_enabled` gates the composer's 🧬 entry.
 - `POST /v1/restart` — restart Brain (graceful)
 - `GET /v1/warmup/status` / `POST /v1/warmup/trigger`
-- `GET /v1/sidecar/status` / `POST /v1/sidecar/restart`
 - `GET /v1/queue/status` / `POST /v1/queue/cancel`
 - `GET /v1/searxng/status` / `POST /v1/searxng/restart` — admin: the
   self-hosted SearXNG subprocess (status/pid/uptime/health/breaker).
@@ -759,12 +756,12 @@ logged-in user (not admin-gated).
 - `POST /v1/background-tasks/cancel-tool` — `{task_id, tool_use_id}`. Cancels
   ONE in-flight tool call of a running task (the task keeps going). For
   subprocess-backed tools (`python_exec`/`execute_command`) the process group is
-  SIGKILLed — a real kill; for other tools the sidecar just abandons the wait and
+  SIGKILLed — a real kill; for other tools the loop just abandons the wait and
   feeds the loop a synthetic error result. 200 if acted on, 409 otherwise
   (already returned / not live).
 - `DELETE /v1/background-tasks?task_id=` — remove a finished/aborted row
   (refuses a still-running task with 409 — cancel it first).
-- `GET /v1/background-tasks/<id>/transcript` — SSE. Running → live sidecar
+- `GET /v1/background-tasks/<id>/transcript` — SSE. Running → live loop
   events; finished (or log purged) → one `text_delta` replay of the stored
   output + a terminal `done`.
 

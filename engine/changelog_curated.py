@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.274.1",
+        "date": "2026-07-03",
+        "title": "Aufgeräumt: Sidecar-Bereich entfernt",
+        "body": "In den Allgemeinen Einstellungen unter „Server“ gibt es den "
+                "Bereich „Sidecar“ nicht mehr — der zugehörige Hilfsprozess "
+                "wurde bereits vor einigen Versionen durch eine schnellere, "
+                "direkt integrierte Lösung ersetzt; der verbliebene Monitor "
+                "samt Neustart-Schaltfläche war funktionslos. Die Monitore für "
+                "Websuche (SearXNG) und Web-Rendering (crawl4ai) bleiben "
+                "unverändert erhalten.",
+        "audience": "admin",
+        "versions": ["9.274.1"],
+    },
+    {
         "version": "9.274.0",
         "date": "2026-07-03",
         "title": "Experten-Gremium: Orchestrator pro Aufgabentyp wählbar",

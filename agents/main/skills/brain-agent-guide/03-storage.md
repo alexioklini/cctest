@@ -74,7 +74,7 @@ agents/
   server.log                   # startup banner only
   server.error.log             # ALL daemon stdout/stderr (launchd quirk)
   telegram.log / .error.log
-  pi-sidecar.log               # Anthropic SDK sidecar
+  pi-sidecar.log               # DEAD (sidecar deleted v9.247.0; loop is in-process)
   claude-code-*.log
   qmd.log / .error.log
   extracted-cache/             # binary→markdown cache (markitdown/mistral OCR)
@@ -89,7 +89,6 @@ config.json                    # repo root: providers, models, server,
                                # max_rounds,system_prompt}  (last three gitignored,
                                # per-machine — supervisors no-op without them)
 mempalace.yaml                 # MemPalace palace_path + chat-sync config
-sidecar/                       # Anthropic SDK subprocess (separate venv)
 searxng/ + .venv_searxng       # self-hosted SearXNG (port 8088), gitignored
 crawl4ai/ + .venv_crawl4ai     # headless-render service (port 8422), gitignored
 ```

@@ -1,9 +1,10 @@
 # Agent Tool Reference
 
 Every tool the LLM can call in a chat turn. Names match the actual
-`tool_use` block. Dispatch path: sidecar emits `tool_use` → POSTs
-`/v1/tools/call` to Brain → `server_lib/tool_mcp.handle_tools_call`
-dispatches via `engine.TOOL_DISPATCH` (or MCP fallback) → result returned.
+`tool_use` block. Dispatch path (in-process since v9.247.0): the loop
+(`engine/llm_loop.py`) parses a `tool_call` from the stream and calls
+`engine.TOOL_DISPATCH[name](args)` directly on its own thread (or the MCP
+fallback) → result returned to the model as a `role:"tool"` message.
 
 Tools are gated per-call by a 3-layer resolver, and the status is now
 settable **per use-case** (purpose):

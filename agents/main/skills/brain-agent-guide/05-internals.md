@@ -8,37 +8,41 @@ requires understanding the moving parts.
 
 ```
 launcher.py → server.py (HTTP API, port 8420)
-                ├── brain.py            # tools, providers, MemPalace, scheduler
+                ├── brain.py            # tool wiring, providers, MemPalace, scheduler
                 ├── engine/             # extracted engine modules
+                │   └── llm_loop.py     # IN-PROCESS OpenAI agentic loop
+                │       httpx SSE → {base_url}/chat/completions;
+                │       tool_use → engine.TOOL_DISPATCH[name](args) (direct call)
                 ├── handlers/           # per-endpoint HTTP handlers
                 ├── server_lib/         # DB, auth, sessions, notifications
-                │
-                ├── sidecar/sidecar.py  (port 8421, separate venv)
-                │   └─ Anthropic Python SDK 0.101.0
-                │      Owns the agentic loop. Brain never iterates LLM rounds.
-                │
                 ├── searxng/ (port 8088, separate venv) — self-hosted search
                 ├── crawl4ai/ (port 8422, separate venv) — headless render + Scrapling stealth
                 ├── SQLite              # chats, schedules, costs, traces, context, …
                 └── MemPalace (in-process, NOT MCP)
 ```
 
-All chat + non-interactive LLM calls go through the sidecar via
-`POST http://127.0.0.1:8421/turn` (SSE). Tool calls flow back:
-sidecar → `POST /v1/tools/call` to Brain → dispatch → result returned.
+All chat + non-interactive LLM calls run **in-process** via
+`engine/llm_loop.py` (the Anthropic-SDK sidecar subprocess was deleted in
+v9.247.0). Tool calls are dispatched directly on the loop's thread via
+`engine.TOOL_DISPATCH[name](args)` — no HTTP hop, no nonce.
 
-## Agentic loop (sidecar)
+## Agentic loop (in-process)
 
-- **Interactive chat**: `handlers/chat.py:worker` builds Anthropic-shape
-  messages → `sidecar_proxy.run_turn()` → sidecar streams events
-  (`text_delta`, `thinking`, `tool_use`, `tool_dispatch_done`, `done`).
+- **Interactive chat**: `handlers/chat.py:worker` →
+  `sidecar_proxy.run_turn()` (legacy module name — there is no sidecar) →
+  `engine.llm_loop.run_loop(...)` on the worker thread, which streams
+  `httpx` SSE from `{base_url}/chat/completions` and emits the Brain event
+  vocabulary (`text_delta`, `thinking_*`, `tool_call`, `tool_result`,
+  `usage`, `done`).
 - **Background calls**: scheduler, refine, soul-chat, summary, profile,
   next-prompt, classifier, image-describe, ask_llm, memory-extract,
   promote-skill, KG extract, code-graph summaries, citation re-round,
-  translate/* — all use `sidecar_proxy.background_call()`.
-- **Cancel**: Brain mints `turn_id`, passes `X-Turn-Id` header. Proxy's
-  `_watch_cancel` thread polls `session.cancel_token` and POSTs
-  `/cancel/<turn_id>` to sidecar.
+  translate/* — all use `sidecar_proxy.background_call()` →
+  `run_turn_blocking` → `run_loop` (drains to a final dict).
+- **Cancel**: interactive turns poll `session.cancel_token` between rounds
+  AND a watcher thread closes the stream socket mid-generation. Background
+  turns register a `turn_id → Event` in `sidecar_proxy`;
+  `sidecar_proxy.cancel_turn(turn_id)` trips it.
 - **`AskUserQuestion`**: blocks via `_pending_answers[session_id] +
   Event`. Unblocked by `POST /v1/chat/answer`.
 
@@ -53,15 +57,15 @@ sidecar → `POST /v1/tools/call` to Brain → dispatch → result returned.
   Client disconnect on the reattach endpoint NEVER cancels the worker.
 - Incremental persistence: `sessions.streaming_text` / `streaming_meta`
   written by event_callback (~0.4s throttle); cleared in worker `finally`.
-- **Brain-restart recovery**: `active_turns` rows + sidecar's per-turn
-  event log (`/turn/<id>/events?since=N`, 5-min retention) let Brain
-  re-attach after its own restart. If sidecar also died, partial
-  `streaming_text` gets promoted to a persisted message tagged
-  `*(Server restart — turn lost)*`.
+- **Brain-restart recovery**: the in-process loop dies WITH Brain (no
+  external process holds the turn), so on boot
+  `recover_active_turns_on_boot()` promotes any persisted partial
+  `streaming_text` to a message tagged `*(Server restart — turn lost)*`
+  and clears the `active_turns` row.
 
 ## Multi-round answer text — accumulate + chronological interleave
 
-- The sidecar loop ACCUMULATES visible answer text across rounds
+- The loop ACCUMULATES visible answer text across rounds
   (`text_segments` → `final_text = "\n\n".join(...)`). Interleaved-reasoning
   models (e.g. mistral-medium) emit answer text in several rounds
   (text → tool → text); overwriting per round would drop the early text
@@ -363,7 +367,7 @@ the model decision + why, and the tool-deferral decision (`Im Prompt` vs
 `Zurückgestellt (per tool_search abrufbar)`, or why it was a no-op for a
 warm/local model).
 
-LLM and hybrid **fail open to keywords** — a down sidecar or slow local model
+LLM and hybrid **fail open to keywords** — a failed classifier call or slow local model
 never blocks a turn. Config-wise the mode set is unchanged (still
 `keywords|llm|hybrid`, default `keywords`, ships dark); only the `llm`/`hybrid`
 internals got richer.
@@ -383,9 +387,9 @@ Per-request state (current user, project, exclude_tools, purpose, …) lives
 in a typed `RequestContext` dataclass held in a `contextvars.ContextVar`
 (`engine/context.py`). Read/write **only** via `get_request_context().<field>`;
 enter/teardown **only** via `with request_context(**overrides):` (the
-context manager push/token-resets — automatic teardown). The sidecar's
-`/v1/tools/call` rebuilds the context per call (`tool_mcp._apply_context`,
-inside its own `with`).
+context manager push/token-resets — automatic teardown). Background
+(blocking) turns rebuild the context via `sidecar_proxy._apply_bg_context`
+inside their own `with request_context()`.
 
 The old `_thread_local = threading.local()` request-state bag is **gone**
 (Tier G, 9.12.0). Bleed invariant: a fresh thread starts with empty
@@ -396,11 +400,11 @@ wrap it in `with request_context()`. (DB-connection pooling still uses
 
 ## Supervised subprocesses
 
-Three long-lived helper processes, each its own venv, each managed by a
+Two long-lived helper processes, each its own venv, each managed by a
 `ProcessSupervisor` subclass (3-crash-in-60s circuit breaker + HTTP health
-probe), admin status/restart endpoints:
+probe), admin status/restart endpoints (the LLM loop is NOT one of them —
+it runs in-process since v9.247.0):
 
-- **sidecar** (`:8421`) — the Anthropic SDK agentic loop (above).
 - **SearXNG** (`:8088`, `SearxngSupervisor`) — self-hosted metasearch
   backing `searxng_search` + the Websuche tab. URL from
   `config.json → searxng.url` via `_searxng_base_url()`. Per-engine health
@@ -514,7 +518,7 @@ PDF before its balance sheet). The chat `web_fetch` keeps its 50k per-turn cap
 **`read_document` has NO size cap** — it returns the extracted content VERBATIM
 (tool_mcp hard rule: no truncation/summary); the only ceiling on a big read is
 the model's context window. (`_apply_tool_result_budget`'s disk-spill+preview is
-dead on the chat path — the sidecar owns the ephemeral tool exchange, results
+dead on the chat path — the loop owns the ephemeral tool exchange, results
 never live in `session.messages`; CHANGELOG 9.46.5.) `read_document(pages=…)`
 only applies to PDFs; on `.md/.txt` it returns a `note` (use offset/limit)
 instead of silently ignoring.
@@ -538,8 +542,7 @@ starts empty. On send the enabled entries ride as `body.web_urls_to_fetch`.
   `sessions.allow_further_web` is off, the worker sets
   `get_request_context().exclude_tools = ["web_fetch","exa_search",
   "searxng_search"]`; `resolve_active_tools` subtracts it (generic
-  per-turn mechanism, Brain-side — NOT plumbed through the sidecar
-  payload). All non-web tools stay live. There is **no** `web_search` tool.
+  per-turn mechanism, resolved from the worker's request context). All non-web tools stay live. There is **no** `web_search` tool.
 - **Escape hatch**: `sessions.allow_further_web` (sticky, default 0), inert
   when the basket is empty; when on, curated sources are still pre-fetched
   but the model may also search/fetch.
@@ -581,7 +584,7 @@ cache-key folds working_dir + BRAIN.md mtime). `init` (POST
 background turn (engine/code_init.py → background_call purpose=interactive,
 cwd=working_dir) that explores the dir and writes BRAIN.md — one agentic pass
 (selective key-file reads, like Claude Code's /init), not per-file. working_dir
-flows to the sidecar's per-tool-call context via tool_context. code_mode is FIXED AT CREATION — two
+flows to the loop's per-tool-call context via tool_context. code_mode is FIXED AT CREATION — two
 overview buttons ("Neues Projekt" / "Neues Code-Projekt"); create_project reads
 code_mode+working_dir, and code_mode is NOT in the update_project whitelist
 (immutable; working_dir stays editable). UI: code projects render a distinct
@@ -704,15 +707,15 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
 - **Same agent/config**: the thread replicates the session's system prompt +
   tools via `build_first_turn_prefix(model, agent_id)` and runs a fresh
   `sidecar_proxy.background_call(...)` with a pre-minted `turn_id` (so Stopp can
-  cancel via the sidecar's `POST /cancel/<turn_id>` — the same endpoint chat
-  uses). It passes the SAME `gdpr_pick_model_for_background` gate as every
+  cancel via `sidecar_proxy.cancel_turn(turn_id)` — the same in-process
+  mechanism chat uses). It passes the SAME `gdpr_pick_model_for_background` gate as every
   background call (no bypass).
 - **Model offload (per-model fan-out model)**: the chat model's registry entry
   may carry `config.json → models.<id>.background_task_model` — a (usually
   cheaper) model its fanned-out leaf tasks run on. The decompose/orchestrate
   reasoning stays on the chat model; only the `run_background_task` leaf runs
   swap. Resolved in `_resolve_fanout_model` before the DB row is written (so the
-  panel, GDPR pick, and sidecar call all see the leaf model). Empty/unset, or a
+  panel, GDPR pick, and loop call all see the leaf model). Empty/unset, or a
   target that's missing/disabled, leaves the leaf on the chat model. The special
   value `"auto"` intent-routes per leaf: the sub-task's prompt is classified via
   `resolve_task_purpose` (see *Auto model routing* below) and the best-fitting
@@ -744,12 +747,12 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
     Websuche), so it reaches the model once, never enters `session.messages`/DB,
     and drops out of context after that turn — like a tool result.
   Either path consumes the task exactly once.
-- **Cancel = partial kept**: Stopp trips a flag + cancels the sidecar turn; the
+- **Cancel = partial kept**: Stopp trips a flag + cancels the in-flight turn; the
   worker stores whatever output it had and marks the row `cancelled`.
 - **Panel**: the "Hintergrundaufgaben" right-panel tab + top-bar pill
   (`web/js/panels_background.js`) poll `GET /v1/background-tasks` every 2s while
   ≥1 task runs (no new SSE channel). "Transkript anzeigen" hits the transcript
-  endpoint (live sidecar SSE while running, stored replay once finished).
+  endpoint (live loop SSE while running, stored replay once finished).
 - **Boot reconcile**: a `running` row whose thread died on shutdown is set to
   `error` at startup so the panel never shows a zombie.
 
@@ -1396,7 +1399,7 @@ against, auto-continuing until fulfilled — like Claude Code's `/goal`.
   COUNT — no token in/out, no cost, no per-tool list (regression since the
   v9.0.0 SDK migration dropped the native loop that used to log these). Each
   tool span's `result_summary` is filled from `tool_events[].result_text` —
-  a copy of each tool's output the sidecar now carries for non-streaming
+  a copy of each tool's output the loop carries for non-streaming
   consumers — so the run-detail inspector shows what each tool returned, not
   just its name. The span stores BOTH a 500-char `result_summary` (inline
   preview) and `full_result` (the complete output the model received, capped
@@ -1468,7 +1471,7 @@ against, auto-continuing until fulfilled — like Claude Code's `/goal`.
   project's `instructions` + description in the prompt, `research_mode`,
   and scopes MemPalace `mempalace_query` to the `project__<id>` wing — the
   same path an interactive project chat uses. The same name also goes into
-  the sidecar tool-call `_tool_context["project"]` so per-tool-call context
+  the per-tool-call context (`tool_context["project"]`) so context
   rebuilds stay scoped. Empty (or a now-deleted project) → agent-global,
   unchanged. Artifacts stay in the agent-global `sched-<run_id>` folder
   (no project-tagging); the project view's "Geplante Aufgaben" tab just
@@ -1620,8 +1623,8 @@ at dispatch (`tool_context['allowed_tools']`), not just at list-build.
 `user-profile` polls every 30 min. Per-user gate:
 `daily_summary_enabled` + local hour matches + 23h cooldown.
 
-Worker: 100 most-recently-active chats from last 90 days → sidecar
-background_call with `_PROFILE_SYSTEM_PROMPT`. Atomic write via tmp +
+Worker: 100 most-recently-active chats from last 90 days →
+`sidecar_proxy.background_call` with `_PROFILE_SYSTEM_PROMPT`. Atomic write via tmp +
 `os.replace`. Mirrors to MemPalace wing `user__<uid>, room=user_profile`,
 one drawer per `## section`, purge-then-add.
 
@@ -1730,8 +1733,9 @@ opt-in). Either day-count `=0` disables that stage.
 ## Common pitfalls
 
 - Daemon stdout/stderr → `server.error.log`, not `server.log`.
-- Sidecar must NEVER import `claude_cli` (breaks anyio streaming).
-- launchctl kickstart needs >6s before HTTP listener binds.
+- Restart ONLY via graceful SIGTERM (`launchctl kill SIGTERM …`), never a
+  hard kill — SIGKILL corrupts in-flight MemPalace writes.
+- After a restart the HTTP listener needs >6s to bind.
 - `MODEL_PROFILES` overlays must only carry request-style knobs (never
   warmup/GPU/etc. — would silently re-enable user-toggled-off fields).
 - Sessions are created lazily on first send. SQL hides 0-message

@@ -233,18 +233,16 @@ curl -s -H "$AUTH" http://127.0.0.1:8420/v1/agents/main/projects/<name>/sync-sta
 # Brain server (graceful):
 curl -s -H "$AUTH" -X POST http://127.0.0.1:8420/v1/restart
 
-# Via launchctl (when curl can't reach the server):
-launchctl kickstart -k gui/$UID/com.brain-agent.server
-
-# Sidecar only (anthropic SDK loop host):
-curl -s -H "$AUTH" -X POST http://127.0.0.1:8420/v1/sidecar/restart
+# Via launchctl (when curl can't reach the server) — GRACEFUL SIGTERM,
+# NEVER `kickstart -k` / `kill -9` (SIGKILL corrupts MemPalace writes):
+launchctl kill SIGTERM gui/$UID/com.brain-agent.server
 
 # Mempalace daemons / telegram:
 curl -s -H "$AUTH" -X POST http://127.0.0.1:8420/v1/services/telegram \
   -H 'Content-Type: application/json' -d '{"action":"restart"}'
 ```
 
-After kickstart, wait ≥6 s before retrying HTTP (the listener needs to bind).
+After the restart, wait ≥6 s before retrying HTTP (the listener needs to bind).
 
 ---
 
@@ -256,8 +254,9 @@ NOT `server.log`. Always tail the error log:
 ```bash
 tail -n 200 ~/.brain-agent/server.error.log
 tail -f ~/.brain-agent/server.error.log
-# Sidecar (LLM-loop) errors:
-tail -n 200 ~/.brain-agent/pi-sidecar.log
+# LLM-loop errors land in the same file (in-process since 9.247.0) —
+# grep the per-turn summary lines:
+grep "inprocess-loop" ~/.brain-agent/server.error.log | tail -20
 # Daemons:
 curl -s -H "$AUTH" "http://127.0.0.1:8420/v1/services/log?name=mempalace-miner&lines=200" | jq -r .lines[]
 ```

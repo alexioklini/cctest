@@ -1362,9 +1362,11 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
 - **Zeitplan** — der eigene memory_summary-Daemon des Agenten
 
 ### Allgemeine Einstellungen (Admin)
-- **Server** — **Auto-Routing**, Ports, Monitore für **Sidecar**, **Web Search
+- **Server** — **Auto-Routing**, Ports, Monitore für **Web Search
   (SearXNG)** und **crawl4ai** (Status/PID/Uptime/Health/Breaker + Neustart;
-  SearXNG zusätzlich mit Pro-Engine-Tabelle und „Jetzt testen"). Die
+  SearXNG zusätzlich mit Pro-Engine-Tabelle und „Jetzt testen"; der
+  Sidecar-Monitor wurde mit dem Sidecar selbst entfernt — die LLM-Schleife
+  läuft seit 9.247.0 im Server-Prozess). Die
   Modell-Zuordnungen (Standardmodell, Chat-Zusammenfassung, Auto-Routing-
   Klassifikator usw.) liegen nicht mehr hier, sondern zentral unter
   **Service-Modelle** — eine „Modelle"-Karte verlinkt dorthin.
@@ -1516,12 +1518,6 @@ Kategorie ist „Server-Block" aktiv. Entweder die PII entfernen, auf ein
 lokales Modell wechseln (Daten bleiben auf dem Gerät) oder — als Admin —
 die Kategorie-Aktion unter Einstellungen → GDPR von `block` auf `warn`
 ändern.
-
-**F: Warum stoppte die Antwort mit „Sidecar error…"?**
-A: Der Sidecar-Subprozess (der die LLM-Schleife fährt) ist unten. Neu
-starten: Einstellungen → Server → Sidecar-Monitor oder
-`POST /v1/sidecar/restart`. Bei wiederholtem Fehlschlag
-`~/.brain-agent/pi-sidecar.log` prüfen.
 
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an

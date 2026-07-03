@@ -1,4 +1,4 @@
-// settings_general.js — General Settings modal: tab dispatcher, models/providers/nodes/context config savers, sidecar restart. Split from settings.js (Tier F Phase 2). Global <script>, no modules.
+// settings_general.js — General Settings modal: tab dispatcher, models/providers/nodes/context config savers, supervisor restarts (searxng/crawl4ai). Split from settings.js (Tier F Phase 2). Global <script>, no modules.
 
 function openGeneralSettings() {
   // Server-wide config (providers, models, quotas, GDPR, MemPalace, ...) is
@@ -72,29 +72,6 @@ function _renderScheduleRow(t) {
     <span style="font-size:11px;color:var(--text-400)">${esc(t.agent||'')}</span>
     <span style="font-size:11px;padding:2px 8px;border-radius:4px;background:${t.status==='active'?'rgba(22,163,74,0.1)':'var(--bg-200)'};color:${sc}">${esc(t.status)}</span>
   </div>`;
-}
-
-async function restartSidecar(btn) {
-  if (!confirm('Sidecar hart neu starten?\n\nLaufende Chat-Durchläufe schlagen mit einem Sidecar-Fehler fehl und müssen erneut versucht werden.')) return;
-  const orig = btn?.textContent || 'Sidecar neu starten';
-  if (btn) { btn.disabled = true; btn.textContent = 'Wird neu gestartet…'; }
-  try {
-    const r = await API.post('/v1/sidecar/restart', {});
-    if (r && r.ok) {
-      showToast('Sidecar wird neu gestartet');
-    } else {
-      showToast(r?.error || 'Neustart fehlgeschlagen', true);
-    }
-  } catch (e) {
-    showToast('Neustart fehlgeschlagen: ' + (e?.message || e), true);
-  } finally {
-    // Re-render the Server tab so the new status (PID, uptime) shows up.
-    setTimeout(() => {
-      const t = document.querySelector('.modal-tab.active[onclick*="server"]');
-      if (t) switchGeneralTab('server', t);
-      else if (btn) { btn.disabled = false; btn.textContent = orig; }
-    }, 1500);
-  }
 }
 
 async function restartSearxng(btn) {
@@ -210,7 +187,7 @@ async function testSearxngEngines(btn) {
   }
 }
 
-// Shared renderer for a ProcessSupervisor status block (sidecar + searxng share
+// Shared renderer for a ProcessSupervisor status block (searxng + crawl4ai share
 // the same status dict shape). `opts.restartFn` is the onclick handler name,
 // `opts.note` the warning shown next to the restart button, `opts.disabledHint`
 // the config key shown when auto_start is off.
