@@ -307,6 +307,29 @@ _MOA_REF_SYSTEM_PLAN = (
     "this setup or address the other models."
 )
 
+# Delegate mode (v9.283.x): the PLANNER (the strongest model — the one that
+# would have aggregated) consolidates the reference approaches into ONE
+# execution plan; a cheaper EXECUTOR model then runs the interactive tool turn
+# from that plan. The planner call is short (plan out, once) — the executor
+# pays the long multi-round tool loop at its cheaper rate.
+_MOA_PLANNER_SYSTEM = (
+    "You are the planning orchestrator. Below is a user conversation and "
+    "several candidate approaches for solving the user's latest request, "
+    "proposed independently by other AI models. Consolidate them into ONE "
+    "concrete execution plan for another AI model that HAS tools (search, "
+    "document reading, memory, code execution) and will carry it out. Pick "
+    "the best combination of the approaches and improve on it. The plan must "
+    "be specific to THIS request: the steps in order, which tools/sources/"
+    "queries to use, what to verify before asserting, how to structure the "
+    "final answer, and the pitfalls to avoid. Do NOT answer the request "
+    "yourself and do NOT state expected findings as facts — neither you nor "
+    "the approach authors had access to the user's sources (documents, "
+    "memory, live web); where the request depends on them, plan the "
+    "verification and state that a clean 'not found in the sources' answer "
+    "is the correct outcome should the search come up empty. Concise, "
+    "numbered steps, no filler. Do not mention this setup."
+)
+
 
 def _flatten_wire_transcript(wire_messages, max_chars):
     """Flatten the wire history (role + text content only) into one transcript
@@ -356,10 +379,13 @@ def _run_moa_references(plan, wire_messages, sid, live, session):
 
     cfg = engine.get_moa_config()
     refs = [r for r in (plan.get("references") or []) if r]
-    # Draft mode from the plan: "plan" = approach only (tool-heavy task types),
+    # Draft mode from the plan: "plan" = approach only (tool-heavy task
+    # types), "delegate" = approaches too (the planner consolidates them),
     # "answer" = full candidate answer (default; content ensembling).
-    _mode = plan.get("mode") if plan.get("mode") in ("answer", "plan") else "answer"
-    _ref_system = _MOA_REF_SYSTEM_PLAN if _mode == "plan" else _MOA_REF_SYSTEM
+    _mode = (plan.get("mode")
+             if plan.get("mode") in ("answer", "plan", "delegate") else "answer")
+    _ref_system = (_MOA_REF_SYSTEM_PLAN if _mode in ("plan", "delegate")
+                   else _MOA_REF_SYSTEM)
     try:
         _ref_max_tokens = int(cfg.get("reference_max_tokens") or 600)
         _ref_timeout = float(cfg.get("reference_timeout_s") or 60)
@@ -497,6 +523,101 @@ def _build_moa_suffix(drafts, mode="answer"):
         "these drafts or that you "
         "received any. If my request demands specific parts, include every demanded "
         "part.\n\n" + block + "\n=== end candidate answers ===")
+
+
+def _run_moa_planner(plan, drafts, wire_messages, sid, live, session):
+    """Delegate mode, stage 1: ONE background call to the PLANNER model (the
+    would-have-been aggregator, e.g. glm-5.2) that consolidates the reference
+    approaches into a single execution plan. Returns (plan_text, meta);
+    plan_text == "" on any failure — the caller falls back to the plain
+    plan-mode suffix on the current model (fail-safe, never an error).
+
+    Same rules as the references: GDPR background gate, pseudonym space
+    preserved (no de-anonymisation), stub filter, one cost_log row
+    (cost_purpose="moa_planner"), one synthetic card pair (kind
+    "moa_planner") for chat + Aktivität-tab visibility."""
+    cfg = engine.get_moa_config()
+    planner = (plan.get("planner") or "").strip()
+    try:
+        _max_tokens = int(cfg.get("planner_max_tokens") or 1000)
+        _timeout = float(cfg.get("reference_timeout_s") or 60)
+        _max_chars = int(cfg.get("reference_input_max_chars") or 24000)
+    except (TypeError, ValueError):
+        _max_tokens, _timeout, _max_chars = 1000, 60.0, 24000
+    transcript = _flatten_wire_transcript(wire_messages, _max_chars)
+    named = [(m, (t or "").strip()) for m, t in (drafts or []) if (t or "").strip()]
+    if not planner or not transcript or not named:
+        return "", {"model": planner, "error": "nothing to plan from"}
+    approaches = "\n\n".join(
+        f"--- Approach {chr(65 + i)} ---\n{t}" for i, (_m, t) in enumerate(named))
+    t0 = time.time()
+    _tuid = f"moaplan_{sid[:8]}_{int(t0 * 1000) % 1_000_000}"
+    try:
+        _emit_synthetic_tool_event(
+            live=live, sid=sid, kind="moa_planner",
+            tool_use_id=_tuid, phase="dispatch",
+            args={"model": planner, "mode": "delegate"})
+    except Exception:
+        pass
+    plan_text, err, used_model = "", "", planner
+    try:
+        prompt = (f"{transcript}\n\n=== Candidate approaches ===\n\n{approaches}"
+                  f"\n\n=== end candidate approaches ===")
+        safe_model, (sys_safe, msg_safe), _deanon = (
+            engine.gdpr_pick_model_for_background(
+                planner, [_MOA_PLANNER_SYSTEM, prompt],
+                purpose="moa_planner"))
+        used_model = safe_model
+        res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": msg_safe}],
+            model=safe_model, system_prompt=sys_safe, purpose="transform",
+            cost_purpose="moa_planner", session_id=sid,
+            agent_id=session.agent_id, user_id=session.user_id or "",
+            max_rounds=1, max_tokens=_max_tokens, timeout_s=_timeout)
+        if res.get("error") and not (res.get("reply") or "").strip():
+            err = str(res["error"])[:300]
+        else:
+            plan_text = (res.get("reply") or "").strip()
+            if plan_text.startswith("No response was returned"):
+                err, plan_text = f"provider stub reply: {plan_text[:120]}", ""
+        # Deliberately NO de-anonymisation — the plan is injected next to the
+        # pseudonymised wire history (same rule as the reference drafts).
+    except Exception as e:
+        err = str(e)[:300]
+    _ms = int((time.time() - t0) * 1000)
+    try:
+        _emit_synthetic_tool_event(
+            live=live, sid=sid, kind="moa_planner", tool_use_id=_tuid,
+            phase="done",
+            result=({"model": used_model, "chars": len(plan_text),
+                     "mode": "delegate", "draft": plan_text}
+                    if plan_text else {"model": used_model, "error": err}),
+            status=("ok" if plan_text else "error"), duration_ms=_ms)
+    except Exception:
+        pass
+    return plan_text, {"model": used_model, "error": err, "ms": _ms}
+
+
+def _build_moa_delegate_suffix(plan_text):
+    """Wire-only suffix for delegate mode: the consolidated execution plan
+    (instead of the raw drafts). The executor gets a plan to CARRY OUT — as
+    guidance, not gospel: its own tool results outrank the plan."""
+    plan_text = (plan_text or "").strip()
+    if not plan_text:
+        return ""
+    return (
+        "\n\n=== Execution plan (private context, do not quote) ===\n"
+        "The plan below was synthesized from several expert approaches to my "
+        "request above. CARRY IT OUT using your tools where it calls for "
+        "searching, reading or computing. It is guidance, not gospel — where "
+        "your own tool results contradict a step, follow the evidence and "
+        "adapt. Its authors had NO access to my sources (documents, memory, "
+        "live web) — if your own retrieval does not support the asked "
+        "specifics, a clear 'not found' answer is the correct one; do not "
+        "let the plan pull you into answering beyond your evidence. Answer "
+        "me directly — never mention this plan or that you received one. If "
+        "my request demands specific parts, include every demanded part.\n\n"
+        + plan_text + "\n=== end execution plan ===")
 
 
 def _session_attachment_paths(session_id: str) -> list[str]:
@@ -2916,22 +3037,30 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 purpose = session.agent.config.get("model_purpose")
                 if not purpose and session.agent.config.get("model") == "auto":
                     purpose = engine.classify_task_purpose(nonlocal_message)
-                inf_params = engine.get_inference_params(session.model, purpose)
-                # Apply thinking level from request — only when the model supports thinking.
-                _model_cfg = engine._models_config.get(session.model, {}) or {}
-                _tfmt = _model_cfg.get("thinking_format", "none")
-                if thinking_level and thinking_level != "none" and _tfmt != "none":
-                    _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
-                    inf_params["thinking"] = True
-                    inf_params["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
-                    # Provider-facing reasoning toggle. Engine's _apply_inference_to_payload maps this
-                    # per thinking_format: reasoning_effort for mistral_blocks/reasoning_field/openai_opaque,
-                    # chat_template_kwargs.enable_thinking for oMLX inline_tags variants, etc.
-                    inf_params["thinking_level"] = thinking_level
-                else:
-                    inf_params.pop("thinking", None)
-                    inf_params.pop("thinking_budget", None)
-                    inf_params.pop("thinking_level", None)
+                def _inf_params_for(model):
+                    # Inference params + thinking-level application for a model.
+                    # A closure because the MoA delegate stage may SWITCH the
+                    # turn's model mid-worker (planner → executor) and must
+                    # rebuild these for the executor.
+                    p = engine.get_inference_params(model, purpose)
+                    # Apply thinking level from request — only when the model supports thinking.
+                    _model_cfg = engine._models_config.get(model, {}) or {}
+                    _tfmt = _model_cfg.get("thinking_format", "none")
+                    if thinking_level and thinking_level != "none" and _tfmt != "none":
+                        _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
+                        p["thinking"] = True
+                        p["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
+                        # Provider-facing reasoning toggle. Engine's _apply_inference_to_payload maps this
+                        # per thinking_format: reasoning_effort for mistral_blocks/reasoning_field/openai_opaque,
+                        # chat_template_kwargs.enable_thinking for oMLX inline_tags variants, etc.
+                        p["thinking_level"] = thinking_level
+                    else:
+                        p.pop("thinking", None)
+                        p.pop("thinking_budget", None)
+                        p.pop("thinking_level", None)
+                    return p
+
+                inf_params = _inf_params_for(session.model)
                 # NOTE: the thinking-mode KV prefix is now warmed naturally —
                 # mark_prefix_used (after the prefix build below) records the
                 # exact prefix each turn hits, thinking included where it changes
@@ -2977,50 +3106,59 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # On turn 0 _discovered_tools is empty (matches warmup); the
                 # anthropic wire-shape (is_openai_shape=False) only changes tool
                 # serialization, not the KV-relevant prompt/name set.
-                _tool_breakdown = {}
-                _system_prompt, _active_tools, _active_tool_names = engine.build_first_turn_prefix(
-                    session.model, session.agent_id,
-                    mcp_manager=getattr(engine, "_mcp_manager", None),
-                    discovered_tools=engine.get_request_context()._discovered_tools or set(),
-                    is_openai_shape=False,
-                    breakdown=_tool_breakdown,
-                )
-                # Record the prefix this turn actually hits as warm/used. Running
-                # a real turn keeps its KV prefix resident on the GPU — using it
-                # IS the best warmup — so the warmup mirror must reflect that, or
-                # the keeper / session-warmup would re-prime an already-resident
-                # prefix (the mid-session re-warm). thinking enters the prefix id
-                # only when it changes the tokenised prompt (oMLX enable_thinking).
-                try:
-                    _think_in_prefix = (bool(inf_params.get("thinking"))
-                                        and engine.prefix_thinking_relevant(session.model))
-                    _pid = engine.compute_prefix_id(
-                        _system_prompt, _active_tool_names, _think_in_prefix)
-                    engine.mark_prefix_used(session.model, _pid)
-                    # This turn's prefill evicts the model's other resident
-                    # prefixes — mirror that so a stale prefix isn't reported warm.
-                    engine.evict_prefixes_except(session.model, _pid)
-                except Exception:
-                    pass
-                # Stash the GROUND-TRUTH per-turn tool resolution (in_prompt /
-                # deferred / excluded — exactly what resolve_active_tools handed
-                # the wire this turn) for the classification inspector. Runs on
-                # EVERY turn (the classifier re-runs every turn), not just turn 0.
-                try:
-                    engine.get_request_context()._tool_breakdown = _tool_breakdown
-                except Exception:
-                    pass
-                # Persist for the session inspector — overwritten per turn,
-                # no history. Best-effort; persist failure must not block
-                # the chat call.
-                try:
-                    with _db_conn() as _ssp_conn:
-                        _ssp_conn.execute(
-                            "UPDATE sessions SET last_system_prompt = ? WHERE id = ?",
-                            (_system_prompt, sid))
-                        _ssp_conn.commit()
-                except Exception:
-                    pass
+                def _build_prefix_for(model, _inf):
+                    # Prefix build + warmup bookkeeping + inspector persistence
+                    # for a model. A closure for the same reason as
+                    # _inf_params_for: the MoA delegate stage rebuilds the
+                    # prefix when it hands the turn to the executor model.
+                    _bd = {}
+                    _sp, _at, _atn = engine.build_first_turn_prefix(
+                        model, session.agent_id,
+                        mcp_manager=getattr(engine, "_mcp_manager", None),
+                        discovered_tools=engine.get_request_context()._discovered_tools or set(),
+                        is_openai_shape=False,
+                        breakdown=_bd,
+                    )
+                    # Record the prefix this turn actually hits as warm/used. Running
+                    # a real turn keeps its KV prefix resident on the GPU — using it
+                    # IS the best warmup — so the warmup mirror must reflect that, or
+                    # the keeper / session-warmup would re-prime an already-resident
+                    # prefix (the mid-session re-warm). thinking enters the prefix id
+                    # only when it changes the tokenised prompt (oMLX enable_thinking).
+                    try:
+                        _think_in_prefix = (bool(_inf.get("thinking"))
+                                            and engine.prefix_thinking_relevant(model))
+                        _pid = engine.compute_prefix_id(
+                            _sp, _atn, _think_in_prefix)
+                        engine.mark_prefix_used(model, _pid)
+                        # This turn's prefill evicts the model's other resident
+                        # prefixes — mirror that so a stale prefix isn't reported warm.
+                        engine.evict_prefixes_except(model, _pid)
+                    except Exception:
+                        pass
+                    # Stash the GROUND-TRUTH per-turn tool resolution (in_prompt /
+                    # deferred / excluded — exactly what resolve_active_tools handed
+                    # the wire this turn) for the classification inspector. Runs on
+                    # EVERY turn (the classifier re-runs every turn), not just turn 0.
+                    try:
+                        engine.get_request_context()._tool_breakdown = _bd
+                    except Exception:
+                        pass
+                    # Persist for the session inspector — overwritten per turn,
+                    # no history. Best-effort; persist failure must not block
+                    # the chat call.
+                    try:
+                        with _db_conn() as _ssp_conn:
+                            _ssp_conn.execute(
+                                "UPDATE sessions SET last_system_prompt = ? WHERE id = ?",
+                                (_sp, sid))
+                            _ssp_conn.commit()
+                    except Exception:
+                        pass
+                    return _sp, _at, _atn
+
+                _system_prompt, _active_tools, _active_tool_names = (
+                    _build_prefix_for(session.model, inf_params))
                 # Snapshot the request context into the tool_context dict —
                 # the SAME shared builder the scheduler uses, so the
                 # sidecar's per-tool-call context rebuild is identical in
@@ -3066,6 +3204,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 _goal_done_meta = None   # → done_data["goal"]
                 _goal_web_cache = None   # curated-web fetch: once, reused per iteration
                 _moa_cache = None        # MoA reference fan-out: once, reused per iteration
+                _moa_delegate_state = None  # delegate mode: (plan_text,) once per turn
 
                 def _goal_set(status=None, iteration=None):
                     """Mirror a goal-state change onto the live Session + DB."""
@@ -3197,8 +3336,129 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 _m.update(_moa_meta)
                                 auto_route["moa"] = _m
                         _drafts, _moa_meta = _moa_cache
-                        _moa_suffix = _build_moa_suffix(
-                            _drafts, mode=_moa_plan_now.get("mode", "answer"))
+                        _moa_mode = _moa_plan_now.get("mode", "answer")
+                        _moa_suffix = ""
+                        if _moa_mode == "delegate" and _drafts:
+                            # DELEGATE (planner/executor split): the PLANNER
+                            # (the would-have-been aggregator, e.g. glm-5.2)
+                            # consolidates the approaches into ONE plan in a
+                            # short background call; the plan is classified
+                            # and the interactive tool turn is handed to the
+                            # cheapest capable EXECUTOR — pinned on the
+                            # session after the first pick so later turns
+                            # (and the executor's prompt cache) stay stable.
+                            # Runs once per turn; goal iterations 2+ reuse.
+                            if _moa_delegate_state is None:
+                                _plan_text, _pl_meta = _run_moa_planner(
+                                    _moa_plan_now, _drafts, _wire_messages,
+                                    sid, live, session)
+                                _dmeta = {"planner": _pl_meta.get("model", ""),
+                                          "planner_ms": _pl_meta.get("ms", 0)}
+                                if _pl_meta.get("error"):
+                                    _dmeta["planner_error"] = _pl_meta["error"]
+                                _pin = getattr(session, "_moa_executor_model", "") or ""
+                                if _plan_text and _pin and _pin == session.model:
+                                    # Turns 2+: the send handler already routed
+                                    # this turn onto the pinned executor.
+                                    _dmeta["executor"] = _pin
+                                    _dmeta["executor_pinned"] = True
+                                elif _plan_text:
+                                    # First delegate turn (or the pin became
+                                    # unroutable): classify the PLAN and pick
+                                    # the executor now.
+                                    _allowed_ids = _moa_plan_now.get("allowed")
+                                    # Exclude only the PLAN'S AUTHOR (planner
+                                    # identities) — the current session model
+                                    # is a legitimate executor candidate (with
+                                    # a fixed orchestrator the session sits on
+                                    # the auto pick, often already the
+                                    # cheapest capable model; picking it again
+                                    # = pin without a switch).
+                                    _exec_model, _exec_analysis = engine.resolve_moa_executor(
+                                        _plan_text,
+                                        {_pl_meta.get("model") or "",
+                                         _moa_plan_now.get("planner") or ""},
+                                        allowed_models=(set(_allowed_ids)
+                                                        if _allowed_ids else None),
+                                        fallback_task_type=_moa_plan_now.get("gate_hit", ""),
+                                        fallback_complexity=_moa_plan_now.get("complexity") or "")
+                                    if _exec_analysis and _exec_analysis.get("source") == "llm":
+                                        _dmeta["plan_task_types"] = (
+                                            _exec_analysis.get("task_types") or [])
+                                    if _exec_model and _exec_model != session.model:
+                                        # Hand the turn to the executor: switch
+                                        # model/provider and REBUILD the model-
+                                        # dependent turn state (params, prefix)
+                                        # so run_turn below runs the executor.
+                                        try:
+                                            _xp = engine.resolve_provider_for_model(_exec_model)
+                                            with session.lock:
+                                                session.model = _exec_model
+                                                session.api_key = _xp["api_key"]
+                                                session.base_url = _xp["base_url"]
+                                                session.max_context = engine.get_model_max_context(_exec_model)
+                                                session._auto_route_model = _exec_model
+                                                session._moa_executor_model = _exec_model
+                                                session._moa_planner_model = (
+                                                    _moa_plan_now.get("planner") or "")
+                                                # Move the cache freeze onto the
+                                                # executor — IT holds the session's
+                                                # conversation (and its prompt
+                                                # cache) from now on.
+                                                if engine.model_is_cache_priced(_exec_model):
+                                                    session._cache_freeze_model = _exec_model
+                                                    _cache_freeze_groups(session)[_exec_model] = (
+                                                        session._auto_tool_groups)
+                                            engine.get_request_context()._current_model = session.model
+                                            inf_params = _inf_params_for(_exec_model)
+                                            _sampling = {
+                                                "temperature": inf_params.get("temperature"),
+                                                "top_p": inf_params.get("top_p"),
+                                                "top_k": inf_params.get("top_k"),
+                                                "stop_sequences": inf_params.get("stop") or inf_params.get("stop_sequences"),
+                                            }
+                                            _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
+                                            _system_prompt, _active_tools, _active_tool_names = (
+                                                _build_prefix_for(_exec_model, inf_params))
+                                            _dmeta["executor"] = _exec_model
+                                            # Update the spinner/status: the
+                                            # executor is doing the work now.
+                                            if isinstance(auto_route, dict):
+                                                auto_route["model"] = _exec_model
+                                                auto_route["reason"] = (
+                                                    "Experten-Gremium: Plan-Delegation an "
+                                                    f"günstigeres Modell (Plan von "
+                                                    f"{_moa_plan_now.get('planner') or '?'})")
+                                                live.emit("auto_route", auto_route)
+                                        except Exception as _de:
+                                            # Switch failed → keep the planner's
+                                            # model; the plan still helps.
+                                            print(f"[chat] moa delegate switch failed: {_de}", flush=True)
+                                            _dmeta["executor_error"] = str(_de)[:200]
+                                    else:
+                                        # Pool collapsed / plan classified to the
+                                        # same model → execute here; still pin so
+                                        # later turns don't re-classify.
+                                        with session.lock:
+                                            session._moa_executor_model = session.model
+                                            session._moa_planner_model = (
+                                                _moa_plan_now.get("planner") or "")
+                                        _dmeta["executor"] = session.model
+                                _moa_delegate_state = (_plan_text, _dmeta)
+                                if isinstance(auto_route, dict):
+                                    _m = dict(auto_route.get("moa") or {})
+                                    _m.update(_dmeta)
+                                    auto_route["moa"] = _m
+                            _plan_text, _dmeta = _moa_delegate_state
+                            if _plan_text:
+                                _moa_suffix = _build_moa_delegate_suffix(_plan_text)
+                        if not _moa_suffix:
+                            # answer/plan modes — and the delegate fallback when
+                            # the planner call failed (drafts injected plan-style
+                            # on the current model; fail-safe).
+                            _moa_suffix = _build_moa_suffix(
+                                _drafts,
+                                mode=("plan" if _moa_mode == "delegate" else _moa_mode))
                         if _moa_suffix:
                             _wire_messages = _append_to_wire_user(
                                 _wire_messages, _moa_suffix)
@@ -5142,12 +5402,17 @@ class ChatHandlerMixin:
                         _analysis = engine.resolve_task_analysis(message)
                     except Exception:
                         _analysis = None
-                _plan = engine.resolve_moa_plan(_analysis, _frozen, allowed_models=_allowed)
+                _plan = engine.resolve_moa_plan(
+                    _analysis, _frozen, allowed_models=_allowed,
+                    planner_pin=getattr(session, "_moa_planner_model", "") or "")
                 # Admin-fixed orchestrator wins over the freeze: the admin
                 # explicitly pinned who synthesizes this task type. Switch the
                 # turn to that model; if it is itself cache-priced, move the
                 # freeze onto it so later turns stabilize there instead of
                 # ping-ponging back to the old frozen pick.
+                # (Delegate mode returns aggregator=None — there the fixed
+                # model is the PLANNER, a background call, never the session
+                # model — so this block naturally no-ops.)
                 _fixed_agg = (_plan or {}).get("aggregator") or ""
                 if _fixed_agg and _fixed_agg != _frozen:
                     _fp2 = self._resolve_provider(_fixed_agg)
@@ -5165,6 +5430,30 @@ class ChatHandlerMixin:
                         f"Experten-Gremium: festes Orchestrator-Modell für "
                         f"'{(_plan or {}).get('gate_hit', '')}'")
                     auto_route.pop("frozen", None)
+                # Delegate mode, turns 2+: route the turn onto the PINNED
+                # executor (the worker picked + pinned it on the first
+                # delegate turn). Covers the executor-not-cache-priced case
+                # where the freeze still points at the old pick: without this
+                # the worker would re-classify and re-switch every turn.
+                if (_plan or {}).get("mode") == "delegate":
+                    _pin_exec = getattr(session, "_moa_executor_model", "") or ""
+                    if _pin_exec and (_pin_exec not in engine.get_enabled_models()
+                                      or (_allowed is not None and _pin_exec not in _allowed)):
+                        _pin_exec = ""  # pin became invalid → worker re-picks
+                    if _pin_exec and _pin_exec != session.model:
+                        _fp3 = self._resolve_provider(_pin_exec)
+                        with session.lock:
+                            session.model = _pin_exec
+                            session.api_key = _fp3["api_key"]
+                            session.base_url = _fp3["base_url"]
+                            session.max_context = engine.get_model_max_context(_pin_exec)
+                            session._auto_tool_groups = _cache_freeze_groups(session).get(_pin_exec)
+                            session._auto_route_model = _pin_exec
+                        auto_route["model"] = _pin_exec
+                        auto_route["reason"] = (
+                            "Experten-Gremium: Plan-Delegation an gepinnten "
+                            "Executor")
+                        auto_route.pop("frozen", None)
                 with session.lock:
                     session._moa_plan = _plan
                 auto_route["moa"] = {
@@ -5172,6 +5461,7 @@ class ChatHandlerMixin:
                     "gate_hit": (_plan or {}).get("gate_hit", ""),
                     "mode": (_plan or {}).get("mode", ""),
                     "aggregator": (_plan or {}).get("aggregator") or "",
+                    "planner": (_plan or {}).get("planner") or "",
                     "gated_out": _plan is None,
                 }
                 if _analysis and _analysis.get("source") == "llm":
@@ -5216,11 +5506,14 @@ class ChatHandlerMixin:
             _moa_plan = None
             if want_moa and auto_model:
                 _moa_plan = engine.resolve_moa_plan(
-                    auto_analysis, auto_model, allowed_models=allowed)
+                    auto_analysis, auto_model, allowed_models=allowed,
+                    planner_pin=getattr(session, "_moa_planner_model", "") or "")
                 # Admin-fixed orchestrator for the gate-hit task type: the plan
                 # names the model that must RUN this turn (references already
                 # exclude it). Override the auto pick BEFORE the provider switch
                 # + freeze logic below so everything downstream follows.
+                # (Delegate mode: aggregator=None — the fixed model is the
+                # PLANNER there and runs as a background call.)
                 _fixed_agg = (_moa_plan or {}).get("aggregator") or ""
                 if _fixed_agg and _fixed_agg != auto_model:
                     auto_model = _fixed_agg
@@ -5229,12 +5522,30 @@ class ChatHandlerMixin:
                         auto_route["reason"] = (
                             f"Experten-Gremium: festes Orchestrator-Modell für "
                             f"'{(_moa_plan or {}).get('gate_hit', '')}'")
+                # Delegate mode with a PINNED executor (turns 2+ when the
+                # first pick wasn't cache-priced, so no freeze routed here):
+                # run the turn on the executor; the planner stays a background
+                # call. First delegate turn has no pin — the worker picks +
+                # pins after the plan exists.
+                if (_moa_plan or {}).get("mode") == "delegate":
+                    _pin_exec = getattr(session, "_moa_executor_model", "") or ""
+                    if _pin_exec and (_pin_exec not in engine.get_enabled_models()
+                                      or (allowed is not None and _pin_exec not in allowed)):
+                        _pin_exec = ""
+                    if _pin_exec and _pin_exec != auto_model:
+                        auto_model = _pin_exec
+                        if auto_route is not None:
+                            auto_route["model"] = _pin_exec
+                            auto_route["reason"] = (
+                                "Experten-Gremium: Plan-Delegation an "
+                                "gepinnten Executor")
                 if auto_route is not None:
                     auto_route["moa"] = {
                         "references": (_moa_plan or {}).get("references", []),
                         "gate_hit": (_moa_plan or {}).get("gate_hit", ""),
                         "mode": (_moa_plan or {}).get("mode", ""),
                         "aggregator": (_moa_plan or {}).get("aggregator") or "",
+                        "planner": (_moa_plan or {}).get("planner") or "",
                         "gated_out": _moa_plan is None,
                     }
             if auto_model and auto_model != session.model:

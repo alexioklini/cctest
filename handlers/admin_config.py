@@ -949,11 +949,13 @@ class AdminConfigHandlers:
                         out_tp[tt] = cleaned
                 mo["task_pools"] = out_tp
             # Per-task draft mode: what the references return for this task
-            # type — "answer" (full candidate answer) or "plan" (approach only).
+            # type — "answer" (full candidate answer), "plan" (approach only)
+            # or "delegate" (approaches → planner synthesizes ONE plan → a
+            # cheaper executor model runs the turn).
             if "task_modes" in moa_in:
                 tm_in = moa_in["task_modes"] or {}
                 if not isinstance(tm_in, dict):
-                    self._send_json({"error": "moa.task_modes must be an object {task_type: 'answer'|'plan'}"}, 400)
+                    self._send_json({"error": "moa.task_modes must be an object {task_type: 'answer'|'plan'|'delegate'}"}, 400)
                     return
                 valid_tt = set(engine._TASK_TYPES)
                 out_tm = {}
@@ -962,8 +964,8 @@ class AdminConfigHandlers:
                         self._send_json({"error": f"moa.task_modes: unknown task_type '{tt}' "
                                                   f"(valid: {', '.join(sorted(valid_tt))})"}, 400)
                         return
-                    if md not in ("answer", "plan"):
-                        self._send_json({"error": f"moa.task_modes.{tt} must be 'answer' or 'plan'"}, 400)
+                    if md not in ("answer", "plan", "delegate"):
+                        self._send_json({"error": f"moa.task_modes.{tt} must be 'answer', 'plan' or 'delegate'"}, 400)
                         return
                     out_tm[tt] = md
                 mo["task_modes"] = out_tm
@@ -993,7 +995,8 @@ class AdminConfigHandlers:
             for key, lo, hi in (("max_references", 1, 5),
                                 ("reference_max_tokens", 64, 4000),
                                 ("reference_timeout_s", 5, 600),
-                                ("reference_input_max_chars", 1000, 200000)):
+                                ("reference_input_max_chars", 1000, 200000),
+                                ("planner_max_tokens", 128, 8000)):
                 if key in moa_in:
                     try:
                         mo[key] = min(max(int(moa_in[key]), lo), hi)

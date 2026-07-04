@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.283.6"
+VERSION = "9.284.0"
 VERSION_DATE = "2026-07-04"
 CHANGELOG = [
+    ("9.284.0", "2026-07-04", "feat(Experten-Gremium: Plan-Delegation / Planner-Executor-Split): dritter Beitrags-Modus 'delegate' in der Gremium-Matrix (User-Idee: 'glm 5.2 macht den plan, umsetzen aber ein billigeres modell' — Kosten-INVERSION: das teure Modell denkt EINMAL kurz, das billige Modell zahlt die vielen Tool-Runden mit wachsender History). MECHANIK: Referenzen liefern Ansätze (plan-Prompts); der PLANNER (= der bisherige Aggregator: task_aggregators-Eintrag, sonst gepinnter Planner (Turns 2+), sonst Auto-Route-Pick — resolve_moa_plan gibt ihn als plan.planner zurück, plan.aggregator ist im delegate-Modus IMMER None, damit der Send-Handler die Session nie aufs Planner-Modell schaltet) konsolidiert sie per EINEM kurzen background_call zu EINEM Ausführungsplan (handlers/chat.py _run_moa_planner, _MOA_PLANNER_SYSTEM, max_tokens=moa.planner_max_tokens (neu, Default 1000), cost_purpose='moa_planner', GDPR-Gate + Stub-Filter + Pseudonym-Raum-Regel exakt wie Referenzen, eigene synthetische Karte kind='moa_planner' mit Plan als result.draft — chat_render/chat_tools/panels_background um den neuen Kind erweitert, 9.269.1-Gotcha beachtet). Der Plan wird KLASSIFIZIERT (brain.resolve_moa_executor: Plan-Klassifikation schlägt Prompt-Klassifikation — 'suche X, lies Y' verrät die wahre Aufgabenform; Fallback auf gate_hit/complexity des Prompts) und der Turn an den günstigsten fähigen Cloud-EXECUTOR übergeben (gleiches _bench_rank_key-Band-Ranking wie Auto-Route; Planner + aktuelles Modell ausgeschlossen; ACL via plan.allowed). Der Worker schaltet die Session MID-WORKER um (Provider/max_context/_current_model) und baut den modellabhängigen Turn-State NEU auf — dafür wurden inf_params- und Prefix-Build in Closures gehoben (_inf_params_for/_build_prefix_for, byte-identische Logik); auto_route wird mit Executor re-emittiert (Spinner zeigt das arbeitende Modell). Der Executor wird GEPINNT (session._moa_executor_model/_moa_planner_model): Folge-Turns routen im Send-Handler direkt auf ihn (Frozen- UND Fresh-Branch; deckt den Fall Executor-nicht-cache-priced), der Planner liefert pro Fan-out-Turn einen frischen Plan, keine Re-Klassifikation; der Cache-FREEZE WANDERT auf den Executor, wenn er cache-priced ist (er hält ab jetzt Konversation + Prompt-Cache). FAIL-SAFE-Kette: Planner-Fehler → Drafts als plan-Suffix aufs aktuelle Modell; Klassifikations-Fehler → Prompt-Fallback; leerer Pool → aktuelles Modell bleibt (nie ein Turn-Fehler). Wire-Suffix _build_moa_delegate_suffix ('guidance, not gospel — follow the evidence and adapt' + Quellen-Bewusstseins-Zeile aus 9.281.0). Delegate-Meta (planner/executor/plan_task_types/planner_ms) in auto_route.moa. admin_config validiert 'delegate' + planner_max_tokens (128–8000); Settings-Matrix-Dropdown 'Plan-Delegation' + Tooltip. py_compile brain/chat/admin_config OK; js_gate GRÜN (net-globals 1844 unverändert, Smoke 5/5). Skill 05/06 + SKILL.md 1.137.0 im selben Commit. Server-Restart nötig. EVAL folgt (Arme: GLM-Aggregator vs GLM-Plan→billiger Executor, ≥3 Reps, Score+Kosten). KURATIERTER Eintrag (admin)."),
     ("9.283.6", "2026-07-04", "ui(Plan-Nutzung als echter Modal): das an die Statusleisten-Pille verankerte Popover ist durch einen zentrierten Standard-Modal im General-Settings-Look ersetzt (User-Wunsch: gleiche Groesse/Font wie Allgemeine Einstellungen) — modal-overlay + modal-content x-wide (1100px) + modal-header/-title/-body, Overlay-Klick schliesst, Admin-Knopf Einstellungen-> im Header. repositionQuotaModal (Anker-/Resize-Logik) zum dokumentierten No-op reduziert — die Async-Render-Pfade rufen sie weiter, CSS uebernimmt Position/Groesse. VERIFIZIERT (Playwright): modal-content x-wide zentriert, Titel, alle 3 Sektionen, Overlay-Close. js_gate GRUEN (Globals unveraendert). Nur web/. Kuratiert: in die 9.283.0-versions-Liste."),
     ("9.283.5", "2026-07-04", "ui(Plan-Balken-Prognose): der Auslastungsbalken zeigt die prognostizierte Quota-Nutzung jetzt VISUELL — halbtransparentes Segment in Balkenfarbe vom Ist-Stand bis zum projizierten Stand am Fensterende (gedeckelt bei 100%; Ueberlauf = roter Marker am Balkenende), daneben grau (Pfeil ~62%) wenn Projektion und Ist mind. 1pp auseinander liegen. VERIFIZIERT live (Playwright): 4 Prognose-Segmente, GLM Woche 7%->61%. js_gate GRUEN. Nur web/. Kuratiert: in die 9.283.0-versions-Liste."),
     ("9.283.4", "2026-07-04", "ui(Plan-Popover): Plan-Nutzung-Dialog verbreitert 420→640px (max 94vw) — die Coding-Plan-Zeilen (Balken + Token-Zahlen + Countdown + Kalibrierfeld) und die Kostentabelle brauchten die Breite; Plan-Formular 420→560px. Positionierung liest offsetWidth (kein Hardcode). js_gate GRÜN. Nur web/ — Reload genügt; Restart für Versionsanzeige. Kuratiert: keiner (kosmetisch)."),
@@ -12207,9 +12208,23 @@ _MOA_DEFAULTS: dict = {
     #              never the answer itself) — for tool-heavy task types where
     #              tool-less references can't answer but CAN advise the
     #              tool-wielding aggregator (the Alex-Klinsky research case).
+    #   "delegate" (v9.283.x) — plan mode PLUS the planner/executor split:
+    #              the PLANNER (the model that would have aggregated — the
+    #              auto-route pick or the fixed task_aggregators entry, e.g.
+    #              glm-5.2) synthesizes ONE execution plan from the reference
+    #              approaches in a single short background call; the plan is
+    #              then CLASSIFIED and the interactive tool turn runs on the
+    #              cheapest capable EXECUTOR for the plan's task type
+    #              (resolve_moa_executor), pinned on the session after the
+    #              first pick so the executor's prompt cache stays stable.
+    #              Cost inversion: the expensive model thinks once, the cheap
+    #              model grinds the tool rounds.
     # Missing task_type → "answer".
     "task_modes": {"research": "plan", "orchestration": "plan",
                    "agentic": "plan"},
+    # Max tokens for the delegate-mode planner call (one consolidated plan —
+    # richer than a single reference draft, still no essay).
+    "planner_max_tokens": 1000,
     # PER-TASK fixed aggregator/orchestrator (v9.274.0): {task_type: model_id}.
     # Missing/empty/"auto" → the aggregator is whatever auto-route picked for
     # the turn (the original behavior). A configured model REPLACES the auto
@@ -12245,7 +12260,8 @@ def moa_enabled() -> bool:
 
 
 def resolve_moa_plan(analysis: dict | None, aggregator: str,
-                     *, allowed_models: set[str] | None = None) -> dict | None:
+                     *, allowed_models: set[str] | None = None,
+                     planner_pin: str = "") -> dict | None:
     """Decide the per-turn MoA fan-out from the classifier's structured analysis.
 
     Candidate source, two modes: `task_pools` (the Settings matrix — per
@@ -12289,6 +12305,14 @@ def resolve_moa_plan(analysis: dict | None, aggregator: str,
             return None
         pool_cfg = [m for m in cfg.get("reference_pool") or [] if isinstance(m, str)]
     enabled = set(get_enabled_models())
+    # Draft mode for the winning gate type: "plan" (approach only),
+    # "delegate" (plan + planner/executor split) or "answer" (full candidate
+    # answer, the default). Resolved BEFORE the pool exclusion because the
+    # delegate mode changes who the "orchestrator" is (the planner, which
+    # never runs the turn itself).
+    mode = (cfg.get("task_modes") or {}).get(hits[0])
+    if mode not in ("answer", "plan", "delegate"):
+        mode = "answer"
     # Fixed aggregator for the winning gate type (task_aggregators matrix row):
     # replaces the auto-route pick as this turn's orchestrator. Invalid /
     # disabled / ACL-blocked config values fall back to auto silently (the
@@ -12300,7 +12324,20 @@ def resolve_moa_plan(analysis: dict | None, aggregator: str,
         _cand = _agg_cfg.strip()
         if _cand in enabled and (not allowed_models or _cand in allowed_models):
             fixed_aggregator = _cand
-    effective_aggregator = fixed_aggregator or aggregator
+    planner = None
+    if mode == "delegate":
+        # The PLANNER is what the aggregator would have been: the admin-fixed
+        # orchestrator for this task type, else the session's pinned planner
+        # (turns 2+ — the frozen/executor model must not become the planner),
+        # else the auto-route pick handed in as `aggregator`. It synthesizes
+        # the plan in a background call and never runs the turn — so the
+        # caller must NOT switch the session onto it (aggregator=None below).
+        _pin = (planner_pin or "").strip()
+        if _pin and (_pin not in enabled
+                     or (allowed_models and _pin not in allowed_models)):
+            _pin = ""  # pinned planner got disabled/removed → fall back
+        planner = fixed_aggregator or _pin or aggregator
+    effective_aggregator = planner or fixed_aggregator or aggregator
     pool = [m for m in dict.fromkeys(pool_cfg)  # de-dup, keep order
             if m in enabled and m != effective_aggregator
             and (not allowed_models or m in allowed_models)]
@@ -12317,16 +12354,65 @@ def resolve_moa_plan(analysis: dict | None, aggregator: str,
     except (TypeError, ValueError):
         n = 3
     n = max(1, min(n, 5))
-    # Draft mode for the winning gate type: "plan" (approach only) or
-    # "answer" (full candidate answer, the default).
-    mode = (cfg.get("task_modes") or {}).get(hits[0])
-    if mode not in ("answer", "plan"):
-        mode = "answer"
     return {"references": pool[:n], "gate_hit": hits[0], "mode": mode,
             # None = keep the auto-route pick; a model id = the caller must
             # run the turn on THIS model instead (admin-fixed orchestrator).
-            "aggregator": fixed_aggregator,
+            # Always None in delegate mode — there the fixed model is the
+            # PLANNER (background call), never the session model.
+            "aggregator": None if mode == "delegate" else fixed_aggregator,
+            # delegate mode only: who synthesizes the execution plan.
+            "planner": planner,
+            # ACL snapshot for the worker's executor pick (delegate mode) —
+            # the worker has no request user; None = unrestricted (admin).
+            "allowed": sorted(allowed_models) if allowed_models else None,
             "task_types": task_types, "complexity": complexity}
+
+
+def resolve_moa_executor(plan_text: str, exclude: set[str] | None = None,
+                         *, allowed_models: set[str] | None = None,
+                         fallback_task_type: str = "",
+                         fallback_complexity: str = "") -> tuple[str | None, dict | None]:
+    """Delegate mode, stage 2: pick the EXECUTOR for a synthesized plan.
+
+    Classifies the PLAN text (not the user prompt — the plan reveals the true
+    task shape: 'search X, read Y, compute Z' classifies more honestly than
+    the question that produced it) and ranks the enabled CLOUD models with the
+    same capability-band ranking auto-route uses — so within the band the
+    CHEAPEST capable model wins (the whole point: the expensive planner
+    thinks once, a cheap executor grinds the tool rounds). `exclude` = the
+    planner (and current session model): the plan's author never executes,
+    that would just re-pay the expensive model.
+
+    Fail-safe: classification failure falls back to the original prompt's
+    task_type/complexity (passed in from the moa plan); an empty pool returns
+    (None, analysis) — the caller keeps the turn on the current model.
+    """
+    exclude = exclude or set()
+    analysis = None
+    try:
+        analysis = resolve_task_analysis(plan_text)
+    except Exception:
+        analysis = None
+    if analysis and analysis.get("source") == "llm" and analysis.get("task_types"):
+        task_types = [t for t in analysis.get("task_types") or [] if t]
+        complexity = analysis.get("complexity")
+    elif fallback_task_type:
+        task_types = [fallback_task_type]
+        complexity = fallback_complexity or None
+    else:
+        return None, analysis
+    enabled = get_enabled_models()
+    pool = [m for m in enabled
+            if m not in exclude and not is_model_local(m)
+            and (not allowed_models or m in allowed_models)]
+    if not pool:
+        return None, analysis
+    floor = _complexity_floor(complexity)
+    bench_task = task_types[0]
+    top_cap = _bench_top_cap(pool, bench_task, floor)
+    pool.sort(key=lambda m: _bench_rank_key(m, bench_task, floor, complexity,
+                                            top_cap=top_cap))
+    return pool[0], analysis
 
 
 def get_model_info(model: str) -> dict:

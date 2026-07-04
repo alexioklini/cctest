@@ -133,7 +133,8 @@ function toolDescribe(name, args) {
     execute_command: () => `Befehl ausführen: \`${(a.command || '').substring(0, 60)}${(a.command || '').length > 60 ? '...' : ''}\``,
     python_exec: () => `Python ausführen (${(a.code || '').split('\n').length} Zeilen)`,
     web_fetch: () => { try { return `Webseite abrufen: ${a.url ? new URL(a.url).hostname : '...'}`; } catch(e) { return `Webseite abrufen: ${a.url || '...'}`; } },
-    moa_reference: () => `🧬 Experte: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}${a.mode === 'plan' ? ' (Ansatz)' : ''}`,
+    moa_reference: () => `🧬 Experte: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}${a.mode === 'plan' || a.mode === 'delegate' ? ' (Ansatz)' : ''}`,
+    moa_planner: () => `🧬 Plan-Orchestrator: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     run_background_task: () => a.title ? `Hintergrundaufgabe: ${a.title}` : 'Hintergrundaufgabe starten',
@@ -745,6 +746,7 @@ function renderSyntheticGdprCall(msg, idx) {
     deanonymise_text: 'Antwort wiederhergestellt',
     deanonymise_file: 'Datei wiederhergestellt',
     moa_reference: 'Experte',
+    moa_planner: 'Plan-Orchestrator',
   };
   const title = titleMap[kind] || kind;
 
@@ -770,14 +772,17 @@ function renderSyntheticGdprCall(msg, idx) {
     summary = `${n} Token wiederhergestellt`;
   } else if (kind === 'deanonymise_file') {
     summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' wiederhergestellt';
-  } else if (kind === 'moa_reference') {
+  } else if (kind === 'moa_reference' || kind === 'moa_planner') {
     // Dispatch args carry the planned model + contribution mode; the done
     // result carries the model that actually ran (GDPR may have swapped it),
-    // the draft size and the mode ("answer" = Antwort, "plan" = Ansatz).
+    // the draft size and the mode ("answer" = Antwort, "plan"/"delegate" =
+    // Ansatz; moa_planner = the consolidated execution plan).
     const mdl = result.model || msg.args?.model || '';
     const mName = mdl ? modelShortName(mdl, false) : 'Modell';
-    const mMode = (result.mode || msg.args?.mode) === 'plan' ? ' · Ansatz' : '';
-    if (status === 'pending') summary = `${mName} arbeitet zu …`;
+    const rMode = result.mode || msg.args?.mode;
+    const mMode = kind === 'moa_planner' ? ' · Plan'
+      : (rMode === 'plan' || rMode === 'delegate') ? ' · Ansatz' : '';
+    if (status === 'pending') summary = kind === 'moa_planner' ? `${mName} plant …` : `${mName} arbeitet zu …`;
     else if (status === 'error') summary = `${mName}: ${String(result.error || 'fehlgeschlagen').slice(0, 120)}`;
     else summary = `${mName} · ${result.chars ?? 0} Zeichen${mMode}`;
   }
@@ -797,7 +802,7 @@ function renderSyntheticGdprCall(msg, idx) {
 
   // Per-row marker so users can recognise these at a glance: shield for the
   // GDPR kinds, DNA for MoA reference drafts.
-  const isMoa = kind === 'moa_reference';
+  const isMoa = kind === 'moa_reference' || kind === 'moa_planner';
   const shieldBadge = isMoa
     ? ('<span class="tool-badge-synthetic" title="Experten-Gremium (Mixture of Agents) — Beitrag eines Experten-Modells" '
       + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'

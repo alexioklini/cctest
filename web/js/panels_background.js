@@ -441,7 +441,8 @@ function _syncToolEntries() {
     // display), but MoA reference drafts DO belong in the Aktivität tab — they
     // are real per-turn LLM activity (one card per reference, expandable to
     // the draft text).
-    const isMoaRef = m.synthetic && (m.kind || m.name) === 'moa_reference';
+    const isMoaRef = m.synthetic && ((m.kind || m.name) === 'moa_reference'
+      || (m.kind || m.name) === 'moa_planner');
     if (m.synthetic && !isMoaRef) continue;
     // Pair with its result (match by tool_use_id, else name; don't cross turns).
     let result = null, resTs = null;

@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.284.0",
+        "date": "2026-07-04",
+        "title": "Experten-Gremium: Plan-Delegation an günstigere Modelle",
+        "body": "Das Experten-Gremium kann pro Aufgabentyp jetzt delegieren: "
+                "Das stärkste Modell fasst die Experten-Ansätze in einen "
+                "konkreten Ausführungsplan zusammen, und ein günstigeres, "
+                "automatisch zum Plan passendes Modell erledigt die "
+                "eigentliche Werkzeug-Arbeit — das teure Modell denkt einmal, "
+                "die vielen Recherche-Schritte laufen zum kleinen Tarif. Das "
+                "gewählte Ausführungs-Modell bleibt für den Chat gepinnt, und "
+                "der Plan ist im Chat als eigene aufklappbare Karte "
+                "„Plan-Orchestrator“ einsehbar. Aktivierbar in den "
+                "Server-Einstellungen über den neuen Beitrags-Modus "
+                "„Plan-Delegation“ in der Gremium-Matrix.",
+        "audience": "admin",
+        "versions": ["9.284.0"],
+    },
+    {
         "version": "9.283.0",
         "date": "2026-07-04",
         "title": "Coding-Pläne und API-Guthaben im Blick",

@@ -5609,12 +5609,12 @@
     "task_modes": {
       "coding": "answer",
       "math": "answer",
-      "research": "plan",
+      "research": "delegate",
       "analysis": "answer",
       "reporting": "answer",
       "creative": "answer",
-      "orchestration": "plan",
-      "agentic": "plan",
+      "orchestration": "delegate",
+      "agentic": "delegate",
       "fast": "answer"
     },
     "task_aggregators": {

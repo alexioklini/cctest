@@ -330,7 +330,13 @@ Werkzeugzugriff. Je Aufgabentyp liefern die Experten entweder eine
 Smart-Modell prüft und synthetisiert) oder einen **Ansatz** (nur die
 Herangehensweise: Schritte, Quellen, Fallstricke — stark bei Recherche/
 Orchestrierung; das Smart-Modell wählt die beste Kombination und führt sie
-mit seinen Tools aus). Jeder Beitrag erscheint live als eigene 🧬-Karte im
+mit seinen Tools aus). Dritte Option je Aufgabentyp: **Plan-Delegation**
+(9.284.0) — der Orchestrator (z. B. das stärkste Modell) fasst die
+Experten-Ansätze in EINEN Ausführungsplan zusammen (eigene 🧬-Karte
+„Plan-Orchestrator", aufklappbar), und ein **günstigeres Modell**, das
+anhand des Plans automatisch gewählt und für den Chat gemerkt wird, führt
+den Plan mit den Tools aus — das teure Modell denkt einmal, das günstige
+erledigt die Werkzeug-Arbeit. Jeder Beitrag erscheint live als eigene 🧬-Karte im
 Chat (Modell, Größe, Dauer, ggf. „· Ansatz"; Fehler einzelner Experten
 brechen die Anfrage nie ab) — **ein Klick auf die Karte klappt den
 vollständigen Beitragstext auf** (seit 9.270.0; enthielt die Anfrage
@@ -1425,8 +1431,13 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   Aufgabentyp antreten; eine Spalte ohne Häkchen heißt: für diesen Typ tritt
   kein Gremium an (die Anfrage verhält sich wie „Smart (Cloud)"). Die zweite
   Kopfzeile wählt je Spalte den **Beitrags-Modus**: „Antwort" (vollständiger
-  Entwurf) oder „Ansatz" (nur Herangehensweise, das antwortende Modell führt
-  aus — Voreinstellung bei Recherche/Orchestrierung/Agentisch). Das Modell,
+  Entwurf), „Ansatz" (nur Herangehensweise, das antwortende Modell führt
+  aus — Voreinstellung bei Recherche/Orchestrierung/Agentisch) oder
+  **„Plan-Delegation"** (9.284.0): der Orchestrator schreibt aus den
+  Ansätzen EINEN Ausführungsplan, der Plan wird klassifiziert und ein
+  günstigeres, dazu passendes Modell führt ihn mit den Tools aus (es wird
+  für die Session gepinnt; der Plan-Aufruf erscheint im Kosten-Popover als
+  „moa_planner"). Das Modell,
   das die Anfrage gerade selbst beantwortet, wird automatisch ausgelassen.
   Die dritte
   Kopfzeile wählt je Spalte den **Orchestrator** (9.274.0): „Auto (Smart)" =

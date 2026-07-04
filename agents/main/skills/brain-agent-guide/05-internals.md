@@ -273,7 +273,8 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   `auto_route.moa` into the done event + `msg_metadata.auto_route`.
   Dropdown entry `🧬 MoA (Smart)` is gated on `/v1/status → moa_enabled` and
   hidden under the GDPR local-only lock (references are cloud).
-- **Draft mode** (`moa.task_modes {task_type: "answer"|"plan"}`, v9.271.0;
+- **Draft mode** (`moa.task_modes {task_type: "answer"|"plan"|"delegate"}`,
+  v9.271.0, "delegate" since v9.284.0;
   defaults research/orchestration/agentic → "plan"): what references RETURN.
   "answer" = full candidate answer (Hermes original; content ensembling — the
   eval-backed win on synthesis/judgment). "plan" = APPROACH only (steps,
@@ -284,6 +285,39 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   these approaches and EXECUTE it with your tools". Mode rides
   `resolve_moa_plan → plan.mode`, the cards (args/result.mode, "· Ansatz")
   and `auto_route.moa.mode`.
+- **Delegate mode — planner/executor split** (v9.284.0, Settings matrix
+  option "Plan-Delegation"): cost inversion — the expensive model thinks
+  once, a cheap model grinds the tool rounds. References contribute
+  APPROACHES (plan-style prompts); then the **PLANNER** (= the
+  would-have-been aggregator: `task_aggregators` entry, else the pinned
+  planner on turns 2+, else the auto-route pick — `resolve_moa_plan` returns
+  it as `plan.planner`, and `plan.aggregator` is always `None` so the send
+  handler never switches the session onto it) consolidates them into ONE
+  execution plan via a single short `background_call`
+  (`handlers/chat.py _run_moa_planner`, `_MOA_PLANNER_SYSTEM`,
+  `max_tokens=moa.planner_max_tokens` (1000), `cost_purpose="moa_planner"`,
+  GDPR gate + stub filter + pseudonym-space rule exactly like references,
+  own synthetic card `kind="moa_planner"` with the plan as `result.draft`).
+  The plan text is then CLASSIFIED (`brain.resolve_moa_executor`: plan
+  classification beats prompt classification — "search X, read Y" reveals
+  the true task shape) and the interactive tool turn is handed to the
+  cheapest capable cloud **EXECUTOR** (same `_bench_rank_key`
+  capability-band ranking as auto-route; planner + current model excluded;
+  ACL honored via `plan.allowed`). The worker switches the session
+  mid-worker (provider/max_context/`_current_model`) and REBUILDS the
+  model-dependent turn state (`_inf_params_for` + `_build_prefix_for`
+  closures), re-emits `auto_route`, and injects the plan as a wire-only
+  suffix (`_build_moa_delegate_suffix` — "guidance, not gospel: follow the
+  evidence and adapt"). The executor is **PINNED** on the session
+  (`session._moa_executor_model` / `_moa_planner_model`) — later turns route
+  onto it in the send handler (both frozen + fresh branches), the planner
+  produces a fresh plan per fan-out turn, no re-pick — and the cache freeze
+  MOVES onto the executor when it is cache-priced (it holds the
+  conversation + prompt cache from then on). Fail-safe chain: planner
+  failure → drafts injected plan-style on the current model; classification
+  failure → fallback to the prompt's gate_hit/complexity; empty executor
+  pool → stay on the current model. Delegate meta
+  (planner/executor/plan_task_types/planner_ms) rides `auto_route.moa`.
 - **Fixed orchestrator** (`moa.task_aggregators {task_type: model_id}`,
   v9.274.0; missing/"auto" = auto-route pick, the default): pins WHO
   synthesizes per task type. When the fan-out gates in on that type,
@@ -294,7 +328,8 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   onto it. Invalid/disabled/ACL-blocked values silently fall back to auto.
 - **Config** `config.json → moa` {enabled, task_pools (the matrix),
   task_modes, task_aggregators, max_references, reference_max_tokens (600),
-  reference_timeout_s (60), reference_input_max_chars (24000); legacy:
+  reference_timeout_s (60), reference_input_max_chars (24000),
+  planner_max_tokens (1000, delegate mode); legacy:
   reference_pool, gate_task_types}
   — Settings → Server → "MoA (Mixture of Agents)" renders a scrollable
   model × task_type checkbox MATRIX (rows = enabled cloud models, columns =

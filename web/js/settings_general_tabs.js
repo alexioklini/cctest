@@ -70,13 +70,14 @@ async function _genTab_server(C) {
           const aggs = mo.task_aggregators || {};
           const th = vocab.map(tt =>
             `<th style="padding:4px 6px;font-size:11px;color:var(--text-200);font-weight:600;white-space:nowrap;text-align:center" title="${esc(tt)}">${esc(ttDe[tt]||tt)}</th>`).join('');
-          // Second header row: per-column contribution mode (answer|plan).
+          // Second header row: per-column contribution mode (answer|plan|delegate).
           const thMode = vocab.map(tt => {
-            const md = modes[tt] === 'plan' ? 'plan' : 'answer';
+            const md = (modes[tt] === 'plan' || modes[tt] === 'delegate') ? modes[tt] : 'answer';
             return `<th style="padding:2px 4px;text-align:center">
-              <select class="form-select moa-mode-sel" data-tt="${esc(tt)}" title="Beitrags-Modus für ${esc(ttDe[tt]||tt)}" style="font-size:10.5px;padding:1px 2px;width:100%">
+              <select class="form-select moa-mode-sel" data-tt="${esc(tt)}" title="Beitrags-Modus für ${esc(ttDe[tt]||tt)}: Antwort = Experten liefern Antwort-Entwürfe; Ansatz = nur Herangehensweisen, der Orchestrator führt aus; Plan-Delegation = der Orchestrator schreibt aus den Ansätzen EINEN Plan und ein günstigeres, per Plan-Klassifikation gewähltes Modell führt aus (wird für die Session gepinnt)" style="font-size:10.5px;padding:1px 2px;width:100%">
                 <option value="answer" ${md==='answer'?'selected':''}>Antwort</option>
                 <option value="plan" ${md==='plan'?'selected':''}>Ansatz</option>
+                <option value="delegate" ${md==='delegate'?'selected':''}>Plan-Delegation</option>
               </select>
             </th>`;
           }).join('');
@@ -2721,10 +2722,12 @@ async function saveMoaConfig() {
     const tt = cb.dataset.tt, mid = cb.dataset.mid;
     (taskPools[tt] = taskPools[tt] || []).push(mid);
   });
-  // Per-column contribution mode (Antwort|Ansatz) from the matrix's 2nd header row.
+  // Per-column contribution mode (Antwort|Ansatz|Plan-Delegation) from the
+  // matrix's 2nd header row.
   const taskModes = {};
   document.querySelectorAll('.moa-mode-sel').forEach(sel => {
-    taskModes[sel.dataset.tt] = sel.value === 'plan' ? 'plan' : 'answer';
+    taskModes[sel.dataset.tt] =
+      (sel.value === 'plan' || sel.value === 'delegate') ? sel.value : 'answer';
   });
   // Per-column orchestrator from the 3rd header row; 'auto' entries are
   // simply absent (= auto-route pick).
