@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.join(REPO_ROOT, "eval"))
 import moa_eval as base  # noqa: E402  (questions, auto_check, hashing, stats)
 
 RESULTS = os.path.join(REPO_ROOT, "eval", "results")
+# --suffix rewrites these (per-config arms, e.g. _delegate vs _planmode).
 ANSWERS_PATH = os.path.join(RESULTS, "moa_prod_answers.json")
 QUEUE_PATH = os.path.join(RESULTS, "moa_prod_judge_queue.json")
 SCORES_PATH = base.SCORES_PATH  # SHARED judge cache (same hash scheme)
@@ -189,7 +190,13 @@ def phase_gen(args):
                    "latency": round(res["latency"], 1),
                    "tokens_in": md.get("tokens_in", 0),
                    "tokens_out": md.get("tokens_out", 0),
-                   "cost": md.get("cost"), "model": md.get("model", ""),
+                   # cost = billed (flat-plan models bill $0); cost_list = API
+                   # list price — the honest economic axis for arm comparison.
+                   "cost": md.get("cost"), "cost_list": md.get("cost_list"),
+                   "model": md.get("model", ""),
+                   "moa_extra": {k: (ar.get("moa") or {}).get(k) for k in
+                                 ("planner", "executor", "plan_task_types")}
+                                if (ar.get("moa") or {}).get("mode") == "delegate" else None,
                    "task_types": (ar.get("analysis") or {}).get("task_types"),
                    "moa": {k: moa.get(k) for k in
                            ("gate_hit", "mode", "gated_out", "ok", "failed",
@@ -271,12 +278,16 @@ def phase_report(args):
                 if r["arm"] == arm]
         costs = [r["cost"] for recs in answers.values() for r in recs
                  if r["arm"] == arm and isinstance(r.get("cost"), (int, float))]
+        costs_list = [r["cost_list"] for recs in answers.values() for r in recs
+                      if r["arm"] == arm
+                      and isinstance(r.get("cost_list"), (int, float))]
         arm_means[arm] = base._mean(per_q_means)
         arm_q_spread[arm] = base._mean(per_q_spreads)
         print(f"{arm:8s} overall={arm_means[arm]:.3f}  "
               f"avg_q_spread=±{arm_q_spread[arm]:.3f}  "
               f"avg_latency={base._mean(lats):5.1f}s  "
-              f"avg_cost=${base._mean(costs):.4f}", flush=True)
+              f"avg_cost=${base._mean(costs):.4f}  "
+              f"avg_cost_list=${base._mean(costs_list):.4f}", flush=True)
     print("\nPer category:", flush=True)
     cats = sorted({qm["category"] for qm in qmeta.values()})
     for cat in cats:
@@ -322,7 +333,14 @@ def main():
     ap.add_argument("--questions", default="moa_prod_questions.json",
                     help="question file under eval/ (default: the 15 originals "
                          "+ 3 live web-research questions)")
+    ap.add_argument("--suffix", default="",
+                    help="suffix for answers/queue filenames — separates runs "
+                         "under different SERVER configs (e.g. _delegate)")
     args = ap.parse_args()
+    if args.suffix:
+        global ANSWERS_PATH, QUEUE_PATH
+        ANSWERS_PATH = ANSWERS_PATH.replace(".json", f"{args.suffix}.json")
+        QUEUE_PATH = QUEUE_PATH.replace(".json", f"{args.suffix}.json")
     if args.phase == "gen":
         phase_gen(args)
     else:
