@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.277.2",
+        "date": "2026-07-04",
+        "title": "Websuche funktioniert auch nach einer Begrüßung",
+        "body": "Begann eine Unterhaltung mit einer einfachen Begrüßung, blieb "
+                "der Assistent bei einigen Modellen für den Rest der "
+                "Unterhaltung auf ein Minimal-Werkzeugset festgelegt — eine "
+                "spätere Frage nach z. B. dem Wetter wurde dann ohne "
+                "Internetrecherche beantwortet. Jetzt wird jede Eingabe neu "
+                "eingeschätzt und fehlende Werkzeuge (etwa die Websuche) "
+                "werden automatisch nachgeladen. Außerdem erscheint das "
+                "Klassifikations-Symbol unter der Antwort nun bei jeder "
+                "Antwort, nicht nur bei der ersten.",
+        "audience": "user",
+        "versions": ["9.277.2"],
+    },
+    {
         "version": "9.277.1",
         "date": "2026-07-04",
         "title": "Thinking-Schalter wirkt bei allen Modellen",

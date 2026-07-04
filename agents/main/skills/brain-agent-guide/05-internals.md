@@ -402,10 +402,18 @@ its own cache at ~0.1×, so the prefix must stay stable across turns. Two effect
 (1) `model_should_optimize_tools` returns **False** for a cache-priced model (never
 reshape its tool set per turn — same KV-prefix-stability reason as full-mode warmup).
 (2) Once an Auto session routes to a cache-priced model, `handlers/chat.py` records
-`session._cache_freeze_model` and on every later Auto turn **reuses that model + the
-turn-1 tool set and SKIPS the classifier entirely** (no per-turn classifier LLM
-call) — the spinner shows `frozen: true`. The freeze sticks for the session even if
-a later turn's content would route elsewhere (by design — maximizes cache hits).
+`session._cache_freeze_model` and on every later Auto turn **reuses that model**
+(never re-routes) — the spinner shows `frozen: true`. The freeze sticks for the
+session even if a later turn's content would route elsewhere (by design —
+maximizes cache hits). The frozen TOOL set is no longer static (since 9.277.2):
+the classifier still runs on every frozen turn (concrete-model AND Auto branch,
+tool-gate only, never re-route) and the frozen set **grows monotonically** —
+union of the frozen groups and this turn's needed groups. A growth turn pays ONE
+prefix cache miss, the superset re-freezes, later turns are byte-stable again; it
+never shrinks. (Before 9.277.2 the classifier was skipped entirely on frozen
+turns, so a session opened with "hi" stayed locked to the greeting toolset — web
+tools never declared — and turns 2+ carried no `auto_route` metadata, hiding the
+classification inspector icon.)
 Non-cache-priced models are unchanged: re-classify every Auto turn. The realized
 saving is visible — `cache_read_tokens` flows into the live usage event + turn
 metadata, rendered as a `⚡ N cached` badge in the status bar and per-turn stats.

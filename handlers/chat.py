@@ -5067,6 +5067,34 @@ class ChatHandlerMixin:
                     else ("auto-local" if auto_pool == "local" else "auto-cloud"))
             auto_route = {"model": _frozen, "reason": "cache-stable (turn-1 pick frozen)",
                           "frozen": True}
+            # Classify ANYWAY on frozen turns (chat 537d49a5, same rationale as
+            # the concrete-model branch): never to re-route — only to (a) GROW
+            # the frozen tool set monotonically when this turn needs groups the
+            # turn-1 trim dropped (union; one prefix cache miss on growth, then
+            # byte-stable again; never shrink) and (b) surface the analysis in
+            # auto_route so the classification inspector icon shows on every
+            # turn, not just turn 1.
+            _frozen_ta = None
+            if engine.agent_optimize_tools_enabled(agent_cfg):
+                try:
+                    _frozen_ta = engine.resolve_task_analysis(message)
+                except Exception:
+                    _frozen_ta = None  # fail-open: frozen set stands
+            if isinstance(_frozen_ta, dict) and "tool_groups" in _frozen_ta:
+                _fr = _cache_freeze_groups(session)
+                if _fr.get(_frozen) is not None:
+                    _merged = sorted(set(_fr[_frozen])
+                                     | set(_frozen_ta.get("tool_groups") or []))
+                    with session.lock:
+                        _fr[_frozen] = _merged
+                        session._auto_tool_groups = _merged
+            if isinstance(_frozen_ta, dict) and _frozen_ta.get("source") == "llm":
+                auto_route["analysis"] = {
+                    "task_types": _frozen_ta.get("task_types", []),
+                    "tools": _frozen_ta.get("tools", []),
+                    "complexity": _frozen_ta.get("complexity", ""),
+                    "reasoning": _frozen_ta.get("reasoning", ""),
+                }
             # MoA on a frozen session: model + tool set stay pinned (prefix
             # byte-stable, cache pricing intact) but the classifier still runs —
             # ONLY to decide the fan-out (gate + reference pick), never to
@@ -5077,10 +5105,14 @@ class ChatHandlerMixin:
                 _allowed = None
                 if _user and _user.get("role") != "admin" and _user.get("id") != "__system__":
                     _allowed = _auth_mod.AuthDB.get_user_allowed_models(_user["id"])
-                try:
-                    _analysis = engine.resolve_task_analysis(message)
-                except Exception:
-                    _analysis = None
+                # Reuse the frozen-turn classification from above when it ran
+                # (one classifier call per turn, not two).
+                _analysis = _frozen_ta
+                if _analysis is None:
+                    try:
+                        _analysis = engine.resolve_task_analysis(message)
+                    except Exception:
+                        _analysis = None
                 _plan = engine.resolve_moa_plan(_analysis, _frozen, allowed_models=_allowed)
                 # Admin-fixed orchestrator wins over the freeze: the admin
                 # explicitly pinned who synthesizes this task type. Switch the
@@ -5267,7 +5299,17 @@ class ChatHandlerMixin:
                 # Return visit to a known cache-priced model → reuse its frozen set.
                 with session.lock:
                     session._auto_tool_groups = _freeze.get(session.model)
-                _run_classifier = False
+                # Classify ANYWAY (chat 537d49a5): skipping the classifier on
+                # frozen turns locked a session opened with "hi" to the greeting
+                # toolset forever — web/documents/core never declared, and strict
+                # function callers (glm) answer "no internet access" instead of
+                # trying tool_search. The frozen set may only GROW (union below,
+                # never shrink): a growth turn pays ONE prefix cache miss, the
+                # superset re-freezes, later turns are byte-stable again; a
+                # no-growth turn keeps the prefix identical. Running it also
+                # restores the per-turn auto_route metadata (classification
+                # inspector icon) that frozen turns silently dropped.
+                _run_classifier = _opt_on
             else:
                 # Non-cache model → classify every turn (if safe).
                 # Cache-priced model NOT yet seen → classify once, freeze below.
@@ -5286,7 +5328,14 @@ class ChatHandlerMixin:
                     # genuine no-signal → fail-open, static deferral stands.
                     if isinstance(_ta, dict) and "tool_groups" in _ta:
                         with session.lock:
-                            session._auto_tool_groups = _ta.get("tool_groups") or []
+                            _tg_new = _ta.get("tool_groups") or []
+                            # Frozen model: monotone growth only — union this
+                            # turn's needed groups into the frozen set. Never
+                            # shrink (a smaller set would flip the prefix back
+                            # and forth every turn and kill the cache pricing).
+                            if _seen_this_model and _freeze.get(session.model) is not None:
+                                _tg_new = sorted(set(_freeze[session.model]) | set(_tg_new))
+                            session._auto_tool_groups = _tg_new
                             # FREEZE this model's trimmed set (per-model) so every
                             # later turn back on this cache-priced model reuses the
                             # exact set → byte-stable prefix → cache hits. Only for
