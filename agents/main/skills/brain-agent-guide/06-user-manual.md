@@ -1430,7 +1430,9 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   der Provider-Cache trifft). Daneben die Checkbox **„Flatrate / Coding-Plan"**
   (9.281.0): Ist sie gesetzt, wird jeder Aufruf dieses Modells mit **0 $
   realen Kosten** verbucht (Quotas, Plan-Verbrauch) — für Modelle, die über
-  einen Abo-Plan laufen (Z.ai/Kimi Coding Plan, Mistral Vibe). Die Kostenfelder
+  einen Abo-Plan laufen (Z.ai/Kimi Coding Plan, Mistral Vibe). Das gilt auch
+  für die seiten-basierte **OCR**- und die zeichen-basierte **TTS**-Abrechnung,
+  wenn das jeweilige OCR-/Voxtral-Modell das Flag trägt. Die Kostenfelder
   behalten dabei den **API-Listenpreis**; daraus rechnen Statuszeile und
   Kostenaufstellung den hypothetischen „API-Listenpreis ohne Flatrate" samt
   Ersparnis. Der Cache-Freeze („Kosten cached") bleibt davon unberührt. Pro

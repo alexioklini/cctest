@@ -472,7 +472,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "base_model_id": "mistral-medium-latest"
+      "base_model_id": "mistral-medium-latest",
+      "flat_plan": true
     },
     "magistral-medium-latest": {
       "enabled": false,
@@ -490,7 +491,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "base_model_id": "magistral-medium-latest"
+      "base_model_id": "magistral-medium-latest",
+      "flat_plan": true
     },
     "gemma-4-26B-A4B-it-MLX-4bit": {
       "enabled": false,
@@ -816,7 +818,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-medium-2508": {
       "enabled": false,
@@ -838,7 +841,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-direct/mistral-medium-latest": {
       "enabled": false,
@@ -861,7 +865,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-medium": {
       "enabled": false,
@@ -883,7 +888,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-vibe-cli-with-tools": {
       "enabled": false,
@@ -905,7 +911,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "open-mistral-nemo": {
       "enabled": false,
@@ -927,7 +934,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "open-mistral-nemo-2407": {
       "enabled": false,
@@ -949,7 +957,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-tiny-2407": {
       "enabled": false,
@@ -971,7 +980,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-tiny-latest": {
       "enabled": false,
@@ -993,7 +1003,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "codestral-2508": {
       "enabled": false,
@@ -1010,7 +1021,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "codestral-latest": {
       "enabled": false,
@@ -1027,7 +1039,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "devstral-2512": {
       "enabled": false,
@@ -1049,7 +1062,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "devstral-medium-latest": {
       "enabled": false,
@@ -1071,7 +1085,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "devstral-latest": {
       "enabled": false,
@@ -1093,7 +1108,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-small-2603": {
       "enabled": false,
@@ -1115,7 +1131,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-direct/mistral-small-latest": {
       "enabled": false,
@@ -1138,7 +1155,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-vibe-cli-fast": {
       "enabled": false,
@@ -1160,7 +1178,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "magistral-small-latest": {
       "enabled": false,
@@ -1177,7 +1196,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "magistral-medium-2509": {
       "enabled": false,
@@ -1194,7 +1214,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-direct/magistral-medium-latest": {
       "enabled": false,
@@ -1213,7 +1234,8 @@
       "max_context": 131072,
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "voxtral-small-2507": {
       "enabled": true,
@@ -1233,7 +1255,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "voxtral-small-latest": {
       "enabled": true,
@@ -1253,7 +1276,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "mistral-large-2512": {
       "enabled": false,
@@ -1275,7 +1299,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-large-latest": {
       "enabled": false,
@@ -1297,7 +1322,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "ministral-3b-2512": {
       "enabled": false,
@@ -1314,7 +1340,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "ministral-3b-latest": {
       "enabled": false,
@@ -1331,7 +1358,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "ministral-8b-2512": {
       "enabled": false,
@@ -1348,7 +1376,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "ministral-8b-latest": {
       "enabled": false,
@@ -1365,7 +1394,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "ministral-14b-2512": {
       "enabled": false,
@@ -1382,7 +1412,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "ministral-14b-latest": {
       "enabled": false,
@@ -1399,7 +1430,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-direct/mistral-medium-3.5": {
       "enabled": false,
@@ -1422,7 +1454,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-medium-3": {
       "enabled": false,
@@ -1444,7 +1477,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-medium-2604": {
       "enabled": false,
@@ -1466,7 +1500,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-vibe-cli-latest": {
       "enabled": false,
@@ -1488,7 +1523,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "voxtral-mini-latest": {
       "enabled": true,
@@ -1508,7 +1544,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "magistral-small-2509": {
       "enabled": false,
@@ -1525,7 +1562,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-small-2506": {
       "enabled": false,
@@ -1547,7 +1585,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-embed-2312": {
       "enabled": false,
@@ -1569,7 +1608,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-embed": {
       "enabled": false,
@@ -1591,7 +1631,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "codestral-embed": {
       "enabled": false,
@@ -1608,7 +1649,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "codestral-embed-2505": {
       "enabled": false,
@@ -1625,7 +1667,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-moderation-2603": {
       "enabled": false,
@@ -1647,7 +1690,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-ocr-2512": {
       "enabled": false,
@@ -1669,7 +1713,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-ocr-latest": {
       "enabled": true,
@@ -1689,7 +1734,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "voxtral-mini-2602": {
       "enabled": true,
@@ -1709,7 +1755,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "voxtral-mini-transcribe-realtime-2602": {
       "enabled": true,
@@ -1729,7 +1776,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "voxtral-mini-realtime-2602": {
       "enabled": true,
@@ -1749,7 +1797,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "voxtral-mini-realtime-latest": {
       "enabled": true,
@@ -1769,7 +1818,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "voxtral-mini-tts-2603": {
       "enabled": true,
@@ -1790,7 +1840,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "voxtral-mini-tts-latest": {
       "enabled": true,
@@ -1811,7 +1862,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "flat_plan": true
     },
     "gemma-4-26b-cloud": {
       "enabled": false,
@@ -2131,7 +2183,8 @@
       "_caps_canonical": true,
       "_audio_backfilled": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-code-latest": {
       "enabled": false,
@@ -2153,7 +2206,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-code-fim-latest": {
       "enabled": false,
@@ -2175,7 +2229,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-code-agent-latest": {
       "enabled": false,
@@ -2197,7 +2252,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "Lokal-M4/Qwen2.5-7B-Instruct-4bit": {
       "enabled": false,
@@ -2264,7 +2320,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-ocr-3": {
       "enabled": false,
@@ -2286,7 +2343,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-ocr-4-0": {
       "enabled": false,
@@ -2308,7 +2366,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "mistral-ocr-4": {
       "enabled": false,
@@ -2330,7 +2389,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "gemma-4-12B-it-qat-4bit": {
       "enabled": true,
@@ -2473,7 +2533,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "labs-leanstral-1-5": {
       "enabled": false,
@@ -2490,7 +2551,8 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "flat_plan": true
     },
     "glm-5.2": {
       "enabled": true,

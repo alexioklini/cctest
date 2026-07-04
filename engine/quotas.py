@@ -219,6 +219,25 @@ def _compute_cost(model: str, tokens_in: int, tokens_out: int,
             + cache_read_tokens * rate["cache_read"]) / 1_000_000
 
 
+def _unit_list_cost(purpose: str, units: int) -> float | None:
+    """API list price for SYNTHETIC unit-billed cost rows of flat-plan models —
+    OCR rows carry pages in tokens_in (rate ocr.cost_per_page_usd), TTS rows
+    carry chars in tokens_in (rate text_to_speech.cost_per_1k_chars_usd). The
+    token-based flat-plan reconstruction yields 0 for these rows, so the read-
+    time aggregators call this first. None = not a unit-billed purpose."""
+    try:
+        if purpose == "ocr":
+            from engine.doc_convert import _ocr_config
+            return units * float(_ocr_config().get("cost_per_page_usd") or 0.0)
+        if purpose in ("read_aloud", "audio_overview"):
+            import brain as _brain
+            cfg = _brain.get_tool_config().get("text_to_speech", {}) or {}
+            return units / 1000.0 * float(cfg.get("cost_per_1k_chars_usd", 0) or 0.0)
+    except Exception:
+        return None
+    return None
+
+
 class CostTracker:
     """Thread-safe cost tracking with SQLite persistence."""
 
@@ -300,7 +319,14 @@ class CostTracker:
                 key_name: str = "", purpose: str = "ocr"):
         """Log an OCR call as a synthetic cost row. Pages stashed in tokens_in
         (output stays 0); explicit USD cost bypasses _compute_cost which only
-        knows tokens. Aggregates sum cost_usd correctly without changes."""
+        knows tokens. Aggregates sum cost_usd correctly without changes.
+
+        Flat-plan models (config `flat_plan: true`) log $0 real cost — the
+        caller-computed amount is the LIST price, reconstructed at read time
+        from pages × ocr.cost_per_page_usd (see _unit_list_cost)."""
+        import brain as _brain
+        if _brain.model_is_flat_plan(model):
+            cost_usd = 0.0
         try:
             with _cost_conn() as conn:
                 conn.execute("""
@@ -317,7 +343,11 @@ class CostTracker:
         """Log a text-to-speech render as a synthetic cost row. Chars synthesized
         stashed in tokens_in (output stays 0); explicit USD cost bypasses
         _compute_cost (TTS is char-billed, not token-billed). Aggregates sum
-        cost_usd correctly without changes — mirrors log_ocr."""
+        cost_usd correctly without changes — mirrors log_ocr (incl. the
+        flat-plan $0 rule; list price reconstructed via _unit_list_cost)."""
+        import brain as _brain
+        if _brain.model_is_flat_plan(model):
+            cost_usd = 0.0
         try:
             with _cost_conn() as conn:
                 conn.execute("""
@@ -517,13 +547,13 @@ class CostTracker:
             with _cost_conn() as conn:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute("""
-                    SELECT model,
+                    SELECT model, purpose,
                            COUNT(*) as calls,
                            COALESCE(SUM(tokens_in), 0) as tokens_in,
                            COALESCE(SUM(tokens_out), 0) as tokens_out,
                            COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
                            COALESCE(SUM(cost_usd), 0.0) as cost
-                    FROM cost_log WHERE session_id = ? GROUP BY model
+                    FROM cost_log WHERE session_id = ? GROUP BY model, purpose
                 """, (session_id,)).fetchall()
                 out = dict(_empty)
                 import brain as _brain
@@ -533,10 +563,14 @@ class CostTracker:
                     out["tokens_out"] += r["tokens_out"]
                     out["cost"] += r["cost"]
                     if _brain.model_is_flat_plan(r["model"]):
-                        rate = _get_cost_rate(r["model"])
-                        out["cost_list"] += (r["tokens_in"] * rate["input"]
-                                             + r["tokens_out"] * rate["output"]
-                                             + r["cache_read_tokens"] * rate["cache_read"]) / 1e6
+                        _ul = _unit_list_cost(r["purpose"] or "", r["tokens_in"])
+                        if _ul is not None:
+                            out["cost_list"] += _ul
+                        else:
+                            rate = _get_cost_rate(r["model"])
+                            out["cost_list"] += (r["tokens_in"] * rate["input"]
+                                                 + r["tokens_out"] * rate["output"]
+                                                 + r["cache_read_tokens"] * rate["cache_read"]) / 1e6
                     else:
                         out["cost_list"] += r["cost"]
                 return out

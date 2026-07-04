@@ -218,11 +218,16 @@ class AdminCostsHandlers:
         # `flat_plan` log $0 real cost but keep the provider list price in their
         # REGULAR cost_* fields. Computed at READ time from the summed tokens via
         # the normal rate lookup — no schema change, retroactive for all rows.
-        def _list_cost(model: str, t_in: int, t_out: int, t_cr: int) -> float | None:
+        def _list_cost(model: str, purpose: str, t_in: int, t_out: int, t_cr: int) -> float | None:
             cfg = (getattr(engine, "_models_config", None) or {}).get(model) or {}
             if not cfg.get("flat_plan"):
                 return None          # not flat → list price == real cost
-            from engine.quotas import _get_cost_rate
+            from engine.quotas import _get_cost_rate, _unit_list_cost
+            # Synthetic unit-billed rows (OCR pages / TTS chars in tokens_in)
+            # reconstruct from their per-unit rates, not token rates.
+            _ul = _unit_list_cost(purpose or "", t_in)
+            if _ul is not None:
+                return _ul
             r = _get_cost_rate(model)
             return (t_in * r["input"] + t_out * r["output"]
                     + t_cr * r["cache_read"]) / 1e6
@@ -258,7 +263,7 @@ class AdminCostsHandlers:
             # cache-HIT tokens (billed at the discounted cache_read rate) — surfaced
             # separately so the UI can show cache hit-rate + realized savings.
             t_cr = int(r.get("cache_read_tokens", 0) or 0)
-            _lc = _list_cost(model, t_in, t_out, t_cr)
+            _lc = _list_cost(model, r.get("purpose", ""), t_in, t_out, t_cr)
             cost_list = cost if _lc is None else _lc
             c_save = _cache_savings(model, t_cr)
             total_cost += cost
