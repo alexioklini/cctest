@@ -556,7 +556,7 @@ function openQuotaModal() {
   // pinned and the body scrolls reliably regardless of height/anchor. max-height
   // is set dynamically by repositionQuotaModal() to the real space available at
   // the chosen anchor, so the scrollbar is always fully on-screen + reachable.
-  pop.style.cssText = 'position:fixed;width:420px;display:flex;flex-direction:column;background:var(--bg-000);border:1px solid var(--border-100);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:100;font-size:13px;visibility:hidden;left:0;top:0;overflow:hidden';
+  pop.style.cssText = 'position:fixed;width:640px;max-width:94vw;display:flex;flex-direction:column;background:var(--bg-000);border:1px solid var(--border-100);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:100;font-size:13px;visibility:hidden;left:0;top:0;overflow:hidden';
   pop.onclick = (e) => e.stopPropagation();
   const isAdmin = (state.authUser?.role || 'admin') === 'admin';
   pop.innerHTML = `
@@ -1016,7 +1016,7 @@ function openCodingPlanForm(planId) {
   ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
   const F = 'width:100%;padding:4px 8px;border:1px solid var(--border-100);border-radius:6px;font-size:12px;background:var(--bg-000);color:var(--text-100)';
   const L = 'font-size:11px;color:var(--text-400);display:block;margin:8px 0 2px';
-  ov.innerHTML = `<div class="modal-content" style="max-width:420px;width:92%" onclick="event.stopPropagation()">
+  ov.innerHTML = `<div class="modal-content" style="max-width:560px;width:92%" onclick="event.stopPropagation()">
     <div class="modal-header"><h2 style="font-size:15px">${p ? 'Plan bearbeiten' : 'Plan anlegen'}</h2>
       <button class="modal-close" onclick="document.getElementById('coding-plan-form').remove()" style="margin-left:auto">&times;</button></div>
     <div class="modal-body" style="font-size:12px">
