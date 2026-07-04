@@ -529,74 +529,41 @@ function _quotaBar(used, limit, level) {
 }
 
 function openQuotaModal() {
+  // Echter modaler Dialog im General-Settings-Look (modal-overlay +
+  // modal-content x-wide + modal-header/-body) — kein an die Pille
+  // verankertes Popover mehr (User-Wunsch 9.283.6).
   const existing = document.getElementById('quota-modal');
   if (existing) { existing.remove(); return; }
-  const pill = document.getElementById('status-quota');
-  // Outside-click handler attached to document — popover itself isn't an overlay
-  const onDocClick = (e) => {
-    const pop = document.getElementById('quota-modal');
-    if (!pop) { document.removeEventListener('mousedown', onDocClick, true); window.removeEventListener('resize', repositionQuotaModal); return; }
-    if (!pop.contains(e.target) && e.target !== pill && !pill.contains(e.target)) {
-      pop.remove();
-      document.removeEventListener('mousedown', onDocClick, true);
-      window.removeEventListener('resize', repositionQuotaModal);
-    }
-  };
-  const onKeydown = (e) => {
-    if (e.key === 'Escape') {
-      document.getElementById('quota-modal')?.remove();
-      document.removeEventListener('keydown', onKeydown, true);
-      window.removeEventListener('resize', repositionQuotaModal);
-    }
-  };
-  const pop = document.createElement('div');
-  pop.id = 'quota-modal';
-  // Flex column: fixed header + a single scrollable content region. The scroll
-  // lives on #quota-modal-scroll (not the popover root) so the title bar stays
-  // pinned and the body scrolls reliably regardless of height/anchor. max-height
-  // is set dynamically by repositionQuotaModal() to the real space available at
-  // the chosen anchor, so the scrollbar is always fully on-screen + reachable.
-  pop.style.cssText = 'position:fixed;width:640px;max-width:94vw;display:flex;flex-direction:column;background:var(--bg-000);border:1px solid var(--border-100);border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.18);z-index:100;font-size:13px;visibility:hidden;left:0;top:0;overflow:hidden';
-  pop.onclick = (e) => e.stopPropagation();
+  const overlay = document.createElement('div');
+  overlay.id = 'quota-modal';
+  overlay.className = 'modal-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  const content = document.createElement('div');
+  content.className = 'modal-content x-wide';
   const isAdmin = (state.authUser?.role || 'admin') === 'admin';
-  pop.innerHTML = `
-    <div style="display:flex;align-items:center;gap:8px;padding:14px 16px 10px;flex:0 0 auto">
-      <div style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">Plan-Nutzung</div>
+  content.innerHTML = `
+    <div class="modal-header">
+      <span class="modal-title">Plan-Nutzung</span>
       ${isAdmin ? `<button onclick="document.getElementById('quota-modal')?.remove();openGeneralSettings();setTimeout(()=>{const t=document.querySelector('.modal-tab[onclick*=&quot;quotas&quot;]');if(t)switchGeneralTab('quotas',t);},50);"
-              style="background:transparent;border:1px solid var(--border-100);color:var(--text-300);
-                     border-radius:6px;width:24px;height:24px;cursor:pointer;display:flex;align-items:center;justify-content:center"
-              title="Kontingent-Einstellungen öffnen">&#x2192;</button>` : ''}
+              style="margin-left:auto;background:transparent;border:1px solid var(--border-100);color:var(--text-300);
+                     border-radius:6px;padding:2px 10px;cursor:pointer;font-size:12px"
+              title="Kontingent-Einstellungen öffnen">Einstellungen &#x2192;</button>` : ''}
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" ${isAdmin ? '' : 'style="margin-left:auto"'}>&times;</button>
     </div>
-    <div id="quota-modal-scroll" style="overflow-y:auto;padding:0 16px 14px;flex:1 1 auto;min-height:0">
+    <div class="modal-body" id="quota-modal-scroll" style="overflow-y:auto">
       <div id="quota-modal-body"><div style="color:var(--text-300);text-align:center;padding:12px">Wird geladen…</div></div>
       <div id="coding-plans-section" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-100)"></div>
       <div id="cost-breakdown-section" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-100)"></div>
     </div>`;
-  document.body.appendChild(pop);
+  overlay.appendChild(content);
+  document.body.appendChild(overlay);
 
   // Cost breakdown: window selector + per-use-case × per-model table. Lazy —
   // fetched on open and whenever the window changes, NOT on the 30s quota poll.
   renderCostBreakdownSection();
   loadCodingPlansSection();
-
-  // Render synchronously so we can measure the real height before positioning.
-  // Without this, the first paint uses the placeholder body and the upward
-  // offset is too small — the bottom third clips below the viewport edge.
   renderQuotaModalBody();
-
-  // First measure after layout, then refresh once more after the async fetch
-  // so the height reflects the final content.
-  requestAnimationFrame(repositionQuotaModal);
-
-  // Defer outside-click handler so the click that opened us doesn't close us
-  setTimeout(() => document.addEventListener('mousedown', onDocClick, true), 0);
-  document.addEventListener('keydown', onKeydown, true);
-  // Re-fit on viewport resize (rotate / window resize) while the modal is open.
-  window.addEventListener('resize', repositionQuotaModal);
-
-  QuotaMonitor.refresh().then(() => {
-    if (document.getElementById('quota-modal')) requestAnimationFrame(repositionQuotaModal);
-  }).catch(() => {});
+  QuotaMonitor.refresh().catch(() => {});
 }
 
 // Anchor the Plan-usage popover to the status-bar pill AND size its scroll
@@ -604,35 +571,10 @@ function openQuotaModal() {
 // and reachable. Prefers placing above the pill; falls back below. Called on
 // open, after the async breakdown loads, on expand/collapse, and on resize.
 function repositionQuotaModal() {
-  const pop = document.getElementById('quota-modal');
-  const pill = document.getElementById('status-quota');
-  // Modal closed (e.g. via the settings-shortcut button) — detach this resize
-  // handler so it doesn't linger.
-  if (!pop) { window.removeEventListener('resize', repositionQuotaModal); return; }
-  if (!pill) return;
-  const margin = 8;
-  const r = pill.getBoundingClientRect();
-  const vw = window.innerWidth, vh = window.innerHeight;
-  const popW = pop.offsetWidth || 420;
-  // Space above the pill vs below it; pick the roomier side.
-  const spaceAbove = r.top - margin * 2;
-  const spaceBelow = vh - r.bottom - margin * 2;
-  const placeAbove = spaceAbove >= spaceBelow;
-  const avail = Math.max(120, Math.floor(placeAbove ? spaceAbove : spaceBelow));
-  // Cap the whole popover to the available space (also never exceed ~88vh).
-  const maxH = Math.min(avail, Math.floor(vh * 0.88));
-  pop.style.maxHeight = maxH + 'px';
-  // Now measure the (possibly clamped) height and place it.
-  const popH = Math.min(pop.offsetHeight || 200, maxH);
-  let left = r.right - popW;
-  if (left < margin) left = margin;
-  if (left + popW > vw - margin) left = vw - popW - margin;
-  let top = placeAbove ? (r.top - popH - margin) : (r.bottom + margin);
-  if (top < margin) top = margin;
-  if (top + popH > vh - margin) top = Math.max(margin, vh - popH - margin);
-  pop.style.left = left + 'px';
-  pop.style.top = top + 'px';
-  pop.style.visibility = 'visible';
+  // Seit 9.283.6 ist die Plan-Nutzung ein zentrierter Standard-Modal
+  // (modal-overlay) — CSS übernimmt Position/Größe, hier gibt es nichts mehr
+  // zu verankern. Bleibt als No-op erhalten, weil die Async-Render-Pfade
+  // (Kosten-Tabelle, Plan-Sektion) sie nach dem Laden weiterhin aufrufen.
 }
 
 function renderQuotaModalBody() {
