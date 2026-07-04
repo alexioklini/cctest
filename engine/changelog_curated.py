@@ -47,7 +47,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "laufenden Gespräch erscheinen Experten- und Datenschutz-Karten "
                 "nicht mehr doppelt.",
         "audience": "user",
-        "versions": ["9.281.0"],
+        "versions": ["9.281.0", "9.281.1"],
     },
     {
         "version": "9.280.0",

@@ -228,10 +228,20 @@ function updateStatusBar() {
   if (cachedWrap && cachedLabel) {
     const _promptTot = totalIn + totalCached;
     const _hitPct = _promptTot ? Math.round(100 * totalCached / _promptTot) : 0;
-    const _save = (typeof cacheSavingsUSD === 'function') ? cacheSavingsUSD(chat.model, totalCached) : 0;
+    // Effective model for cache pricing: chat.model can be a VIRTUAL directive
+    // (moa / auto / auto-cloud / auto-local) that has no cost config — keying
+    // the tariff check on it falsely claimed "kein Cache-Tarif hinterlegt"
+    // (MoA eval chats, glm-5.2 aggregator). Use the last turn's actual
+    // answering model from its metadata; fall back to chat.model.
+    let _effCacheModel = chat.model;
+    for (let mi = msgs.length - 1; mi >= 0; mi--) {
+      const m = msgs[mi];
+      if (m.role === 'assistant' && m.metadata?.model) { _effCacheModel = m.metadata.model; break; }
+    }
+    const _save = (typeof cacheSavingsUSD === 'function') ? cacheSavingsUSD(_effCacheModel, totalCached) : 0;
     // Whether this model is cache-priced at all (has cost_cache_read config).
     // If NOT, caching never happens for it — say so in the tooltip.
-    const _mcfg = state.modelsConfig?.models?.[chat.model] || {};
+    const _mcfg = state.modelsConfig?.models?.[_effCacheModel] || {};
     const _cachePriced = Number(_mcfg.cost_cache_read) > 0;
     if (msgs.length === 0) {
       cachedWrap.style.display = 'none';
@@ -240,7 +250,7 @@ function updateStatusBar() {
       cachedLabel.textContent = `${totalCached.toLocaleString()} (${_hitPct}%)`;
       cachedLabel.style.color = totalCached > 0 ? '#10b981' : '';
       if (!_cachePriced) {
-        cachedWrap.title = 'Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es findet kein Prompt-Caching statt. Bei cache-fähigen Modellen (z. B. Mistral via CLIProxyAPI) wird der wiederholte Prefix zum ~0,1×-Tarif abgerechnet.';
+        cachedWrap.title = 'Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es findet kein Prompt-Caching statt. Bei cache-fähigen Modellen (z. B. glm, kimi, Mistral) wird der wiederholte Prefix zum ~0,1×-Tarif abgerechnet.';
       } else {
         cachedWrap.title = `Prompt-Cache-Treffer dieser Sitzung: ${totalCached.toLocaleString()} Tokens = ${_hitPct}% des Prompts, zum ~0,1×-Tarif abgerechnet.${_save > 0 ? ' Ersparnis ggü. vollem Eingabe-Tarif: $' + _save.toFixed(4) + '.' : ''}`;
       }
