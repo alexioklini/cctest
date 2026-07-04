@@ -102,6 +102,12 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
 - NOTE: mistral-medium via CLIProxyAPI emits NO separate thinking blocks
   (no `thinking_done` → no `thinking` rows persisted); that's a
   provider-format gap, not a data-loss bug.
+- Thinking-OFF is sent EXPLICITLY for `reasoning_field` cloud models
+  (glm/kimi/deepseek): level none/unset → `reasoning_effort: "none"` on the
+  wire (since 9.277.1). Those hybrid reasoners default thinking ON upstream
+  when the field is absent, so "off by omission" silently ignored the
+  composer toggle. mistral_blocks stays off-by-omission (default-off
+  upstream); oMLX models use the explicit `enable_thinking` kwarg instead.
 
 ## Provider routing
 

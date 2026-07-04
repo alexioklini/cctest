@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.277.1",
+        "date": "2026-07-04",
+        "title": "Thinking-Schalter wirkt bei allen Modellen",
+        "body": "Einige Modelle (u. a. GLM, Kimi und DeepSeek) haben bisher "
+                "auch dann „nachgedacht“, wenn das Thinking im Eingabefeld "
+                "ausgeschaltet war — der Schalter wurde schlicht ignoriert. "
+                "Jetzt gilt Ihre Einstellung verlässlich: Thinking aus heißt "
+                "aus. Antworten dieser Modelle kommen ohne unerwünschten "
+                "Denkblock, schneller und günstiger.",
+        "audience": "user",
+        "versions": ["9.277.1"],
+    },
+    {
         "version": "9.277.0",
         "date": "2026-07-03",
         "title": "Abgerissene Antworten setzen sich selbst fort",
