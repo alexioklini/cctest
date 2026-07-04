@@ -569,6 +569,7 @@ function openQuotaModal() {
     </div>
     <div id="quota-modal-scroll" style="overflow-y:auto;padding:0 16px 14px;flex:1 1 auto;min-height:0">
       <div id="quota-modal-body"><div style="color:var(--text-300);text-align:center;padding:12px">Wird geladen…</div></div>
+      <div id="coding-plans-section" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-100)"></div>
       <div id="cost-breakdown-section" style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border-100)"></div>
     </div>`;
   document.body.appendChild(pop);
@@ -576,6 +577,7 @@ function openQuotaModal() {
   // Cost breakdown: window selector + per-use-case × per-model table. Lazy —
   // fetched on open and whenever the window changes, NOT on the 30s quota poll.
   renderCostBreakdownSection();
+  loadCodingPlansSection();
 
   // Render synchronously so we can measure the real height before positioning.
   // Without this, the first paint uses the placeholder body and the upward
@@ -883,6 +885,178 @@ function renderCostBreakdownBody(data) {
         <tbody>${bodyRows}</tbody>
       </table>
     </div>`;
+}
+
+// ── Coding-Pläne & API-Guthaben (Plan-Nutzung-Popover) ───────────────────────
+// Geschätzt aus dem eigenen cost_log (keine Anbieter-Quota-API). Nur Pläne mit
+// verknüpften Modellen erscheinen (Verknüpfung: Einstellungen → Modelle →
+// „Coding-Plan / Konto").
+function _cpTok(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1).replace('.', ',') + ' M';
+  if (n >= 1e3) return Math.round(n / 1e3) + 'k';
+  return String(n);
+}
+async function loadCodingPlansSection() {
+  const sec = document.getElementById('coding-plans-section');
+  if (!sec) return;
+  try {
+    const data = await API.get('/v1/plans/usage');
+    renderCodingPlansSection(data);
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(repositionQuotaModal);
+  } catch (e) {
+    sec.innerHTML = `<div style="color:var(--error);font-size:11px">Coding-Pläne: ${esc(String(e && e.message || e))}</div>`;
+  }
+}
+function renderCodingPlansSection(data) {
+  const sec = document.getElementById('coding-plans-section');
+  if (!sec) return;
+  const isAdmin = (state.authUser?.role || 'admin') === 'admin';
+  const plans = (data && data.plans) || [];
+  const bar = (pct, warnAt) => {
+    const p = Math.min(100, Math.max(0, pct || 0));
+    const color = p >= 90 ? 'var(--error)' : (p >= (warnAt || 70) ? 'var(--warning)' : 'var(--success)');
+    return `<div style="flex:1;height:5px;background:var(--bg-200);border-radius:999px;overflow:hidden;min-width:60px">
+      <div style="height:100%;width:${p}%;background:${color};border-radius:999px"></div></div>`;
+  };
+  const rows = plans.map((p) => {
+    const winRows = p.windows.map((w) => {
+      if (w.kind === 'credit') {
+        return `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-300);padding:2px 0">
+          <span style="width:44px;flex-shrink:0">${esc(w.label)}</span>
+          ${bar(w.pct)}
+          <span style="font-variant-numeric:tabular-nums;white-space:nowrap" title="verbraucht seit Aufladung ${esc(w.anchor)}">
+            $${(w.used_usd || 0).toFixed(2)} / $${(w.balance_usd || 0).toFixed(2)} · <b style="color:var(--text-200)">$${(w.remaining_usd || 0).toFixed(2)} frei</b></span>
+          ${isAdmin ? `<span style="white-space:nowrap"><input type="number" step="1" min="0" placeholder="$" id="cp-topup-${esc(p.id)}"
+              style="width:44px;padding:1px 4px;font-size:10px;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-000);color:var(--text-200)"
+              title="Neues Guthaben nach Aufladung in $ — setzt auch das Aufladedatum auf heute">
+            <button onclick="topupCodingPlan('${esc(p.id)}')" style="font-size:10px;padding:1px 5px;cursor:pointer;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-100);color:var(--text-300)" title="Guthaben neu setzen (Aufladung)">⟳</button></span>` : ''}
+        </div>`;
+      }
+      return `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-300);padding:2px 0">
+        <span style="width:44px;flex-shrink:0">${esc(w.label)}</span>
+        ${bar(w.pct)}
+        <span style="font-variant-numeric:tabular-nums;white-space:nowrap" title="geschätzt: ${(w.used_est || 0).toLocaleString('de-DE')} von ${(w.limit_tokens || 0).toLocaleString('de-DE')} Tokens${w.resets_at ? ' · Reset ' + esc(w.resets_at) : ''}">
+          ~${w.pct == null ? '—' : w.pct.toFixed(0) + ' %'} · ${_cpTok(w.used_est || 0)} / ${_cpTok(w.limit_tokens || 0)}</span>
+        ${isAdmin ? `<span style="white-space:nowrap"><input type="number" step="1" min="1" max="100" placeholder="%" id="cp-cal-${esc(p.id)}-${esc(w.kind)}"
+            style="width:36px;padding:1px 4px;font-size:10px;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-000);color:var(--text-200)"
+            title="Kalibrieren: aktuellen %-Wert vom Anbieter-Dashboard eintragen — das Limit wird daraus neu berechnet">
+          <button onclick="calibrateCodingPlan('${esc(p.id)}','${esc(w.kind)}')" style="font-size:10px;padding:1px 5px;cursor:pointer;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-100);color:var(--text-300)" title="Limit aus Dashboard-% neu berechnen">✓</button></span>` : ''}
+      </div>`;
+    }).join('');
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border-100)">
+      <div style="display:flex;align-items:baseline;gap:8px">
+        <span style="font-size:12px;font-weight:500;color:var(--text-100)" title="Modelle: ${esc(p.models.join(', '))}${p.quota_note ? '\n' + esc(p.quota_note) : ''}">${esc(p.name)}</span>
+        <span style="font-size:10.5px;color:var(--text-400)">${esc(p.price)}</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--text-500)" title="zuletzt kalibriert">${esc(p.calibrated_at)}</span>
+        ${isAdmin ? `<button onclick="openCodingPlanForm('${esc(p.id)}')" style="font-size:10px;padding:1px 5px;cursor:pointer;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-100);color:var(--text-300)" title="Plan bearbeiten">✎</button>
+        <button onclick="deleteCodingPlan('${esc(p.id)}')" style="font-size:10px;padding:1px 5px;cursor:pointer;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-100);color:var(--error)" title="Plan löschen (Modell-Verknüpfungen werden entfernt)">×</button>` : ''}
+      </div>
+      ${winRows}
+    </div>`;
+  }).join('');
+  window._cpLastPlans = plans;   // Rohdaten für das Bearbeiten-Formular
+  sec.innerHTML = `
+    <div style="display:flex;align-items:center;margin-bottom:6px">
+      <div style="font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;color:var(--text-400)"
+           title="Geschätzt aus dem eigenen Nutzungs-Ledger — die Anbieter haben keine Quota-API. Mit dem %-Feld gegen das echte Anbieter-Dashboard kalibrieren.">Coding-Pläne &amp; API-Guthaben <span style="font-weight:400;text-transform:none">(geschätzt)</span></div>
+      ${isAdmin ? `<button onclick="openCodingPlanForm('')" style="margin-left:auto;font-size:10px;padding:1px 7px;cursor:pointer;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-100);color:var(--text-300)">+ Plan</button>` : ''}
+    </div>
+    ${rows || '<div style="font-size:11px;color:var(--text-400)">Keine Pläne mit verknüpften Modellen. Verknüpfung: Einstellungen → Modelle → „Coding-Plan / Konto".</div>'}`;
+}
+async function calibrateCodingPlan(planId, kind) {
+  const inp = document.getElementById(`cp-cal-${planId}-${kind}`);
+  const pct = parseFloat(inp?.value);
+  if (!pct || pct <= 0 || pct > 100) { showToast('Bitte den %-Wert vom Anbieter-Dashboard eintragen (1–100).', true); return; }
+  try {
+    const r = await API.post('/v1/plans/calibrate', { plan_id: planId, window_kind: kind, dashboard_pct: pct });
+    showToast(`Kalibriert — neues Limit ${_cpTok(r.new_limit_tokens)} Tokens.`);
+    loadCodingPlansSection();
+  } catch (e) { showToast('Kalibrierung fehlgeschlagen: ' + (e.message || e), true); }
+}
+async function topupCodingPlan(planId) {
+  const inp = document.getElementById(`cp-topup-${planId}`);
+  const bal = parseFloat(inp?.value);
+  if (isNaN(bal) || bal < 0) { showToast('Bitte das neue Guthaben in $ eintragen.', true); return; }
+  try {
+    await API.post('/v1/plans/calibrate', { plan_id: planId, balance_usd: bal });
+    showToast(`Guthaben auf $${bal.toFixed(2)} gesetzt (Zähler ab heute).`);
+    loadCodingPlansSection();
+  } catch (e) { showToast('Aufladung fehlgeschlagen: ' + (e.message || e), true); }
+}
+function openCodingPlanForm(planId) {
+  const p = (window._cpLastPlans || []).find((x) => x.id === planId) || null;
+  const w = (kind) => (p?.windows || []).find((x) => x.kind === kind) || {};
+  const ov = document.createElement('div');
+  ov.className = 'modal-overlay';
+  ov.id = 'coding-plan-form';
+  ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+  const F = 'width:100%;padding:4px 8px;border:1px solid var(--border-100);border-radius:6px;font-size:12px;background:var(--bg-000);color:var(--text-100)';
+  const L = 'font-size:11px;color:var(--text-400);display:block;margin:8px 0 2px';
+  ov.innerHTML = `<div class="modal-content" style="max-width:420px;width:92%" onclick="event.stopPropagation()">
+    <div class="modal-header"><h2 style="font-size:15px">${p ? 'Plan bearbeiten' : 'Plan anlegen'}</h2>
+      <button class="modal-close" onclick="document.getElementById('coding-plan-form').remove()" style="margin-left:auto">&times;</button></div>
+    <div class="modal-body" style="font-size:12px">
+      <label style="${L}">Name</label><input id="cpf-name" style="${F}" value="${esc(p?.name || '')}" placeholder="z. B. Kilo API-Guthaben">
+      <label style="${L}">Typ</label>
+      <select id="cpf-type" style="${F}" onchange="document.getElementById('cpf-flat').style.display=this.value==='flat'?'':'none';document.getElementById('cpf-credit').style.display=this.value==='credit'?'':'none'">
+        <option value="flat"${(p?.type || 'flat') === 'flat' ? ' selected' : ''}>Flat (Abo mit Zeitfenster-Quotas — $0 verrechnet)</option>
+        <option value="credit"${p?.type === 'credit' ? ' selected' : ''}>Credit (API-Guthaben — echte Token-Abrechnung)</option>
+      </select>
+      <label style="${L}">Preis (Anzeige)</label><input id="cpf-price" style="${F}" value="${esc(p?.price || '')}" placeholder="z. B. $18/Monat">
+      <label style="${L}">Notiz</label><input id="cpf-note" style="${F}" value="${esc(p?.quota_note || '')}" placeholder="Quota-Hinweise">
+      <div id="cpf-flat" style="display:${(p?.type || 'flat') === 'flat' ? '' : 'none'}">
+        <label style="${L}">Limit 5h-Fenster (Tokens, leer = kein Fenster)</label><input id="cpf-l5h" type="number" style="${F}" value="${w('rolling_5h').limit_tokens || ''}">
+        <label style="${L}">Limit Woche (Tokens)</label><input id="cpf-l7d" type="number" style="${F}" value="${w('rolling_7d').limit_tokens || ''}">
+        <label style="${L}">Limit Monat (Tokens)</label><input id="cpf-lmon" type="number" style="${F}" value="${w('monthly').limit_tokens || ''}">
+        <label style="${L}">Monats-Zyklusstart (YYYY-MM-DD)</label><input id="cpf-anchor-mon" style="${F}" value="${esc(w('monthly').anchor || '')}" placeholder="nur bei Monats-Limit">
+        <label style="${L}">Cache-Token-Gewicht (Z.ai zählt ~0.67)</label><input id="cpf-wcached" type="number" step="0.01" style="${F}" value="${p?.count?.cached ?? 1.0}">
+      </div>
+      <div id="cpf-credit" style="display:${p?.type === 'credit' ? '' : 'none'}">
+        <label style="${L}">Guthaben ($)</label><input id="cpf-balance" type="number" step="0.01" style="${F}" value="${p?.balance_usd ?? ''}">
+        <label style="${L}">Aufladedatum (YYYY-MM-DD)</label><input id="cpf-anchor" style="${F}" value="${esc(p?.anchor || '')}" placeholder="heute wenn leer">
+      </div>
+      <div style="margin-top:8px;font-size:10.5px;color:var(--text-500)">Modelle verknüpfen Sie unter Einstellungen → Modelle → „Coding-Plan / Konto".</div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px">
+      <button onclick="document.getElementById('coding-plan-form').remove()" style="padding:5px 12px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100);color:var(--text-300);cursor:pointer">Abbrechen</button>
+      <button onclick="saveCodingPlanForm('${esc(p?.id || '')}')" style="padding:5px 12px;border:none;border-radius:6px;background:var(--accent-brand);color:#fff;cursor:pointer">Speichern</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+}
+async function saveCodingPlanForm(existingId) {
+  const v = (id) => document.getElementById(id)?.value?.trim() || '';
+  const name = v('cpf-name');
+  if (!name) { showToast('Name erforderlich.', true); return; }
+  const type = v('cpf-type') || 'flat';
+  const plan = {
+    id: existingId || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''),
+    name, type, price: v('cpf-price'), quota_note: v('cpf-note'),
+  };
+  if (type === 'credit') {
+    plan.balance_usd = parseFloat(v('cpf-balance')) || 0;
+    if (v('cpf-anchor')) plan.anchor = v('cpf-anchor');
+  } else {
+    plan.count = { fresh_in: 1.0, out: 1.0, cached: parseFloat(v('cpf-wcached')) || 1.0 };
+    plan.windows = [];
+    if (v('cpf-l5h')) plan.windows.push({ kind: 'rolling_5h', limit_tokens: parseInt(v('cpf-l5h'), 10) });
+    if (v('cpf-l7d')) plan.windows.push({ kind: 'rolling_7d', limit_tokens: parseInt(v('cpf-l7d'), 10) });
+    if (v('cpf-lmon')) plan.windows.push({ kind: 'monthly', limit_tokens: parseInt(v('cpf-lmon'), 10), anchor: v('cpf-anchor-mon') || undefined });
+    if (!plan.windows.length) { showToast('Mindestens ein Fenster-Limit angeben.', true); return; }
+  }
+  try {
+    await API.post('/v1/plans/save', { plan });
+    document.getElementById('coding-plan-form')?.remove();
+    showToast('Plan gespeichert.');
+    loadCodingPlansSection();
+  } catch (e) { showToast('Speichern fehlgeschlagen: ' + (e.message || e), true); }
+}
+async function deleteCodingPlan(planId) {
+  if (!confirm('Plan löschen? Die Verknüpfungen an den Modellen werden entfernt.')) return;
+  try {
+    await API.post('/v1/plans/delete', { plan_id: planId });
+    showToast('Plan gelöscht.');
+    loadCodingPlansSection();
+  } catch (e) { showToast('Löschen fehlgeschlagen: ' + (e.message || e), true); }
 }
 
 function openQueueModal() {

@@ -328,6 +328,306 @@ class AdminCostsHandlers:
             "by_use_case": by_use_case,
         })
 
+    # --- Coding-plan usage estimator (flat-plan window quotas) ---
+
+    @staticmethod
+    def _plan_config_path():
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+
+    @staticmethod
+    def _plan_models(plan: dict) -> list[str]:
+        """Resolve a plan's model set: every model whose `coding_plan` field
+        names this plan's id (the linkage lives ON THE MODEL, not the plan —
+        so the dashboard only shows plans that are actually wired up)."""
+        pid = plan.get("id") or ""
+        return [mid for mid, mc in (getattr(engine, "_models_config", None) or {}).items()
+                if (mc.get("coding_plan") or "") == pid]
+
+    @staticmethod
+    def _plan_window_since(win: dict) -> tuple[str, str | None]:
+        """(since_iso_utc, resets_at_iso|None) for a plan window. Rolling windows
+        approximate the vendor's session/weekly quota conservatively; `monthly`
+        steps calendar months from the `anchor` cycle-start date."""
+        now = _dt.datetime.utcnow()
+        kind = win.get("kind") or "rolling_5h"
+        if kind == "rolling_5h":
+            return (now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S"), None
+        if kind == "rolling_7d":
+            return (now - _dt.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S"), None
+        if kind == "monthly":
+            try:
+                anchor = _dt.datetime.strptime(win.get("anchor") or "", "%Y-%m-%d")
+            except ValueError:
+                anchor = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            start = anchor
+            while True:
+                ny, nm = (start.year + (start.month // 12), start.month % 12 + 1)
+                try:
+                    nxt = start.replace(year=ny, month=nm)
+                except ValueError:
+                    nxt = start.replace(year=ny, month=nm, day=1)
+                if nxt > now:
+                    return start.strftime("%Y-%m-%d %H:%M:%S"), nxt.strftime("%Y-%m-%d")
+                start = nxt
+        return (now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S"), None
+
+    _PLAN_WINDOW_LABELS = {"rolling_5h": "5h", "rolling_7d": "Woche", "monthly": "Monat"}
+
+    def _handle_plans_usage(self):
+        """GET /v1/plans/usage — estimated coding-plan window usage, computed
+        from our own cost_log (no vendor quota API exists). Weighted count:
+        fresh_in/out/cached × the plan's `count` weights (Z.ai discounts cached
+        prompt tokens ~0.67 in its plan counter)."""
+        if not self._require_auth():
+            return
+        if not engine._cost_tracker:
+            self._send_json({"error": "Cost tracking not initialized"}, 503)
+            return
+        try:
+            with open(self._plan_config_path()) as f:
+                plans = (json.load(f).get("coding_plans") or [])
+        except Exception as e:
+            self._send_json({"error": f"config read failed: {e}"}, 500)
+            return
+        out = []
+        for plan in plans:
+            models = self._plan_models(plan)
+            if not models:
+                continue          # nur Pläne zeigen, die real mit Modellen verknüpft sind
+            ptype = (plan.get("type") or "flat")
+            windows = []
+            if ptype == "credit":
+                # API-Guthaben (z. B. Kilo): verbraucht = SUMME der real
+                # verrechneten Kosten der verknüpften Modelle seit der letzten
+                # Aufladung (anchor); verfügbar = Kontingent − verbraucht.
+                anchor = (plan.get("anchor") or "1970-01-01") + " 00:00:00"
+                s = engine._cost_tracker.token_sums(models, anchor)
+                balance = float(plan.get("balance_usd") or 0.0)
+                spent = round(float(s["cost"]), 4)
+                windows.append({
+                    "kind": "credit", "label": "Guthaben",
+                    "balance_usd": balance,
+                    "used_usd": spent,
+                    "remaining_usd": round(balance - spent, 4),
+                    "pct": round(100.0 * spent / balance, 1) if balance > 0 else None,
+                    "calls": s["calls"],
+                    "anchor": plan.get("anchor") or "",
+                })
+            else:
+                cw = plan.get("count") or {}
+                w_in = float(cw.get("fresh_in", 1.0) or 0.0)
+                w_out = float(cw.get("out", 1.0) or 0.0)
+                w_cr = float(cw.get("cached", 1.0) or 0.0)
+                for win in (plan.get("windows") or []):
+                    since, resets = self._plan_window_since(win)
+                    s = engine._cost_tracker.token_sums(models, since)
+                    used = (s["tokens_in"] * w_in + s["tokens_out"] * w_out
+                            + s["cache_read_tokens"] * w_cr)
+                    limit = float(win.get("limit_tokens") or 0)
+                    windows.append({
+                        "kind": win.get("kind"),
+                        "label": self._PLAN_WINDOW_LABELS.get(win.get("kind"), win.get("kind")),
+                        "limit_tokens": int(limit),
+                        "used_est": int(used),
+                        "pct": round(100.0 * used / limit, 1) if limit > 0 else None,
+                        "calls": s["calls"],
+                        "resets_at": resets,
+                        "anchor": win.get("anchor") or "",
+                    })
+            out.append({
+                "id": plan.get("id"), "name": plan.get("name") or plan.get("id"),
+                "type": ptype,
+                "count": plan.get("count") or {},
+                "balance_usd": plan.get("balance_usd"),
+                "anchor": plan.get("anchor") or "",
+                "price": plan.get("price") or "", "price_note": plan.get("price_note") or "",
+                "url": plan.get("url") or "", "quota_note": plan.get("quota_note") or "",
+                "models": models, "calibrated_at": plan.get("calibrated_at") or "",
+                "windows": windows,
+            })
+        self._send_json({"plans": out})
+
+    def _handle_plans_save(self):
+        """POST /v1/plans/save {plan} — admin: create or update a coding-plan /
+        billing-account object (upsert by id). Model linkage happens on the
+        MODEL (models.<id>.coding_plan) in the Models grid, not here."""
+        user = self._require_auth()
+        if not user:
+            return
+        if user.get("role") != "admin" and user.get("id") != "__system__":
+            self._send_json({"error": "admin only"}, 403)
+            return
+        body = self._read_json()
+        plan = body.get("plan") or {}
+        pid = (plan.get("id") or "").strip()
+        if not pid or not (plan.get("name") or "").strip():
+            self._send_json({"error": "id und name erforderlich"}, 400)
+            return
+        ptype = (plan.get("type") or "flat")
+        if ptype not in ("flat", "credit"):
+            self._send_json({"error": "type muss 'flat' oder 'credit' sein"}, 400)
+            return
+        # Whitelist der persistierten Felder (kein Blind-Merge von Client-JSON).
+        clean = {"id": pid, "name": plan.get("name").strip(), "type": ptype,
+                 "price": str(plan.get("price") or ""),
+                 "quota_note": str(plan.get("quota_note") or ""),
+                 "url": str(plan.get("url") or ""),
+                 "calibrated_at": _dt.date.today().isoformat()}
+        if ptype == "credit":
+            try:
+                clean["balance_usd"] = float(plan.get("balance_usd") or 0.0)
+            except (TypeError, ValueError):
+                self._send_json({"error": "balance_usd (Zahl) erforderlich"}, 400)
+                return
+            clean["anchor"] = str(plan.get("anchor") or _dt.date.today().isoformat())
+        else:
+            cw = plan.get("count") or {}
+            clean["count"] = {"fresh_in": float(cw.get("fresh_in", 1.0) or 0),
+                              "out": float(cw.get("out", 1.0) or 0),
+                              "cached": float(cw.get("cached", 1.0) or 0)}
+            wins = []
+            for w in (plan.get("windows") or []):
+                if w.get("kind") not in ("rolling_5h", "rolling_7d", "monthly"):
+                    continue
+                try:
+                    lim = int(float(w.get("limit_tokens") or 0))
+                except (TypeError, ValueError):
+                    continue
+                if lim <= 0:
+                    continue
+                entry = {"kind": w["kind"], "limit_tokens": lim}
+                if w["kind"] == "monthly":
+                    entry["anchor"] = str(w.get("anchor") or _dt.date.today().replace(day=1).isoformat())
+                wins.append(entry)
+            if not wins:
+                self._send_json({"error": "mindestens ein Fenster mit Limit erforderlich"}, 400)
+                return
+            clean["windows"] = wins
+        cfg_path = self._plan_config_path()
+        try:
+            with open(cfg_path) as f:
+                config = json.load(f)
+            plans = config.get("coding_plans") or []
+            plans = [p for p in plans if p.get("id") != pid] + [clean]
+            config["coding_plans"] = plans
+            with open(cfg_path, "w") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            self._send_json({"ok": True, "plan": clean})
+        except Exception as e:
+            self._send_json({"error": f"Speichern fehlgeschlagen: {e}"}, 500)
+
+    def _handle_plans_delete(self):
+        """POST /v1/plans/delete {plan_id} — admin: remove a plan object AND
+        detach it from every model that referenced it."""
+        user = self._require_auth()
+        if not user:
+            return
+        if user.get("role") != "admin" and user.get("id") != "__system__":
+            self._send_json({"error": "admin only"}, 403)
+            return
+        pid = (self._read_json().get("plan_id") or "").strip()
+        if not pid:
+            self._send_json({"error": "plan_id erforderlich"}, 400)
+            return
+        cfg_path = self._plan_config_path()
+        try:
+            with open(cfg_path) as f:
+                config = json.load(f)
+            config["coding_plans"] = [p for p in (config.get("coding_plans") or [])
+                                      if p.get("id") != pid]
+            detached = 0
+            for mid, mc in (config.get("models") or {}).items():
+                if (mc.get("coding_plan") or "") == pid:
+                    mc.pop("coding_plan", None)
+                    detached += 1
+            with open(cfg_path, "w") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            # In-Memory-Modelle nachziehen (Verknüpfung wirkt in der Abrechnung).
+            for mid, mc in (getattr(engine, "_models_config", None) or {}).items():
+                if (mc.get("coding_plan") or "") == pid:
+                    mc.pop("coding_plan", None)
+            self._send_json({"ok": True, "detached_models": detached})
+        except Exception as e:
+            self._send_json({"error": f"Löschen fehlgeschlagen: {e}"}, 500)
+
+    def _handle_plans_calibrate(self):
+        """POST /v1/plans/calibrate {plan_id, window_kind, dashboard_pct} —
+        admin: refit a window's limit from the vendor dashboard's REAL percent
+        (limit = current window usage / pct). Stamps calibrated_at."""
+        user = self._require_auth()
+        if not user:
+            return
+        if user.get("role") != "admin" and user.get("id") != "__system__":
+            self._send_json({"error": "admin only"}, 403)
+            return
+        body = self._read_json()
+        plan_id = (body.get("plan_id") or "").strip()
+        wkind = (body.get("window_kind") or "").strip()
+        # Credit-Aufladung: {plan_id, balance_usd[, anchor]} setzt Kontingent +
+        # Aufladedatum neu (statt Prozent-Kalibrierung).
+        if body.get("balance_usd") is not None:
+            try:
+                bal = float(body.get("balance_usd"))
+            except (TypeError, ValueError):
+                self._send_json({"error": "balance_usd (Zahl) erforderlich"}, 400)
+                return
+            cfg_path = self._plan_config_path()
+            try:
+                with open(cfg_path) as f:
+                    config = json.load(f)
+                plan = next((p for p in (config.get("coding_plans") or [])
+                             if p.get("id") == plan_id), None)
+                if not plan or (plan.get("type") or "flat") != "credit":
+                    self._send_json({"error": f"Credit-Plan nicht gefunden: {plan_id}"}, 404)
+                    return
+                plan["balance_usd"] = bal
+                plan["anchor"] = str(body.get("anchor") or _dt.date.today().isoformat())
+                plan["calibrated_at"] = _dt.date.today().isoformat()
+                with open(cfg_path, "w") as f:
+                    json.dump(config, f, indent=2, ensure_ascii=False)
+                self._send_json({"ok": True, "plan_id": plan_id,
+                                 "balance_usd": bal, "anchor": plan["anchor"]})
+            except Exception as e:
+                self._send_json({"error": f"Aufladung fehlgeschlagen: {e}"}, 500)
+            return
+        try:
+            pct = float(body.get("dashboard_pct"))
+        except (TypeError, ValueError):
+            self._send_json({"error": "dashboard_pct (Zahl) erforderlich"}, 400)
+            return
+        if pct <= 0 or pct > 100:
+            self._send_json({"error": "dashboard_pct muss in (0, 100] liegen"}, 400)
+            return
+        cfg_path = self._plan_config_path()
+        try:
+            with open(cfg_path) as f:
+                config = json.load(f)
+            plans = config.get("coding_plans") or []
+            plan = next((p for p in plans if p.get("id") == plan_id), None)
+            win = next((w for w in (plan.get("windows") or []) if w.get("kind") == wkind), None) if plan else None
+            if not win:
+                self._send_json({"error": f"Plan/Fenster nicht gefunden: {plan_id}/{wkind}"}, 404)
+                return
+            models = self._plan_models(plan)
+            cw = plan.get("count") or {}
+            since, _ = self._plan_window_since(win)
+            s = engine._cost_tracker.token_sums(models, since)
+            used = (s["tokens_in"] * float(cw.get("fresh_in", 1.0) or 0)
+                    + s["tokens_out"] * float(cw.get("out", 1.0) or 0)
+                    + s["cache_read_tokens"] * float(cw.get("cached", 1.0) or 0))
+            if used <= 0:
+                self._send_json({"error": "Keine Nutzung im Fenster — Kalibrierung braucht Verkehr im Ledger"}, 400)
+                return
+            win["limit_tokens"] = int(round(used / (pct / 100.0)))
+            plan["calibrated_at"] = _dt.date.today().isoformat()
+            with open(cfg_path, "w") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            self._send_json({"ok": True, "plan_id": plan_id, "window_kind": wkind,
+                             "new_limit_tokens": win["limit_tokens"],
+                             "used_est": int(used)})
+        except Exception as e:
+            self._send_json({"error": f"Kalibrierung fehlgeschlagen: {e}"}, 500)
+
     # --- Per-user cost quotas ---
 
     def _handle_quota_me(self):

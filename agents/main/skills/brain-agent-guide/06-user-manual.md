@@ -101,6 +101,21 @@ Dieselben Kennzahlen in derselben Reihenfolge erscheinen auch im
 **Sitzungs-Inspektor** (Lupe in der Statusleiste): oben als Kacheln für die
 ganze Sitzung, und in jeder Anfrage-Kopfzeile pro Turn („API $… ·
 verrechnet $… · ⚡ −$…").
+
+Zwischen Kontingenten und Kostentabelle sitzt die Sektion **„Coding-Pläne &
+API-Guthaben (geschätzt)"** (9.283.0): eine Zeile pro Abrechnungskonto, das
+mit mindestens einem Modell verknüpft ist — mit Name, Abo-Preis und pro
+Zeitfenster (5h / Woche / Monat) einem Balken mit geschätzter Auslastung
+(grün/gelb/rot). **Flat-Pläne** (Z.ai/Kimi Coding Plan, Mistral Vibe) zeigen
+Token-Fenster; **Credit-Konten** (API-Guthaben, z. B. Kilo) zeigen verbraucht/
+verfügbar in $ seit der letzten Aufladung. Die Werte sind aus dem eigenen
+Nutzungs-Ledger **geschätzt** (die Anbieter haben keine Quota-API) — Admins
+kalibrieren per %-Feld gegen das echte Anbieter-Dashboard (das Limit wird
+daraus neu berechnet) bzw. setzen bei Credit-Konten nach einer Aufladung das
+neue Guthaben. **„+ Plan"** legt ein Konto an (Typ Flat oder Credit, Preis,
+Fenster-Limits bzw. Guthaben); ✎/× bearbeiten/löschen. Die **Verknüpfung
+Modell ↔ Plan** geschieht unter Einstellungen → Modelle im Dropdown
+**„Coding-Plan / Konto"** — nur verknüpfte Pläne erscheinen im Dashboard.
 Über das Auswahlmenü oben rechts wählt man den **Zeitraum** (Heute, Diese Woche,
 letzte 7/30/180/365 Tage, seit Jahresbeginn, aktueller/letzter Abrechnungszeitraum,
 Gesamt). Hinweis: lokale Modelle sind kostenlos und erscheinen mit 0 $ (aber echten
@@ -1427,15 +1442,18 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   cached ($/M)"** — der Preis für Tokens aus dem Prompt-Cache (leer = automatisch
   0,1× des Eingabepreises). Ein gesetzter Wert markiert das Modell zugleich als
   „cache-priced" (Auto-Routing friert Modell + Tools dann auf Turn 1 ein, damit
-  der Provider-Cache trifft). Daneben die Checkbox **„Flatrate / Coding-Plan"**
-  (9.281.0): Ist sie gesetzt, wird jeder Aufruf dieses Modells mit **0 $
-  realen Kosten** verbucht (Quotas, Plan-Verbrauch) — für Modelle, die über
-  einen Abo-Plan laufen (Z.ai/Kimi Coding Plan, Mistral Vibe). Das gilt auch
-  für die seiten-basierte **OCR**- und die zeichen-basierte **TTS**-Abrechnung,
-  wenn das jeweilige OCR-/Voxtral-Modell das Flag trägt. Die Kostenfelder
-  behalten dabei den **API-Listenpreis**; daraus rechnen Statuszeile und
-  Kostenaufstellung den hypothetischen „API-Listenpreis ohne Flatrate" samt
-  Ersparnis. Der Cache-Freeze („Kosten cached") bleibt davon unberührt. Pro
+  der Provider-Cache trifft). Daneben das Dropdown **„Coding-Plan / Konto"**
+  (9.281.0, seit 9.283.0 als Plan-Verknüpfung): Es verbindet das Modell mit
+  einem Abrechnungskonto aus der Plan-Nutzung-Sektion. Ein **Flat-Plan**
+  (Z.ai/Kimi Coding Plan, Mistral Vibe — oder „Flatrate ohne Plan-Objekt")
+  verbucht jeden Aufruf mit **0 $ realen Kosten** (Quotas, Plan-Verbrauch);
+  das gilt auch für die seiten-basierte **OCR**- und die zeichen-basierte
+  **TTS**-Abrechnung. Ein **Credit-Konto** (API-Guthaben, z. B. Kilo) rechnet
+  weiter real nach Token — der Verbrauch läuft gegen das hinterlegte
+  Kontingent im Dashboard. Die Kostenfelder behalten in beiden Fällen den
+  **API-Listenpreis**; daraus rechnen Statuszeile und Kostenaufstellung den
+  hypothetischen „API-Listenpreis ohne Flatrate" samt Ersparnis. Der
+  Cache-Freeze („Kosten cached") bleibt davon unberührt. Pro
   Modell über das ⚙-Icon: u.a. **Fan-out-Modell** — teilt dieses Chat-Modell im
   Chat eine Hintergrundaufgabe per Fan-out auf, laufen die Leaf-Tasks auf dem
   hier gewählten (meist günstigeren) Modell; leer = bleiben auf diesem Modell.

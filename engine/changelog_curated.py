@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.283.0",
+        "date": "2026-07-04",
+        "title": "Coding-Pläne und API-Guthaben im Blick",
+        "body": "Die Plan-Nutzung zeigt jetzt Ihre Abo-Pläne und API-Guthaben "
+                "als eigene Übersicht: pro Plan der Monatspreis und farbige "
+                "Auslastungsbalken für jedes Zeitfenster (5 Stunden, Woche, "
+                "Monat), bei Guthaben-Konten der verbrauchte und noch "
+                "verfügbare Betrag seit der letzten Aufladung. Pläne legen "
+                "Sie selbst an und verknüpfen sie pro Modell in den "
+                "Modell-Einstellungen — angezeigt wird nur, was wirklich in "
+                "Benutzung ist. Da die Anbieter keine Abfrage-Schnittstelle "
+                "bieten, sind die Werte aus der eigenen Nutzung geschätzt und "
+                "lassen sich mit einem Klick gegen das echte "
+                "Anbieter-Dashboard kalibrieren.",
+        "audience": "user",
+        "versions": ["9.283.0"],
+    },
+    {
         "version": "9.281.0",
         "date": "2026-07-04",
         "title": "Ehrliche Kosten: Flatrate, Listenpreis und Cache-Ersparnis",

@@ -317,7 +317,7 @@
         }
       },
       "cost_cache_read": 0.15,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-small-latest": {
       "enabled": true,
@@ -449,7 +449,7 @@
       },
       "raw_formats": [],
       "cost_cache_read": 0.01275,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-medium-latest": {
       "enabled": false,
@@ -473,7 +473,7 @@
       "is_local": false,
       "warmup": false,
       "base_model_id": "mistral-medium-latest",
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "magistral-medium-latest": {
       "enabled": false,
@@ -492,7 +492,7 @@
       "is_local": false,
       "warmup": false,
       "base_model_id": "magistral-medium-latest",
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "gemma-4-26B-A4B-it-MLX-4bit": {
       "enabled": false,
@@ -819,7 +819,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-medium-2508": {
       "enabled": false,
@@ -842,7 +842,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-direct/mistral-medium-latest": {
       "enabled": false,
@@ -866,7 +866,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-medium": {
       "enabled": false,
@@ -889,7 +889,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-vibe-cli-with-tools": {
       "enabled": false,
@@ -912,7 +912,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "open-mistral-nemo": {
       "enabled": false,
@@ -935,7 +935,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "open-mistral-nemo-2407": {
       "enabled": false,
@@ -958,7 +958,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-tiny-2407": {
       "enabled": false,
@@ -981,7 +981,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-tiny-latest": {
       "enabled": false,
@@ -1004,7 +1004,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "codestral-2508": {
       "enabled": false,
@@ -1022,7 +1022,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "codestral-latest": {
       "enabled": false,
@@ -1040,7 +1040,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "devstral-2512": {
       "enabled": false,
@@ -1063,7 +1063,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "devstral-medium-latest": {
       "enabled": false,
@@ -1086,7 +1086,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "devstral-latest": {
       "enabled": false,
@@ -1109,7 +1109,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-small-2603": {
       "enabled": false,
@@ -1132,7 +1132,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-direct/mistral-small-latest": {
       "enabled": false,
@@ -1156,7 +1156,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-vibe-cli-fast": {
       "enabled": false,
@@ -1179,7 +1179,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "magistral-small-latest": {
       "enabled": false,
@@ -1197,7 +1197,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "magistral-medium-2509": {
       "enabled": false,
@@ -1215,7 +1215,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-direct/magistral-medium-latest": {
       "enabled": false,
@@ -1235,7 +1235,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-small-2507": {
       "enabled": true,
@@ -1256,7 +1256,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-small-latest": {
       "enabled": true,
@@ -1277,7 +1277,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-large-2512": {
       "enabled": false,
@@ -1300,7 +1300,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-large-latest": {
       "enabled": false,
@@ -1323,7 +1323,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "ministral-3b-2512": {
       "enabled": false,
@@ -1341,7 +1341,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "ministral-3b-latest": {
       "enabled": false,
@@ -1359,7 +1359,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "ministral-8b-2512": {
       "enabled": false,
@@ -1377,7 +1377,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "ministral-8b-latest": {
       "enabled": false,
@@ -1395,7 +1395,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "ministral-14b-2512": {
       "enabled": false,
@@ -1413,7 +1413,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "ministral-14b-latest": {
       "enabled": false,
@@ -1431,7 +1431,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-direct/mistral-medium-3.5": {
       "enabled": false,
@@ -1455,7 +1455,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-medium-3": {
       "enabled": false,
@@ -1478,7 +1478,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-medium-2604": {
       "enabled": false,
@@ -1501,7 +1501,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-vibe-cli-latest": {
       "enabled": false,
@@ -1524,7 +1524,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-latest": {
       "enabled": true,
@@ -1545,7 +1545,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "magistral-small-2509": {
       "enabled": false,
@@ -1563,7 +1563,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-small-2506": {
       "enabled": false,
@@ -1586,7 +1586,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-embed-2312": {
       "enabled": false,
@@ -1609,7 +1609,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-embed": {
       "enabled": false,
@@ -1632,7 +1632,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "codestral-embed": {
       "enabled": false,
@@ -1650,7 +1650,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "codestral-embed-2505": {
       "enabled": false,
@@ -1668,7 +1668,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-moderation-2603": {
       "enabled": false,
@@ -1691,7 +1691,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-ocr-2512": {
       "enabled": false,
@@ -1714,7 +1714,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-ocr-latest": {
       "enabled": true,
@@ -1735,7 +1735,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-2602": {
       "enabled": true,
@@ -1756,7 +1756,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-transcribe-realtime-2602": {
       "enabled": true,
@@ -1777,7 +1777,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-realtime-2602": {
       "enabled": true,
@@ -1798,7 +1798,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-realtime-latest": {
       "enabled": true,
@@ -1819,7 +1819,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-tts-2603": {
       "enabled": true,
@@ -1841,7 +1841,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-tts-latest": {
       "enabled": true,
@@ -1863,7 +1863,7 @@
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "gemma-4-26b-cloud": {
       "enabled": false,
@@ -1890,7 +1890,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "base_model_id": "google/gemma-4-26b-a4b-it"
+      "base_model_id": "google/gemma-4-26b-a4b-it",
+      "coding_plan": "kilo-credit"
     },
     "gemma-4-31b-cloud": {
       "enabled": false,
@@ -1917,7 +1918,8 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "base_model_id": "google/gemma-4-31b-it"
+      "base_model_id": "google/gemma-4-31b-it",
+      "coding_plan": "kilo-credit"
     },
     "deepseek-v4-pro": {
       "enabled": true,
@@ -2040,7 +2042,8 @@
           }
         }
       },
-      "base_model_id": "deepseek/deepseek-v4-pro:discounted"
+      "base_model_id": "deepseek/deepseek-v4-pro:discounted",
+      "coding_plan": "kilo-credit"
     },
     "deepseek-v4-flash": {
       "enabled": true,
@@ -2163,7 +2166,8 @@
           }
         }
       },
-      "base_model_id": "deepseek/deepseek-v4-flash:discounted"
+      "base_model_id": "deepseek/deepseek-v4-flash:discounted",
+      "coding_plan": "kilo-credit"
     },
     "voxtral-mini-2507": {
       "enabled": true,
@@ -2184,7 +2188,7 @@
       "_audio_backfilled": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-code-latest": {
       "enabled": false,
@@ -2207,7 +2211,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-code-fim-latest": {
       "enabled": false,
@@ -2230,7 +2234,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-code-agent-latest": {
       "enabled": false,
@@ -2253,7 +2257,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "Lokal-M4/Qwen2.5-7B-Instruct-4bit": {
       "enabled": false,
@@ -2321,7 +2325,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-ocr-3": {
       "enabled": false,
@@ -2344,7 +2348,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-ocr-4-0": {
       "enabled": false,
@@ -2367,7 +2371,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "mistral-ocr-4": {
       "enabled": false,
@@ -2390,7 +2394,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "gemma-4-12B-it-qat-4bit": {
       "enabled": true,
@@ -2534,7 +2538,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "labs-leanstral-1-5": {
       "enabled": false,
@@ -2552,7 +2556,7 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "flat_plan": true
+      "coding_plan": "mistral-vibe"
     },
     "glm-5.2": {
       "enabled": true,
@@ -2679,7 +2683,7 @@
         }
       },
       "base_model_id": "zai-coding/glm-5.2",
-      "flat_plan": true
+      "coding_plan": "glm-lite"
     },
     "kimi-k2.6": {
       "enabled": true,
@@ -2804,7 +2808,7 @@
         }
       },
       "base_model_id": "kimi-coding/kimi-for-coding",
-      "flat_plan": true
+      "coding_plan": "kimi-moderato"
     },
     "zai-coding/glm-5.2": {
       "enabled": false,
@@ -5631,5 +5635,87 @@
     "enabled": true
   },
   "goal_judge_model": "glm-5.2",
-  "model_sync_auto_enable": false
+  "model_sync_auto_enable": false,
+  "coding_plans": [
+    {
+      "id": "glm-lite",
+      "name": "Z.ai Coding Plan (Lite)",
+      "type": "flat",
+      "price": "$18/Monat (Promo $12.60 bis Sep 2026)",
+      "quota_note": "offiziell ~80 Prompts/5h, ~400/Woche; Token-Limits aus Dashboard-Kalibrierung 04.07.",
+      "url": "https://z.ai/subscribe",
+      "count": {
+        "fresh_in": 1.0,
+        "out": 1.0,
+        "cached": 0.67
+      },
+      "windows": [
+        {
+          "kind": "rolling_5h",
+          "limit_tokens": 12500000
+        },
+        {
+          "kind": "rolling_7d",
+          "limit_tokens": 63000000
+        }
+      ],
+      "calibrated_at": "2026-07-04"
+    },
+    {
+      "id": "kimi-moderato",
+      "name": "Kimi Code (Moderato)",
+      "type": "flat",
+      "price": "$19/Monat",
+      "quota_note": "eng — nur für Referenz-Drafts/leichte Chats; Limits aus Dashboard-Kalibrierung 04.07.",
+      "url": "https://www.kimi.com/coding",
+      "count": {
+        "fresh_in": 1.0,
+        "out": 1.0,
+        "cached": 1.0
+      },
+      "windows": [
+        {
+          "kind": "rolling_5h",
+          "limit_tokens": 340000
+        },
+        {
+          "kind": "rolling_7d",
+          "limit_tokens": 1900000
+        }
+      ],
+      "calibrated_at": "2026-07-04"
+    },
+    {
+      "id": "mistral-vibe",
+      "name": "Mistral Pro (Vibe)",
+      "type": "flat",
+      "price": "$14.99/Monat",
+      "quota_note": "Monats-Kontingent; Reset ~31.07.; deckt Chat+OCR+Voxtral (alles api.mistral.ai)",
+      "url": "https://mistral.ai/pricing",
+      "count": {
+        "fresh_in": 1.0,
+        "out": 1.0,
+        "cached": 1.0
+      },
+      "windows": [
+        {
+          "kind": "monthly",
+          "limit_tokens": 7700000,
+          "anchor": "2026-07-01"
+        }
+      ],
+      "calibrated_at": "2026-07-04"
+    },
+    {
+      "id": "kilo-credit",
+      "name": "Kilo API-Guthaben",
+      "type": "credit",
+      "price": "Pay-as-you-go (Token-Listenpreis)",
+      "quota_note": "deepseek + gemma-cloud; Aufladung $20 am 04.07.",
+      "url": "https://app.kilo.ai/profile",
+      "balance_usd": 20.0,
+      "anchor": "2026-07-04",
+      "calibrated_at": "2026-07-04"
+    }
+  ]
 }

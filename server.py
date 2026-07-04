@@ -1679,6 +1679,8 @@ class BrainAgentHandler(
             self._handle_costs_daily()
         elif path == "/v1/costs/breakdown":
             self._handle_costs_breakdown()
+        elif path == "/v1/plans/usage":
+            self._handle_plans_usage()
         elif path == "/v1/quotas/me":
             self._handle_quota_me()
         elif path == "/v1/quotas/config":
@@ -2132,6 +2134,12 @@ class BrainAgentHandler(
             self._handle_kg_reextract()
         elif path == "/v1/quotas/config":
             self._handle_quota_config_save()
+        elif path == "/v1/plans/calibrate":
+            self._handle_plans_calibrate()
+        elif path == "/v1/plans/save":
+            self._handle_plans_save()
+        elif path == "/v1/plans/delete":
+            self._handle_plans_delete()
         elif path == "/v1/tools/settings":
             self._handle_tool_settings_save()
         elif path == "/v1/classification/config":

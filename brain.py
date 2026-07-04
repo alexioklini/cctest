@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.282.1"
+VERSION = "9.283.0"
 VERSION_DATE = "2026-07-04"
 CHANGELOG = [
+    ("9.283.0", "2026-07-04", "feat(Coding-Plan-Dashboard): Abrechnungskonten als EIGENE Objekte + Verknüpfung AM MODELL + Nutzungs-Schätzung im Plan-Popover (User-Design: 'eigene Objekte … beim Modell hinterlegt man den Plan … nicht hardgecodet … Dashboard zeigt nur was verknüpft ist' + 'manuelle Anlage von API-Anbietern wie Kilo mit Kontingent'). KONZEPT: config.json → coding_plans = Liste von Plan-Objekten mit type 'flat' (Abo mit Zeitfenster-Quotas — Aufrufe buchen $0) oder 'credit' (API-Guthaben — echte Token-Abrechnung gegen hinterlegtes Kontingent); Modelle verlinken per models.<id>.coding_plan=<plan-id> (ersetzt die 9.281.0-flat_plan-Massenflags; flat_plan bleibt als planloses Flatrate-Flag). brain.model_is_flat_plan ist jetzt TYP-BEWUSST (coding_plan→flat nur wenn Plan-Typ != credit; neue brain.get_coding_plans mit mtime-Cache auf config.json — server_config kopiert nur selektive Keys, der Plan-Editor schreibt direkt auf Platte). SERVER: GET /v1/plans/usage (nur Pläne MIT verknüpften Modellen; flat: gewichtete Token-Summen — count.cached z. B. 0.67 für Z.ais rabattierte Cache-Zählung — je rolling_5h/rolling_7d/monthly-Fenster gegen limit_tokens, monthly mit Anker-Zyklus + resets_at; credit: SUM(cost_usd) der verknüpften Modelle seit anchor → used/remaining/pct in $); POST /v1/plans/save (Upsert per id, Feld-Whitelist, Fenster-Validierung) + /v1/plans/delete (löst auch Modell-Verknüpfungen, Datei+In-Memory) + /v1/plans/calibrate (dashboard_pct → Limit-Refit aus Ist-Fensternutzung; balance_usd[+anchor] → Credit-Aufladung); alle admin-gated. CostTracker.token_sums liefert zusätzlich SUM(cost_usd). GET /v1/models/config → coding_plans-Roster (id/name/price) für das Grid-Dropdown. UI: (1) Plan-Popover neue Sektion 'Coding-Pläne & API-Guthaben (geschätzt)' — pro Plan Name/Abo-Preis/Kalibrierdatum + je Fenster Farbbalken (grün/gelb/rot ab 70/90%) mit ~%- und Token- bzw. $-Angaben; Admin: %-Kalibrierfeld je Fenster, $-Aufladefeld je Credit-Konto, '+ Plan'-Formular (Typ-abhängige Felder) + ✎/×. (2) Modelle-Grid: Dropdown 'Coding-Plan / Konto' (— keiner — / Flatrate ohne Plan-Objekt / Plan-Liste) ersetzt die 9.281.0-Checkbox; Save schreibt coding_plan XOR flat_plan. SEED (config, WEB-RECHERCHE für Preise): glm-lite $18/Monat (Promo $12.60, ~80 Prompts/5h offiziell; Limits 12,5M/5h + 63M/Woche aus Dashboard-Kalibrierung), kimi-moderato $19/Monat (340k/5h + 1,9M/Woche — eng, nur Referenz-Rolle), mistral-vibe $14.99/Monat (7,7M/Monat, Anker 01.07.), kilo-credit $20 Aufladung 04.07. (deepseek-v4-* + gemma-cloud verknüpft — bleiben ECHTE Kosten). VERIFIZIERT live: /v1/plans/usage liefert alle 4 (Mistral ~8,2% ≈ Dashboard 8%; Kilo $0.13 verbraucht/$19.87 frei); Playwright: Sektion rendert alle Pläne + Balken, Formular öffnet; Modelle-Payload trägt Roster + Verknüpfungen. EINSCHRÄNKUNG (Übergangstag): rollierende Fenster mischen heute noch Vor-Plan-Verkehr (Kilo-Guthaben-Ära) ein → 5h/Woche über-schätzt bis die Fenster durchrotiert sind; Monats-/Credit-Zahlen exakt. py_compile OK; js_gate GRÜN (net-globals 1835→1843, +8 Plan-Fns, Baseline im Commit). Skill 01 (4 Endpoints) + 06 (Sektion + Dropdown) + SKILL.md 1.133.0 im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (user+admin)."),
     ("9.282.1", "2026-07-04", "feat(Flatrate für OCR+TTS): flat_plan deckt jetzt auch die unit-billed Dienste ab (User: 'alles via mistral geht über flatrate'). VORAB VERIFIZIERT, dass alle Mistral-Sonderdienste nach dem CLIProxyAPI-Aus direkt erreichbar sind (Live-Probes api.mistral.ai/vibe-Key): /v1/ocr (mistral-ocr-latest, 4-Seiten-PDF→Markdown OK), /audio/speech (voxtral-mini-tts-latest, audio_data-Base64-JSON — Brain dekodiert das bereits in BEIDEN Pfaden translate.py+audio_overview.py), /audio/transcriptions (voxtral-mini-latest, Roundtrip OK), /audio/voices (items-Format, wird so geparst); ocr.provider/tools_config-Slots standen schon auf mistral-direct — kein Wiring-Fix nötig. NEU: (1) log_ocr/log_tts (engine/quotas.py, der EINE Choke-Point beider Unit-Abrechnungen): model_is_flat_plan(model) → cost_usd=0 (Quotas/Plan-Verbrauch sauber), der Caller-Betrag bleibt der Listenpreis. (2) Listenpreis-Rekonstruktion für Unit-Rows: neue quotas._unit_list_cost(purpose, units) — purpose 'ocr' = Seiten(tokens_in) × ocr.cost_per_page_usd, 'read_aloud'/'audio_overview' = Zeichen/1000 × text_to_speech.cost_per_1k_chars_usd; get_session_cost GROUP BY (model,purpose) + admin_costs._list_cost fragen sie VOR der Token-Rechnung ab (die für Unit-Rows 0 ergäbe). (3) config.json: flat_plan auf ALLE 62 restlichen mistral-direct-Modelle (inkl. mistral-ocr-latest + alle voxtral-*). VERIFIZIERT live: /v1/translate/tts durch Brains echten Pfad → 14KB Audio, cost_log-Zeile purpose=read_aloud cost_usd=0.0, Breakdown 'Vorlesen (TTS)' real=$0 / list=$0.000005 (=33 Zeichen × 0.00015/1k, exakt). py_compile OK. Server-Restart nötig. Kuratiert: an 9.281.0-Eintrag angehängt."),
     ("9.282.0", "2026-07-04", "feat(Kosten-Konsistenz): EINE Kennzahlen-Reihenfolge überall — API-Kosten (Listenpreis) → Verrechnet → Cache-Ersparnis (User-Report: Kostenaufstellung 'extrem unübersichtlich'). (1) PLAN-POPOVER Kostenaufstellung als ECHTE SPALTEN-TABELLE statt Balken+verschachtelter Inline-Werte (monitors.js): Spalten Anwendungsfall/Modell · Aufrufe · Token ein · Token aus · ⚡ Gecached · API-Kosten · Verrechnet · ⚡-Ersparnis; Use-Case-Zeilen aufklappbar → Modell-Zeilen (tr[data-uc], toggleCostUseCase auf Tabellenzeilen umgestellt); Kopf-Kacheln (4 Kennzahlen + Token-Zeile) bleiben. Serverseitig liefert /v1/costs/breakdown dafür cache_savings zusätzlich pro Bucket/Modell (war bisher nur total — 9.281.0 hatte es schon je Ebene accumuliert). (2) SITZUNGS-INSPEKTOR: Kacheln-Leiste 6→8 (Anfragen · Token ein/aus · ⚡ Gecached · Dauer · API-Kosten · Verrechnete Kosten · Cache-Ersparnis, gleiche Reihenfolge, Tooltips wie im Popover); PRO TURN zeigt die Anfrage-Kopfzeile 'API $x · verrechnet $y · ⚡ −$z'. Server (handlers/sessions_handler.py _handle_session_inspect): pro Turn cost_list als DELTA des kumulativen msg_metadata.cost_list (Muster turn_cost; Alt-Turns ohne Feld: Liste=real) + cache_savings zum Tarif des Turn-Modells; totals.cost_list = letzter kumulativer Stand. VERIFIZIERT live (Playwright + Endpoint-Probe auf MoA-Session 6801c2e8): Tabellen-Header komplett, 20 Modell-Zeilen klappen, Inspector-Kacheln + Turn-Zeile 'API $0.1113 · verrechnet $0.1113' (Vor-Flag-Session: Liste=real korrekt), cache_savings $0.0927 = 81k ⚡ × (1.4−0.26)/M. py_compile OK, js_gate GRÜN. Skill 06 (Kostenaufstellung als Tabelle + Inspector-Kennzahlen) + SKILL.md 1.131.0 im selben Commit. Server-Restart nötig (Inspect-Endpoint). Kuratiert: an 9.281.0-Eintrag angehängt."),
     ("9.281.1", "2026-07-04", "fix(Statusleiste): Cache-Tooltip behauptete bei MoA-/Auto-Sessions fälschlich 'kein Cache-Tarif hinterlegt' (User-Report, Eval-Chats). URSACHE: updateStatusBar keyte den cost_cache_read-Check UND cacheSavingsUSD auf chat.model — bei den virtuellen Direktiven (moa/auto/auto-cloud/auto-local) existiert dort kein Kosten-Config-Eintrag, obwohl das tatsächlich antwortende Modell (glm-5.2-Aggregator) sehr wohl cache-priced ist; die Ersparnis-Anzeige war aus demselben Grund $0. FIX (web/js/panels_chats.js): effektives Modell = metadata.model des LETZTEN Assistant-Turns (das aufgelöste antwortende Modell; deckt auch Fallback-Modelle), Fallback chat.model; Tarif-Check + Ersparnis rechnen darauf. Die Turn-Statistikzeile (chat_render) war korrekt (nutzt meta.model schon immer). Nebenbei: veralteter 'Mistral via CLIProxyAPI'-Text im Tooltip → 'glm, kimi, Mistral'. VERIFIZIERT per Playwright-Probe mit MoA-Session-Shape: Tooltip 'Prompt-Cache-Treffer … Ersparnis $0.0171' (= 15k × (1.4−0.26)/M, echte glm-Raten) statt 'kein Cache-Tarif'; Kosten-Feld '0.000 (API 0.050)' korrekt. js_gate GRÜN. Nur web/ — Seite neu laden genügt; Restart nur für Versionsanzeige. Kein eigener kuratierter Eintrag (9.281.1 in die versions-Liste des 9.281.0-Eintrags aufgenommen)."),
@@ -11523,9 +11524,41 @@ def model_is_flat_plan(model: str) -> bool:
     if not model:
         return False
     try:
-        return bool(((_models_config or {}).get(model) or {}).get("flat_plan"))
+        cfg = (_models_config or {}).get(model) or {}
+        if cfg.get("flat_plan"):
+            return True
+        # Coding-plan linkage (models.<id>.coding_plan = id aus config.json →
+        # coding_plans): NUR type='flat' (Abo) bucht $0 — type='credit'
+        # (API-Guthaben, z. B. Kilo) bleibt echte Token-Abrechnung.
+        pid = cfg.get("coding_plan") or ""
+        if not pid:
+            return False
+        plan = next((p for p in get_coding_plans() if p.get("id") == pid), None)
+        return bool(plan) and (plan.get("type") or "flat") != "credit"
     except Exception:
         return False
+
+
+_coding_plans_cache = {"mtime": 0.0, "plans": []}
+
+
+def get_coding_plans() -> list:
+    """The coding-plan / billing-account roster (config.json → coding_plans).
+
+    Read from DISK with an mtime cache (server_config copies only selected
+    keys, and the plan editor writes config.json directly — the mtime check
+    makes edits live without restart while keeping the per-call billing
+    check cheap)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    try:
+        mt = os.path.getmtime(path)
+        if mt != _coding_plans_cache["mtime"]:
+            with open(path) as f:
+                _coding_plans_cache["plans"] = list(json.load(f).get("coding_plans") or [])
+            _coding_plans_cache["mtime"] = mt
+    except Exception:
+        pass
+    return _coding_plans_cache["plans"]
 
 
 def agent_optimize_tools_enabled(agent_config: dict | None) -> bool:

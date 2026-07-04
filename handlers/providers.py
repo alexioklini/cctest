@@ -511,6 +511,18 @@ class ProvidersHandlerMixin:
             "models": models,
             "capabilities": list(engine.CAPABILITY_VALUES),
         }
+        # Coding-plan roster (id+name+price) — feeds the per-model plan dropdown
+        # in the Models grid; plan objects live in config.json → coding_plans.
+        try:
+            _cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+            with open(_cfg_path) as _f:
+                payload["coding_plans"] = [
+                    {"id": p.get("id"), "name": p.get("name") or p.get("id"),
+                     "price": p.get("price") or ""}
+                    for p in (json.load(_f).get("coding_plans") or []) if p.get("id")
+                ]
+        except Exception:
+            payload["coding_plans"] = []
         if is_admin:
             # Key presence only (never the key) — GUI shows set/unset state.
             bo = server_config.get("benchmark_official", {}) or {}

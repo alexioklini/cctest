@@ -358,6 +358,31 @@ class CostTracker:
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"TTS cost tracking error: {e}")
 
+    def token_sums(self, models: list[str], since_iso: str) -> dict:
+        """Sum fresh/out/cached tokens, calls and REAL cost for a model set
+        since a UTC timestamp — data source for the coding-plan/credit
+        usage estimator."""
+        _empty = {"calls": 0, "tokens_in": 0, "tokens_out": 0,
+                  "cache_read_tokens": 0, "cost": 0.0}
+        if not models:
+            return dict(_empty)
+        try:
+            with _cost_conn() as conn:
+                conn.row_factory = sqlite3.Row
+                qs = ",".join("?" * len(models))
+                row = conn.execute(f"""
+                    SELECT COUNT(*) AS calls,
+                           COALESCE(SUM(tokens_in), 0) AS tokens_in,
+                           COALESCE(SUM(tokens_out), 0) AS tokens_out,
+                           COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                           COALESCE(SUM(cost_usd), 0.0) AS cost
+                    FROM cost_log
+                    WHERE model IN ({qs}) AND created_at >= ?
+                """, (*models, since_iso)).fetchone()
+                return dict(row) if row else dict(_empty)
+        except (sqlite3.Error, OSError):
+            return dict(_empty)
+
     def per_provider_key_stats(self, days: int = 30) -> list[dict]:
         """Return per-provider + per-key call/token/cost aggregates."""
         try:
