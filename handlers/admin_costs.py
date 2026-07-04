@@ -344,16 +344,60 @@ class AdminCostsHandlers:
                 if (mc.get("coding_plan") or "") == pid]
 
     @staticmethod
-    def _plan_window_since(win: dict) -> tuple[str, str | None]:
-        """(since_iso_utc, resets_at_iso|None) for a plan window. Rolling windows
-        approximate the vendor's session/weekly quota conservatively; `monthly`
-        steps calendar months from the `anchor` cycle-start date."""
+    def _utc_to_local_hm(iso_utc: str) -> str:
+        """'YYYY-MM-DD HH:MM:SS' (UTC) → 'HH:MM' local — for reset-time display."""
+        try:
+            d = _dt.datetime.strptime(iso_utc, "%Y-%m-%d %H:%M:%S").replace(tzinfo=_dt.timezone.utc)
+            return d.astimezone().strftime("%H:%M")
+        except Exception:
+            return iso_utc
+
+    def _plan_window_since(self, win: dict, plan: dict, models: list[str]) -> tuple[str, str | None]:
+        """(since_iso_utc, resets_at|None) for a plan window.
+
+        `session_5h` mirrors the vendors' real 5h quota: a FIXED window opens
+        with the first request (after the previous window expired) and resets
+        exactly 5h later — the window chain is reconstructed from the ledger's
+        request timestamps. `weekly` steps fixed 7-day cycles from `anchor`
+        (subscription date), `monthly` calendar months from `anchor`. The
+        legacy rolling_* kinds stay supported. Every window start is CLIPPED
+        to the plan's `since` (activation) so pre-plan traffic (e.g. the
+        credit-era glm/kimi calls) never counts against the plan."""
         now = _dt.datetime.utcnow()
-        kind = win.get("kind") or "rolling_5h"
+        kind = win.get("kind") or "session_5h"
+        plan_since = (plan.get("since") or "1970-01-01 00:00:00")
+
+        def _clip(iso: str) -> str:
+            return max(iso, plan_since)
+
+        if kind == "session_5h":
+            ts = engine._cost_tracker.call_timestamps(models, plan_since)
+            if not ts:
+                return _clip(now.strftime("%Y-%m-%d %H:%M:%S")), None
+            ws = _dt.datetime.strptime(ts[0], "%Y-%m-%d %H:%M:%S")
+            for t in ts[1:]:
+                td = _dt.datetime.strptime(t, "%Y-%m-%d %H:%M:%S")
+                if td >= ws + _dt.timedelta(hours=5):
+                    ws = td
+            if now >= ws + _dt.timedelta(hours=5):
+                # Fenster abgelaufen, noch keine neue Anfrage → Quota leer.
+                return now.strftime("%Y-%m-%d %H:%M:%S"), None
+            reset = (ws + _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
+            return _clip(ws.strftime("%Y-%m-%d %H:%M:%S")), self._utc_to_local_hm(reset) + " Uhr"
+        if kind == "weekly":
+            try:
+                anchor = _dt.datetime.strptime(win.get("anchor") or plan_since[:10], "%Y-%m-%d")
+            except ValueError:
+                anchor = now - _dt.timedelta(days=7)
+            start = anchor
+            while start + _dt.timedelta(days=7) <= now:
+                start += _dt.timedelta(days=7)
+            return (_clip(start.strftime("%Y-%m-%d %H:%M:%S")),
+                    (start + _dt.timedelta(days=7)).strftime("%Y-%m-%d"))
         if kind == "rolling_5h":
-            return (now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S"), None
+            return _clip((now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")), None
         if kind == "rolling_7d":
-            return (now - _dt.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S"), None
+            return _clip((now - _dt.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")), None
         if kind == "monthly":
             try:
                 anchor = _dt.datetime.strptime(win.get("anchor") or "", "%Y-%m-%d")
@@ -367,11 +411,12 @@ class AdminCostsHandlers:
                 except ValueError:
                     nxt = start.replace(year=ny, month=nm, day=1)
                 if nxt > now:
-                    return start.strftime("%Y-%m-%d %H:%M:%S"), nxt.strftime("%Y-%m-%d")
+                    return _clip(start.strftime("%Y-%m-%d %H:%M:%S")), nxt.strftime("%Y-%m-%d")
                 start = nxt
-        return (now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S"), None
+        return _clip((now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")), None
 
-    _PLAN_WINDOW_LABELS = {"rolling_5h": "5h", "rolling_7d": "Woche", "monthly": "Monat"}
+    _PLAN_WINDOW_LABELS = {"session_5h": "5h", "rolling_5h": "5h",
+                           "weekly": "Woche", "rolling_7d": "Woche", "monthly": "Monat"}
 
     def _handle_plans_usage(self):
         """GET /v1/plans/usage — estimated coding-plan window usage, computed
@@ -419,7 +464,7 @@ class AdminCostsHandlers:
                 w_out = float(cw.get("out", 1.0) or 0.0)
                 w_cr = float(cw.get("cached", 1.0) or 0.0)
                 for win in (plan.get("windows") or []):
-                    since, resets = self._plan_window_since(win)
+                    since, resets = self._plan_window_since(win, plan, models)
                     s = engine._cost_tracker.token_sums(models, since)
                     used = (s["tokens_in"] * w_in + s["tokens_out"] * w_out
                             + s["cache_read_tokens"] * w_cr)
@@ -487,7 +532,7 @@ class AdminCostsHandlers:
                               "cached": float(cw.get("cached", 1.0) or 0)}
             wins = []
             for w in (plan.get("windows") or []):
-                if w.get("kind") not in ("rolling_5h", "rolling_7d", "monthly"):
+                if w.get("kind") not in ("session_5h", "weekly", "rolling_5h", "rolling_7d", "monthly"):
                     continue
                 try:
                     lim = int(float(w.get("limit_tokens") or 0))
@@ -498,6 +543,8 @@ class AdminCostsHandlers:
                 entry = {"kind": w["kind"], "limit_tokens": lim}
                 if w["kind"] == "monthly":
                     entry["anchor"] = str(w.get("anchor") or _dt.date.today().replace(day=1).isoformat())
+                elif w["kind"] == "weekly":
+                    entry["anchor"] = str(w.get("anchor") or _dt.date.today().isoformat())
                 wins.append(entry)
             if not wins:
                 self._send_json({"error": "mindestens ein Fenster mit Limit erforderlich"}, 400)
@@ -508,6 +555,11 @@ class AdminCostsHandlers:
             with open(cfg_path) as f:
                 config = json.load(f)
             plans = config.get("coding_plans") or []
+            # Aktivierungszeitpunkt (`since`, Vor-Plan-Verkehr-Clipping) beim
+            # Upsert erhalten; Neuanlage = jetzt.
+            _old = next((p for p in plans if p.get("id") == pid), None)
+            clean["since"] = ((_old or {}).get("since")
+                              or _dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
             plans = [p for p in plans if p.get("id") != pid] + [clean]
             config["coding_plans"] = plans
             with open(cfg_path, "w") as f:
@@ -610,7 +662,7 @@ class AdminCostsHandlers:
                 return
             models = self._plan_models(plan)
             cw = plan.get("count") or {}
-            since, _ = self._plan_window_since(win)
+            since, _ = self._plan_window_since(win, plan, models)
             s = engine._cost_tracker.token_sums(models, since)
             used = (s["tokens_in"] * float(cw.get("fresh_in", 1.0) or 0)
                     + s["tokens_out"] * float(cw.get("out", 1.0) or 0)

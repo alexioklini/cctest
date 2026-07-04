@@ -1005,8 +1005,8 @@ function openCodingPlanForm(planId) {
       <label style="${L}">Preis (Anzeige)</label><input id="cpf-price" style="${F}" value="${esc(p?.price || '')}" placeholder="z. B. $18/Monat">
       <label style="${L}">Notiz</label><input id="cpf-note" style="${F}" value="${esc(p?.quota_note || '')}" placeholder="Quota-Hinweise">
       <div id="cpf-flat" style="display:${(p?.type || 'flat') === 'flat' ? '' : 'none'}">
-        <label style="${L}">Limit 5h-Fenster (Tokens, leer = kein Fenster)</label><input id="cpf-l5h" type="number" style="${F}" value="${w('rolling_5h').limit_tokens || ''}">
-        <label style="${L}">Limit Woche (Tokens)</label><input id="cpf-l7d" type="number" style="${F}" value="${w('rolling_7d').limit_tokens || ''}">
+        <label style="${L}">Limit 5h-Fenster (Tokens, leer = kein Fenster)</label><input id="cpf-l5h" type="number" style="${F}" value="${w('session_5h').limit_tokens || w('rolling_5h').limit_tokens || ''}">
+        <label style="${L}">Limit Woche (Tokens)</label><input id="cpf-l7d" type="number" style="${F}" value="${w('weekly').limit_tokens || w('rolling_7d').limit_tokens || ''}">
         <label style="${L}">Limit Monat (Tokens)</label><input id="cpf-lmon" type="number" style="${F}" value="${w('monthly').limit_tokens || ''}">
         <label style="${L}">Monats-Zyklusstart (YYYY-MM-DD)</label><input id="cpf-anchor-mon" style="${F}" value="${esc(w('monthly').anchor || '')}" placeholder="nur bei Monats-Limit">
         <label style="${L}">Cache-Token-Gewicht (Z.ai zählt ~0.67)</label><input id="cpf-wcached" type="number" step="0.01" style="${F}" value="${p?.count?.cached ?? 1.0}">
@@ -1038,8 +1038,8 @@ async function saveCodingPlanForm(existingId) {
   } else {
     plan.count = { fresh_in: 1.0, out: 1.0, cached: parseFloat(v('cpf-wcached')) || 1.0 };
     plan.windows = [];
-    if (v('cpf-l5h')) plan.windows.push({ kind: 'rolling_5h', limit_tokens: parseInt(v('cpf-l5h'), 10) });
-    if (v('cpf-l7d')) plan.windows.push({ kind: 'rolling_7d', limit_tokens: parseInt(v('cpf-l7d'), 10) });
+    if (v('cpf-l5h')) plan.windows.push({ kind: 'session_5h', limit_tokens: parseInt(v('cpf-l5h'), 10) });
+    if (v('cpf-l7d')) plan.windows.push({ kind: 'weekly', limit_tokens: parseInt(v('cpf-l7d'), 10) });
     if (v('cpf-lmon')) plan.windows.push({ kind: 'monthly', limit_tokens: parseInt(v('cpf-lmon'), 10), anchor: v('cpf-anchor-mon') || undefined });
     if (!plan.windows.length) { showToast('Mindestens ein Fenster-Limit angeben.', true); return; }
   }

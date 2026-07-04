@@ -5651,15 +5651,17 @@
       },
       "windows": [
         {
-          "kind": "rolling_5h",
+          "kind": "session_5h",
           "limit_tokens": 12500000
         },
         {
-          "kind": "rolling_7d",
-          "limit_tokens": 63000000
+          "kind": "weekly",
+          "limit_tokens": 63000000,
+          "anchor": "2026-07-04"
         }
       ],
-      "calibrated_at": "2026-07-04"
+      "calibrated_at": "2026-07-04",
+      "since": "2026-07-04 14:17:00"
     },
     {
       "id": "kimi-moderato",
@@ -5675,15 +5677,17 @@
       },
       "windows": [
         {
-          "kind": "rolling_5h",
+          "kind": "session_5h",
           "limit_tokens": 340000
         },
         {
-          "kind": "rolling_7d",
-          "limit_tokens": 1900000
+          "kind": "weekly",
+          "limit_tokens": 1900000,
+          "anchor": "2026-07-04"
         }
       ],
-      "calibrated_at": "2026-07-04"
+      "calibrated_at": "2026-07-04",
+      "since": "2026-07-04 14:40:00"
     },
     {
       "id": "mistral-vibe",
@@ -5704,7 +5708,8 @@
           "anchor": "2026-07-01"
         }
       ],
-      "calibrated_at": "2026-07-04"
+      "calibrated_at": "2026-07-04",
+      "since": "2026-07-01 00:00:00"
     },
     {
       "id": "kilo-credit",

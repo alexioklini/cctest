@@ -383,6 +383,23 @@ class CostTracker:
         except (sqlite3.Error, OSError):
             return dict(_empty)
 
+    def call_timestamps(self, models: list[str], since_iso: str) -> list[str]:
+        """Ordered created_at timestamps (UTC) of all calls for a model set —
+        drives the session-window chaining of the coding-plan estimator."""
+        if not models:
+            return []
+        try:
+            with _cost_conn() as conn:
+                qs = ",".join("?" * len(models))
+                rows = conn.execute(f"""
+                    SELECT created_at FROM cost_log
+                    WHERE model IN ({qs}) AND created_at >= ?
+                    ORDER BY created_at
+                """, (*models, since_iso)).fetchall()
+                return [r[0] for r in rows]
+        except (sqlite3.Error, OSError):
+            return []
+
     def per_provider_key_stats(self, days: int = 30) -> list[dict]:
         """Return per-provider + per-key call/token/cost aggregates."""
         try:

@@ -44,7 +44,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "lassen sich mit einem Klick gegen das echte "
                 "Anbieter-Dashboard kalibrieren.",
         "audience": "user",
-        "versions": ["9.283.0"],
+        "versions": ["9.283.0", "9.283.1"],
     },
     {
         "version": "9.281.0",
