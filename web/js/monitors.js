@@ -896,6 +896,18 @@ function _cpTok(n) {
   if (n >= 1e3) return Math.round(n / 1e3) + 'k';
   return String(n);
 }
+// Countdown bis zum Fenster-Reset: Minuten < 90min, Stunden+Minuten < 48h,
+// sonst Tage (aufgerundet — "in 27 Tagen" heißt: am 27. Tag ist Reset).
+function _cpEta(s) {
+  if (s == null || s <= 0) return '';
+  const m = Math.round(s / 60);
+  if (m < 90) return `in ${m} min`;
+  if (s < 48 * 3600) {
+    const h = Math.floor(s / 3600), rm = Math.round((s % 3600) / 60);
+    return rm ? `in ${h} h ${rm} min` : `in ${h} h`;
+  }
+  return `in ${Math.ceil(s / 86400)} Tagen`;
+}
 async function loadCodingPlansSection() {
   const sec = document.getElementById('coding-plans-section');
   if (!sec) return;
@@ -932,11 +944,13 @@ function renderCodingPlansSection(data) {
             <button onclick="topupCodingPlan('${esc(p.id)}')" style="font-size:10px;padding:1px 5px;cursor:pointer;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-100);color:var(--text-300)" title="Guthaben neu setzen (Aufladung)">⟳</button></span>` : ''}
         </div>`;
       }
+      const eta = _cpEta(w.resets_in_s);
       return `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-300);padding:2px 0">
         <span style="width:44px;flex-shrink:0">${esc(w.label)}</span>
         ${bar(w.pct)}
         <span style="font-variant-numeric:tabular-nums;white-space:nowrap" title="geschätzt: ${(w.used_est || 0).toLocaleString('de-DE')} von ${(w.limit_tokens || 0).toLocaleString('de-DE')} Tokens${w.resets_at ? ' · Reset ' + esc(w.resets_at) : ''}">
           ~${w.pct == null ? '—' : w.pct.toFixed(0) + ' %'} · ${_cpTok(w.used_est || 0)} / ${_cpTok(w.limit_tokens || 0)}</span>
+        ${eta ? `<span style="color:var(--text-400);white-space:nowrap" title="${w.resets_at ? 'Reset ' + esc(w.resets_at) : ''}">↻ ${esc(eta)}</span>` : ''}
         ${isAdmin ? `<span style="white-space:nowrap"><input type="number" step="1" min="1" max="100" placeholder="%" id="cp-cal-${esc(p.id)}-${esc(w.kind)}"
             style="width:36px;padding:1px 4px;font-size:10px;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-000);color:var(--text-200)"
             title="Kalibrieren: aktuellen %-Wert vom Anbieter-Dashboard eintragen — das Limit wird daraus neu berechnet">

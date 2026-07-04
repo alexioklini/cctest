@@ -381,9 +381,11 @@ class AdminCostsHandlers:
                     ws = td
             if now >= ws + _dt.timedelta(hours=5):
                 # Fenster abgelaufen, noch keine neue Anfrage → Quota leer.
-                return now.strftime("%Y-%m-%d %H:%M:%S"), None
-            reset = (ws + _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
-            return _clip(ws.strftime("%Y-%m-%d %H:%M:%S")), self._utc_to_local_hm(reset) + " Uhr"
+                return now.strftime("%Y-%m-%d %H:%M:%S"), None, None
+            reset_dt = ws + _dt.timedelta(hours=5)
+            return (_clip(ws.strftime("%Y-%m-%d %H:%M:%S")),
+                    self._utc_to_local_hm(reset_dt.strftime("%Y-%m-%d %H:%M:%S")) + " Uhr",
+                    int((reset_dt - now).total_seconds()))
         if kind == "weekly":
             try:
                 anchor = _dt.datetime.strptime(win.get("anchor") or plan_since[:10], "%Y-%m-%d")
@@ -393,11 +395,12 @@ class AdminCostsHandlers:
             while start + _dt.timedelta(days=7) <= now:
                 start += _dt.timedelta(days=7)
             return (_clip(start.strftime("%Y-%m-%d %H:%M:%S")),
-                    (start + _dt.timedelta(days=7)).strftime("%Y-%m-%d"))
+                    (start + _dt.timedelta(days=7)).strftime("%Y-%m-%d"),
+                    int((start + _dt.timedelta(days=7) - now).total_seconds()))
         if kind == "rolling_5h":
-            return _clip((now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")), None
+            return _clip((now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")), None, None
         if kind == "rolling_7d":
-            return _clip((now - _dt.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")), None
+            return _clip((now - _dt.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")), None, None
         if kind == "monthly":
             try:
                 anchor = _dt.datetime.strptime(win.get("anchor") or "", "%Y-%m-%d")
@@ -411,9 +414,10 @@ class AdminCostsHandlers:
                 except ValueError:
                     nxt = start.replace(year=ny, month=nm, day=1)
                 if nxt > now:
-                    return _clip(start.strftime("%Y-%m-%d %H:%M:%S")), nxt.strftime("%Y-%m-%d")
+                    return (_clip(start.strftime("%Y-%m-%d %H:%M:%S")), nxt.strftime("%Y-%m-%d"),
+                            int((nxt - now).total_seconds()))
                 start = nxt
-        return _clip((now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")), None
+        return _clip((now - _dt.timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")), None, None
 
     _PLAN_WINDOW_LABELS = {"session_5h": "5h", "rolling_5h": "5h",
                            "weekly": "Woche", "rolling_7d": "Woche", "monthly": "Monat"}
@@ -464,7 +468,7 @@ class AdminCostsHandlers:
                 w_out = float(cw.get("out", 1.0) or 0.0)
                 w_cr = float(cw.get("cached", 1.0) or 0.0)
                 for win in (plan.get("windows") or []):
-                    since, resets = self._plan_window_since(win, plan, models)
+                    since, resets, resets_in = self._plan_window_since(win, plan, models)
                     s = engine._cost_tracker.token_sums(models, since)
                     used = (s["tokens_in"] * w_in + s["tokens_out"] * w_out
                             + s["cache_read_tokens"] * w_cr)
@@ -477,6 +481,7 @@ class AdminCostsHandlers:
                         "pct": round(100.0 * used / limit, 1) if limit > 0 else None,
                         "calls": s["calls"],
                         "resets_at": resets,
+                        "resets_in_s": resets_in,
                         "anchor": win.get("anchor") or "",
                     })
             out.append({
@@ -662,7 +667,7 @@ class AdminCostsHandlers:
                 return
             models = self._plan_models(plan)
             cw = plan.get("count") or {}
-            since, _ = self._plan_window_since(win, plan, models)
+            since, _, _ri = self._plan_window_since(win, plan, models)
             s = engine._cost_tracker.token_sums(models, since)
             used = (s["tokens_in"] * float(cw.get("fresh_in", 1.0) or 0)
                     + s["tokens_out"] * float(cw.get("out", 1.0) or 0)
