@@ -402,6 +402,7 @@ async function openSession(sessionId, agentId) {
         if (meta.thinking) msg._thinking = meta.thinking;
         if (meta.thinking_summary) msg._thinkingSummary = meta.thinking_summary;
         if (meta.cost) msg._cost = meta.cost;
+        if (meta.cost_list) msg._costList = meta.cost_list;
         if (meta.files) msg._files = meta.files;
         if (meta.deep_research) msg._deepResearch = true;
         if (meta.model && !data.model) chat.model = meta.model;

@@ -23,7 +23,7 @@
 //     history:[sent prompts], histIdx, draft,
 //     streaming, _abort, _spinTimer, _spinIdx, _spinLabel,
 //     log:[row-models], live:{textEl,thinkEl},
-//     tokensIn, tokensOut, cached, cost, lastApiIn, maxContext }
+//     tokensIn, tokensOut, cached, cost, costList, lastApiIn, maxContext }
 
 const _TC_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const _TC_THINK = { '': 'Aus', none: 'Aus', low: 'Niedrig', medium: 'Mittel', high: 'Hoch' };
@@ -641,6 +641,7 @@ function _tcCallbacks(tab, live) {
       if (typeof d.tokens_out === 'number') tab._liveOut = d.tokens_out;
       if (typeof d.cache_read_tokens === 'number') tab._liveCached = d.cache_read_tokens;
       if (d.cost != null) tab.cost = d.cost;
+      if (d.cost_list != null) tab.costList = d.cost_list;
       if (typeof d.last_tokens_in === 'number') tab.lastApiIn = d.last_tokens_in;
       tcRenderStatus(tab);
     },
@@ -715,6 +716,7 @@ function _tcCallbacks(tab, live) {
       tab.cached = (tab.cached || 0) + tcached;
       tab._liveIn = 0; tab._liveOut = 0; tab._liveCached = 0;
       if (d.cost != null) tab.cost = d.cost;
+      if (d.cost_list != null) tab.costList = d.cost_list;
       if (d.max_context) tab.maxContext = d.max_context;
       if (typeof d.last_tokens_in === 'number') tab.lastApiIn = d.last_tokens_in;
       tcRenderStatus(tab);
@@ -796,7 +798,12 @@ function tcRenderStatus(tab) {
   const think = _TC_THINK[tab.thinking || 'none'] || (tab.thinking || '');
   const tin = (tab.tokensIn || 0) + (tab.streaming ? (tab._liveIn || 0) : 0);
   const tout = (tab.tokensOut || 0) + (tab.streaming ? (tab._liveOut || 0) : 0);
-  const cost = (tab.cost != null) ? ('$' + Number(tab.cost).toFixed(4)) : '—';
+  // Verrechnet (real) + API-Listenpreis, wenn ein Flatrate-Modell sie trennt.
+  const _cl = (tab.costList != null) ? Number(tab.costList) : null;
+  const _cDiff = tab.cost != null && _cl != null && _cl > Number(tab.cost) * 1.01 + 0.0001;
+  const cost = (tab.cost != null)
+    ? ('$' + Number(tab.cost).toFixed(4) + (_cDiff ? ` <span title="API-Listenpreis ohne Flatrate — Ersparnis $${(_cl - Number(tab.cost)).toFixed(4)}" style="color:var(--text-400)">(API $${_cl.toFixed(4)})</span>` : ''))
+    : '—';
   // Prompt-cache hits (session total + live turn) — mirrors the main chat's
   // status-bar item: hit % = cached / (full-price in + cached), green once >0.
   const cached = (tab.cached || 0) + (tab.streaming ? (tab._liveCached || 0) : 0);
@@ -980,7 +987,7 @@ async function _tcCmdClear(tab) {
   // Start a fresh code_chat session (drops context) — keep the same tab.
   tcCancel(tab);
   tab.sessionId = '';
-  tab.tokensIn = 0; tab.tokensOut = 0; tab.cached = 0; tab._liveCached = 0; tab.cost = null; tab.lastApiIn = 0;
+  tab.tokensIn = 0; tab.tokensOut = 0; tab.cached = 0; tab._liveCached = 0; tab.cost = null; tab.costList = null; tab.lastApiIn = 0;
   tab.log = []; tab._autoPicked = '';
   _tcClearRows(tab);
   tcPrint(tab, 'Neue Sitzung — Kontext geleert.', 'tc-sys');
@@ -1241,6 +1248,7 @@ async function tcLoadTranscript(tab) {
         // meta.cost is the CUMULATIVE session cost at that turn (mirrors the
         // done event) — the most recent value wins; summing would inflate.
         if (typeof meta.cost === 'number') { cost = meta.cost; haveCost = true; }
+        if (typeof meta.cost_list === 'number') tab.costList = meta.cost_list;
         if (meta.model) lastModel = meta.model;
         if (meta.tokens_in) lastIn = meta.tokens_in;
       }

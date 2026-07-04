@@ -205,7 +205,14 @@ def _compute_cost(model: str, tokens_in: int, tokens_out: int,
     oMLX reports the whole prompt under cache_creation, so that stays full-price).
     `cache_read_tokens` is the cache-HIT portion, billed at the discounted
     `cache_read` rate. Callers pass cache_read SEPARATELY from tokens_in (it is
-    NOT a subset of tokens_in) — see the collapse-site fix in sidecar_proxy."""
+    NOT a subset of tokens_in) — see the collapse-site fix in sidecar_proxy.
+
+    Flat-plan models (config `flat_plan: true`) always cost $0 here — their
+    cost_* fields keep the API list price for the breakdown's hypothetical
+    'ohne Flatrate' estimate, but nothing real is billed per call."""
+    import brain as _brain
+    if _brain.model_is_flat_plan(model):
+        return 0.0
     rate = _get_cost_rate(model)
     return (tokens_in * rate["input"]
             + tokens_out * rate["output"]
@@ -499,20 +506,42 @@ class CostTracker:
             return []
 
     def get_session_cost(self, session_id: str) -> dict:
-        """Get cost for a specific session."""
+        """Get cost for a specific session.
+
+        `cost` = real/charged (flat-plan models log $0). `cost_list` = the
+        API list price of the same usage: for flat-plan models computed from
+        the session's tokens × the model's regular cost_* fields (which keep
+        the list price), for everything else identical to `cost`."""
+        _empty = {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0, "cost_list": 0.0}
         try:
             with _cost_conn() as conn:
                 conn.row_factory = sqlite3.Row
-                row = conn.execute("""
-                    SELECT COUNT(*) as calls,
+                rows = conn.execute("""
+                    SELECT model,
+                           COUNT(*) as calls,
                            COALESCE(SUM(tokens_in), 0) as tokens_in,
                            COALESCE(SUM(tokens_out), 0) as tokens_out,
+                           COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
                            COALESCE(SUM(cost_usd), 0.0) as cost
-                    FROM cost_log WHERE session_id = ?
-                """, (session_id,)).fetchone()
-                return dict(row) if row else {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0}
+                    FROM cost_log WHERE session_id = ? GROUP BY model
+                """, (session_id,)).fetchall()
+                out = dict(_empty)
+                import brain as _brain
+                for r in rows:
+                    out["calls"] += r["calls"]
+                    out["tokens_in"] += r["tokens_in"]
+                    out["tokens_out"] += r["tokens_out"]
+                    out["cost"] += r["cost"]
+                    if _brain.model_is_flat_plan(r["model"]):
+                        rate = _get_cost_rate(r["model"])
+                        out["cost_list"] += (r["tokens_in"] * rate["input"]
+                                             + r["tokens_out"] * rate["output"]
+                                             + r["cache_read_tokens"] * rate["cache_read"]) / 1e6
+                    else:
+                        out["cost_list"] += r["cost"]
+                return out
         except (sqlite3.Error, OSError):
-            return {"calls": 0, "tokens_in": 0, "tokens_out": 0, "cost": 0.0}
+            return dict(_empty)
 
 
 _cost_tracker: 'CostTracker | None' = None

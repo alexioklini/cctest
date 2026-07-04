@@ -334,24 +334,34 @@ function updateStatusBar() {
   const costWrap = document.getElementById('status-cost-wrap');
   const costLabel = document.getElementById('status-cost-label');
   let sessionCost = 0;
+  let sessionCostList; // API-Listenpreis der Sitzung (≠ verrechnet bei Flatrate-Modellen)
   let sawCostField = false;
   for (let mi = msgs.length - 1; mi >= 0; mi--) {
     const m = msgs[mi];
     if (m.role === 'assistant' && m._cost !== undefined) {
       sessionCost = m._cost || 0;
+      if (m._costList !== undefined) sessionCostList = m._costList || 0;
       sawCostField = true;
       break;
     }
   }
   if (chat._sessionCost !== undefined) { sessionCost = chat._sessionCost || 0; sawCostField = true; }
+  if (chat._sessionCostList !== undefined) sessionCostList = chat._sessionCostList || 0;
+  const _fmt$ = (v) => (v < 1 ? v.toFixed(3) : v.toFixed(2));
+  const _listDiffers = sessionCostList !== undefined && sessionCostList > sessionCost * 1.01 + 0.0001;
   if (sawCostField) {
     costWrap.style.display = '';
-    if (sessionCost <= 0) {
+    if (sessionCost <= 0 && !_listDiffers) {
       costLabel.textContent = '0.00';
       costLabel.style.color = 'var(--text-400)';
       costWrap.title = 'Sitzungskosten: $0.00 — für dieses Modell sind keine Preise hinterlegt. cost_input/cost_output unter Einstellungen → Modelle festlegen.';
+    } else if (_listDiffers) {
+      // Flatrate-Modell: verrechnet (real) + API-Listenpreis nebeneinander.
+      costLabel.innerHTML = `${esc(_fmt$(sessionCost))} <span style="color:var(--text-400);font-size:10px">(API ${esc(_fmt$(sessionCostList))})</span>`;
+      costLabel.style.color = '';
+      costWrap.title = `Sitzungskosten verrechnet: $${sessionCost.toFixed(4)} (Flatrate/Coding-Plan) · zum API-Listenpreis wären es $${sessionCostList.toFixed(4)} — Ersparnis $${(sessionCostList - sessionCost).toFixed(4)}.`;
     } else {
-      costLabel.textContent = sessionCost < 1 ? sessionCost.toFixed(3) : sessionCost.toFixed(2);
+      costLabel.textContent = _fmt$(sessionCost);
       costLabel.style.color = '';
       costWrap.title = `Sitzungskosten: $${sessionCost.toFixed(4)}`;
     }

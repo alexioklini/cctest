@@ -568,6 +568,13 @@ def run_loop(
     text_round_segments: list[dict] = []
     final_text = ""
     final_stop_reason = ""
+    # Terminal provider-error message. Surfaced in the summary as "error" so
+    # BLOCKING callers (run_turn/run_turn_blocking → their "error" field) fail
+    # loud too — without this, an HTTP 402/401 on the FIRST round ended the
+    # turn as a clean empty `done` (reply=0c rounds=0 error=None; the silent
+    # Kilo credit-exhaustion mode, 2026-07-04). The SSE `error` event alone
+    # only reaches live watchers, not result-dict consumers.
+    final_error_msg = None
     forced_tool_input: dict | None = None
     empty_nudges = 0
     resume_attempts = 0
@@ -724,6 +731,7 @@ def run_loop(
                            "round": round_no,
                            "traceback": traceback.format_exc()[-2000:]})
             final_stop_reason = "api_error"
+            final_error_msg = _msg
             break
         finally:
             _stop_watch.set()
@@ -740,6 +748,7 @@ def run_loop(
             emit("error", {"message": f"provider error: {_perr}",
                            "round": round_no})
             final_stop_reason = "api_error"
+            final_error_msg = f"provider error: {_perr}"
             break
 
         # --- usage: split cache_read from full-price input (the v9.245.0 split) ---
@@ -973,6 +982,7 @@ def run_loop(
         "tool_calls_total": tool_calls_total,
         "usage_total": usage_total,
         "tool_events": tool_events,
+        "error": final_error_msg,
     }
     if forced_tool_input is not None:
         summary["forced_tool_input"] = forced_tool_input

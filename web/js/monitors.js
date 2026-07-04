@@ -788,18 +788,32 @@ function renderCostBreakdownBody(data) {
     ? `${(data.since || '').slice(0, 10)} – ${(data.until || '').slice(0, 10) || 'jetzt'}`
     : 'Gesamter Zeitraum';
 
-  // Headline total — the number users scan for first.
+  // Full cost picture: verrechnet (real, flat-plan rows = $0) · API-Listenpreis
+  // (same usage at the models' list rates) · Flatrate-Ersparnis (difference) ·
+  // Caching-Ersparnis (cache-hit tokens at full input rate minus cache rate).
+  const totalList = (data && data.total_cost_list) || 0;
+  const cacheSave = (data && data.total_cache_savings) || 0;
+  const totalIn2 = (data && data.total_tokens_in) || 0;
+  const totalOut2 = (data && data.total_tokens_out) || 0;
+  const totalCr = (data && data.total_cache_read_tokens) || 0;
+  const flatSave = Math.max(0, totalList - total);
+  const _statCell = (label, value, opts) => `
+      <div style="min-width:96px">
+        <div style="font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-400);margin-bottom:2px" ${opts && opts.title ? `title="${opts.title}"` : ''}>${label}</div>
+        <div style="font-size:${opts && opts.big ? 22 : 14}px;font-weight:${opts && opts.big ? 700 : 600};color:${(opts && opts.color) || 'var(--text-100)'};line-height:1.15">${value}</div>
+      </div>`;
   const headline = `
-    <div style="display:flex;align-items:flex-end;justify-content:space-between;
-                background:var(--bg-100);border:1px solid var(--border-100);border-radius:9px;
+    <div style="background:var(--bg-100);border:1px solid var(--border-100);border-radius:9px;
                 padding:10px 13px;margin-bottom:12px">
-      <div>
-        <div style="font-size:10px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-400);margin-bottom:2px">Gesamtkosten</div>
-        <div style="font-size:22px;font-weight:700;color:var(--text-100);line-height:1">${esc(_costFmt(total))}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px 22px;align-items:flex-end">
+        ${_statCell('Verrechnete Kosten', esc(_costFmt(total)), { big: true, title: 'Tatsächlich abgerechnete Kosten — Modelle mit Flatrate/Coding-Plan buchen 0 $.' })}
+        ${_statCell('API-Kosten (Listenpreis)', esc(_costFmt(totalList)), { title: 'Dieselbe Nutzung zu den API-Listenpreisen der Modelle — was ohne Coding-/Vibe-Flatrates fällig wäre. Prompt-Caching ist darin bereits eingerechnet.' })}
+        ${_statCell('Flatrate-Ersparnis', esc(_costFmt(flatSave)), { color: flatSave > 0.005 ? 'var(--success,#16a34a)' : 'var(--text-400)', title: 'API-Listenpreis minus verrechnete Kosten.' })}
+        ${_statCell('Caching-Ersparnis', esc(_costFmt(cacheSave)), { color: cacheSave > 0.005 ? 'var(--success,#16a34a)' : 'var(--text-400)', title: 'Was die ⚡-gecachten Tokens zum vollen Eingabe-Tarif gekostet hätten, minus dem Cache-Tarif (~0,1×). Ohne Prompt-Caching läge der Listenpreis entsprechend höher.' })}
       </div>
-      <div style="text-align:right;font-size:11px;color:var(--text-400);line-height:1.5">
-        <div>${esc(range)}</div>
-        <div>${totalCalls.toLocaleString('de-DE')} Aufrufe · ${esc(_tokFmt(totalTok))} Tokens</div>
+      <div style="display:flex;justify-content:space-between;gap:10px;margin-top:8px;padding-top:7px;border-top:1px solid var(--border-100);font-size:11px;color:var(--text-400)">
+        <div>Tokens: <span style="color:var(--text-300)">${esc(_tokFmt(totalIn2))} ein</span> · <span style="color:var(--text-300)">${esc(_tokFmt(totalOut2))} aus</span> · <span style="color:#10b981">⚡ ${esc(_tokFmt(totalCr))} gecached</span></div>
+        <div>${esc(range)} · ${totalCalls.toLocaleString('de-DE')} Aufrufe</div>
       </div>
     </div>`;
 
@@ -826,8 +840,10 @@ function renderCostBreakdownBody(data) {
                   padding:4px 0 4px 22px;font-size:11px;color:var(--text-300)">
         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"
               title="${esc(m.model)}">${esc(modelShortName(m.model) || m.model || '—')}</span>
-        <span style="white-space:nowrap;color:var(--text-400);font-variant-numeric:tabular-nums">${esc(_tokFmt((m.tokens_in||0)+(m.tokens_out||0)))} tok</span>
-        <span style="white-space:nowrap;color:var(--text-200);font-variant-numeric:tabular-nums;min-width:54px;text-align:right">${esc(_costFmt(m.cost))}</span>
+        <span style="white-space:nowrap;color:var(--text-400);font-variant-numeric:tabular-nums"
+              title="${esc(_tokFmt(m.tokens_in||0))} ein · ${esc(_tokFmt(m.tokens_out||0))} aus · ⚡ ${esc(_tokFmt(m.cache_read_tokens||0))} gecached${Number(m.cache_savings) > 0.005 ? ` · Caching-Ersparnis ${esc(_costFmt(m.cache_savings))}` : ''}">${esc(_tokFmt((m.tokens_in||0)+(m.tokens_out||0)))} tok${(m.cache_read_tokens||0) > 0 ? ` <span style="color:#10b981">⚡${esc(_tokFmt(m.cache_read_tokens))}</span>` : ''}</span>
+        <span style="white-space:nowrap;color:var(--text-200);font-variant-numeric:tabular-nums;min-width:54px;text-align:right"
+              ${Number(m.cost_list) > Number(m.cost) * 1.01 + 0.0001 ? `title="API-Listenpreis ohne Flatrate: ${esc(_costFmt(m.cost_list))}"` : ''}>${esc(_costFmt(m.cost))}${Number(m.cost_list) > Number(m.cost) * 1.01 + 0.0001 ? ` <span style="color:var(--text-400);font-size:10px">(${esc(_costFmt(m.cost_list))})</span>` : ''}</span>
         <span style="white-space:nowrap;color:var(--text-400);min-width:32px;text-align:right">${b.calls ? Math.round((m.calls/b.calls)*100) : 0}%</span>
       </div>`).join('');
     return `

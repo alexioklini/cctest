@@ -605,6 +605,7 @@ function buildStreamCallbacks(chat, isActive) {
         if (typeof d.tokens_out === 'number') chat._liveTurnTokensOut = d.tokens_out;
         if (typeof d.cache_read_tokens === 'number') chat._liveTurnCached = d.cache_read_tokens;
         if (d.cost !== undefined && d.cost !== null) chat._sessionCost = d.cost;
+        if (d.cost_list !== undefined && d.cost_list !== null) chat._sessionCostList = d.cost_list;
         // last_tokens_in = the most recent round's prompt size → drives the live
         // context-fill bar (updateStatusBar reads chat._lastApiIn).
         if (typeof d.last_tokens_in === 'number') chat._lastApiIn = d.last_tokens_in;
@@ -792,6 +793,13 @@ function buildStreamCallbacks(chat, isActive) {
       // appear in chat history alongside real tool calls, but are marked
       // synthetic: true so the renderer can style them distinctly.
       synthetic_tool_use: (d) => {
+        // Reconnect replay guard: synthetic rows persist to the DB the moment
+        // they're emitted, so a mid-turn re-attach (openSession loads them,
+        // attachStream then REPLAYS the same events from turn start) would
+        // push each card a second time — the "alle Experten doppelt" bug
+        // (chat 6801c2e8). Same reason reconnect drops trailing thinking rows.
+        if (d.tool_use_id && chat.messages.some((m) =>
+              m && m.synthetic && m.role === 'tool_call' && m.tool_use_id === d.tool_use_id)) return;
         chat.messages.push({
           role: 'tool_call',
           synthetic: true,
@@ -806,6 +814,9 @@ function buildStreamCallbacks(chat, isActive) {
         if (isActive()) { renderMessages(); renderStreamingMessage(chat); scrollToBottom(); }
       },
       synthetic_tool_result: (d) => {
+        // Reconnect replay guard — see synthetic_tool_use above.
+        if (d.tool_use_id && chat.messages.some((m) =>
+              m && m.synthetic && m.role === 'tool_result' && m.tool_use_id === d.tool_use_id)) return;
         chat.messages.push({
           role: 'tool_result',
           synthetic: true,
@@ -1309,6 +1320,7 @@ function buildStreamCallbacks(chat, isActive) {
         }
         if (lastTokIn > 0) chat._lastApiIn = lastTokIn;
         if (d.cost !== undefined) { assistantMsg._cost = d.cost || 0; chat._sessionCost = d.cost || 0; }
+        if (d.cost_list !== undefined) { assistantMsg._costList = d.cost_list || 0; chat._sessionCostList = d.cost_list || 0; }
         if (d.files?.length) assistantMsg._files = d.files;
         else if (chat.files.length) assistantMsg._files = chat.files;
         if (d.deep_research) assistantMsg._deepResearch = true;

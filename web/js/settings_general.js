@@ -329,6 +329,10 @@ async function saveModelsConfig() {
       // auto 0.1× of cost_input for billing, and NOT cache-priced (no freeze).
       const ccr = readNum(row, 'mdl-cost-cache-read');
       if (ccr !== undefined) mc[mid].cost_cache_read = ccr; else delete mc[mid].cost_cache_read;
+      // Flatrate/Coding-Plan billing: calls log $0 real cost; the cost fields
+      // above keep the API list price for the hypothetical estimate.
+      const flat = row.querySelector('.mdl-flat-plan')?.checked;
+      if (flat === true) mc[mid].flat_plan = true; else delete mc[mid].flat_plan;
       // Inference params — collect non-empty values
       const inf = {};
       const infKeys = ['temperature','top_p','top_k','max_tokens','frequency_penalty','presence_penalty','min_p','repetition_penalty','thinking_budget'];

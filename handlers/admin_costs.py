@@ -214,10 +214,36 @@ class AdminCostsHandlers:
             since_iso=since_iso, until_iso=until_iso,
             user_id=target_uid, agent=agent)
 
+        # API list price ("was würde es OHNE Flatrate kosten"): models flagged
+        # `flat_plan` log $0 real cost but keep the provider list price in their
+        # REGULAR cost_* fields. Computed at READ time from the summed tokens via
+        # the normal rate lookup — no schema change, retroactive for all rows.
+        def _list_cost(model: str, t_in: int, t_out: int, t_cr: int) -> float | None:
+            cfg = (getattr(engine, "_models_config", None) or {}).get(model) or {}
+            if not cfg.get("flat_plan"):
+                return None          # not flat → list price == real cost
+            from engine.quotas import _get_cost_rate
+            r = _get_cost_rate(model)
+            return (t_in * r["input"] + t_out * r["output"]
+                    + t_cr * r["cache_read"]) / 1e6
+
+        # Prompt-cache savings: what the cache-HIT tokens would have cost at
+        # the full input rate minus what they cost at the cache_read rate —
+        # the "ohne Prompt-Caching wäre es teurer"-Dimension, distinct from
+        # the flat-plan savings above.
+        def _cache_savings(model: str, t_cr: int) -> float:
+            if not t_cr:
+                return 0.0
+            from engine.quotas import _get_cost_rate
+            r = _get_cost_rate(model)
+            return max(0.0, t_cr * (r["input"] - r["cache_read"]) / 1e6)
+
         # Collapse (purpose, model) rows into use-case buckets, each with a
         # per-model split. Dict-of-dicts keeps the merge O(rows).
         buckets: dict[str, dict] = {}
         total_cost = 0.0
+        total_cost_list = 0.0
+        total_cache_savings = 0.0
         total_calls = 0
         total_in = 0
         total_out = 0
@@ -232,23 +258,35 @@ class AdminCostsHandlers:
             # cache-HIT tokens (billed at the discounted cache_read rate) — surfaced
             # separately so the UI can show cache hit-rate + realized savings.
             t_cr = int(r.get("cache_read_tokens", 0) or 0)
+            _lc = _list_cost(model, t_in, t_out, t_cr)
+            cost_list = cost if _lc is None else _lc
+            c_save = _cache_savings(model, t_cr)
             total_cost += cost
+            total_cost_list += cost_list
+            total_cache_savings += c_save
             total_calls += calls
             total_in += t_in
             total_out += t_out
             total_cache_read += t_cr
-            b = buckets.setdefault(uc, {"use_case": uc, "cost": 0.0, "calls": 0,
+            b = buckets.setdefault(uc, {"use_case": uc, "cost": 0.0, "cost_list": 0.0,
+                                        "cache_savings": 0.0, "calls": 0,
                                         "tokens_in": 0, "tokens_out": 0,
                                         "cache_read_tokens": 0, "_models": {}})
             b["cost"] += cost
+            b["cost_list"] += cost_list
+            b["cache_savings"] += c_save
             b["calls"] += calls
             b["tokens_in"] += t_in
             b["tokens_out"] += t_out
             b["cache_read_tokens"] += t_cr
-            m = b["_models"].setdefault(model, {"model": model, "cost": 0.0, "calls": 0,
+            m = b["_models"].setdefault(model, {"model": model, "cost": 0.0,
+                                                "cost_list": 0.0, "cache_savings": 0.0,
+                                                "calls": 0,
                                                 "tokens_in": 0, "tokens_out": 0,
                                                 "cache_read_tokens": 0})
             m["cost"] += cost
+            m["cost_list"] += cost_list
+            m["cache_savings"] += c_save
             m["calls"] += calls
             m["tokens_in"] += t_in
             m["tokens_out"] += t_out
@@ -259,7 +297,11 @@ class AdminCostsHandlers:
             models = sorted(b.pop("_models").values(), key=lambda x: -x["cost"])
             for m in models:
                 m["cost"] = round(m["cost"], 6)
+                m["cost_list"] = round(m["cost_list"], 6)
+                m["cache_savings"] = round(m["cache_savings"], 6)
             b["cost"] = round(b["cost"], 6)
+            b["cost_list"] = round(b["cost_list"], 6)
+            b["cache_savings"] = round(b["cache_savings"], 6)
             b["by_model"] = models
             by_use_case.append(b)
         by_use_case.sort(key=lambda x: -x["cost"])
@@ -270,6 +312,8 @@ class AdminCostsHandlers:
             "since": since_iso,
             "until": until_iso,
             "total_cost": round(total_cost, 6),
+            "total_cost_list": round(total_cost_list, 6),
+            "total_cache_savings": round(total_cache_savings, 6),
             "total_calls": total_calls,
             "total_tokens_in": total_in,
             "total_tokens_out": total_out,

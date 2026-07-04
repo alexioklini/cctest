@@ -29,6 +29,27 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.281.0",
+        "date": "2026-07-04",
+        "title": "Ehrliche Kosten: Flatrate, Listenpreis und Cache-Ersparnis",
+        "body": "Modelle, die über einen Coding-Plan oder eine Flatrate laufen, "
+                "lassen sich jetzt pro Modell so kennzeichnen — sie werden mit "
+                "0 $ verrechnet, und überall sehen Sie zusätzlich, was die "
+                "Nutzung zum API-Listenpreis gekostet hätte: in der Statuszeile, "
+                "im Terminal-Chat und in der Kostenaufstellung, die nun "
+                "verrechnete Kosten, API-Kosten, Flatrate-Ersparnis und "
+                "Caching-Ersparnis getrennt ausweist. Außerdem: Ist eine "
+                "gesuchte Information nicht in Ihren Quellen vorhanden, sagt "
+                "der Assistent das jetzt als ersten Satz klar heraus, statt es "
+                "in einer langen Antwort zu verstecken; Provider-Fehler (z. B. "
+                "aufgebrauchtes Guthaben) erscheinen als sichtbare Meldung "
+                "statt als leere Antwort; und beim Wiederverbinden mit einem "
+                "laufenden Gespräch erscheinen Experten- und Datenschutz-Karten "
+                "nicht mehr doppelt.",
+        "audience": "user",
+        "versions": ["9.281.0"],
+    },
+    {
         "version": "9.280.0",
         "date": "2026-07-04",
         "title": "Terminal-Chat: Cache-Anzeige, helles Design, echte Reihenfolge",

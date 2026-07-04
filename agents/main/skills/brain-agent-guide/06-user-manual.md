@@ -79,14 +79,24 @@ Warmup-Status, Provider-Queue. Auf jedes Element klicken für Details. In/Out,
 Kosten und Kontext-Füllstand **aktualisieren live während der Antwort** (pro
 Runde, nicht erst am Ende). Wird eine Antwort **mitten im Stream abgebrochen**,
 bleiben die bis dahin verbrauchten Tokens **und Kosten** erhalten (sie werden
-pro Runde sofort verbucht, gehen also nicht verloren).
+pro Runde sofort verbucht, gehen also nicht verloren). Läuft das Modell über
+eine **Flatrate** (Coding-Plan, siehe unten), zeigt das $-Feld beide Werte:
+`0.000 (API 0.412)` — verrechnet plus, in Klammern, was die Sitzung zum
+API-Listenpreis gekostet hätte (Tooltip nennt die Ersparnis). Dasselbe gilt
+für die Statuszeile des Terminal-Chats in Code-Projekten.
 
 Ein Klick auf **Plan-Nutzung** öffnet ein Fenster mit den Kontingent-Balken
 (täglich + Abrechnungszeitraum) und darunter der **Kostenaufschlüsselung**: oben
-die Gesamtkosten, dann die Kosten **pro Anwendungsfall** (Chat, Chat-Zusammenfassung,
+vier Kennzahlen — **Verrechnete Kosten** (tatsächlich abgebucht; Flatrate-Modelle
+buchen 0 $), **API-Kosten (Listenpreis)** (dieselbe Nutzung zu Listenpreisen),
+**Flatrate-Ersparnis** (die Differenz) und **Caching-Ersparnis** (was die
+⚡-gecachten Tokens ohne Prompt-Cache zusätzlich gekostet hätten) — plus die
+Token-Summen (ein · aus · ⚡ gecached). Darunter die Kosten **pro Anwendungsfall**
+(Chat, Chat-Zusammenfassung,
 Übersetzung, Geplante Aufgaben, Studio, Deep Research, Audio Overview/Podcast,
 Vorlesen, …) mit Balken, Prozentanteil und Aufrufzahl. Jede Zeile lässt sich
-aufklappen, um die **Aufteilung nach Modell** (Tokens, Kosten, Anteil) zu zeigen.
+aufklappen, um die **Aufteilung nach Modell** (Tokens inkl. ⚡-Anteil, verrechnete
+Kosten und ggf. Listenpreis in Klammern) zu zeigen.
 Über das Auswahlmenü oben rechts wählt man den **Zeitraum** (Heute, Diese Woche,
 letzte 7/30/180/365 Tage, seit Jahresbeginn, aktueller/letzter Abrechnungszeitraum,
 Gesamt). Hinweis: lokale Modelle sind kostenlos und erscheinen mit 0 $ (aber echten
@@ -1413,7 +1423,13 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   cached ($/M)"** — der Preis für Tokens aus dem Prompt-Cache (leer = automatisch
   0,1× des Eingabepreises). Ein gesetzter Wert markiert das Modell zugleich als
   „cache-priced" (Auto-Routing friert Modell + Tools dann auf Turn 1 ein, damit
-  der Provider-Cache trifft). Pro
+  der Provider-Cache trifft). Daneben die Checkbox **„Flatrate / Coding-Plan"**
+  (9.281.0): Ist sie gesetzt, wird jeder Aufruf dieses Modells mit **0 $
+  realen Kosten** verbucht (Quotas, Plan-Verbrauch) — für Modelle, die über
+  einen Abo-Plan laufen (Z.ai/Kimi Coding Plan, Mistral Vibe). Die Kostenfelder
+  behalten dabei den **API-Listenpreis**; daraus rechnen Statuszeile und
+  Kostenaufstellung den hypothetischen „API-Listenpreis ohne Flatrate" samt
+  Ersparnis. Der Cache-Freeze („Kosten cached") bleibt davon unberührt. Pro
   Modell über das ⚙-Icon: u.a. **Fan-out-Modell** — teilt dieses Chat-Modell im
   Chat eine Hintergrundaufgabe per Fan-out auf, laufen die Leaf-Tasks auf dem
   hier gewählten (meist günstigeren) Modell; leer = bleiben auf diesem Modell.

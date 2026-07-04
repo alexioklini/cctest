@@ -378,7 +378,7 @@ def run_turn(
         print(f"[inprocess-loop] turn={turn_id[:8]} model={model[:24]} "
               f"reply={len(final_text)}c rounds={summary.get('rounds', 0)} "
               f"tools={summary.get('tool_calls_total', 0)} "
-              f"error={error_msg} cancelled={cancelled}", flush=True)
+              f"error={error_msg or summary.get('error')} cancelled={cancelled}", flush=True)
 
     return {
         "reply": final_text,
@@ -389,7 +389,10 @@ def run_turn(
         "tool_events": summary.get("tool_events", []) or [],
         "text_segments": summary.get("text_segments", []) or [],
         "cancelled": cancelled,
-        "error": error_msg,
+        # error_msg = an exception ESCAPED the loop; summary["error"] = the loop
+        # caught a terminal provider error itself (api_error stop). Either way
+        # the caller must see it — chat.py surfaces it in the reply.
+        "error": error_msg or summary.get("error"),
         "turn_id": turn_id,
     }
 

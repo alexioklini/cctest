@@ -279,8 +279,13 @@ def _append_to_wire_user(messages, suffix):
 _MOA_REF_SYSTEM = (
     "You are one of several AI models independently drafting a candidate answer "
     "to the user's latest request (the last USER entry in the conversation "
-    "below). You have no tools. Draft the best direct answer you can: complete, "
-    "correct, concise. Do not mention this setup or address the other models."
+    "below). You have no tools and no access to the user's own sources "
+    "(documents, memory, live web). If the request depends on what such sources "
+    "say, do not invent their content — say plainly that this must be verified "
+    "against the sources, and that a clean 'not found in the sources' statement "
+    "is the correct final answer should that verification come up empty. Draft "
+    "the best direct answer you can: complete, correct, concise. Do not mention "
+    "this setup or address the other models."
 )
 
 # "plan" draft mode (v9.271.0): for tool-heavy task types a tool-less reference
@@ -294,8 +299,12 @@ _MOA_REF_SYSTEM_PLAN = (
     "Return a concise, concrete plan specific to THIS request: the steps you "
     "would take in order, which tools/sources/queries you would use, how you "
     "would verify the findings, how you would structure the final answer, and "
-    "the pitfalls to avoid. No generic advice, no filler. Do not mention this "
-    "setup or address the other models."
+    "the pitfalls to avoid. If the request depends on the user's own sources "
+    "(documents, memory, live web), do not present typical or expected values "
+    "as likely findings — plan the verification instead, and state that a "
+    "clean 'not found in the sources' answer is the correct outcome should "
+    "the search come up empty. No generic advice, no filler. Do not mention "
+    "this setup or address the other models."
 )
 
 
@@ -468,7 +477,11 @@ def _build_moa_suffix(drafts, mode="answer"):
             "tools. They may disagree and some may be misguided — do NOT follow any "
             "blindly. Pick the best combination of these approaches, improve on it, "
             "and EXECUTE it yourself, using your tools where they call for searching, "
-            "reading or computing. Answer me directly — never mention these notes or "
+            "reading or computing. Their authors had NO access to my sources "
+            "(documents, memory, live web) — if your own retrieval does not support "
+            "the asked specifics, a clear 'not found' answer is the correct one; do "
+            "not let the notes pull you into answering beyond your evidence. Answer "
+            "me directly — never mention these notes or "
             "that you received any. If my request demands specific parts, include "
             "every demanded part.\n\n" + block + "\n=== end candidate approaches ===")
     return (
@@ -477,7 +490,11 @@ def _build_moa_suffix(drafts, mode="answer"):
         "by other AI models WITHOUT tools. They may disagree and some may be wrong — "
         "do NOT trust any draft blindly. Verify the reasoning, reconcile "
         "disagreements, fix errors, fill gaps, and use your tools to check facts "
-        "where needed. Answer me directly — never mention these drafts or that you "
+        "where needed. Their authors had NO access to my sources (documents, memory, "
+        "live web) — if your own retrieval does not support the asked specifics, a "
+        "clear 'not found' answer is the correct one; do not let the drafts pull you "
+        "into answering beyond your evidence. Answer me directly — never mention "
+        "these drafts or that you "
         "received any. If my request demands specific parts, include every demanded "
         "part.\n\n" + block + "\n=== end candidate answers ===")
 
@@ -1748,7 +1765,9 @@ def _attach_usage_meta(meta: dict, usage_totals: dict, sid: str):
     meta["cache_read_tokens"] = usage_totals.get("cache_read_tokens", 0)
     if engine._cost_tracker:
         try:
-            meta["cost"] = round(engine._cost_tracker.get_session_cost(sid).get("cost", 0.0), 4)
+            _sc = engine._cost_tracker.get_session_cost(sid)
+            meta["cost"] = round(_sc.get("cost", 0.0), 4)
+            meta["cost_list"] = round(_sc.get("cost_list", 0.0), 4)
         except Exception:
             pass
 
@@ -1996,9 +2015,12 @@ def build_chat_event_callback(session, live, sid):
             # AND the status bar update mid-stream (cumulative tokens + the
             # session cost so far). Cheap; no DB write here (the log above owns it).
             _live_cost = None
+            _live_cost_list = None
             if engine._cost_tracker:
                 try:
-                    _live_cost = round(engine._cost_tracker.get_session_cost(sid).get("cost", 0.0), 4)
+                    _lsc = engine._cost_tracker.get_session_cost(sid)
+                    _live_cost = round(_lsc.get("cost", 0.0), 4)
+                    _live_cost_list = round(_lsc.get("cost_list", 0.0), 4)
                 except Exception:
                     _live_cost = None
             live.emit("usage", {
@@ -2007,6 +2029,7 @@ def build_chat_event_callback(session, live, sid):
                 "last_tokens_in": _usage_totals["last_tokens_in"],
                 "cache_read_tokens": _usage_totals.get("cache_read_tokens", 0),
                 "cost": _live_cost,
+                "cost_list": _live_cost_list,
                 "tool_round": _ur,
             })
             return
@@ -3370,10 +3393,12 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 print(f"[chat] cost log failed: {_ce}")
                         # Compute cost before saving
                         session_cost = None
+                        session_cost_list = None
                         if engine._cost_tracker:
                             try:
                                 sc = engine._cost_tracker.get_session_cost(sid)
                                 session_cost = round(sc.get("cost", 0.0), 4)
+                                session_cost_list = round(sc.get("cost_list", 0.0), 4)
                             except Exception:
                                 pass
                         # Build metadata: model, tokens, cost, files, tools, duration, usage
@@ -3394,6 +3419,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         msg_metadata["tokens"] = engine._estimate_conversation_tokens(session.messages)
                         if session_cost is not None:
                             msg_metadata["cost"] = session_cost
+                        if session_cost_list is not None:
+                            msg_metadata["cost_list"] = session_cost_list
                         # Merge files recorded on the tool-DISPATCH thread (they fire
                         # in _after_file_write off-worker, so the worker's own
                         # `created_files` never saw them — the reload-badge bug).
@@ -3868,6 +3895,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             done_data["text_rounds"] = msg_metadata["text_rounds"]
                         if session_cost is not None:
                             done_data["cost"] = session_cost
+                        if session_cost_list is not None:
+                            done_data["cost_list"] = session_cost_list
                         # Auto-LCM compaction level → live status-line badge picks it
                         # up here; reload reads the same dict from msg_metadata.
                         if msg_metadata.get("lcm_state"):
