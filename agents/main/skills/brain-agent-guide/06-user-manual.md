@@ -682,8 +682,9 @@ die Wahl wird pro Projekt gemerkt.
 unteren Bereich einen **Terminal-Chat** — eine schlanke, terminalartige
 Chat-Oberfläche („wie ein Coding-Assistent im Terminal"). Sie ist im echten
 **CLI-Look** gestaltet: durchgehend Monospace in einheitlicher Größe, ruhige
-Terminalfarben (immer dunkel, unabhängig vom App-Theme) und Struktur allein über
-Farbe statt Fettdruck — liest sich wie die Kommandozeile. Sie ist als
+Terminalfarben und Struktur allein über Farbe statt Fettdruck — liest sich wie
+die Kommandozeile. Die Farben folgen dem **App-Theme**: im hellen Modus hell,
+im dunklen Modus die gewohnte warm-dunkle CLI-Palette. Sie ist als
 vollwertiger Ersatz für die normale Chat-Ansicht beim Arbeiten in einem
 Code-Projekt gedacht: Sie öffnen sie über den **◈-Knopf** in der Tab-Leiste eines
 Teilbereichs (oder „+ Neuer Terminal-Chat" in der Sektion **Terminal-Chats**).
@@ -694,10 +695,14 @@ Die **Eingabezeile** sitzt — wie in einer Terminal-CLI — direkt **unter der
 letzten Antwort** und scrollt mit dem Verlauf mit. Den **Text im Verlauf** können
 Sie wie gewohnt markieren und kopieren. Die Antworten **streamen** live mit einem
 Lauf-Anzeiger (Spinner); darunter zeigt eine **Statuszeile** das aktive Modell,
-die Denkstufe, Token (ein/aus), Kosten und die Kontext-Auslastung — und rechts
-einen **⬇ .md-Knopf**, der den **Chatverlauf als Markdown** direkt herunterlädt
-(ohne Ablage im Arbeitsverzeichnis). Werkzeugaufrufe werden als kompakte Zeilen
-(`● Werkzeug Datei ✓`) eingeblendet (per `/tools` ein-/ausschaltbar). Mit
+die Denkstufe, Token (ein/aus), die **Prompt-Cache-Treffer** (⚡ gecachte Token
+samt Trefferquote, grün sobald Treffer anfallen), Kosten und die
+Kontext-Auslastung — und rechts einen **⬇ .md-Knopf**, der den **Chatverlauf
+als Markdown** direkt herunterlädt (ohne Ablage im Arbeitsverzeichnis).
+Werkzeugaufrufe werden als kompakte Zeilen (`● Werkzeug Datei ✓`) eingeblendet
+(per `/tools` ein-/ausschaltbar) — zusammen mit den Denkschritten in der
+**tatsächlichen Reihenfolge der Ausführung**, live wie beim erneuten Öffnen
+eines Verlaufs. Mit
 **↑/↓** blättern Sie wie in einer Shell durch zuletzt gesendete Eingaben, mit
 **Tab** auf leerer Zeile holen Sie einen Eingabe-Vorschlag. Über das
 **Rechtsklick-Menü** eines Tabs exportieren Sie Terminal-Chat **oder**

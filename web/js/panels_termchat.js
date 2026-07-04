@@ -23,7 +23,7 @@
 //     history:[sent prompts], histIdx, draft,
 //     streaming, _abort, _spinTimer, _spinIdx, _spinLabel,
 //     log:[row-models], live:{textEl,thinkEl},
-//     tokensIn, tokensOut, cost, lastApiIn, maxContext }
+//     tokensIn, tokensOut, cached, cost, lastApiIn, maxContext }
 
 const _TC_SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const _TC_THINK = { '': 'Aus', none: 'Aus', low: 'Niedrig', medium: 'Mittel', high: 'Hoch' };
@@ -564,12 +564,30 @@ async function _tcReadSSE(tab, resp, cbs) {
 // event vocabulary (subset relevant to a terminal-chat).
 function _tcCallbacks(tab, live) {
   return {
-    thinking_start: () => { live.think = ''; if (tab.showTools) { live.thinkRow.style.display = ''; } _tcSpinSet(tab, 'Denkt nach'); },
+    thinking_start: () => {
+      live.think = '';
+      if (tab.showTools) {
+        // Each round's thinking gets its OWN row inserted at the current end
+        // (before the spinner) — NOT the single pinned row from turn start,
+        // which left all thinking at the top while tool cards stacked below it
+        // (broke the think→tool→think→tool execution order).
+        live.thinkRow = document.createElement('div');
+        live.thinkRow.className = 'tc-row tc-think';
+        _tcLiveInsert(tab, live, live.thinkRow);
+        // Close the current answer row so following text lands AFTER the thinking.
+        live.curTextRow = null;
+      }
+      _tcSpinSet(tab, 'Denkt nach');
+    },
     thinking_delta: (d) => {
       live.think += d.text || '';
       if (tab.showTools) { live.thinkRow.textContent = '⠿ ' + live.think; _tcScroll(tab); }
     },
-    thinking_done: () => { live.think = ''; },
+    thinking_done: () => {
+      // Drop an empty round row (thinking_start fired but nothing streamed).
+      if (live.thinkRow && live.thinkRow.parentNode && !live.thinkRow.textContent) live.thinkRow.remove();
+      live.think = '';
+    },
     queue_wait: (d) => { _tcSpinSet(tab, 'Wartet in der Warteschlange' + (d.position ? ` (#${d.position})` : '')); },
     queue_acquired: () => { _tcSpinSet(tab, 'Denkt nach'); },
     tool_call: (d) => {
@@ -621,6 +639,7 @@ function _tcCallbacks(tab, live) {
       // streaming; committed into the totals at `done`.
       if (typeof d.tokens_in === 'number') tab._liveIn = d.tokens_in;
       if (typeof d.tokens_out === 'number') tab._liveOut = d.tokens_out;
+      if (typeof d.cache_read_tokens === 'number') tab._liveCached = d.cache_read_tokens;
       if (d.cost != null) tab.cost = d.cost;
       if (typeof d.last_tokens_in === 'number') tab.lastApiIn = d.last_tokens_in;
       tcRenderStatus(tab);
@@ -690,9 +709,11 @@ function _tcCallbacks(tab, live) {
       // fall back to the last live `usage` value if absent.
       const tin = (typeof d.tokens_in === 'number') ? d.tokens_in : (tab._liveIn || 0);
       const tout = (typeof d.tokens_out === 'number') ? d.tokens_out : (tab._liveOut || 0);
+      const tcached = (typeof d.cache_read_tokens === 'number') ? d.cache_read_tokens : (tab._liveCached || 0);
       tab.tokensIn = (tab.tokensIn || 0) + tin;
       tab.tokensOut = (tab.tokensOut || 0) + tout;
-      tab._liveIn = 0; tab._liveOut = 0;
+      tab.cached = (tab.cached || 0) + tcached;
+      tab._liveIn = 0; tab._liveOut = 0; tab._liveCached = 0;
       if (d.cost != null) tab.cost = d.cost;
       if (d.max_context) tab.maxContext = d.max_context;
       if (typeof d.last_tokens_in === 'number') tab.lastApiIn = d.last_tokens_in;
@@ -776,6 +797,11 @@ function tcRenderStatus(tab) {
   const tin = (tab.tokensIn || 0) + (tab.streaming ? (tab._liveIn || 0) : 0);
   const tout = (tab.tokensOut || 0) + (tab.streaming ? (tab._liveOut || 0) : 0);
   const cost = (tab.cost != null) ? ('$' + Number(tab.cost).toFixed(4)) : '—';
+  // Prompt-cache hits (session total + live turn) — mirrors the main chat's
+  // status-bar item: hit % = cached / (full-price in + cached), green once >0.
+  const cached = (tab.cached || 0) + (tab.streaming ? (tab._liveCached || 0) : 0);
+  const cachePct = (tin + cached) ? Math.round(100 * cached / (tin + cached)) : 0;
+  const cachedBadge = ` · <span title="Prompt-Cache-Treffer dieser Sitzung: ${cached.toLocaleString('de-DE')} Tokens = ${cachePct}% des Prompts (zum ~0,1×-Tarif)"${cached > 0 ? ' style="color:#10b981"' : ''}>⚡ ${cached.toLocaleString('de-DE')} (${cachePct}%)</span>`;
   let ctx = '';
   if (tab.maxContext && tab.lastApiIn) ctx = ' · ctx ' + Math.min(100, Math.round(tab.lastApiIn / tab.maxContext * 100)) + '%';
   const toolsBadge = tab.showTools ? '' : ' · tools:aus';
@@ -793,7 +819,7 @@ function tcRenderStatus(tab) {
   // the chat has rows.
   const exportBtn = `<button class="tc-st-btn" title="Chatverlauf als Markdown herunterladen"
     onclick="tcExportMarkdown('${esc(tab.id)}')">⬇ .md</button>`;
-  el.innerHTML = `<span class="tc-st-info">${dot}${pausedBadge}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok · ${esc(cost)}${ctx}${toolsBadge}${queueBadge}${goalBadge}${cancelHint}</span>${exportBtn}`;
+  el.innerHTML = `<span class="tc-st-info">${dot}${pausedBadge}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok${cachedBadge} · ${esc(cost)}${ctx}${toolsBadge}${queueBadge}${goalBadge}${cancelHint}</span>${exportBtn}`;
 }
 
 // Build a Markdown transcript of a terminal-chat from its in-DOM rows and
@@ -954,7 +980,7 @@ async function _tcCmdClear(tab) {
   // Start a fresh code_chat session (drops context) — keep the same tab.
   tcCancel(tab);
   tab.sessionId = '';
-  tab.tokensIn = 0; tab.tokensOut = 0; tab.cost = null; tab.lastApiIn = 0;
+  tab.tokensIn = 0; tab.tokensOut = 0; tab.cached = 0; tab._liveCached = 0; tab.cost = null; tab.lastApiIn = 0;
   tab.log = []; tab._autoPicked = '';
   _tcClearRows(tab);
   tcPrint(tab, 'Neue Sitzung — Kontext geleert.', 'tc-sys');
@@ -1205,22 +1231,36 @@ async function tcLoadTranscript(tab) {
     // Restore the running token/cost totals + last-used model + last prompt size
     // from the per-message metadata so the status line reflects the conversation
     // after a reload (was showing 0/0 tok and "Standard").
-    let tin = 0, tout = 0, cost = 0, lastModel = '', lastIn = 0, haveCost = false;
+    let tin = 0, tout = 0, cached = 0, cost = 0, lastModel = '', lastIn = 0, haveCost = false;
     for (const m of (d.messages || [])) {
       const meta = m.metadata || {};
       if (m.role === 'assistant' || m.role === 'assistant_segment') {
         tin += meta.tokens_in || 0;
         tout += meta.tokens_out || 0;
-        if (typeof meta.cost === 'number') { cost += meta.cost; haveCost = true; }
+        cached += meta.cache_read_tokens || 0;
+        // meta.cost is the CUMULATIVE session cost at that turn (mirrors the
+        // done event) — the most recent value wins; summing would inflate.
+        if (typeof meta.cost === 'number') { cost = meta.cost; haveCost = true; }
         if (meta.model) lastModel = meta.model;
         if (meta.tokens_in) lastIn = meta.tokens_in;
       }
     }
-    tab.tokensIn = tin; tab.tokensOut = tout;
+    tab.tokensIn = tin; tab.tokensOut = tout; tab.cached = cached;
     if (haveCost) tab.cost = cost;
     if (lastIn) tab.lastApiIn = lastIn;
     if (lastModel) tab.model = lastModel;   // most recent turn's model wins for display
-    for (const m of (d.messages || [])) _tcRenderHistMsg(tab, m);
+    // Thinking rows are separate DB messages persisted BEFORE their assistant
+    // turn — rendering them flat groups all thinking above all tool cards.
+    // Buffer them and let _tcRenderHistAssistant weave them in per tool_round
+    // (mirrors the main chat's reload interleave in sessions.js).
+    let pendingThink = [];
+    for (const m of (d.messages || [])) {
+      if (m.role === 'thinking') { pendingThink.push(m); continue; }
+      if (m.role === 'assistant') { _tcRenderHistAssistant(tab, m, pendingThink); pendingThink = []; continue; }
+      if (pendingThink.length) { for (const tm of pendingThink) _tcRenderHistMsg(tab, tm); pendingThink = []; }
+      _tcRenderHistMsg(tab, m);
+    }
+    for (const tm of pendingThink) _tcRenderHistMsg(tab, tm);   // trailing (turn cut off)
     tcRenderStatus(tab);
     _tcScrollToEnd(tab);   // open a past chat at its most recent message
     // If a turn is still streaming server-side, attach + follow it.
@@ -1253,31 +1293,42 @@ function _tcRenderHistMsg(tab, m) {
 // then the whole answer. Tools are stored ONLY in the assistant message's
 // metadata (not as separate rows), which is why the old flat render clustered
 // them. Falls back to the plain joined text when there are no tools / rounds.
-function _tcRenderHistAssistant(tab, m) {
+function _tcRenderHistAssistant(tab, m, thinkMsgs) {
   const meta = m.metadata || {};
   const tools = tab.showTools ? (meta.tools || []) : [];
   const rounds = meta.text_rounds || [];
-  // No round split available → render the tools (if any) then the whole answer,
-  // preserving at least tool-before-text ordering.
+  // Buffered thinking rows for THIS turn (each carries metadata.tool_round) —
+  // woven in at the START of their round, matching the live stream order
+  // (thinking → that round's tools → that round's text).
+  const thinks = tab.showTools ? (thinkMsgs || []) : [];
+  const printThink = (tm) => tcPrint(tab, '⠿ ' + esc(_tcMsgText(tm)), 'tc-think');
+  // No round split available → render thinking, then the tools (if any), then
+  // the whole answer, preserving at least think/tool-before-text ordering.
   if (!rounds.length) {
+    for (const tm of thinks) printThink(tm);
     for (const t of tools) _tcPrintHistTool(tab, t);
     const txt = _tcMsgText(m);
     if (txt) tcPrint(tab, renderMarkdown(txt), 'tc-asst');
     return;
   }
-  // Group tools by round; walk rounds in order: that round's tools, then its text.
+  // Group tools + thinking by round; walk rounds in order: that round's
+  // thinking, its tools, then its text.
   const byRound = {};
   for (const t of tools) { const r = t.tool_round || 0; (byRound[r] = byRound[r] || []).push(t); }
-  const seen = new Set();
+  const thinkByRound = {};
+  for (const tm of thinks) { const r = tm.metadata?.tool_round ?? 0; (thinkByRound[r] = thinkByRound[r] || []).push(tm); }
+  const seen = new Set(), seenThink = new Set();
   const roundNos = rounds.map(r => r.round).filter(n => typeof n === 'number');
-  const maxRound = Math.max(0, ...roundNos, ...Object.keys(byRound).map(Number));
+  const maxRound = Math.max(0, ...roundNos, ...Object.keys(byRound).map(Number), ...Object.keys(thinkByRound).map(Number));
   const textByRound = {};
   for (const r of rounds) if (typeof r.round === 'number') textByRound[r.round] = r.text || '';
   for (let r = 0; r <= maxRound; r++) {
+    for (const tm of (thinkByRound[r] || [])) { printThink(tm); seenThink.add(tm); }
     for (const t of (byRound[r] || [])) { _tcPrintHistTool(tab, t); seen.add(t); }
     if (textByRound[r]) tcPrint(tab, renderMarkdown(textByRound[r]), 'tc-asst');
   }
-  // Any tools without a matching round bucket (defensive) → append at the end.
+  // Anything without a matching round bucket (defensive) → append at the end.
+  for (const tm of thinks) if (!seenThink.has(tm)) printThink(tm);
   for (const t of tools) if (!seen.has(t)) _tcPrintHistTool(tab, t);
 }
 

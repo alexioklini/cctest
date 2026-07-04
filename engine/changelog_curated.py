@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.280.0",
+        "date": "2026-07-04",
+        "title": "Terminal-Chat: Cache-Anzeige, helles Design, echte Reihenfolge",
+        "body": "Die Statuszeile des Terminal-Chats in Code-Projekten zeigt "
+                "jetzt auch die Prompt-Cache-Treffer (⚡ mit Trefferquote) und "
+                "verlässliche Kosten — auch nach dem erneuten Öffnen eines "
+                "früheren Verlaufs. Im hellen Design erscheint der "
+                "Terminal-Chat nun hell statt immer dunkel; im dunklen Design "
+                "bleibt der gewohnte CLI-Look erhalten. Außerdem erscheinen "
+                "Denkschritte und Werkzeugaufrufe jetzt in der tatsächlichen "
+                "Reihenfolge der Ausführung statt gruppiert.",
+        "audience": "user",
+        "versions": ["9.280.0"],
+    },
+    {
         "version": "9.279.0",
         "date": "2026-07-04",
         "title": "Neue Modelle erscheinen nicht mehr ungefragt",

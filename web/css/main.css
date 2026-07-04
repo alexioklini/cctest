@@ -809,16 +809,31 @@ textarea { resize: none; }
 .termchat {
   position: absolute; inset: 0; display: flex; flex-direction: column;
   overflow: hidden;
-  /* CLI look: a self-contained Claude-Code terminal palette + monospace, applied
-     REGARDLESS of the app's light/dark theme (a real terminal is always dark).
-     These locally re-bind the theme vars the .tc-* rules already reference, so the
-     whole panel adopts the CLI palette without rewriting every rule. */
+  /* CLI look: monospace + Claude-terracotta accents in BOTH modes; bg/text
+     follow the app's light/dark theme via the inherited --bg-*/--text-* vars.
+     (The always-dark CLI palette now lives in the [data-mode="dark"] override
+     below — it used to apply regardless of theme, which made the pane dark in
+     light mode.) */
   /* Use the SYSTEM terminal-grade mono (--font-term = SF Mono / Menlo / Cascadia /
      DejaVu) — it matches the real Claude Code CLI look. (JetBrains Mono was tried
      to fight the "too fat" look but read wrong; grayscale antialiasing + the dimmed
      body + no-bold below carry that instead.) --font-ui is re-bound so any .tc-*
      rule using --font-ui follows too. */
   --font-ui: var(--font-term);
+  --accent-brand: #d97757;    /* Claude terracotta — prompts, headings, accents */
+  --accent-brand-hover: #bf5f40;
+  background: var(--bg-000); font-family: var(--font-term);
+  color: var(--text-100); font-size: 13px; line-height: 1.45; font-weight: 400;
+  /* Grayscale antialiasing — the main lever against the "too fat" look: without it
+     macOS renders SF Mono/Menlo on a dark bg heavier. A hair of negative tracking
+     further slims the strokes optically. */
+  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+/* Dark mode: the self-contained Claude-Code CLI palette (warm near-black). These
+   locally re-bind the theme vars the .tc-* rules already reference, so the whole
+   panel adopts the CLI look without rewriting every rule. */
+[data-mode="dark"] .termchat {
   --bg-000: #1a1917;          /* warm near-black terminal bg */
   --bg-200: #24231f;          /* code/shell block bg */
   --text-100: #a8a49b;        /* primary body — dimmed further; a lower-contrast
@@ -829,17 +844,9 @@ textarea { resize: none; }
   --text-400: #625f58;        /* dim (thinking, hints, status) */
   --border-200: rgba(255,255,255,0.10);
   --border-100: rgba(255,255,255,0.14);
-  --accent-brand: #d97757;    /* Claude terracotta — prompts, headings, accents */
   --accent-brand-hover: #e0906f;
   --git-added: #7bb585;
   --git-deleted: #e06b6b;
-  background: var(--bg-000); font-family: var(--font-term);
-  color: var(--text-100); font-size: 13px; line-height: 1.45; font-weight: 400;
-  /* Grayscale antialiasing — the main lever against the "too fat" look: without it
-     macOS renders SF Mono/Menlo on a dark bg heavier. A hair of negative tracking
-     further slims the strokes optically. */
-  -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
-  letter-spacing: -0.01em;
 }
 /* Force the body weight to 400 everywhere except explicit emphasis/headings, so
    nothing inherits a heavier default. */
