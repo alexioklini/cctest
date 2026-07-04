@@ -1937,39 +1937,34 @@ async function openInspectModal() {
     const body = document.getElementById('inspect-body');
     let html = '';
 
-    // --- Summary bar ---
+    // --- Summary bar --- (einheitliche Kosten-Reihenfolge wie Statuszeile/
+    // Kostenaufstellung: API-Kosten → Verrechnet → Cache-Ersparnis)
     const t = data.totals || {};
     const _cached = t.cache_read_tokens || 0;
     const _hitPct = (typeof t.cache_hit_pct === 'number') ? t.cache_hit_pct : 0;
     const _cachedCost = t.cached_cost || 0;
     const _cachedSave = t.cached_savings || 0;
+    const _costList = (typeof t.cost_list === 'number') ? t.cost_list : (t.cost || 0);
     const _cacheColor = _cached > 0 ? '#10b981' : 'var(--text-400)';
-    html += `<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px">
-      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Anfragen</div>
-        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.turns || 0}</div>
-      </div>
-      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Token ein</div>
-        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${(t.tokens_in||0).toLocaleString()}</div>
-      </div>
-      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Token aus</div>
-        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${(t.tokens_out||0).toLocaleString()}</div>
-      </div>
-      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center" title="Prompt-Cache-Treffer: ${_cached.toLocaleString()} Tokens (${_hitPct}% des Prompts) zum ~0,1×-Tarif abgerechnet. Kosten dafür: $${_cachedCost.toFixed(4)} — gespart ggü. vollem Eingabe-Tarif: $${_cachedSave.toFixed(4)}.">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">⚡ Cached</div>
-        <div style="font-size:20px;font-weight:600;color:${_cacheColor};margin-top:4px">${_cached.toLocaleString()}</div>
-        <div style="font-size:11px;color:${_cacheColor};margin-top:2px">${_hitPct}% · −$${_cachedSave.toFixed(4)}</div>
-      </div>
-      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Dauer</div>
-        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">${t.duration ? t.duration.toFixed(1) + 's' : '-'}</div>
-      </div>
-      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center">
-        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">Kosten</div>
-        <div style="font-size:20px;font-weight:600;color:var(--text-000);margin-top:4px">$${(t.cost||0).toFixed(4)}</div>
-      </div>
+    const _tile = (label, value, sub, opts) => `
+      <div style="background:var(--bg-200);border-radius:10px;padding:12px;text-align:center" ${opts && opts.title ? `title="${opts.title}"` : ''}>
+        <div style="font-size:11px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px">${label}</div>
+        <div style="font-size:20px;font-weight:600;color:${(opts && opts.color) || 'var(--text-000)'};margin-top:4px">${value}</div>
+        ${sub ? `<div style="font-size:11px;color:${(opts && opts.color) || 'var(--text-400)'};margin-top:2px">${sub}</div>` : ''}
+      </div>`;
+    html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+      ${_tile('Anfragen', String(t.turns || 0), '')}
+      ${_tile('Token ein', (t.tokens_in||0).toLocaleString(), '')}
+      ${_tile('Token aus', (t.tokens_out||0).toLocaleString(), '')}
+      ${_tile('⚡ Gecached', _cached.toLocaleString(), `${_hitPct}% des Prompts`, { color: _cacheColor,
+        title: `Prompt-Cache-Treffer: ${_cached.toLocaleString()} Tokens (${_hitPct}% des Prompts) zum ~0,1×-Tarif abgerechnet. Kosten dafür: $${_cachedCost.toFixed(4)}.` })}
+      ${_tile('Dauer', t.duration ? t.duration.toFixed(1) + 's' : '-', '')}
+      ${_tile('API-Kosten', '$' + _costList.toFixed(4), '', {
+        title: 'Diese Sitzung zum API-Listenpreis der Modelle — was ohne Coding-/Vibe-Flatrates fällig wäre. Prompt-Caching ist bereits eingerechnet.' })}
+      ${_tile('Verrechnete Kosten', '$' + (t.cost||0).toFixed(4), '', {
+        title: 'Tatsächlich abgerechnet — Modelle mit Flatrate/Coding-Plan buchen 0 $.' })}
+      ${_tile('Cache-Ersparnis', '−$' + _cachedSave.toFixed(4), '', { color: _cachedSave > 0 ? '#10b981' : 'var(--text-400)',
+        title: 'Was die gecachten Tokens zum vollen Eingabe-Tarif zusätzlich gekostet hätten (voller Tarif minus ~0,1×-Cache-Tarif).' })}
     </div>`;
 
     // --- Extract system prompt & tools from first payload (constant per session) ---
@@ -2063,11 +2058,14 @@ async function openInspectModal() {
         <span style="font-weight:600;color:var(--text-000)">Anfrage ${ix.turn}</span>
         ${thinkingBadge}
         ${cavBadge}
-        <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-400)">
+        <span style="margin-left:auto;font-family:var(--font-mono);font-size:11px;color:var(--text-400)"
+              title="Kosten dieser Anfrage: API-Listenpreis · verrechnet · Cache-Ersparnis (gleiche Reihenfolge wie in der Gesamtübersicht)">
           ${a.model ? esc(a.model) : ''}
           ${a.duration ? ' &middot; ' + a.duration.toFixed(1) + 's' : ''}
           ${speed ? ' &middot; ' + speed + ' tok/s' : ''}
-          ${a.cost ? ' &middot; $' + a.cost.toFixed(4) : ''}
+          ${(typeof a.cost_list === 'number' && (a.cost_list || a.cost)) ? ' &middot; API $' + a.cost_list.toFixed(4) : ''}
+          ${(typeof a.cost === 'number' && (a.cost_list || a.cost)) ? ' &middot; verrechnet $' + a.cost.toFixed(4) : (a.cost ? ' &middot; $' + a.cost.toFixed(4) : '')}
+          ${a.cache_savings ? ' &middot; <span style="color:#10b981">⚡ −$' + a.cache_savings.toFixed(4) + '</span>' : ''}
         </span>
       </div>`;
 

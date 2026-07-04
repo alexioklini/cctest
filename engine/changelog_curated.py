@@ -38,7 +38,10 @@ CURATED_CHANGELOG: list[dict] = [
                 "Nutzung zum API-Listenpreis gekostet hätte: in der Statuszeile, "
                 "im Terminal-Chat und in der Kostenaufstellung, die nun "
                 "verrechnete Kosten, API-Kosten, Flatrate-Ersparnis und "
-                "Caching-Ersparnis getrennt ausweist. Außerdem: Ist eine "
+                "Caching-Ersparnis getrennt ausweist — als übersichtliche "
+                "Tabelle mit festen Spalten; der Sitzungs-Inspektor zeigt "
+                "dieselben Kennzahlen für die ganze Sitzung und pro Anfrage "
+                "in derselben Reihenfolge. Außerdem: Ist eine "
                 "gesuchte Information nicht in Ihren Quellen vorhanden, sagt "
                 "der Assistent das jetzt als ersten Satz klar heraus, statt es "
                 "in einer langen Antwort zu verstecken; Provider-Fehler (z. B. "
@@ -47,7 +50,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "laufenden Gespräch erscheinen Experten- und Datenschutz-Karten "
                 "nicht mehr doppelt.",
         "audience": "user",
-        "versions": ["9.281.0", "9.281.1"],
+        "versions": ["9.281.0", "9.281.1", "9.282.0"],
     },
     {
         "version": "9.280.0",

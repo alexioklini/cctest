@@ -767,11 +767,13 @@ function loadCostBreakdown(window) {
 }
 
 function toggleCostUseCase(id) {
-  const e = document.getElementById(id);
+  // Tabellen-Layout: die Modell-Zeilen eines Anwendungsfalls sind <tr>s mit
+  // data-uc="<id>" (keine Container-Div mehr).
   const r = document.getElementById(id + '-row');
-  if (!e) return;
-  const open = e.style.display !== 'none';
-  e.style.display = open ? 'none' : 'block';
+  const open = r ? r.getAttribute('data-open') === '1' : false;
+  document.querySelectorAll(`tr[data-uc="${id}"]`).forEach((tr) => {
+    tr.style.display = open ? 'none' : '';
+  });
   if (r) r.setAttribute('data-open', open ? '0' : '1');
   const arr = document.getElementById(id + '-arr');
   if (arr) arr.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
@@ -826,51 +828,61 @@ function renderCostBreakdownBody(data) {
     return;
   }
 
-  const maxCost = Math.max(...buckets.map((b) => Number(b.cost) || 0), 1e-9);
+  // Spalten-Tabelle (statt Balken + verschachtelter Inline-Werte): eine Zeile
+  // pro Anwendungsfall (aufklappbar → Modell-Zeilen mit denselben Spalten).
+  // Spaltenreihenfolge = überall gleich: Tokens (ein/aus/⚡) → API-Kosten →
+  // Verrechnet → ⚡-Ersparnis.
+  const NUM = 'text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;padding:4px 6px';
+  const TH = `font-size:10px;letter-spacing:.03em;text-transform:uppercase;color:var(--text-400);
+              text-align:right;padding:4px 6px;white-space:nowrap;border-bottom:1px solid var(--border-200)`;
+  const cell = (v, extra) => `<td style="${NUM};${extra || ''}">${v}</td>`;
+  const numRow = (o, cls) => [
+    cell(`${o.calls}×`, 'color:var(--text-400)'),
+    cell(esc(_tokFmt(o.tokens_in || 0)), `color:var(--text-${cls ? '300' : '200'})`),
+    cell(esc(_tokFmt(o.tokens_out || 0)), `color:var(--text-${cls ? '300' : '200'})`),
+    cell((o.cache_read_tokens || 0) > 0 ? `<span style="color:#10b981">${esc(_tokFmt(o.cache_read_tokens))}</span>` : '—', ''),
+    cell(esc(_costFmt(o.cost_list != null ? o.cost_list : o.cost)), 'color:var(--text-200)'),
+    cell(`<b>${esc(_costFmt(o.cost))}</b>`, 'color:var(--text-100)'),
+    cell(Number(o.cache_savings) > 0.0005 ? `<span style="color:#10b981">−${esc(_costFmt(o.cache_savings))}</span>` : '—', ''),
+  ].join('');
 
-  const rows = buckets.map((b, i) => {
-    const models = (b.by_model || []);
+  const bodyRows = buckets.map((b, i) => {
     const id = `cost-uc-${i}`;
     const color = _COST_PALETTE[i % _COST_PALETTE.length];
-    const cost = Number(b.cost) || 0;
-    const pctOfTotal = total > 0 ? (cost / total * 100) : 0;
-    const barW = Math.max(2, (cost / maxCost) * 100);
-    const modelRows = models.map((m) => `
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;
-                  padding:4px 0 4px 22px;font-size:11px;color:var(--text-300)">
-        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"
-              title="${esc(m.model)}">${esc(modelShortName(m.model) || m.model || '—')}</span>
-        <span style="white-space:nowrap;color:var(--text-400);font-variant-numeric:tabular-nums"
-              title="${esc(_tokFmt(m.tokens_in||0))} ein · ${esc(_tokFmt(m.tokens_out||0))} aus · ⚡ ${esc(_tokFmt(m.cache_read_tokens||0))} gecached${Number(m.cache_savings) > 0.005 ? ` · Caching-Ersparnis ${esc(_costFmt(m.cache_savings))}` : ''}">${esc(_tokFmt((m.tokens_in||0)+(m.tokens_out||0)))} tok${(m.cache_read_tokens||0) > 0 ? ` <span style="color:#10b981">⚡${esc(_tokFmt(m.cache_read_tokens))}</span>` : ''}</span>
-        <span style="white-space:nowrap;color:var(--text-200);font-variant-numeric:tabular-nums;min-width:54px;text-align:right"
-              ${Number(m.cost_list) > Number(m.cost) * 1.01 + 0.0001 ? `title="API-Listenpreis ohne Flatrate: ${esc(_costFmt(m.cost_list))}"` : ''}>${esc(_costFmt(m.cost))}${Number(m.cost_list) > Number(m.cost) * 1.01 + 0.0001 ? ` <span style="color:var(--text-400);font-size:10px">(${esc(_costFmt(m.cost_list))})</span>` : ''}</span>
-        <span style="white-space:nowrap;color:var(--text-400);min-width:32px;text-align:right">${b.calls ? Math.round((m.calls/b.calls)*100) : 0}%</span>
-      </div>`).join('');
+    const modelRows = (b.by_model || []).map((m) => `
+      <tr class="cost-model-row" data-uc="${id}" style="display:none;font-size:11px;color:var(--text-300)">
+        <td style="padding:3px 6px 3px 30px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px"
+            title="${esc(m.model)}">${esc(modelShortName(m.model) || m.model || '—')}</td>
+        ${numRow(m, true)}
+      </tr>`).join('');
     return `
-      <div id="${id}-row" data-open="0">
-        <div onclick="toggleCostUseCase('${id}')" class="cost-uc-head"
-             style="display:flex;align-items:center;gap:8px;padding:7px 4px;cursor:pointer;border-radius:7px">
-          <span id="${id}-arr" style="color:var(--text-400);font-size:9px;display:inline-block;width:10px;
-                transition:transform .15s ease;flex-shrink:0">▶</span>
-          <span style="width:8px;height:8px;border-radius:2px;background:${color};flex-shrink:0"></span>
-          <span style="flex:1;min-width:0">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
-              <span style="font-size:12.5px;color:var(--text-100);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(b.use_case)}</span>
-              <span style="font-size:12.5px;color:var(--text-100);font-weight:600;white-space:nowrap;margin-left:8px;font-variant-numeric:tabular-nums">${esc(_costFmt(b.cost))}</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <div style="flex:1;height:5px;background:var(--bg-200);border-radius:999px;overflow:hidden">
-                <div style="height:100%;width:${barW.toFixed(1)}%;background:${color};border-radius:999px"></div>
-              </div>
-              <span style="font-size:10.5px;color:var(--text-400);white-space:nowrap;font-variant-numeric:tabular-nums">${pctOfTotal.toFixed(0)}% · ${b.calls}×</span>
-            </div>
-          </span>
-        </div>
-        <div id="${id}" style="display:none;padding:2px 0 8px">${modelRows}</div>
-      </div>`;
+      <tr onclick="toggleCostUseCase('${id}')" style="cursor:pointer;font-size:12px" class="cost-uc-head" id="${id}-row" data-open="0">
+        <td style="padding:5px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px">
+          <span id="${id}-arr" style="color:var(--text-400);font-size:9px;display:inline-block;width:10px;transition:transform .15s ease">▶</span>
+          <span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color};margin:0 5px 0 1px"></span>
+          <span style="color:var(--text-100);font-weight:500" title="${esc(b.use_case)}">${esc(b.use_case)}</span>
+        </td>
+        ${numRow(b, false)}
+      </tr>
+      ${modelRows}`;
   }).join('');
 
-  body.innerHTML = headline + `<div style="display:flex;flex-direction:column;gap:1px">${rows}</div>`;
+  body.innerHTML = headline + `
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr>
+          <th style="${TH};text-align:left">Anwendungsfall / Modell</th>
+          <th style="${TH}">Aufrufe</th>
+          <th style="${TH}">Token ein</th>
+          <th style="${TH}">Token aus</th>
+          <th style="${TH}" title="Prompt-Cache-Treffer (zum ~0,1×-Tarif)">⚡ Gecached</th>
+          <th style="${TH}" title="Zum API-Listenpreis der Modelle — was ohne Flatrates fällig wäre">API-Kosten</th>
+          <th style="${TH}" title="Tatsächlich abgerechnet (Flatrate-Modelle: 0 $)">Verrechnet</th>
+          <th style="${TH}" title="Ersparnis durch Prompt-Caching (voller Eingabe-Tarif minus Cache-Tarif)">⚡-Ersparnis</th>
+        </tr></thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>`;
 }
 
 function openQueueModal() {

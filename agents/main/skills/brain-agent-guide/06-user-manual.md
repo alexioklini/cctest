@@ -91,12 +91,16 @@ vier Kennzahlen — **Verrechnete Kosten** (tatsächlich abgebucht; Flatrate-Mod
 buchen 0 $), **API-Kosten (Listenpreis)** (dieselbe Nutzung zu Listenpreisen),
 **Flatrate-Ersparnis** (die Differenz) und **Caching-Ersparnis** (was die
 ⚡-gecachten Tokens ohne Prompt-Cache zusätzlich gekostet hätten) — plus die
-Token-Summen (ein · aus · ⚡ gecached). Darunter die Kosten **pro Anwendungsfall**
-(Chat, Chat-Zusammenfassung,
-Übersetzung, Geplante Aufgaben, Studio, Deep Research, Audio Overview/Podcast,
-Vorlesen, …) mit Balken, Prozentanteil und Aufrufzahl. Jede Zeile lässt sich
-aufklappen, um die **Aufteilung nach Modell** (Tokens inkl. ⚡-Anteil, verrechnete
-Kosten und ggf. Listenpreis in Klammern) zu zeigen.
+Token-Summen (ein · aus · ⚡ gecached). Darunter eine **Tabelle pro
+Anwendungsfall** (Chat, Chat-Zusammenfassung, Übersetzung, Geplante Aufgaben,
+Studio, Deep Research, Audio Overview/Podcast, Vorlesen, …) mit festen Spalten
+in überall gleicher Reihenfolge: Aufrufe · Token ein · Token aus · ⚡ Gecached ·
+**API-Kosten** · **Verrechnet** · **⚡-Ersparnis**. Jede Zeile lässt sich
+aufklappen und zeigt die **Aufteilung nach Modell** in denselben Spalten.
+Dieselben Kennzahlen in derselben Reihenfolge erscheinen auch im
+**Sitzungs-Inspektor** (Lupe in der Statusleiste): oben als Kacheln für die
+ganze Sitzung, und in jeder Anfrage-Kopfzeile pro Turn („API $… ·
+verrechnet $… · ⚡ −$…").
 Über das Auswahlmenü oben rechts wählt man den **Zeitraum** (Heute, Diese Woche,
 letzte 7/30/180/365 Tage, seit Jahresbeginn, aktueller/letzter Abrechnungszeitraum,
 Gesamt). Hinweis: lokale Modelle sind kostenlos und erscheinen mit 0 $ (aber echten

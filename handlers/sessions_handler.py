@@ -953,6 +953,8 @@ class SessionsHandlerMixin:
         # the delta against the previous turn.
         interactions = []
         prev_cum_cost = 0.0
+        prev_cum_cost_list = 0.0
+        from engine.quotas import _get_cost_rate as _rate
         i = 0
         while i < len(msgs):
             m = msgs[i]
@@ -1002,6 +1004,22 @@ class SessionsHandlerMixin:
                 payloads = meta.get("request_payloads", [])
                 cum_cost = float(meta.get("cost") or 0.0) if assistant_msg else prev_cum_cost
                 turn_cost = max(0.0, cum_cost - prev_cum_cost)
+                # API-Listenpreis pro Turn: meta.cost_list ist wie meta.cost der
+                # KUMULATIVE Sitzungsstand am Turn-Ende → Delta. Alt-Turns ohne
+                # das Feld: Liste == real (kein Flat-Modell-Traffic erfasst).
+                _cum_list_raw = meta.get("cost_list") if assistant_msg else None
+                cum_cost_list = float(_cum_list_raw) if _cum_list_raw is not None else (
+                    prev_cum_cost_list + turn_cost)
+                turn_cost_list = max(0.0, cum_cost_list - prev_cum_cost_list)
+                # Cache-Ersparnis pro Turn: gecachte Tokens × (Eingabe- minus
+                # Cache-Tarif) zum Tarif des Turn-Modells.
+                _cr_t = int(meta.get("cache_read_tokens", 0) or 0) if assistant_msg else 0
+                if _cr_t:
+                    _r_t = _rate(meta.get("model") or (session.model if session else ""))
+                    turn_cache_savings = _cr_t / 1_000_000 * (
+                        _r_t.get("input", 0.0) - _r_t.get("cache_read", 0.0))
+                else:
+                    turn_cache_savings = 0.0
                 interactions.append({
                     "turn": len(interactions) + 1,
                     "user": {
@@ -1020,6 +1038,8 @@ class SessionsHandlerMixin:
                         "duration": meta.get("duration", 0),
                         "model": meta.get("model", ""),
                         "cost": round(turn_cost, 4),
+                        "cost_list": round(turn_cost_list, 4),
+                        "cache_savings": round(max(0.0, turn_cache_savings), 4),
                         "tools": meta.get("tools", []),
                         "thinking": bool(meta.get("thinking")),
                         "thinking_level": meta.get("thinking_level") or ("none" if meta.get("thinking") is None else None),
@@ -1041,6 +1061,7 @@ class SessionsHandlerMixin:
                 })
                 if assistant_msg:
                     prev_cum_cost = cum_cost
+                    prev_cum_cost_list = cum_cost_list
                 i = (j + 1) if assistant_msg else (i + 1)
             else:
                 i += 1
@@ -1060,7 +1081,6 @@ class SessionsHandlerMixin:
         # (cache_read rate = per-model cost_cache_read, default 0.1x input). Savings
         # = what those cached tokens WOULD have cost at the full input rate minus
         # what they actually cost at the cache_read rate.
-        from engine.quotas import _get_cost_rate as _rate
         cached_cost = 0.0
         cached_savings = 0.0
         for _ix in interactions:
@@ -1091,6 +1111,7 @@ class SessionsHandlerMixin:
                 "cached_savings": round(cached_savings, 4),
                 "duration": round(total_duration, 2),
                 "cost": round(total_cost, 4),
+                "cost_list": round(prev_cum_cost_list, 4),
             },
         })
 
