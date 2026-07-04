@@ -3624,6 +3624,7 @@ def main():
     server_config["telegram_enabled"] = file_config.get("telegram", {}).get("enabled", True)
     attachments_cfg = file_config.get("attachments", {})
     server_config["attachment_image_model"] = attachments_cfg.get("image_model", "")
+    server_config["model_sync_auto_enable"] = bool(file_config.get("model_sync_auto_enable", True))
     server_config["chat_summary_model"] = file_config.get("chat_summary_model", "") or ""
     server_config["classifier_model"] = file_config.get("classifier_model", "") or ""
     server_config["next_prompt_model"] = file_config.get("next_prompt_model", "") or ""
@@ -3804,8 +3805,9 @@ def main():
     existing_models = file_config.get("models")
     deleted_models = file_config.get("deleted_models", [])
     if providers:
-        synced = engine.init_models_config(providers, existing_models,
-                                           deleted_models=deleted_models)
+        synced = engine.init_models_config(
+            providers, existing_models, deleted_models=deleted_models,
+            auto_enable_new=file_config.get("model_sync_auto_enable", True))
         # Persist when (a) first run with no stored models, or (b) the in-memory
         # init upgraded fields on existing rows (e.g. provider-aware
         # thinking_format re-detection upgrading 'none' → 'reasoning_field').

@@ -157,7 +157,13 @@ class ProvidersHandlerMixin:
                 "enabled_count": len(enabled_models),
                 "status": "connected" if all_models else "no models",
             })
-        self._send_json({"providers": result})
+        self._send_json({
+            "providers": result,
+            # Seed default for newly discovered models (config.json →
+            # model_sync_auto_enable, default True). Rendered as the
+            # "Neue Modelle automatisch aktivieren" toggle in the Provider tab.
+            "model_sync_auto_enable": bool(server_config.get("model_sync_auto_enable", True)),
+        })
 
     def _handle_save_providers(self):
         """POST /v1/providers — save provider config."""
@@ -619,6 +625,7 @@ class ProvidersHandlerMixin:
                     providers_subset, models_dict,
                     all_providers=all_providers,
                     deleted_models=tombstones,
+                    auto_enable_new=config.get("model_sync_auto_enable", True),
                 )
                 config["models"] = synced
                 engine._models_config = dict(synced)
@@ -643,6 +650,7 @@ class ProvidersHandlerMixin:
                             providers, existing,
                             all_providers=all_providers,
                             deleted_models=deleted,
+                            auto_enable_new=cfg.get("model_sync_auto_enable", True),
                         )
                         cfg["models"] = synced
                         with open(cfg_path, "w") as f:

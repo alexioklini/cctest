@@ -551,6 +551,23 @@ class AdminConfigHandlers:
             result["default_model"] = model
             result["default_provider"] = provider_name or ""
 
+        # --- Model-sync seed default (new models enabled or disabled) ---
+        if "model_sync_auto_enable" in body:
+            val = bool(body["model_sync_auto_enable"])
+            server_config["model_sync_auto_enable"] = val
+            try:
+                config = {}
+                if os.path.exists(config_path):
+                    with open(config_path) as f:
+                        config = json.load(f)
+                config["model_sync_auto_enable"] = val
+                with open(config_path, "w") as f:
+                    json.dump(config, f, indent=2)
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
+                return
+            result["model_sync_auto_enable"] = val
+
         # --- Attachment image model ---
         if "attachment_image_model" in body:
             aim = body["attachment_image_model"] or ""

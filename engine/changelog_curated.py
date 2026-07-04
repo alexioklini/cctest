@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.279.0",
+        "date": "2026-07-04",
+        "title": "Neue Modelle erscheinen nicht mehr ungefragt",
+        "body": "Wenn ein Anbieter neue Modelle in seinen Katalog aufnimmt, "
+                "tauchten diese bisher automatisch aktiviert in der "
+                "Modellauswahl auf — bei großen Katalogen wurde die Liste "
+                "unübersichtlich. Ein neuer Schalter im Provider-Tab "
+                "(„Neu entdeckte Modelle automatisch aktivieren“) legt jetzt "
+                "fest, ob neue Modelle sofort nutzbar sind oder zunächst "
+                "deaktiviert angelegt werden und bewusst freigeschaltet "
+                "werden müssen.",
+        "audience": "admin",
+        "versions": ["9.279.0"],
+    },
+    {
         "version": "9.278.0",
         "date": "2026-07-04",
         "title": "Direktverbindung zu allen Cloud-Anbietern",

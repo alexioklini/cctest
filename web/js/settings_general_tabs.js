@@ -565,7 +565,14 @@ async function _genTab_providers(C) {
       const providers = Array.isArray(provs) ? provs : (provs.providers || []);
       const statsByProvider = {};
       for (const s of (statsResp.stats || [])) statsByProvider[s.provider] = s;
+      const syncAutoEnable = Array.isArray(provs) ? true : (provs.model_sync_auto_enable !== false);
       let html = `<div style="${G('12px')}">`;
+      html += `<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px solid var(--border-100);border-radius:10px;background:var(--bg-100)">
+        <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-200);cursor:pointer">
+          <input type="checkbox"${syncAutoEnable?' checked':''} onchange="API.post('/v1/services/server',{model_sync_auto_enable:this.checked}).then(()=>showToast('Gespeichert — gilt für künftige Syncs')).catch(e=>showToast('Fehlgeschlagen: '+e.message,true))">
+          Neu entdeckte Modelle automatisch aktivieren${helpIcon('Gilt für die Modell-Synchronisierung (Serverstart + Sync-Buttons): AN = neue Modelle aus dem /models-Katalog eines Providers erscheinen sofort aktiviert im Composer (bisheriges Verhalten). AUS = neue Modelle werden deaktiviert angelegt — sie tauchen nur im Modelle-Tab auf und müssen dort bewusst aktiviert werden. Empfohlen AUS bei Aggregator-Providern mit großen Katalogen (z. B. Kilo, 300+ Modelle). Bestehende Modelle sind nie betroffen.')}
+        </label>
+      </div>`;
       for (const p of providers) {
         const ok = p.model_count > 0;
         const mc = p.models?.length || p.model_count || 0;

@@ -699,6 +699,11 @@ Once a feedback row exists, user and admin exchange short one-line messages
   `/services/server` also persists `config.default_model` (the
   Settings → Server → Standardmodell dropdown; 9.21.4), plus
   `chat_summary_model`, `classifier_model`, `auto_route_classifier_mode`,
+  (9.279.0) `model_sync_auto_enable` (bool — seed default for NEWLY
+  discovered models on provider sync; `false` = new catalog models arrive
+  DISABLED and must be enabled in the Models tab; toggle lives in the
+  Provider tab header, current value in `GET /v1/providers →
+  model_sync_auto_enable`),
   `gdpr_scanner{…}`, (9.275.0) `benchmark_aa_api_key` (Artificial-Analysis
   API key for the official-leaderboard benchmark; empty string clears it;
   stored in `config.benchmark_official.artificialanalysis_api_key`) and
