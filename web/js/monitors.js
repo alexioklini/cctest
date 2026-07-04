@@ -934,8 +934,16 @@ function renderCodingPlansSection(data) {
     const pr = (projected == null) ? p : projected;
     const color = (p >= 90 || pr > 130) ? 'var(--error)'
       : (p >= 70 || pr > 100) ? 'var(--warning)' : 'var(--success)';
-    return `<div style="flex:1;height:5px;background:var(--bg-200);border-radius:999px;overflow:hidden;min-width:60px">
-      <div style="height:100%;width:${p}%;background:${color};border-radius:999px"></div></div>`;
+    // Prognose-Segment: halbtransparente Fortsetzung vom Ist-Stand bis zum
+    // projizierten Stand am Fensterende (bei gleichem Tempo), gedeckelt bei
+    // 100 % — Überlauf zeigt die Farbe + der ⇥-Marker am Balkenende.
+    const ghostW = Math.max(0, Math.min(100, pr) - p);
+    const overflow = pr > 100;
+    return `<div style="flex:1;height:5px;background:var(--bg-200);border-radius:999px;overflow:hidden;min-width:60px;display:flex;position:relative">
+      <div style="height:100%;width:${p}%;background:${color};flex-shrink:0"></div>
+      ${ghostW > 0.5 ? `<div style="height:100%;width:${ghostW}%;background:${color};opacity:.32;flex-shrink:0"></div>` : ''}
+      ${overflow ? `<div style="position:absolute;right:0;top:0;bottom:0;width:3px;background:var(--error)"></div>` : ''}
+    </div>`;
   };
   const rows = plans.map((p) => {
     const winRows = p.windows.map((w) => {
@@ -959,7 +967,7 @@ function renderCodingPlansSection(data) {
         <span style="width:44px;flex-shrink:0">${esc(w.label)}</span>
         ${bar(w.pct, w.projected_pct)}
         <span style="font-variant-numeric:tabular-nums;white-space:nowrap" title="geschätzt: ${(w.used_est || 0).toLocaleString('de-DE')} von ${(w.limit_tokens || 0).toLocaleString('de-DE')} Tokens${w.resets_at ? ' · Reset ' + esc(w.resets_at) : ''}${projTitle}">
-          ~${w.pct == null ? '—' : w.pct.toFixed(0) + ' %'} · ${_cpTok(w.used_est || 0)} / ${_cpTok(w.limit_tokens || 0)}</span>
+          ~${w.pct == null ? '—' : w.pct.toFixed(0) + ' %'}${w.projected_pct != null && Math.abs(w.projected_pct - (w.pct || 0)) >= 1 ? ` <span style="color:var(--text-400)">→ ~${w.projected_pct.toFixed(0)} %</span>` : ''} · ${_cpTok(w.used_est || 0)} / ${_cpTok(w.limit_tokens || 0)}</span>
         ${eta ? `<span style="color:var(--text-400);white-space:nowrap" title="${w.resets_at ? 'Reset ' + esc(w.resets_at) : ''}">↻ ${esc(eta)}</span>` : ''}
         ${isAdmin ? `<span style="white-space:nowrap"><input type="number" step="1" min="1" max="100" placeholder="%" id="cp-cal-${esc(p.id)}-${esc(w.kind)}"
             style="width:36px;padding:1px 4px;font-size:10px;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-000);color:var(--text-200)"
