@@ -56,7 +56,7 @@ launcher.py → server.py (8420)
                 └── MemPalace (direct in-process, no MCP)
 ```
 
-All chat + non-interactive LLM calls run **in-process** via `engine/llm_loop.py` (the OpenAI `/v1/chat/completions` wire path — the one where Mistral prompt caching via CLIProxyAPI reliably hits). The Anthropic-SDK **sidecar subprocess + `server_lib/tool_mcp.py` + `.venv_sdk` were deleted in v9.247.0** (see `OPENAI_INPROCESS_LOOP_HANDOVER.md`). Brain owns tool registry wiring + dispatch, MemPalace/scheduler/projects/MCP routing, runtime classes, AND the agentic loop. Providers are plain OpenAI-compatible `config.json` entries; the loop hits `{base_url}/chat/completions` regardless of the provider's `type` field (CLIProxyAPI serves both the Anthropic and OpenAI paths on the same host).
+All chat + non-interactive LLM calls run **in-process** via `engine/llm_loop.py` (the OpenAI `/v1/chat/completions` wire path — where upstream prompt caching reliably hits). The Anthropic-SDK **sidecar subprocess + `server_lib/tool_mcp.py` + `.venv_sdk` were deleted in v9.247.0** (see `OPENAI_INPROCESS_LOOP_HANDOVER.md`); **CLIProxyAPI was removed in v9.278.0** — cloud models hit their upstreams DIRECTLY: `Kilo` (kilo.ai/api/openrouter; glm/kimi/deepseek/gemma-cloud, upstream ids in `base_model_id`) and `mistral-direct` (api.mistral.ai, all Mistral models). Brain owns tool registry wiring + dispatch, MemPalace/scheduler/projects/MCP routing, runtime classes, AND the agentic loop. Providers are plain OpenAI-compatible `config.json` entries; the loop hits `{base_url}/chat/completions` regardless of the provider's `type` field. NB: upstream prompt caches (Kilo + Mistral) only engage on real conversation shapes — synthetic identical-prompt curl repeats report `cached_tokens: 0`; verify caching with multi-turn sessions.
 
 ## Agentic Loop (in-process)
 
@@ -151,7 +151,7 @@ Per-model fields in `config.json → models`. `_match_known_model()` seeds from 
 
 ## Thinking / Reasoning
 
-The in-process loop maps the UI `thinking_level` to the OpenAI wire via `brain._apply_inference_to_payload` (`engine/llm_loop.build_openai_payload`): `reasoning_effort` (cloud reasoning models / Mistral `mistral_blocks` → `high`) or `chat_template_kwargs.enable_thinking` (oMLX). CLIProxyAPI translates to each upstream format.
+The in-process loop maps the UI `thinking_level` to the OpenAI wire via `brain._apply_inference_to_payload` (`engine/llm_loop.build_openai_payload`): `reasoning_effort` (cloud reasoning models / Mistral `mistral_blocks` → `high`) or `chat_template_kwargs.enable_thinking` (oMLX). Off/unset on `reasoning_field` hybrids (glm/kimi/deepseek, default-on upstream) sends an EXPLICIT `reasoning_effort:"none"` (9.277.1) — verified honored by Kilo direct.
 
 For oMLX-direct: warmup must mirror the chat-template `enable_thinking` kwarg byte-for-byte on every non-`none`-reasoning request or KV prefix misses silently (`engine/provider.py` warmup + `_apply_inference_to_payload`).
 
@@ -201,7 +201,7 @@ WPB-policy document-sensitivity detector + enforcement. `ClassificationBlockedEr
 
 ## Provider Concurrency Queue
 
-`LocalProviderQueue` (`engine/provider.py`). `omlx=2` (continuous batching), `cliproxyapi=2` (serialized), cloud=0 (unlimited). Queue key = `provider_name`, not `base_url`.
+`LocalProviderQueue` (`engine/provider.py`). `omlx=2` (continuous batching), cloud=0 (unlimited). Queue key = `provider_name`, not `base_url`. (The `cliproxyapi=2` serialization died with the provider in 9.278.0 — direct cloud turns run unqueued.)
 
 ## Warmup & Warm Session Pool
 

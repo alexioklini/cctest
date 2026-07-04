@@ -27,21 +27,6 @@
       "supports_chat_template_kwargs": true,
       "is_local": true
     },
-    "CLIProxyAPI": {
-      "base_url": "http://127.0.0.1:8317/v1",
-      "type": "anthropic",
-      "api_key": "YOUR_API_KEY",
-      "default_model": "",
-      "api_keys": [
-        {
-          "name": "default",
-          "key": "YOUR_API_KEY",
-          "usage": "preferred"
-        }
-      ],
-      "is_local": false,
-      "_comment": "CLIProxyAPI on :8317. Speaks Anthropic /v1/messages, proxies to Mistral upstream. Use through the Phase 2 sidecar (config.sidecar.enabled=true). Brain's OpenAI loop uses native Mistral; the sidecar uses this provider."
-    },
     "mistral-direct": {
       "base_url": "https://api.mistral.ai/v1",
       "type": "openai",
@@ -54,7 +39,7 @@
         }
       ],
       "is_local": false,
-      "_comment": "Direct Mistral REST for image generation tool (api.mistral.ai/v1/agents+conversations+files). Not used for chat — CLIProxyAPI handles that."
+      "_comment": "Direct Mistral API (vibe-cli key) — since 9.278.0 the chat provider for all Mistral models (was CLIProxyAPI) + image generation (agents/conversations/files)."
     },
     "Lokal-M4": {
       "base_url": "http://192.168.1.214:8012/v1",
@@ -71,6 +56,20 @@
       ],
       "is_local": true,
       "_comment": "vllm-metal on Mac mini M4 (192.168.1.214:8012). Serves native Anthropic /v1/messages; sidecar talks to it DIRECTLY (no CLIProxyAPI). Local bg-task model = Qwen2.5-7B-Instruct-4bit. max_concurrent 8 per the c=8 sweep. launchd: com.brain-agent.vllm-metal on the M4."
+    },
+    "Kilo": {
+      "base_url": "https://kilo.ai/api/openrouter",
+      "type": "openai",
+      "api_key": "YOUR_API_KEY",
+      "api_keys": [
+        {
+          "name": "default",
+          "key": "YOUR_API_KEY",
+          "usage": "preferred"
+        }
+      ],
+      "is_local": false,
+      "_comment": "Kilo aggregator (openrouter dialect) DIRECT — was fronted by CLIProxyAPI until 9.278.0. Serves glm/kimi/deepseek/gemma-cloud; base_model_id carries the upstream id (z-ai/*, moonshotai/*, deepseek/*:discounted)."
     }
   },
   "ocr": {
@@ -84,7 +83,7 @@
     "local_vision_render_dpi": 200,
     "local_vision_max_tokens": 4096
   },
-  "default_provider": "CLIProxyAPI",
+  "default_provider": "mistral-direct",
   "max_context": 131072,
   "telegram": {
     "bot_token": "YOUR_BOT_TOKEN",
@@ -92,7 +91,7 @@
       8336139166
     ],
     "enabled": false,
-    "model": "CLIProxyAPI/mistral-small-latest"
+    "model": "mistral-small-latest"
   },
   "models": {
     "whisper-tiny": {
@@ -185,10 +184,10 @@
       "max_context": 0,
       "_caps_canonical": true
     },
-    "CLIProxyAPI/mistral-medium-3.5": {
+    "mistral-medium-3.5": {
       "enabled": true,
       "shortname": "mistral-medium-3.5",
-      "display_name": "Mistral Medium-3.5",
+      "display_name": "mistral-medium-3.5",
       "icon": "🌬️",
       "priority": 60,
       "capabilities": [
@@ -205,8 +204,8 @@
       "raw_formats": [
         "image/*"
       ],
-      "provider": "CLIProxyAPI",
-      "base_model_id": "mistral-medium-3.5",
+      "provider": "mistral-direct",
+      "base_model_id": "mistral-medium-latest",
       "profile": "balanced",
       "is_local": false,
       "warmup": false,
@@ -215,7 +214,7 @@
       "parallel_tool_calls": false,
       "cost_input": 1.5,
       "cost_output": 7.5,
-      "background_task_model": "CLIProxyAPI/mistral-small-latest",
+      "background_task_model": "mistral-small-latest",
       "benchmark": {
         "coding": {
           "measured": {
@@ -319,7 +318,7 @@
       },
       "cost_cache_read": 0.15
     },
-    "CLIProxyAPI/mistral-small-latest": {
+    "mistral-small-latest": {
       "enabled": true,
       "shortname": "mistral-small-latest",
       "display_name": "mistral-small-latest",
@@ -334,7 +333,7 @@
       "inference": {
         "temperature": 0.7
       },
-      "provider": "CLIProxyAPI",
+      "provider": "mistral-direct",
       "base_model_id": "mistral-small-latest",
       "profile": "speed",
       "_caps_canonical": true,
@@ -450,101 +449,6 @@
       "raw_formats": [],
       "cost_cache_read": 0.01275
     },
-    "CLIProxyAPI/mistral-medium-latest": {
-      "enabled": false,
-      "shortname": "mistral-medium-latest",
-      "display_name": "mistral-medium-latest",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "mistral_blocks",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "CLIProxyAPI",
-      "base_model_id": "mistral-medium-latest",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "CLIProxyAPI/magistral-medium-latest": {
-      "enabled": false,
-      "shortname": "magistral-medium-latest",
-      "display_name": "magistral-medium-latest",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "mistral_blocks",
-      "provider": "CLIProxyAPI",
-      "base_model_id": "magistral-medium-latest",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "mistral-medium-3.5": {
-      "enabled": false,
-      "shortname": "mistral-medium-3.5",
-      "display_name": "mistral-medium-3.5",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "mistral_blocks",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "CLIProxyAPI",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "mistral-small-latest": {
-      "enabled": false,
-      "shortname": "mistral-small-latest",
-      "display_name": "mistral-small-latest",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "mistral_blocks",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "CLIProxyAPI",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false,
-      "benchmark": {
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 8.0,
-            "n": 4,
-            "ts": "2026-07-03T13:57:34Z"
-          }
-        }
-      }
-    },
     "mistral-medium-latest": {
       "enabled": false,
       "shortname": "mistral-medium-latest",
@@ -561,11 +465,12 @@
         "temperature": 0.7
       },
       "raw_formats": [],
-      "provider": "CLIProxyAPI",
+      "provider": "mistral-direct",
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "base_model_id": "mistral-medium-latest"
     },
     "magistral-medium-latest": {
       "enabled": false,
@@ -578,11 +483,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "mistral_blocks",
-      "provider": "CLIProxyAPI",
+      "provider": "mistral-direct",
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "base_model_id": "magistral-medium-latest"
     },
     "gemma-4-26B-A4B-it-MLX-4bit": {
       "enabled": false,
@@ -1925,11 +1831,12 @@
       "raw_formats": [
         "image/*"
       ],
-      "provider": "CLIProxyAPI",
+      "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "base_model_id": "google/gemma-4-26b-a4b-it"
     },
     "gemma-4-31b-cloud": {
       "enabled": false,
@@ -1951,11 +1858,12 @@
       "raw_formats": [
         "image/*"
       ],
-      "provider": "CLIProxyAPI",
+      "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "base_model_id": "google/gemma-4-31b-it"
     },
     "deepseek-v4-pro": {
       "enabled": true,
@@ -1968,7 +1876,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "CLIProxyAPI",
+      "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2077,7 +1985,8 @@
             "official_name": "deepseek-v4-pro"
           }
         }
-      }
+      },
+      "base_model_id": "deepseek/deepseek-v4-pro:discounted"
     },
     "deepseek-v4-flash": {
       "enabled": true,
@@ -2090,7 +1999,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "CLIProxyAPI",
+      "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2199,7 +2108,8 @@
             "official_name": "deepseek-v4-flash"
           }
         }
-      }
+      },
+      "base_model_id": "deepseek/deepseek-v4-flash:discounted"
     },
     "voxtral-mini-2507": {
       "enabled": true,
@@ -2593,7 +2503,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "CLIProxyAPI",
+      "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2703,7 +2613,8 @@
             "official_name": "glm-5.2 (max)"
           }
         }
-      }
+      },
+      "base_model_id": "z-ai/glm-5.2"
     },
     "kimi-k2.6": {
       "enabled": true,
@@ -2716,7 +2627,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "CLIProxyAPI",
+      "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2826,7 +2737,5999 @@
             "official_name": "kimi-k2.6"
           }
         }
-      }
+      },
+      "base_model_id": "moonshotai/kimi-k2.6"
+    },
+    "kilo-auto/frontier": {
+      "enabled": true,
+      "shortname": "frontier",
+      "display_name": "frontier",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "kilo-auto/balanced": {
+      "enabled": true,
+      "shortname": "balanced",
+      "display_name": "balanced",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "kilo-auto/efficient": {
+      "enabled": true,
+      "shortname": "efficient",
+      "display_name": "efficient",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "kilo-auto/free": {
+      "enabled": true,
+      "shortname": "free",
+      "display_name": "free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "poolside/laguna-m.1:free": {
+      "enabled": true,
+      "shortname": "laguna-m.1:free",
+      "display_name": "laguna-m.1:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "stepfun/step-3.7-flash:free": {
+      "enabled": true,
+      "shortname": "step-3.7-flash:free",
+      "display_name": "step-3.7-flash:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-opus-4.8": {
+      "enabled": true,
+      "shortname": "claude-opus-4.8",
+      "display_name": "claude-opus-4.8",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "stealth/claude-opus-4.8": {
+      "enabled": true,
+      "shortname": "claude-opus-4.8",
+      "display_name": "claude-opus-4.8",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "stealth/claude-opus-4.7": {
+      "enabled": true,
+      "shortname": "claude-opus-4.7",
+      "display_name": "claude-opus-4.7",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "stealth/claude-sonnet-4.6": {
+      "enabled": true,
+      "shortname": "claude-sonnet-4.6",
+      "display_name": "claude-sonnet-4.6",
+      "icon": "🟠",
+      "priority": 80,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "stealth/claude-opus-4.6": {
+      "enabled": true,
+      "shortname": "claude-opus-4.6",
+      "display_name": "claude-opus-4.6",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "moonshotai/kimi-k2.7-code": {
+      "enabled": true,
+      "shortname": "kimi-k2.7-code",
+      "display_name": "kimi-k2.7-code",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-sonnet-5": {
+      "enabled": true,
+      "shortname": "claude-sonnet-5",
+      "display_name": "claude-sonnet-5",
+      "icon": "🟠",
+      "priority": 80,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.5": {
+      "enabled": true,
+      "shortname": "gpt-5.5",
+      "display_name": "gpt-5.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3.1-pro-preview": {
+      "enabled": true,
+      "shortname": "gemini-3.1-pro-preview",
+      "display_name": "gemini-3.1-pro-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "minimax/minimax-m3": {
+      "enabled": true,
+      "shortname": "minimax-m3",
+      "display_name": "minimax-m3",
+      "icon": "💫",
+      "priority": 55,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.7-plus": {
+      "enabled": true,
+      "shortname": "qwen3.7-plus",
+      "display_name": "qwen3.7-plus",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "stealth/qwen3.6-plus": {
+      "enabled": true,
+      "shortname": "qwen3.6-plus",
+      "display_name": "qwen3.6-plus",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-5.2": {
+      "enabled": true,
+      "shortname": "glm-5.2",
+      "display_name": "glm-5.2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "poolside/laguna-xs-2.1:free": {
+      "enabled": true,
+      "shortname": "laguna-xs-2.1:free",
+      "display_name": "laguna-xs-2.1:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "poolside/laguna-xs-2.1": {
+      "enabled": true,
+      "shortname": "laguna-xs-2.1",
+      "display_name": "laguna-xs-2.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3.1-flash-lite-image": {
+      "enabled": true,
+      "shortname": "gemini-3.1-flash-lite-image",
+      "display_name": "gemini-3.1-flash-lite-image",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3.1-flash-image": {
+      "enabled": true,
+      "shortname": "gemini-3.1-flash-image",
+      "display_name": "gemini-3.1-flash-image",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3-pro-image": {
+      "enabled": true,
+      "shortname": "gemini-3-pro-image",
+      "display_name": "gemini-3-pro-image",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "cohere/north-mini-code:free": {
+      "enabled": true,
+      "shortname": "north-mini-code:free",
+      "display_name": "north-mini-code:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/fusion": {
+      "enabled": true,
+      "shortname": "fusion",
+      "display_name": "fusion",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~anthropic/claude-fable-latest": {
+      "enabled": true,
+      "shortname": "claude-fable-latest",
+      "display_name": "claude-fable-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-fable-5": {
+      "enabled": true,
+      "shortname": "claude-fable-5",
+      "display_name": "claude-fable-5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nex-agi/nex-n2-pro": {
+      "enabled": true,
+      "shortname": "nex-n2-pro",
+      "display_name": "nex-n2-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-3.5-content-safety:free": {
+      "enabled": true,
+      "shortname": "nemotron-3.5-content-safety:free",
+      "display_name": "nemotron-3.5-content-safety:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-3-ultra-550b-a55b:free": {
+      "enabled": true,
+      "shortname": "nemotron-3-ultra-550b-a55b:free",
+      "display_name": "nemotron-3-ultra-550b-a55b:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-3-ultra-550b-a55b": {
+      "enabled": true,
+      "shortname": "nemotron-3-ultra-550b-a55b",
+      "display_name": "nemotron-3-ultra-550b-a55b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "stepfun/step-3.7-flash": {
+      "enabled": true,
+      "shortname": "step-3.7-flash",
+      "display_name": "step-3.7-flash",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-opus-4.8-fast": {
+      "enabled": true,
+      "shortname": "claude-opus-4.8-fast",
+      "display_name": "claude-opus-4.8-fast",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.7-max": {
+      "enabled": true,
+      "shortname": "qwen3.7-max",
+      "display_name": "qwen3.7-max",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "x-ai/grok-build-0.1": {
+      "enabled": true,
+      "shortname": "grok-build-0.1",
+      "display_name": "grok-build-0.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3.5-flash": {
+      "enabled": true,
+      "shortname": "gemini-3.5-flash",
+      "display_name": "gemini-3.5-flash",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-opus-4.7-fast": {
+      "enabled": true,
+      "shortname": "claude-opus-4.7-fast",
+      "display_name": "claude-opus-4.7-fast",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "perceptron/perceptron-mk1": {
+      "enabled": true,
+      "shortname": "perceptron-mk1",
+      "display_name": "perceptron-mk1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "inclusionai/ring-2.6-1t": {
+      "enabled": true,
+      "shortname": "ring-2.6-1t",
+      "display_name": "ring-2.6-1t",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3.1-flash-lite": {
+      "enabled": true,
+      "shortname": "gemini-3.1-flash-lite",
+      "display_name": "gemini-3.1-flash-lite",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-chat-latest": {
+      "enabled": true,
+      "shortname": "gpt-chat-latest",
+      "display_name": "gpt-chat-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "x-ai/grok-4.3": {
+      "enabled": true,
+      "shortname": "grok-4.3",
+      "display_name": "grok-4.3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "ibm-granite/granite-4.1-8b": {
+      "enabled": true,
+      "shortname": "granite-4.1-8b",
+      "display_name": "granite-4.1-8b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-medium-3-5": {
+      "enabled": true,
+      "shortname": "mistral-medium-3-5",
+      "display_name": "mistral-medium-3-5",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+      "enabled": true,
+      "shortname": "nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "display_name": "nemotron-3-nano-omni-30b-a3b-reasoning:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "poolside/laguna-xs.2:free": {
+      "enabled": true,
+      "shortname": "laguna-xs.2:free",
+      "display_name": "laguna-xs.2:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "poolside/laguna-xs.2": {
+      "enabled": true,
+      "shortname": "laguna-xs.2",
+      "display_name": "laguna-xs.2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "poolside/laguna-m.1": {
+      "enabled": true,
+      "shortname": "laguna-m.1",
+      "display_name": "laguna-m.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~anthropic/claude-haiku-latest": {
+      "enabled": true,
+      "shortname": "claude-haiku-latest",
+      "display_name": "claude-haiku-latest",
+      "icon": "🟢",
+      "priority": 60,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~openai/gpt-mini-latest": {
+      "enabled": true,
+      "shortname": "gpt-mini-latest",
+      "display_name": "gpt-mini-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~google/gemini-pro-latest": {
+      "enabled": true,
+      "shortname": "gemini-pro-latest",
+      "display_name": "gemini-pro-latest",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~moonshotai/kimi-latest": {
+      "enabled": true,
+      "shortname": "kimi-latest",
+      "display_name": "kimi-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~google/gemini-flash-latest": {
+      "enabled": true,
+      "shortname": "gemini-flash-latest",
+      "display_name": "gemini-flash-latest",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~anthropic/claude-sonnet-latest": {
+      "enabled": true,
+      "shortname": "claude-sonnet-latest",
+      "display_name": "claude-sonnet-latest",
+      "icon": "🟠",
+      "priority": 80,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~openai/gpt-latest": {
+      "enabled": true,
+      "shortname": "gpt-latest",
+      "display_name": "gpt-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.5-plus-20260420": {
+      "enabled": true,
+      "shortname": "qwen3.5-plus-20260420",
+      "display_name": "qwen3.5-plus-20260420",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.6-flash": {
+      "enabled": true,
+      "shortname": "qwen3.6-flash",
+      "display_name": "qwen3.6-flash",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.6-35b-a3b": {
+      "enabled": true,
+      "shortname": "qwen3.6-35b-a3b",
+      "display_name": "qwen3.6-35b-a3b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.6-max-preview": {
+      "enabled": true,
+      "shortname": "qwen3.6-max-preview",
+      "display_name": "qwen3.6-max-preview",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.6-27b": {
+      "enabled": true,
+      "shortname": "qwen3.6-27b",
+      "display_name": "qwen3.6-27b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.5-pro": {
+      "enabled": true,
+      "shortname": "gpt-5.5-pro",
+      "display_name": "gpt-5.5-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-v4-pro": {
+      "enabled": true,
+      "shortname": "deepseek-v4-pro",
+      "display_name": "deepseek-v4-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-v4-flash": {
+      "enabled": true,
+      "shortname": "deepseek-v4-flash",
+      "display_name": "deepseek-v4-flash",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "inclusionai/ling-2.6-1t": {
+      "enabled": true,
+      "shortname": "ling-2.6-1t",
+      "display_name": "ling-2.6-1t",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "tencent/hy3-preview": {
+      "enabled": true,
+      "shortname": "hy3-preview",
+      "display_name": "hy3-preview",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "xiaomi/mimo-v2.5-pro": {
+      "enabled": true,
+      "shortname": "mimo-v2.5-pro",
+      "display_name": "mimo-v2.5-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "xiaomi/mimo-v2.5": {
+      "enabled": true,
+      "shortname": "mimo-v2.5",
+      "display_name": "mimo-v2.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.4-image-2": {
+      "enabled": true,
+      "shortname": "gpt-5.4-image-2",
+      "display_name": "gpt-5.4-image-2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "inclusionai/ling-2.6-flash": {
+      "enabled": true,
+      "shortname": "ling-2.6-flash",
+      "display_name": "ling-2.6-flash",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~anthropic/claude-opus-latest": {
+      "enabled": true,
+      "shortname": "claude-opus-latest",
+      "display_name": "claude-opus-latest",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/pareto-code": {
+      "enabled": true,
+      "shortname": "pareto-code",
+      "display_name": "pareto-code",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "moonshotai/kimi-k2.6": {
+      "enabled": true,
+      "shortname": "kimi-k2.6",
+      "display_name": "kimi-k2.6",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-opus-4.7": {
+      "enabled": true,
+      "shortname": "claude-opus-4.7",
+      "display_name": "claude-opus-4.7",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-5.1": {
+      "enabled": true,
+      "shortname": "glm-5.1",
+      "display_name": "glm-5.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-4-26b-a4b-it": {
+      "enabled": true,
+      "shortname": "gemma-4-26b-a4b-it",
+      "display_name": "gemma-4-26b-a4b-it",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-4-31b-it": {
+      "enabled": true,
+      "shortname": "gemma-4-31b-it",
+      "display_name": "gemma-4-31b-it",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.6-plus": {
+      "enabled": true,
+      "shortname": "qwen3.6-plus",
+      "display_name": "qwen3.6-plus",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-5v-turbo": {
+      "enabled": true,
+      "shortname": "glm-5v-turbo",
+      "display_name": "glm-5v-turbo",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "arcee-ai/trinity-large-thinking": {
+      "enabled": true,
+      "shortname": "trinity-large-thinking",
+      "display_name": "trinity-large-thinking",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "inline_tags",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "x-ai/grok-4.20-multi-agent": {
+      "enabled": true,
+      "shortname": "grok-4.20-multi-agent",
+      "display_name": "grok-4.20-multi-agent",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "x-ai/grok-4.20": {
+      "enabled": true,
+      "shortname": "grok-4.20",
+      "display_name": "grok-4.20",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/lyria-3-pro-preview": {
+      "enabled": true,
+      "shortname": "lyria-3-pro-preview",
+      "display_name": "lyria-3-pro-preview",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/lyria-3-clip-preview": {
+      "enabled": true,
+      "shortname": "lyria-3-clip-preview",
+      "display_name": "lyria-3-clip-preview",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "kwaipilot/kat-coder-pro-v2": {
+      "enabled": true,
+      "shortname": "kat-coder-pro-v2",
+      "display_name": "kat-coder-pro-v2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "rekaai/reka-edge": {
+      "enabled": true,
+      "shortname": "reka-edge",
+      "display_name": "reka-edge",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "minimax/minimax-m2.7": {
+      "enabled": true,
+      "shortname": "minimax-m2.7",
+      "display_name": "minimax-m2.7",
+      "icon": "💫",
+      "priority": 55,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.4-nano": {
+      "enabled": true,
+      "shortname": "gpt-5.4-nano",
+      "display_name": "gpt-5.4-nano",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.4-mini": {
+      "enabled": true,
+      "shortname": "gpt-5.4-mini",
+      "display_name": "gpt-5.4-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-small-2603": {
+      "enabled": true,
+      "shortname": "mistral-small-2603",
+      "display_name": "mistral-small-2603",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-5-turbo": {
+      "enabled": true,
+      "shortname": "glm-5-turbo",
+      "display_name": "glm-5-turbo",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-3-super-120b-a12b:free": {
+      "enabled": true,
+      "shortname": "nemotron-3-super-120b-a12b:free",
+      "display_name": "nemotron-3-super-120b-a12b:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-3-super-120b-a12b": {
+      "enabled": true,
+      "shortname": "nemotron-3-super-120b-a12b",
+      "display_name": "nemotron-3-super-120b-a12b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "bytedance-seed/seed-2.0-lite": {
+      "enabled": true,
+      "shortname": "seed-2.0-lite",
+      "display_name": "seed-2.0-lite",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.5-9b": {
+      "enabled": true,
+      "shortname": "qwen3.5-9b",
+      "display_name": "qwen3.5-9b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.4-pro": {
+      "enabled": true,
+      "shortname": "gpt-5.4-pro",
+      "display_name": "gpt-5.4-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.4": {
+      "enabled": true,
+      "shortname": "gpt-5.4",
+      "display_name": "gpt-5.4",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "inception/mercury-2": {
+      "enabled": true,
+      "shortname": "mercury-2",
+      "display_name": "mercury-2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.3-chat": {
+      "enabled": true,
+      "shortname": "gpt-5.3-chat",
+      "display_name": "gpt-5.3-chat",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3.1-flash-lite-preview": {
+      "enabled": true,
+      "shortname": "gemini-3.1-flash-lite-preview",
+      "display_name": "gemini-3.1-flash-lite-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "bytedance-seed/seed-2.0-mini": {
+      "enabled": true,
+      "shortname": "seed-2.0-mini",
+      "display_name": "seed-2.0-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3.1-flash-image-preview": {
+      "enabled": true,
+      "shortname": "gemini-3.1-flash-image-preview",
+      "display_name": "gemini-3.1-flash-image-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.5-35b-a3b": {
+      "enabled": true,
+      "shortname": "qwen3.5-35b-a3b",
+      "display_name": "qwen3.5-35b-a3b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.5-27b": {
+      "enabled": true,
+      "shortname": "qwen3.5-27b",
+      "display_name": "qwen3.5-27b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.5-122b-a10b": {
+      "enabled": true,
+      "shortname": "qwen3.5-122b-a10b",
+      "display_name": "qwen3.5-122b-a10b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.5-flash-02-23": {
+      "enabled": true,
+      "shortname": "qwen3.5-flash-02-23",
+      "display_name": "qwen3.5-flash-02-23",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "liquid/lfm-2-24b-a2b": {
+      "enabled": true,
+      "shortname": "lfm-2-24b-a2b",
+      "display_name": "lfm-2-24b-a2b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3.1-pro-preview-customtools": {
+      "enabled": true,
+      "shortname": "gemini-3.1-pro-preview-customtools",
+      "display_name": "gemini-3.1-pro-preview-customtools",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.3-codex": {
+      "enabled": true,
+      "shortname": "gpt-5.3-codex",
+      "display_name": "gpt-5.3-codex",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "aion-labs/aion-2.0": {
+      "enabled": true,
+      "shortname": "aion-2.0",
+      "display_name": "aion-2.0",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-sonnet-4.6": {
+      "enabled": true,
+      "shortname": "claude-sonnet-4.6",
+      "display_name": "claude-sonnet-4.6",
+      "icon": "🟠",
+      "priority": 80,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.5-plus-02-15": {
+      "enabled": true,
+      "shortname": "qwen3.5-plus-02-15",
+      "display_name": "qwen3.5-plus-02-15",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3.5-397b-a17b": {
+      "enabled": true,
+      "shortname": "qwen3.5-397b-a17b",
+      "display_name": "qwen3.5-397b-a17b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "minimax/minimax-m2.5": {
+      "enabled": true,
+      "shortname": "minimax-m2.5",
+      "display_name": "minimax-m2.5",
+      "icon": "💫",
+      "priority": 55,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-5": {
+      "enabled": true,
+      "shortname": "glm-5",
+      "display_name": "glm-5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-max-thinking": {
+      "enabled": true,
+      "shortname": "qwen3-max-thinking",
+      "display_name": "qwen3-max-thinking",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-opus-4.6": {
+      "enabled": true,
+      "shortname": "claude-opus-4.6",
+      "display_name": "claude-opus-4.6",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-coder-next": {
+      "enabled": true,
+      "shortname": "qwen3-coder-next",
+      "display_name": "qwen3-coder-next",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/free": {
+      "enabled": true,
+      "shortname": "free",
+      "display_name": "free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "stepfun/step-3.5-flash": {
+      "enabled": true,
+      "shortname": "step-3.5-flash",
+      "display_name": "step-3.5-flash",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "moonshotai/kimi-k2.5": {
+      "enabled": true,
+      "shortname": "kimi-k2.5",
+      "display_name": "kimi-k2.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "upstage/solar-pro-3": {
+      "enabled": true,
+      "shortname": "solar-pro-3",
+      "display_name": "solar-pro-3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "minimax/minimax-m2-her": {
+      "enabled": true,
+      "shortname": "minimax-m2-her",
+      "display_name": "minimax-m2-her",
+      "icon": "💫",
+      "priority": 55,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "writer/palmyra-x5": {
+      "enabled": true,
+      "shortname": "palmyra-x5",
+      "display_name": "palmyra-x5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-audio": {
+      "enabled": true,
+      "shortname": "gpt-audio",
+      "display_name": "gpt-audio",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-audio-mini": {
+      "enabled": true,
+      "shortname": "gpt-audio-mini",
+      "display_name": "gpt-audio-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-4.7-flash": {
+      "enabled": true,
+      "shortname": "glm-4.7-flash",
+      "display_name": "glm-4.7-flash",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.2-codex": {
+      "enabled": true,
+      "shortname": "gpt-5.2-codex",
+      "display_name": "gpt-5.2-codex",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "bytedance-seed/seed-1.6-flash": {
+      "enabled": true,
+      "shortname": "seed-1.6-flash",
+      "display_name": "seed-1.6-flash",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "bytedance-seed/seed-1.6": {
+      "enabled": true,
+      "shortname": "seed-1.6",
+      "display_name": "seed-1.6",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "minimax/minimax-m2.1": {
+      "enabled": true,
+      "shortname": "minimax-m2.1",
+      "display_name": "minimax-m2.1",
+      "icon": "💫",
+      "priority": 55,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-4.7": {
+      "enabled": true,
+      "shortname": "glm-4.7",
+      "display_name": "glm-4.7",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3-flash-preview": {
+      "enabled": true,
+      "shortname": "gemini-3-flash-preview",
+      "display_name": "gemini-3-flash-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-3-nano-30b-a3b": {
+      "enabled": true,
+      "shortname": "nemotron-3-nano-30b-a3b",
+      "display_name": "nemotron-3-nano-30b-a3b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.2-chat": {
+      "enabled": true,
+      "shortname": "gpt-5.2-chat",
+      "display_name": "gpt-5.2-chat",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.2-pro": {
+      "enabled": true,
+      "shortname": "gpt-5.2-pro",
+      "display_name": "gpt-5.2-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.2": {
+      "enabled": true,
+      "shortname": "gpt-5.2",
+      "display_name": "gpt-5.2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/devstral-2512": {
+      "enabled": true,
+      "shortname": "devstral-2512",
+      "display_name": "devstral-2512",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "relace/relace-search": {
+      "enabled": true,
+      "shortname": "relace-search",
+      "display_name": "relace-search",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-4.6v": {
+      "enabled": true,
+      "shortname": "glm-4.6v",
+      "display_name": "glm-4.6v",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/bodybuilder": {
+      "enabled": true,
+      "shortname": "bodybuilder",
+      "display_name": "bodybuilder",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.1-codex-max": {
+      "enabled": true,
+      "shortname": "gpt-5.1-codex-max",
+      "display_name": "gpt-5.1-codex-max",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "amazon/nova-2-lite-v1": {
+      "enabled": true,
+      "shortname": "nova-2-lite-v1",
+      "display_name": "nova-2-lite-v1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/ministral-14b-2512": {
+      "enabled": true,
+      "shortname": "ministral-14b-2512",
+      "display_name": "ministral-14b-2512",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/ministral-8b-2512": {
+      "enabled": true,
+      "shortname": "ministral-8b-2512",
+      "display_name": "ministral-8b-2512",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/ministral-3b-2512": {
+      "enabled": true,
+      "shortname": "ministral-3b-2512",
+      "display_name": "ministral-3b-2512",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-large-2512": {
+      "enabled": true,
+      "shortname": "mistral-large-2512",
+      "display_name": "mistral-large-2512",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "arcee-ai/trinity-mini": {
+      "enabled": true,
+      "shortname": "trinity-mini",
+      "display_name": "trinity-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-v3.2": {
+      "enabled": true,
+      "shortname": "deepseek-v3.2",
+      "display_name": "deepseek-v3.2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-opus-4.5": {
+      "enabled": true,
+      "shortname": "claude-opus-4.5",
+      "display_name": "claude-opus-4.5",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "allenai/olmo-3-32b-think": {
+      "enabled": true,
+      "shortname": "olmo-3-32b-think",
+      "display_name": "olmo-3-32b-think",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-3-pro-image-preview": {
+      "enabled": true,
+      "shortname": "gemini-3-pro-image-preview",
+      "display_name": "gemini-3-pro-image-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepcogito/cogito-v2.1-671b": {
+      "enabled": true,
+      "shortname": "cogito-v2.1-671b",
+      "display_name": "cogito-v2.1-671b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.1": {
+      "enabled": true,
+      "shortname": "gpt-5.1",
+      "display_name": "gpt-5.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.1-chat": {
+      "enabled": true,
+      "shortname": "gpt-5.1-chat",
+      "display_name": "gpt-5.1-chat",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.1-codex": {
+      "enabled": true,
+      "shortname": "gpt-5.1-codex",
+      "display_name": "gpt-5.1-codex",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5.1-codex-mini": {
+      "enabled": true,
+      "shortname": "gpt-5.1-codex-mini",
+      "display_name": "gpt-5.1-codex-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "moonshotai/kimi-k2-thinking": {
+      "enabled": true,
+      "shortname": "kimi-k2-thinking",
+      "display_name": "kimi-k2-thinking",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "inline_tags",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "amazon/nova-premier-v1": {
+      "enabled": true,
+      "shortname": "nova-premier-v1",
+      "display_name": "nova-premier-v1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "perplexity/sonar-pro-search": {
+      "enabled": true,
+      "shortname": "sonar-pro-search",
+      "display_name": "sonar-pro-search",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/voxtral-small-24b-2507": {
+      "enabled": true,
+      "shortname": "voxtral-small-24b-2507",
+      "display_name": "voxtral-small-24b-2507",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-oss-safeguard-20b": {
+      "enabled": true,
+      "shortname": "gpt-oss-safeguard-20b",
+      "display_name": "gpt-oss-safeguard-20b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "minimax/minimax-m2": {
+      "enabled": true,
+      "shortname": "minimax-m2",
+      "display_name": "minimax-m2",
+      "icon": "💫",
+      "priority": 55,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-vl-32b-instruct": {
+      "enabled": true,
+      "shortname": "qwen3-vl-32b-instruct",
+      "display_name": "qwen3-vl-32b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "ibm-granite/granite-4.0-h-micro": {
+      "enabled": true,
+      "shortname": "granite-4.0-h-micro",
+      "display_name": "granite-4.0-h-micro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5-image-mini": {
+      "enabled": true,
+      "shortname": "gpt-5-image-mini",
+      "display_name": "gpt-5-image-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-haiku-4.5": {
+      "enabled": true,
+      "shortname": "claude-haiku-4.5",
+      "display_name": "claude-haiku-4.5",
+      "icon": "🟢",
+      "priority": 60,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-vl-8b-thinking": {
+      "enabled": true,
+      "shortname": "qwen3-vl-8b-thinking",
+      "display_name": "qwen3-vl-8b-thinking",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-vl-8b-instruct": {
+      "enabled": true,
+      "shortname": "qwen3-vl-8b-instruct",
+      "display_name": "qwen3-vl-8b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5-image": {
+      "enabled": true,
+      "shortname": "gpt-5-image",
+      "display_name": "gpt-5-image",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o3-deep-research": {
+      "enabled": true,
+      "shortname": "o3-deep-research",
+      "display_name": "o3-deep-research",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o4-mini-deep-research": {
+      "enabled": true,
+      "shortname": "o4-mini-deep-research",
+      "display_name": "o4-mini-deep-research",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/llama-3.3-nemotron-super-49b-v1.5": {
+      "enabled": true,
+      "shortname": "llama-3.3-nemotron-super-49b-v1.5",
+      "display_name": "llama-3.3-nemotron-super-49b-v1.5",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-2.5-flash-image": {
+      "enabled": true,
+      "shortname": "gemini-2.5-flash-image",
+      "display_name": "gemini-2.5-flash-image",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-vl-30b-a3b-thinking": {
+      "enabled": true,
+      "shortname": "qwen3-vl-30b-a3b-thinking",
+      "display_name": "qwen3-vl-30b-a3b-thinking",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-vl-30b-a3b-instruct": {
+      "enabled": true,
+      "shortname": "qwen3-vl-30b-a3b-instruct",
+      "display_name": "qwen3-vl-30b-a3b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5-pro": {
+      "enabled": true,
+      "shortname": "gpt-5-pro",
+      "display_name": "gpt-5-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-4.6": {
+      "enabled": true,
+      "shortname": "glm-4.6",
+      "display_name": "glm-4.6",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-sonnet-4.5": {
+      "enabled": true,
+      "shortname": "claude-sonnet-4.5",
+      "display_name": "claude-sonnet-4.5",
+      "icon": "🟠",
+      "priority": 80,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-v3.2-exp": {
+      "enabled": true,
+      "shortname": "deepseek-v3.2-exp",
+      "display_name": "deepseek-v3.2-exp",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "thedrummer/cydonia-24b-v4.1": {
+      "enabled": true,
+      "shortname": "cydonia-24b-v4.1",
+      "display_name": "cydonia-24b-v4.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "relace/relace-apply-3": {
+      "enabled": true,
+      "shortname": "relace-apply-3",
+      "display_name": "relace-apply-3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-2.5-flash-lite-preview-09-2025": {
+      "enabled": true,
+      "shortname": "gemini-2.5-flash-lite-preview-09-2025",
+      "display_name": "gemini-2.5-flash-lite-preview-09-2025",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-vl-235b-a22b-thinking": {
+      "enabled": true,
+      "shortname": "qwen3-vl-235b-a22b-thinking",
+      "display_name": "qwen3-vl-235b-a22b-thinking",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-vl-235b-a22b-instruct": {
+      "enabled": true,
+      "shortname": "qwen3-vl-235b-a22b-instruct",
+      "display_name": "qwen3-vl-235b-a22b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-max": {
+      "enabled": true,
+      "shortname": "qwen3-max",
+      "display_name": "qwen3-max",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-coder-plus": {
+      "enabled": true,
+      "shortname": "qwen3-coder-plus",
+      "display_name": "qwen3-coder-plus",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5-codex": {
+      "enabled": true,
+      "shortname": "gpt-5-codex",
+      "display_name": "gpt-5-codex",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-v3.1-terminus": {
+      "enabled": true,
+      "shortname": "deepseek-v3.1-terminus",
+      "display_name": "deepseek-v3.1-terminus",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-coder-flash": {
+      "enabled": true,
+      "shortname": "qwen3-coder-flash",
+      "display_name": "qwen3-coder-flash",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-next-80b-a3b-thinking": {
+      "enabled": true,
+      "shortname": "qwen3-next-80b-a3b-thinking",
+      "display_name": "qwen3-next-80b-a3b-thinking",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-next-80b-a3b-instruct": {
+      "enabled": true,
+      "shortname": "qwen3-next-80b-a3b-instruct",
+      "display_name": "qwen3-next-80b-a3b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen-plus-2025-07-28:thinking": {
+      "enabled": true,
+      "shortname": "qwen-plus-2025-07-28:thinking",
+      "display_name": "qwen-plus-2025-07-28:thinking",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "inline_tags",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen-plus-2025-07-28": {
+      "enabled": true,
+      "shortname": "qwen-plus-2025-07-28",
+      "display_name": "qwen-plus-2025-07-28",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "moonshotai/kimi-k2-0905": {
+      "enabled": true,
+      "shortname": "kimi-k2-0905",
+      "display_name": "kimi-k2-0905",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-30b-a3b-thinking-2507": {
+      "enabled": true,
+      "shortname": "qwen3-30b-a3b-thinking-2507",
+      "display_name": "qwen3-30b-a3b-thinking-2507",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nousresearch/hermes-4-70b": {
+      "enabled": true,
+      "shortname": "hermes-4-70b",
+      "display_name": "hermes-4-70b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nousresearch/hermes-4-405b": {
+      "enabled": true,
+      "shortname": "hermes-4-405b",
+      "display_name": "hermes-4-405b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-chat-v3.1": {
+      "enabled": true,
+      "shortname": "deepseek-chat-v3.1",
+      "display_name": "deepseek-chat-v3.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-medium-3.1": {
+      "enabled": true,
+      "shortname": "mistral-medium-3.1",
+      "display_name": "mistral-medium-3.1",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-4.5v": {
+      "enabled": true,
+      "shortname": "glm-4.5v",
+      "display_name": "glm-4.5v",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "ai21/jamba-large-1.7": {
+      "enabled": true,
+      "shortname": "jamba-large-1.7",
+      "display_name": "jamba-large-1.7",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5-chat": {
+      "enabled": true,
+      "shortname": "gpt-5-chat",
+      "display_name": "gpt-5-chat",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5": {
+      "enabled": true,
+      "shortname": "gpt-5",
+      "display_name": "gpt-5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5-mini": {
+      "enabled": true,
+      "shortname": "gpt-5-mini",
+      "display_name": "gpt-5-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-5-nano": {
+      "enabled": true,
+      "shortname": "gpt-5-nano",
+      "display_name": "gpt-5-nano",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-oss-120b": {
+      "enabled": true,
+      "shortname": "gpt-oss-120b",
+      "display_name": "gpt-oss-120b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-oss-20b": {
+      "enabled": true,
+      "shortname": "gpt-oss-20b",
+      "display_name": "gpt-oss-20b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-opus-4.1": {
+      "enabled": true,
+      "shortname": "claude-opus-4.1",
+      "display_name": "claude-opus-4.1",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/codestral-2508": {
+      "enabled": true,
+      "shortname": "codestral-2508",
+      "display_name": "codestral-2508",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-coder-30b-a3b-instruct": {
+      "enabled": true,
+      "shortname": "qwen3-coder-30b-a3b-instruct",
+      "display_name": "qwen3-coder-30b-a3b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-30b-a3b-instruct-2507": {
+      "enabled": true,
+      "shortname": "qwen3-30b-a3b-instruct-2507",
+      "display_name": "qwen3-30b-a3b-instruct-2507",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-4.5": {
+      "enabled": true,
+      "shortname": "glm-4.5",
+      "display_name": "glm-4.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "z-ai/glm-4.5-air": {
+      "enabled": true,
+      "shortname": "glm-4.5-air",
+      "display_name": "glm-4.5-air",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-235b-a22b-thinking-2507": {
+      "enabled": true,
+      "shortname": "qwen3-235b-a22b-thinking-2507",
+      "display_name": "qwen3-235b-a22b-thinking-2507",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-coder": {
+      "enabled": true,
+      "shortname": "qwen3-coder",
+      "display_name": "qwen3-coder",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "bytedance/ui-tars-1.5-7b": {
+      "enabled": true,
+      "shortname": "ui-tars-1.5-7b",
+      "display_name": "ui-tars-1.5-7b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-2.5-flash-lite": {
+      "enabled": true,
+      "shortname": "gemini-2.5-flash-lite",
+      "display_name": "gemini-2.5-flash-lite",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-235b-a22b-2507": {
+      "enabled": true,
+      "shortname": "qwen3-235b-a22b-2507",
+      "display_name": "qwen3-235b-a22b-2507",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "switchpoint/router": {
+      "enabled": true,
+      "shortname": "router",
+      "display_name": "router",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "moonshotai/kimi-k2": {
+      "enabled": true,
+      "shortname": "kimi-k2",
+      "display_name": "kimi-k2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "tencent/hunyuan-a13b-instruct": {
+      "enabled": true,
+      "shortname": "hunyuan-a13b-instruct",
+      "display_name": "hunyuan-a13b-instruct",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "morph/morph-v3-large": {
+      "enabled": true,
+      "shortname": "morph-v3-large",
+      "display_name": "morph-v3-large",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "morph/morph-v3-fast": {
+      "enabled": true,
+      "shortname": "morph-v3-fast",
+      "display_name": "morph-v3-fast",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "baidu/ernie-4.5-vl-424b-a47b": {
+      "enabled": true,
+      "shortname": "ernie-4.5-vl-424b-a47b",
+      "display_name": "ernie-4.5-vl-424b-a47b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-small-3.2-24b-instruct": {
+      "enabled": true,
+      "shortname": "mistral-small-3.2-24b-instruct",
+      "display_name": "mistral-small-3.2-24b-instruct",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "minimax/minimax-m1": {
+      "enabled": true,
+      "shortname": "minimax-m1",
+      "display_name": "minimax-m1",
+      "icon": "💫",
+      "priority": 55,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-2.5-flash": {
+      "enabled": true,
+      "shortname": "gemini-2.5-flash",
+      "display_name": "gemini-2.5-flash",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-2.5-pro": {
+      "enabled": true,
+      "shortname": "gemini-2.5-pro",
+      "display_name": "gemini-2.5-pro",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o3-pro": {
+      "enabled": true,
+      "shortname": "o3-pro",
+      "display_name": "o3-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-2.5-pro-preview": {
+      "enabled": true,
+      "shortname": "gemini-2.5-pro-preview",
+      "display_name": "gemini-2.5-pro-preview",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-r1-0528": {
+      "enabled": true,
+      "shortname": "deepseek-r1-0528",
+      "display_name": "deepseek-r1-0528",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-opus-4": {
+      "enabled": true,
+      "shortname": "claude-opus-4",
+      "display_name": "claude-opus-4",
+      "icon": "🟣",
+      "priority": 100,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-sonnet-4": {
+      "enabled": true,
+      "shortname": "claude-sonnet-4",
+      "display_name": "claude-sonnet-4",
+      "icon": "🟠",
+      "priority": 80,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 200000,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 1.0
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-3n-e4b-it": {
+      "enabled": true,
+      "shortname": "gemma-3n-e4b-it",
+      "display_name": "gemma-3n-e4b-it",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-medium-3": {
+      "enabled": true,
+      "shortname": "mistral-medium-3",
+      "display_name": "mistral-medium-3",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemini-2.5-pro-preview-05-06": {
+      "enabled": true,
+      "shortname": "gemini-2.5-pro-preview-05-06",
+      "display_name": "gemini-2.5-pro-preview-05-06",
+      "icon": "💎",
+      "priority": 70,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 1000000,
+      "max_output": 65536,
+      "inference": {
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "raw_formats": [
+        "image/*",
+        "application/pdf"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "arcee-ai/virtuoso-large": {
+      "enabled": true,
+      "shortname": "virtuoso-large",
+      "display_name": "virtuoso-large",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "arcee-ai/coder-large": {
+      "enabled": true,
+      "shortname": "coder-large",
+      "display_name": "coder-large",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-guard-4-12b": {
+      "enabled": true,
+      "shortname": "llama-guard-4-12b",
+      "display_name": "llama-guard-4-12b",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-30b-a3b": {
+      "enabled": true,
+      "shortname": "qwen3-30b-a3b",
+      "display_name": "qwen3-30b-a3b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-8b": {
+      "enabled": true,
+      "shortname": "qwen3-8b",
+      "display_name": "qwen3-8b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-14b": {
+      "enabled": true,
+      "shortname": "qwen3-14b",
+      "display_name": "qwen3-14b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-32b": {
+      "enabled": true,
+      "shortname": "qwen3-32b",
+      "display_name": "qwen3-32b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-235b-a22b": {
+      "enabled": true,
+      "shortname": "qwen3-235b-a22b",
+      "display_name": "qwen3-235b-a22b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o4-mini-high": {
+      "enabled": true,
+      "shortname": "o4-mini-high",
+      "display_name": "o4-mini-high",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o3": {
+      "enabled": true,
+      "shortname": "o3",
+      "display_name": "o3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o4-mini": {
+      "enabled": true,
+      "shortname": "o4-mini",
+      "display_name": "o4-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4.1": {
+      "enabled": true,
+      "shortname": "gpt-4.1",
+      "display_name": "gpt-4.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4.1-mini": {
+      "enabled": true,
+      "shortname": "gpt-4.1-mini",
+      "display_name": "gpt-4.1-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4.1-nano": {
+      "enabled": true,
+      "shortname": "gpt-4.1-nano",
+      "display_name": "gpt-4.1-nano",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-4-maverick": {
+      "enabled": true,
+      "shortname": "llama-4-maverick",
+      "display_name": "llama-4-maverick",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-4-scout": {
+      "enabled": true,
+      "shortname": "llama-4-scout",
+      "display_name": "llama-4-scout",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-chat-v3-0324": {
+      "enabled": true,
+      "shortname": "deepseek-chat-v3-0324",
+      "display_name": "deepseek-chat-v3-0324",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o1-pro": {
+      "enabled": true,
+      "shortname": "o1-pro",
+      "display_name": "o1-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-small-3.1-24b-instruct": {
+      "enabled": true,
+      "shortname": "mistral-small-3.1-24b-instruct",
+      "display_name": "mistral-small-3.1-24b-instruct",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-3-4b-it": {
+      "enabled": true,
+      "shortname": "gemma-3-4b-it",
+      "display_name": "gemma-3-4b-it",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-3-12b-it": {
+      "enabled": true,
+      "shortname": "gemma-3-12b-it",
+      "display_name": "gemma-3-12b-it",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "cohere/command-a": {
+      "enabled": true,
+      "shortname": "command-a",
+      "display_name": "command-a",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4o-mini-search-preview": {
+      "enabled": true,
+      "shortname": "gpt-4o-mini-search-preview",
+      "display_name": "gpt-4o-mini-search-preview",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4o-search-preview": {
+      "enabled": true,
+      "shortname": "gpt-4o-search-preview",
+      "display_name": "gpt-4o-search-preview",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "rekaai/reka-flash-3": {
+      "enabled": true,
+      "shortname": "reka-flash-3",
+      "display_name": "reka-flash-3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-3-27b-it": {
+      "enabled": true,
+      "shortname": "gemma-3-27b-it",
+      "display_name": "gemma-3-27b-it",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "thedrummer/skyfall-36b-v2": {
+      "enabled": true,
+      "shortname": "skyfall-36b-v2",
+      "display_name": "skyfall-36b-v2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "perplexity/sonar-reasoning-pro": {
+      "enabled": true,
+      "shortname": "sonar-reasoning-pro",
+      "display_name": "sonar-reasoning-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "perplexity/sonar-pro": {
+      "enabled": true,
+      "shortname": "sonar-pro",
+      "display_name": "sonar-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "perplexity/sonar-deep-research": {
+      "enabled": true,
+      "shortname": "sonar-deep-research",
+      "display_name": "sonar-deep-research",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-saba": {
+      "enabled": true,
+      "shortname": "mistral-saba",
+      "display_name": "mistral-saba",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o3-mini-high": {
+      "enabled": true,
+      "shortname": "o3-mini-high",
+      "display_name": "o3-mini-high",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "aion-labs/aion-1.0": {
+      "enabled": true,
+      "shortname": "aion-1.0",
+      "display_name": "aion-1.0",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "aion-labs/aion-1.0-mini": {
+      "enabled": true,
+      "shortname": "aion-1.0-mini",
+      "display_name": "aion-1.0-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "aion-labs/aion-rp-llama-3.1-8b": {
+      "enabled": true,
+      "shortname": "aion-rp-llama-3.1-8b",
+      "display_name": "aion-rp-llama-3.1-8b",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen2.5-vl-72b-instruct": {
+      "enabled": true,
+      "shortname": "qwen2.5-vl-72b-instruct",
+      "display_name": "qwen2.5-vl-72b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen-plus": {
+      "enabled": true,
+      "shortname": "qwen-plus",
+      "display_name": "qwen-plus",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o3-mini": {
+      "enabled": true,
+      "shortname": "o3-mini",
+      "display_name": "o3-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-small-24b-instruct-2501": {
+      "enabled": true,
+      "shortname": "mistral-small-24b-instruct-2501",
+      "display_name": "mistral-small-24b-instruct-2501",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "perplexity/sonar": {
+      "enabled": true,
+      "shortname": "sonar",
+      "display_name": "sonar",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-r1-distill-llama-70b": {
+      "enabled": true,
+      "shortname": "deepseek-r1-distill-llama-70b",
+      "display_name": "deepseek-r1-distill-llama-70b",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-r1": {
+      "enabled": true,
+      "shortname": "deepseek-r1",
+      "display_name": "deepseek-r1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "minimax/minimax-01": {
+      "enabled": true,
+      "shortname": "minimax-01",
+      "display_name": "minimax-01",
+      "icon": "💫",
+      "priority": 55,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 32768,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "microsoft/phi-4": {
+      "enabled": true,
+      "shortname": "phi-4",
+      "display_name": "phi-4",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "sao10k/l3.1-70b-hanami-x1": {
+      "enabled": true,
+      "shortname": "l3.1-70b-hanami-x1",
+      "display_name": "l3.1-70b-hanami-x1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-chat": {
+      "enabled": true,
+      "shortname": "deepseek-chat",
+      "display_name": "deepseek-chat",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "sao10k/l3.3-euryale-70b": {
+      "enabled": true,
+      "shortname": "l3.3-euryale-70b",
+      "display_name": "l3.3-euryale-70b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/o1": {
+      "enabled": true,
+      "shortname": "o1",
+      "display_name": "o1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "openai_opaque",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "cohere/command-r7b-12-2024": {
+      "enabled": true,
+      "shortname": "command-r7b-12-2024",
+      "display_name": "command-r7b-12-2024",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3.3-70b-instruct": {
+      "enabled": true,
+      "shortname": "llama-3.3-70b-instruct",
+      "display_name": "llama-3.3-70b-instruct",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "amazon/nova-lite-v1": {
+      "enabled": true,
+      "shortname": "nova-lite-v1",
+      "display_name": "nova-lite-v1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "amazon/nova-micro-v1": {
+      "enabled": true,
+      "shortname": "nova-micro-v1",
+      "display_name": "nova-micro-v1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "amazon/nova-pro-v1": {
+      "enabled": true,
+      "shortname": "nova-pro-v1",
+      "display_name": "nova-pro-v1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4o-2024-11-20": {
+      "enabled": true,
+      "shortname": "gpt-4o-2024-11-20",
+      "display_name": "gpt-4o-2024-11-20",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-large-2407": {
+      "enabled": true,
+      "shortname": "mistral-large-2407",
+      "display_name": "mistral-large-2407",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen-2.5-coder-32b-instruct": {
+      "enabled": true,
+      "shortname": "qwen-2.5-coder-32b-instruct",
+      "display_name": "qwen-2.5-coder-32b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "thedrummer/unslopnemo-12b": {
+      "enabled": true,
+      "shortname": "unslopnemo-12b",
+      "display_name": "unslopnemo-12b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthracite-org/magnum-v4-72b": {
+      "enabled": true,
+      "shortname": "magnum-v4-72b",
+      "display_name": "magnum-v4-72b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen-2.5-7b-instruct": {
+      "enabled": true,
+      "shortname": "qwen-2.5-7b-instruct",
+      "display_name": "qwen-2.5-7b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "inflection/inflection-3-productivity": {
+      "enabled": true,
+      "shortname": "inflection-3-productivity",
+      "display_name": "inflection-3-productivity",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "inflection/inflection-3-pi": {
+      "enabled": true,
+      "shortname": "inflection-3-pi",
+      "display_name": "inflection-3-pi",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "thedrummer/rocinante-12b": {
+      "enabled": true,
+      "shortname": "rocinante-12b",
+      "display_name": "rocinante-12b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3.2-3b-instruct": {
+      "enabled": true,
+      "shortname": "llama-3.2-3b-instruct",
+      "display_name": "llama-3.2-3b-instruct",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3.2-1b-instruct": {
+      "enabled": true,
+      "shortname": "llama-3.2-1b-instruct",
+      "display_name": "llama-3.2-1b-instruct",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3.2-11b-vision-instruct": {
+      "enabled": true,
+      "shortname": "llama-3.2-11b-vision-instruct",
+      "display_name": "llama-3.2-11b-vision-instruct",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen-2.5-72b-instruct": {
+      "enabled": true,
+      "shortname": "qwen-2.5-72b-instruct",
+      "display_name": "qwen-2.5-72b-instruct",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "cohere/command-r-08-2024": {
+      "enabled": true,
+      "shortname": "command-r-08-2024",
+      "display_name": "command-r-08-2024",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "cohere/command-r-plus-08-2024": {
+      "enabled": true,
+      "shortname": "command-r-plus-08-2024",
+      "display_name": "command-r-plus-08-2024",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "sao10k/l3.1-euryale-70b": {
+      "enabled": true,
+      "shortname": "l3.1-euryale-70b",
+      "display_name": "l3.1-euryale-70b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nousresearch/hermes-3-llama-3.1-70b": {
+      "enabled": true,
+      "shortname": "hermes-3-llama-3.1-70b",
+      "display_name": "hermes-3-llama-3.1-70b",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nousresearch/hermes-3-llama-3.1-405b": {
+      "enabled": true,
+      "shortname": "hermes-3-llama-3.1-405b",
+      "display_name": "hermes-3-llama-3.1-405b",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "sao10k/l3-lunaris-8b": {
+      "enabled": true,
+      "shortname": "l3-lunaris-8b",
+      "display_name": "l3-lunaris-8b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4o-2024-08-06": {
+      "enabled": true,
+      "shortname": "gpt-4o-2024-08-06",
+      "display_name": "gpt-4o-2024-08-06",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3.1-8b-instruct": {
+      "enabled": true,
+      "shortname": "llama-3.1-8b-instruct",
+      "display_name": "llama-3.1-8b-instruct",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3.1-70b-instruct": {
+      "enabled": true,
+      "shortname": "llama-3.1-70b-instruct",
+      "display_name": "llama-3.1-70b-instruct",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-nemo": {
+      "enabled": true,
+      "shortname": "mistral-nemo",
+      "display_name": "mistral-nemo",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4o-mini": {
+      "enabled": true,
+      "shortname": "gpt-4o-mini",
+      "display_name": "gpt-4o-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4o-mini-2024-07-18": {
+      "enabled": true,
+      "shortname": "gpt-4o-mini-2024-07-18",
+      "display_name": "gpt-4o-mini-2024-07-18",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-2-27b-it": {
+      "enabled": true,
+      "shortname": "gemma-2-27b-it",
+      "display_name": "gemma-2-27b-it",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4o": {
+      "enabled": true,
+      "shortname": "gpt-4o",
+      "display_name": "gpt-4o",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4o-2024-05-13": {
+      "enabled": true,
+      "shortname": "gpt-4o-2024-05-13",
+      "display_name": "gpt-4o-2024-05-13",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3-8b-instruct": {
+      "enabled": true,
+      "shortname": "llama-3-8b-instruct",
+      "display_name": "llama-3-8b-instruct",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mixtral-8x22b-instruct": {
+      "enabled": true,
+      "shortname": "mixtral-8x22b-instruct",
+      "display_name": "mixtral-8x22b-instruct",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "microsoft/wizardlm-2-8x22b": {
+      "enabled": true,
+      "shortname": "wizardlm-2-8x22b",
+      "display_name": "wizardlm-2-8x22b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4-turbo": {
+      "enabled": true,
+      "shortname": "gpt-4-turbo",
+      "display_name": "gpt-4-turbo",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "anthropic/claude-3-haiku": {
+      "enabled": true,
+      "shortname": "claude-3-haiku",
+      "display_name": "claude-3-haiku",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mistralai/mistral-large": {
+      "enabled": true,
+      "shortname": "mistral-large",
+      "display_name": "mistral-large",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-3.5-turbo-0613": {
+      "enabled": true,
+      "shortname": "gpt-3.5-turbo-0613",
+      "display_name": "gpt-3.5-turbo-0613",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4-turbo-preview": {
+      "enabled": true,
+      "shortname": "gpt-4-turbo-preview",
+      "display_name": "gpt-4-turbo-preview",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/auto": {
+      "enabled": true,
+      "shortname": "auto",
+      "display_name": "auto",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-3.5-turbo-instruct": {
+      "enabled": true,
+      "shortname": "gpt-3.5-turbo-instruct",
+      "display_name": "gpt-3.5-turbo-instruct",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-3.5-turbo-16k": {
+      "enabled": true,
+      "shortname": "gpt-3.5-turbo-16k",
+      "display_name": "gpt-3.5-turbo-16k",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mancer/weaver": {
+      "enabled": true,
+      "shortname": "weaver",
+      "display_name": "weaver",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "undi95/remm-slerp-l2-13b": {
+      "enabled": true,
+      "shortname": "remm-slerp-l2-13b",
+      "display_name": "remm-slerp-l2-13b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "gryphe/mythomax-l2-13b": {
+      "enabled": true,
+      "shortname": "mythomax-l2-13b",
+      "display_name": "mythomax-l2-13b",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-4": {
+      "enabled": true,
+      "shortname": "gpt-4",
+      "display_name": "gpt-4",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-3.5-turbo": {
+      "enabled": true,
+      "shortname": "gpt-3.5-turbo",
+      "display_name": "gpt-3.5-turbo",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-v4-pro:discounted": {
+      "enabled": true,
+      "shortname": "deepseek-v4-pro:discounted",
+      "display_name": "deepseek-v4-pro:discounted",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "deepseek/deepseek-v4-flash:discounted": {
+      "enabled": true,
+      "shortname": "deepseek-v4-flash:discounted",
+      "display_name": "deepseek-v4-flash:discounted",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "kilo-auto/small": {
+      "enabled": true,
+      "shortname": "small",
+      "display_name": "small",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},
@@ -2838,7 +8741,7 @@
     "jwt_secret": "CHANGE_ME_RANDOM_SECRET"
   },
   "attachments": {
-    "image_model": "CLIProxyAPI/mistral-medium-3.5"
+    "image_model": "mistral-medium-3.5"
   },
   "mempalace": {
     "enabled": true,
@@ -2889,7 +8792,7 @@
     },
     "kg": {
       "enabled": true,
-      "extraction_model": "CLIProxyAPI/mistral-small-latest",
+      "extraction_model": "mistral-small-latest",
       "scopes": [
         "projects"
       ],
@@ -5028,7 +10931,7 @@
     "precision": "**PRECISION DISCIPLINE — no plausible-sounding filler** (applies to lane-(a) claims drawn from retrieved sources):\nWhen the retrieved source does not give a concrete value (interval, frequency, threshold, count, deadline, length, duration), write `nicht spezifiziert` — never substitute a plausible default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', 'angemessen'), the very next characters must be a wörtliches Zitat (`> \"...\"`) from the retrieved text proving the source actually says that. No quote → drop the qualifier. Typical phrasing remembered from training data is NOT a source.",
     "citation": "**CITATION DISCIPLINE — per-claim, not per-block; NEVER fabricate**:\n[Quelle: …]-brackets are EXCLUSIVELY for content you actually retrieved THIS turn (or a file this conversation genuinely read). A bracket naming a file you never read, a 'verbatim' quote reconstructed from memory, an invented statistic, or a generic authority ('Branchenstandard', 'Best Practices', a plausible RFC/spec sentence you did not fetch) is a FABRICATION — strictly worse than an uncited sentence and worse than no answer. If you retrieved nothing this turn, write NO brackets at all (lane (b) of the refusal discipline applies). Never cite drafts, private notes, or this conversation itself as a source.\nEVERY factual sentence and EVERY bullet point that came from a retrieved source must carry its OWN reference right after the claim, in the form [Quelle: <kurzer Quellenname> — \"<wörtliches Zitat 10-25 Wörter>\"]. One citation at the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell which bullet came from which source, and uncited bullets are where paraphrase drift and fabrication slip in. Treat each bullet as an independent claim that must stand on its own with its own quote. A bullet with only a citation and no claim, or a claim with no citation, is not correct. This applies to PROSE too: a summary/FAZIT sentence that packs several facts (\"Bilanzsumme +5,8%, Barreserve +43%, CET1 28,13%\") needs a citation for EACH fact, not one at the end of the paragraph — split it or append a bracket per figure ([Quelle: … — \"+5,8%-quote\"] [Quelle: … — \"+43%-quote\"]). Every number you state must be traceable to a verbatim quote.\nTABLES are NOT exempt — a table is a dense block of claims, and one citation under the whole table is INSUFFICIENT for the same reason a single citation under a bullet list is. When you present retrieved data as a markdown table, add a final \"Quelle\" column and put the per-row reference ([Quelle: <name> — \"<wörtliches Zitat>\"]) in EVERY row whose figures came from a source. If several rows share one verbatim quote (e.g. a whole balance-sheet table copied from one passage), cite that quote in the first row and write \"s.o.\" (siehe oben) in the following rows' Quelle cells so it is explicit they share the source — never leave a data row's Quelle cell empty. Every relevant column's figures must be traceable: if the 2025 and 2024 columns come from different passages, the row's Quelle cell carries both brackets. A derived/computed column (e.g. a Δ you calculated) needs no quote — mark its origin once in a note under the table (\"Δ = eigene Berechnung\").\nIf you cannot find a verbatim quote in the retrieved source that supports a specific claim — DELETE that claim. Do not write claims you cannot cite. A shorter, fully-cited answer is always preferable to a longer answer with uncited statements.\nThe verbatim quote (10-25 words, copied EXACTLY from the retrieved text) is mandatory — it lets the user find and verify the statement in the original. Without a quote the citation is unverifiable.\nSource naming: use a short, recognisable source name — a document's filename (without any path or extracted-companion suffix) or, for a web source, its title or domain. Add a locator only when it is genuinely present in the retrieved text (e.g. `Page N`, `Slide N`, `Sheet \"Name\"`, or a section number the source itself prints). NEVER invent paragraph or section numbers — a locator you did not see in the text is a fabrication. If no clean locator exists, the verbatim quote alone is sufficient.\nMultiple sources for one claim → repeat the bracket: [Quelle: A — \"...\"] [Quelle: B — \"...\"]."
   },
-  "chat_summary_model": "CLIProxyAPI/mistral-small-latest",
+  "chat_summary_model": "mistral-small-latest",
   "classification": {
     "keywords": {
       "internal": [
@@ -5088,7 +10991,7 @@
   },
   "helpdesk": {
     "enabled": true,
-    "model": "CLIProxyAPI/mistral-small-latest",
+    "model": "mistral-small-latest",
     "max_rounds": 6,
     "system_prompt": "Du bist Brainy 🧠 — der freundliche, kompetente Helpdesk-Assistent von brain-agent. Du hilfst dem angemeldeten Nutzer direkt im Chat: bei allgemeinen Fragen zur App UND zur aktuellen Sitzung. Du bist NICHT der normale Chat-Agent — du bist ein eigenständiger Helfer mit Insider-Wissen über brain-agent.\n\nPersönlichkeit: warm, geduldig, permanent hilfsbereit, leicht verspielt, niemals herablassend. Antworte kurz und konkret. Sprich den Nutzer freundlich und auf Deutsch an (außer der Nutzer schreibt in einer anderen Sprache — dann passe dich an).\n\nVorgehen:\n1. Lade ZUERST den Skill `brain-agent-guide` mit dem Tool use_skill — er enthält die komplette Bedienungsanleitung, FAQ, Rezepte, API, Tools, Speicherorte und Interna von brain-agent. Stütze deine Antworten darauf, statt zu raten.\n2. Für Fragen zur laufenden Sitzung nutze helpdesk_session_info. Für persönliche/zugeschnittene Hilfe helpdesk_user_context (wer ist der Nutzer) und helpdesk_user_activity (was hat er bisher gemacht — Chats, Projekte, Schedules).\n3. Gib konkrete, umsetzbare Tipps und nenne, WO in der Oberfläche etwas zu finden ist (Tab, Button, Einstellung).\n\nGrenzen: Du bist rein lesend. Du kannst nichts ändern, nichts senden, keine Befehle ausführen und keine Dateien schreiben. Wenn der Nutzer eine Aktion ausführen will, erkläre ihm Schritt für Schritt, wie ER sie selbst durchführt. Wenn du etwas nicht sicher weißt, sag es ehrlich und verweise auf die passende Stelle in der App.\n\nTon & Humor: Du darfst trocken-charmant sein, mit Augenzwinkern. WICHTIG: Die Antwort selbst bleibt immer korrekt und sachlich — Witz kommt obendrauf, nie statt der Antwort und nie auf Kosten der Genauigkeit. Wenn die Daten eine augenzwinkernde Pointe hergeben (z.B. der Nutzer hat 7-mal nach dem Wetter gefragt), hänge HÖCHSTENS einen lockeren Schlusssatz an — etwa: „Vielleicht mal eine neue Frage ausdenken? Wird langsam zur Gewohnheit. ☂️\". Setze das sparsam ein (nicht bei jeder Antwort, sonst nutzt es sich ab), und NIE bei Fehlern, bei Datenschutz/PII-Themen oder wenn der Nutzer gestresst/frustriert wirkt — dann hilf einfach ruhig und sachlich. Die Pointe ist eine augenzwinkernde Beobachtung zum erkannten Muster selbst (z.B. „denk dir mal eine andere Frage aus, das wird öde ☂️\") — NICHT ein proaktives Feature-Angebot oder ein erfundener Tipp. Erfinde dafür keine Funktionen; wenn du eine App-Funktion nennst, muss sie real und durch den brain-agent-guide-Skill gedeckt sein.\n\nBeispiele für den richtigen Schluss (Frage: „Wie oft habe ich nach dem Wetter gefragt?\", 7 Treffer):\n✅ GUT: „Du hast 7-mal nach dem Wetter gefragt. Vielleicht mal eine andere Frage ausdenken — wird langsam zur Gewohnheit. ☂️\"\n❌ FALSCH (erfundenes Feature-Angebot): „… Soll ich dir zeigen, wie du Wetterdaten speichern kannst? Nutze die Artifacts-Funktion!\" — verboten: das ist eine ausgedachte Funktion und kein Witz.\n❌ FALSCH (proaktives Hilfsangebot statt Pointe): „… Möchtest du, dass ich dir etwas anderes heraussuche?\" — die Spitze kommentiert das MUSTER, sie bietet keine Zusatzaktion an.\nDie Schlusszeile ist eine kurze, selbstironische Beobachtung zum Muster — sonst nichts."
   },
@@ -5099,16 +11002,16 @@
   "auto_route": {
     "classifier_mode": "llm"
   },
-  "background_task_model": "CLIProxyAPI/mistral-small-latest",
-  "classifier_model": "CLIProxyAPI/mistral-small-latest",
-  "next_prompt_model": "CLIProxyAPI/mistral-small-latest",
-  "wiki_model": "CLIProxyAPI/mistral-small-latest",
-  "user_profile_model": "CLIProxyAPI/mistral-small-latest",
-  "studio_model": "CLIProxyAPI/mistral-small-latest",
-  "audio_overview_model": "CLIProxyAPI/mistral-small-latest",
-  "code_graph_model": "CLIProxyAPI/mistral-small-latest",
+  "background_task_model": "mistral-small-latest",
+  "classifier_model": "mistral-small-latest",
+  "next_prompt_model": "mistral-small-latest",
+  "wiki_model": "mistral-small-latest",
+  "user_profile_model": "mistral-small-latest",
+  "studio_model": "mistral-small-latest",
+  "audio_overview_model": "mistral-small-latest",
+  "code_graph_model": "mistral-small-latest",
   "deep_research_model": "glm-5.2",
-  "wiki_gate_model": "CLIProxyAPI/mistral-small-latest",
+  "wiki_gate_model": "mistral-small-latest",
   "composer_defaults": {
     "thinking_level": "none",
     "caveman_mode": 0
@@ -5119,7 +11022,7 @@
     "delete_after_days": 90,
     "run_interval_seconds": 3600
   },
-  "instruction_gen_model": "CLIProxyAPI/mistral-medium-3.5",
+  "instruction_gen_model": "mistral-medium-3.5",
   "codebase_memory": {
     "enabled": true,
     "bin": "/Users/alexander/Documents/dev/cctest/.codebase-memory/bin/codebase-memory-mcp",
@@ -5130,8 +11033,8 @@
   "moa": {
     "enabled": true,
     "reference_pool": [
-      "CLIProxyAPI/mistral-medium-3.5",
-      "CLIProxyAPI/mistral-small-latest",
+      "mistral-medium-3.5",
+      "mistral-small-latest",
       "deepseek-v4-flash",
       "deepseek-v4-pro"
     ],
@@ -5148,36 +11051,36 @@
     "task_pools": {
       "research": [
         "glm-5.2",
-        "CLIProxyAPI/mistral-medium-3.5",
+        "mistral-medium-3.5",
         "kimi-k2.6",
         "deepseek-v4-flash",
-        "CLIProxyAPI/mistral-small-latest",
+        "mistral-small-latest",
         "deepseek-v4-pro"
       ],
       "analysis": [
         "glm-5.2",
-        "CLIProxyAPI/mistral-medium-3.5",
+        "mistral-medium-3.5",
         "kimi-k2.6",
         "deepseek-v4-flash",
-        "CLIProxyAPI/mistral-small-latest",
+        "mistral-small-latest",
         "deepseek-v4-pro"
       ],
       "reporting": [
         "glm-5.2",
-        "CLIProxyAPI/mistral-medium-3.5",
+        "mistral-medium-3.5",
         "kimi-k2.6",
         "deepseek-v4-flash",
-        "CLIProxyAPI/mistral-small-latest",
+        "mistral-small-latest",
         "deepseek-v4-pro"
       ],
       "creative": [
         "glm-5.2",
-        "CLIProxyAPI/mistral-medium-3.5",
+        "mistral-medium-3.5",
         "deepseek-v4-pro"
       ],
       "orchestration": [
         "glm-5.2",
-        "CLIProxyAPI/mistral-medium-3.5",
+        "mistral-medium-3.5",
         "kimi-k2.6",
         "deepseek-v4-pro"
       ]

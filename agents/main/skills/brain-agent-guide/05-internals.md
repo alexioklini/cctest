@@ -99,7 +99,7 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
   tool call. RELOAD: `sessions.js` rebuilds the same rows from
   `metadata.text_rounds` (one shared `_seq` counter for segments+tools).
   `assistant_segment` is client-only — never persisted, never on the wire.
-- NOTE: mistral-medium via CLIProxyAPI emits NO separate thinking blocks
+- NOTE: mistral-medium (mistral_blocks format) emits NO separate thinking blocks
   (no `thinking_done` → no `thinking` rows persisted); that's a
   provider-format gap, not a data-loss bug.
 - Thinking-OFF is sent EXPLICITLY for `reasoning_field` cloud models
@@ -115,6 +115,14 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
 `{api_key, base_url, provider_name}`. Used by chat, delegate, scheduler,
 warmup, background. Providers are plain OpenAI-compatible entries in
 `config.json → providers`.
+
+Since 9.278.0 all cloud models hit their upstreams DIRECTLY (the CLIProxyAPI
+proxy on :8317 was removed): `Kilo` (kilo.ai/api/openrouter) serves
+glm-5.2 / kimi-k2.6 / deepseek-v4-pro / deepseek-v4-flash / gemma-cloud with
+the upstream id in `base_model_id` (e.g. `z-ai/glm-5.2`), and `mistral-direct`
+(api.mistral.ai) serves all Mistral models. Upstream prompt caching works on
+both (verified: multi-turn sessions report `cached_tokens`; synthetic
+identical-prompt probes do NOT trigger it).
 
 Provider-scoped ids exist when multiple providers serve the same model
 (`provider/model_id` with `base_model_id`).
@@ -397,7 +405,7 @@ deferral stands). No-signal → static deferral stands (fail-open).
 **Cache-priced models freeze routing to turn 1.** A model with an explicit
 non-zero `cost_cache_read` (per-model config) is "cache-priced" —
 `brain.model_is_cache_priced(model)` is the single trigger. The point: such a
-provider (e.g. Mistral via CLIProxyAPI) serves a byte-identical prompt prefix from
+provider (e.g. Mistral direct, Kilo) serves a byte-identical prompt prefix from
 its own cache at ~0.1×, so the prefix must stay stable across turns. Two effects:
 (1) `model_should_optimize_tools` returns **False** for a cache-priced model (never
 reshape its tool set per turn — same KV-prefix-stability reason as full-mode warmup).

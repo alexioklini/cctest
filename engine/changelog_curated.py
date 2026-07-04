@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.278.0",
+        "date": "2026-07-04",
+        "title": "Direktverbindung zu allen Cloud-Anbietern",
+        "body": "Alle Cloud-Modelle (GLM, Kimi, DeepSeek, Mistral) kommunizieren "
+                "jetzt ohne Zwischenstation direkt mit ihren Anbietern. Das "
+                "entfernt eine ganze Fehlerquelle aus jedem Gespräch — weniger "
+                "Verbindungsabbrüche, geringere Latenz und mehr gleichzeitige "
+                "Anfragen möglich. Die Preisvorteile durch zwischengespeicherte "
+                "Eingaben bleiben vollständig erhalten. Bestehende "
+                "Unterhaltungen laufen unverändert weiter.",
+        "audience": "admin",
+        "versions": ["9.278.0"],
+    },
+    {
         "version": "9.277.2",
         "date": "2026-07-04",
         "title": "Websuche funktioniert auch nach einer Begrüßung",
