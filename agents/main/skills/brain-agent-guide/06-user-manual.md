@@ -106,7 +106,7 @@ Zwischen Kontingenten und Kostentabelle sitzt die Sektion **„Coding-Pläne &
 API-Guthaben (geschätzt)"** (9.283.0): eine Zeile pro Abrechnungskonto, das
 mit mindestens einem Modell verknüpft ist — mit Name, Abo-Preis und pro
 Zeitfenster (5h / Woche / Monat) einem Balken mit geschätzter Auslastung
-(grün/gelb/rot) samt **Countdown bis zum Reset** (↻ „in 39 min" / „in 7
+— die **Farbe ist eine Hochrechnung**: grün = bei gleichbleibendem Nutzungs-Tempo bleibt das Fenster im Rahmen, gelb = das Tempo müsste sinken (Projektion über 100 % bzw. Füllstand ab 70 %), rot = deutlicher Überlauf-Kurs oder fast leer; der Tooltip nennt den projizierten Stand am Fensterende, bei Guthaben-Konten die Reichweite in Tagen — samt **Countdown bis zum Reset** (↻ „in 39 min" / „in 7
 Tagen"; das 5h-Fenster ist ein echtes Session-Fenster ab der ersten Anfrage).
 **Flat-Pläne** (Z.ai/Kimi Coding Plan, Mistral Vibe) zeigen
 Token-Fenster; **Credit-Konten** (API-Guthaben, z. B. Kilo) zeigen verbraucht/

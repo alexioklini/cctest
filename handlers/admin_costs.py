@@ -453,12 +453,23 @@ class AdminCostsHandlers:
                 s = engine._cost_tracker.token_sums(models, anchor)
                 balance = float(plan.get("balance_usd") or 0.0)
                 spent = round(float(s["cost"]), 4)
+                # Reichweite bei gleichem Tempo: Tagesburn seit Aufladung →
+                # verbleibende Tage (None bei <6h Historie oder Burn 0).
+                days_left = None
+                try:
+                    _a = _dt.datetime.strptime(anchor, "%Y-%m-%d %H:%M:%S")
+                    _el_d = (_dt.datetime.utcnow() - _a).total_seconds() / 86400.0
+                    if _el_d > 0.25 and spent > 0:
+                        days_left = round((balance - spent) / (spent / _el_d), 1)
+                except Exception:
+                    pass
                 windows.append({
                     "kind": "credit", "label": "Guthaben",
                     "balance_usd": balance,
                     "used_usd": spent,
                     "remaining_usd": round(balance - spent, 4),
                     "pct": round(100.0 * spent / balance, 1) if balance > 0 else None,
+                    "days_left_est": days_left,
                     "calls": s["calls"],
                     "anchor": plan.get("anchor") or "",
                 })
@@ -473,12 +484,32 @@ class AdminCostsHandlers:
                     used = (s["tokens_in"] * w_in + s["tokens_out"] * w_out
                             + s["cache_read_tokens"] * w_cr)
                     limit = float(win.get("limit_tokens") or 0)
+                    pct = round(100.0 * used / limit, 1) if limit > 0 else None
+                    # Hochrechnung: projizierter Stand am Fensterende bei
+                    # gleichem Tempo (used / verstrichene Fensterzeit). Erst ab
+                    # 10% verstrichener Zeit belastbar; rolling-Fenster sind
+                    # per Definition "voll verstrichen" → Projektion = pct.
+                    projected = None
+                    _len_s = {"session_5h": 5 * 3600, "weekly": 7 * 86400}.get(win.get("kind"))
+                    if win.get("kind") == "monthly" and resets_in is not None:
+                        try:
+                            _start = _dt.datetime.strptime(since, "%Y-%m-%d %H:%M:%S")
+                            _len_s = int((_dt.datetime.utcnow() - _start).total_seconds()) + resets_in
+                        except Exception:
+                            _len_s = None
+                    if pct is not None:
+                        if _len_s and resets_in is not None:
+                            _el = max(0.0, 1.0 - resets_in / _len_s)
+                            projected = round(pct / _el, 1) if _el >= 0.10 else None
+                        elif win.get("kind", "").startswith("rolling"):
+                            projected = pct
                     windows.append({
                         "kind": win.get("kind"),
                         "label": self._PLAN_WINDOW_LABELS.get(win.get("kind"), win.get("kind")),
                         "limit_tokens": int(limit),
                         "used_est": int(used),
-                        "pct": round(100.0 * used / limit, 1) if limit > 0 else None,
+                        "pct": pct,
+                        "projected_pct": projected,
                         "calls": s["calls"],
                         "resets_at": resets,
                         "resets_in_s": resets_in,

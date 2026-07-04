@@ -924,9 +924,16 @@ function renderCodingPlansSection(data) {
   if (!sec) return;
   const isAdmin = (state.authUser?.role || 'admin') === 'admin';
   const plans = (data && data.plans) || [];
-  const bar = (pct, warnAt) => {
+  // Farbe = HOCHRECHNUNG, nicht bloßer Füllstand: rot wenn das Fenster bei
+  // gleichem Tempo deutlich überlaufen würde (Projektion > 130 %) ODER fast
+  // leer ist (≥ 90 %); gelb wenn die Projektion über 100 % liegt (Tempo müsste
+  // sinken) ODER Füllstand ≥ 70 %; sonst grün = bei gleichem Nutzungsausmaß
+  // bleibt man im Kontingent.
+  const bar = (pct, projected) => {
     const p = Math.min(100, Math.max(0, pct || 0));
-    const color = p >= 90 ? 'var(--error)' : (p >= (warnAt || 70) ? 'var(--warning)' : 'var(--success)');
+    const pr = (projected == null) ? p : projected;
+    const color = (p >= 90 || pr > 130) ? 'var(--error)'
+      : (p >= 70 || pr > 100) ? 'var(--warning)' : 'var(--success)';
     return `<div style="flex:1;height:5px;background:var(--bg-200);border-radius:999px;overflow:hidden;min-width:60px">
       <div style="height:100%;width:${p}%;background:${color};border-radius:999px"></div></div>`;
   };
@@ -935,9 +942,9 @@ function renderCodingPlansSection(data) {
       if (w.kind === 'credit') {
         return `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-300);padding:2px 0">
           <span style="width:44px;flex-shrink:0">${esc(w.label)}</span>
-          ${bar(w.pct)}
-          <span style="font-variant-numeric:tabular-nums;white-space:nowrap" title="verbraucht seit Aufladung ${esc(w.anchor)}">
-            $${(w.used_usd || 0).toFixed(2)} / $${(w.balance_usd || 0).toFixed(2)} · <b style="color:var(--text-200)">$${(w.remaining_usd || 0).toFixed(2)} frei</b></span>
+          ${bar(w.pct, null)}
+          <span style="font-variant-numeric:tabular-nums;white-space:nowrap" title="verbraucht seit Aufladung ${esc(w.anchor)}${w.days_left_est != null ? ' · reicht bei gleichem Tempo noch ~' + w.days_left_est + ' Tage' : ''}">
+            $${(w.used_usd || 0).toFixed(2)} / $${(w.balance_usd || 0).toFixed(2)} · <b style="color:var(--text-200)">$${(w.remaining_usd || 0).toFixed(2)} frei</b>${w.days_left_est != null ? ` <span style="color:var(--text-400)">(~${w.days_left_est} Tage)</span>` : ''}</span>
           ${isAdmin ? `<span style="white-space:nowrap"><input type="number" step="1" min="0" placeholder="$" id="cp-topup-${esc(p.id)}"
               style="width:44px;padding:1px 4px;font-size:10px;border:1px solid var(--border-100);border-radius:4px;background:var(--bg-000);color:var(--text-200)"
               title="Neues Guthaben nach Aufladung in $ — setzt auch das Aufladedatum auf heute">
@@ -945,10 +952,13 @@ function renderCodingPlansSection(data) {
         </div>`;
       }
       const eta = _cpEta(w.resets_in_s);
+      const projTitle = w.projected_pct != null
+        ? ` · bei gleichem Tempo ~${w.projected_pct.toFixed(0)} % am Fensterende${w.projected_pct > 100 ? ' (Überlauf!)' : ' (im Rahmen)'}`
+        : '';
       return `<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text-300);padding:2px 0">
         <span style="width:44px;flex-shrink:0">${esc(w.label)}</span>
-        ${bar(w.pct)}
-        <span style="font-variant-numeric:tabular-nums;white-space:nowrap" title="geschätzt: ${(w.used_est || 0).toLocaleString('de-DE')} von ${(w.limit_tokens || 0).toLocaleString('de-DE')} Tokens${w.resets_at ? ' · Reset ' + esc(w.resets_at) : ''}">
+        ${bar(w.pct, w.projected_pct)}
+        <span style="font-variant-numeric:tabular-nums;white-space:nowrap" title="geschätzt: ${(w.used_est || 0).toLocaleString('de-DE')} von ${(w.limit_tokens || 0).toLocaleString('de-DE')} Tokens${w.resets_at ? ' · Reset ' + esc(w.resets_at) : ''}${projTitle}">
           ~${w.pct == null ? '—' : w.pct.toFixed(0) + ' %'} · ${_cpTok(w.used_est || 0)} / ${_cpTok(w.limit_tokens || 0)}</span>
         ${eta ? `<span style="color:var(--text-400);white-space:nowrap" title="${w.resets_at ? 'Reset ' + esc(w.resets_at) : ''}">↻ ${esc(eta)}</span>` : ''}
         ${isAdmin ? `<span style="white-space:nowrap"><input type="number" step="1" min="1" max="100" placeholder="%" id="cp-cal-${esc(p.id)}-${esc(w.kind)}"
