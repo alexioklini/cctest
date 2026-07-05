@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.286.1"
+VERSION = "9.286.2"
 VERSION_DATE = "2026-07-05"
 CHANGELOG = [
+    ("9.286.2", "2026-07-05", "feat(Plan-Review: Executor-Eignung im Dropdown): das Ausführungs-Modell-Dropdown der Plan-Review-Karte kennzeichnet jetzt, welche Modelle für den konkreten Plan geeignet sind (User-Wunsch). MECHANIK: neue brain.classify_executor_suitability(candidates, task_type, complexity) → pro Kandidat {id, suitable, capability}. EIGNUNG = klärt den komplexitäts-justierten Fähigkeits-FLOOR für den Plan-Aufgabentyp (fähig GENUG — bewusst NICHT der schmale Near-Frontier-Band, den die Auto-Wahl zum RANKEN nutzt: der Floor qualifiziert, der Band entscheidet nur wer gewinnt; User-Entscheidung 'nur Floor, kein Band', sonst würden knapp darunterliegende gute Modelle wie kimi/deepseek-flash fälschlich ausgegraut). Unbenchmarkt für den exakten Aufgabentyp → Fallback auf die beste Capability des Modells über alle Aufgabentypen (_model_best_capability); komplett unbenchmarkt → suitable (kein Signal). _run_plan_review_loop: (1) klassifiziert gegen den PLAN-Aufgabentyp (exec_analysis aus resolve_moa_executor durchgereicht; Fallback gate_hit/complexity), (2) filtert Kandidaten auf CHAT-fähige Cloud-Modelle ('chat' in capabilities — schließt voxtral-*/mistral-ocr Audio/OCR-Spezialmodelle aus, die nie gültige Executor waren; latenter Bug), (3) schließt den PLANNER aus (führt seinen eigenen Plan nie aus; war bisher wählbar), (4) sortiert BEST-FIRST per _bench_rank_key, (5) hebt den vorgeschlagenen Executor auf Position 1 (pinned-Turn-Fall), (6) sendet executor_suitability im moa_plan_review-Event. FRONTEND (Web-Chat chat_send.js + Terminal-Chat panels_termchat.js): ungeeignete Optionen ausgegraut + '— wenig geeignet'-Label, weiterhin wählbar; Warn-Zeile ('⚠️ für die Art dieses Plans nur bedingt geeignet …') per change-Handler. KONZEPT (User-Klarstellung): der Auto-Vorschlag IST per Definition das geeignetste Modell (gleiches Ranking) → Position 1 = geeignetstes = Vorschlag. LIVE E2E (research/high-Plan, deepseek-v4-pro vorgeschlagen): 5 Chat-Modelle (voxtral/ocr korrekt raus), Pos1=Vorschlag geeignet, kimi/flash/mistral-medium geeignet, nur mistral-small (cap 58 < Floor) ausgegraut; suitability index-aligned. js_gate GRÜN (net-globals 1844 unverändert, Smoke ok); py_compile OK. Skill 05/06 + SKILL.md im selben Commit. Server-Restart nötig. Kuratiert: 9.286.2 in die versions-Liste des 9.286.0-Eintrags."),
     ("9.286.1", "2026-07-05", "feat(Experten-Gremium: Delegations-Entscheidungen sichtbar): die Plan-Delegations-Rückkopplungen aus 9.286.0 waren im Chat-Tool-Verlauf + rechten Aktivität-Panel UNSICHTBAR (User-Report: 'in den cards für plan prüfung / user review / feedback schleifen gibts keine anzeige … auch das ergebnis der entscheidung ist nicht sichtbar'). URSACHE: der Plan-Review (9.285.0) emittierte NUR die transiente moa_plan_review-Frage-Karte (verschwindet bei _done), aber keine persistente synthetische Card — die Entscheidung (approve/clarify/Executor-Override/Timeout/cancel) lebte nur in meta. FIX (1) NEUE persistente Card kind='moa_plan_review' im _run_plan_review_loop (_emit_review_outcome_card): EINE Ergebnis-Card pro Entscheidungspunkt — cancel/clarify emittieren sofort (clarify trägt das Reviewer-Feedback als aufklappbaren Body), approved/timeout/max_rounds am Schleifenende; result={outcome, executor, executor_overridden, plan_edited, feedback}; der Plantext bleibt im versionierten ausfuehrungsplan.md-Artefakt (kein Card-Duplikat). (2) Post-Verify-Card zeigt jetzt BEI BEIDEN Verdikten einen Grund: _MOA_VERIFY_SYSTEM verlangt 'VERIFY_VERDICT: ok — <kurzer Grund>' bzw. 'insufficient — <konkreter Fix>', geparst in result.reason (ok) bzw. result.instruction+reason (insufficient); Card-Body zeigt reason||instruction (vorher: nur Fix bei insufficient, bei ok leer). (3) Frontend: chat_render (bodyItems inline-Kind), chat_tools (toolDescribe/titleMap/summary/isMoa/moaDraft — Plan-Review-Outcome-Labels 'Plan freigegeben'/'Neu planen lassen'/'Abgebrochen'/'Auto-Freigabe (Timeout|max. Runden)' + Extras 'Executor gewechselt'/'Plan bearbeitet'; Verify-Body reason||instruction), panels_background (Aktivität-Tab nimmt beide neuen Kinds auf + lesbare Result-Reduktion statt JSON-Blob). GREMIUM-Badge + 🧬 für alle. Synthetische Cards laufen generisch über synthetic_tool_use/_result (kind-basiert) — kein neuer SSE-Handler, keine neuen Globals. js_gate GRÜN (net-globals 1844 unverändert, Smoke ok); py_compile OK. Skill 05/06 + SKILL.md im selben Commit. Server-Restart nötig. Kuratiert: 9.286.1 in die versions-Liste des 9.286.0-Eintrags (dieselbe Nutzer-Funktion, jetzt nachvollziehbar)."),
     ("9.286.0", "2026-07-05", "feat(Experten-Gremium: Proposer-Refinement + Executor-Post-Verifikation): zwei Rückkopplungsschleifen für die Plan-Delegation (User-Idee: der Planner prüft die Proposer-Beiträge und lässt die schwachen NACHBESSERN — mit der Begründung warum —; nach der Ausführung prüft der Planner, ob das Ergebnis Plan+Anfrage erfüllt, wie im Goal-Modus). (A) PROPOSER-REFINEMENT (handlers/chat._refine_moa_drafts): _MOA_PLANNER_SYSTEM verlangt bei 'insufficient' jetzt zusätzlich die betroffenen Ansatz-Buchstaben + eine KONKRETE, umsetzbare Begründung ('PLAN_VERDICT: insufficient [A, C] — <Anweisung>'); _run_moa_planner parst weak_letters + verdict_reason. Bei insufficient + benannten Ansätzen + Grund werden GENAU diese Proposer EINMAL erneut befragt (positional A=drafts[0]; _MOA_REF_REFINE_SYSTEM: vorheriger Entwurf + Planner-Feedback → besserer, standalone Ansatz; tool-los, single-round, Pseudonym-Raum, GDPR-Gate wie der erste Fan-out; leere Klammern '[]' = die Anfrage selbst ist der Blocker → kein Refinement, Fallback wie bisher). Danach EIN Re-Planning-Call; still-insufficient fließt in die bestehende self-reject/Review-Fallback-Kette. Genau 1 Runde (Kosten-Cap). Gescheiterte/leere Nachbesserung behält den Original-Entwurf (nie ein Turn-Fehler). Karten: moa_reference mit refine-Flag ('· Nachbesserung'). (B) EXECUTOR-POST-VERIFIKATION (handlers/chat._run_executor_verify), INTERAKTIV NUR: nach dem Executor-Lauf beurteilt der PLANNER per 1-shot bg-call (VERIFY_VERDICT: ok|insufficient — <Fix>) ob die Antwort Plan+Anfrage erfüllt (Vollständigkeit/Korrektheit/nicht über die Evidenz hinaus — sauberes 'not found' = ok). Bei insufficient + konkreter Fix-Anweisung + Budget → der SELBE Executor wird erneut gefahren (die Goal-continue-Maschinerie wiederverwendet: styled User-Msg + Stream-Reset + continue), bis ok ODER moa.executor_verify_max_rounds (neu, Default 2, 0=nur Audit) erreicht. Läuft NICHT wenn der Goal-Loop den Turn besitzt (dessen Judge entscheidet — zwei Judge-Loops würden doppelt zählen), nie bei Turn-Fehler, nie nicht-interaktiv (Eval/Scheduler/API schlank). Fail-open: kaputter Audit blockiert nie eine Antwort. Audit-Verdikt auf msg_metadata.auto_route.moa.verify. Karte moa_verify ('Ergebnis bestätigt'/'Nachbesserung angefordert', aufklappbar = Fix-Anweisung); SSE moa_verify_continue schließt die Antwort-Blase (Web + Terminal-Chat). WICHTIG (unverändert): User-Review geht IMMER an den Planner, NIE an die Proposer (die haben ihre Arbeit erledigt). admin_config validiert executor_verify_max_rounds (0–5); Settings-Feld in der Gremium-Sektion. py_compile brain/chat/admin_config OK; js_gate GRÜN (net-globals 1844 unverändert, Smoke 5/5). Skill 05/06 + SKILL.md im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (user). LIVE-E2E-VERIFIKATION (echte API, interaktiv, mehrteilige Web-Recherche): delegate gate → Planner glm-5.2 (verdict ready) → Plan-Review approve → Executor deepseek-v4-pro; Post-Verify Runde 0 → insufficient ('interne Arbeitsnotizen entfernen') → moa_verify_continue round=1/2 → Executor erneut; Runde 1 → insufficient ('für KEINE Angabe die geforderte URL') → round=2/2 → Executor erneut; Cap 2/2 erreicht → finale Antwort 16546c ausgeliefert. Persistenz verifiziert: jede Zwischen-Assistant-Msg trägt auto_route.moa.verify {verdict, round, model} (assistant#15 round0 insufficient, #19 round1 insufficient), verify-continue-User-Msgs korrekt getaggt. Gegenprobe einfache Recherche: verdict=ok, kein Re-Round. py_compile brain/chat/admin_config/changelog_curated OK; js_gate GRÜN."),
     ("9.285.1", "2026-07-05", "feat(Plan-Review: versionierte Plan-Artefakte): jeder Planstand des INTERAKTIVEN Reviews (User-Spec 'jeweils versioniert in den artefakten persistieren — aber nur wenn interaktiv') wird als Sitzungs-Artefakt abgelegt: handlers/chat._persist_plan_artifact schreibt EINE stabile Datei ausfuehrungsplan.md in den Session-Artefaktordner (Metadaten-Kopfzeile: Quelle Planner-Entwurf/Revision/Freigabe-bearbeitet · Runde · Planner · Verdict · Zeitstempel) und registriert via engine._after_file_write → pro Stand eine artifact_versions-Zeile (die Versionierung; Version-Picker im Artefakte-Panel) + artifact_updated live in den Stream (deep-research-Callback-Muster — der Worker-Kontext hat keinen event_callback installiert). Dedupe: identischer Text schreibt nie doppelt (unveränderte Freigabe erzeugt KEINE Duplikat-Version); Aufrufpunkte NUR im _run_plan_review_loop (= der interaktive Pfad) — nicht-interaktive Delegationen persistieren nichts. Best-effort (Persist-Fehler bricht nie den Turn). LIVE E2E: Entwurf→Revision→bearbeitete Freigabe = 3 artifact_updated-Events + 3 artifact_versions-Zeilen (2561/1497/1547 Zeichen) auf einem Artefakt, Kopfzeile korrekt. py_compile OK. Skill 05/06 + SKILL.md 1.142.0 im selben Commit. Server-Restart nötig. Kuratiert: 9.285.1 in die versions-Liste des 9.285.0-Eintrags + Satz ergänzt."),
@@ -12451,6 +12452,65 @@ def resolve_moa_executor(plan_text: str, exclude: set[str] | None = None,
     pool.sort(key=lambda m: _bench_rank_key(m, bench_task, floor, complexity,
                                             top_cap=top_cap))
     return pool[0], analysis
+
+
+def classify_executor_suitability(candidates: list[str], *,
+                                  task_type: str = "",
+                                  complexity: str | None = None) -> list[dict]:
+    """Per-candidate suitability for a delegate EXECUTOR pick, for the plan-
+    review dropdown (v9.286.2). "Suitable" = the model clears the
+    complexity-adjusted capability FLOOR for the plan's task type (capable
+    ENOUGH for this kind of work) — NOT the near-frontier band the auto-pick
+    uses for RANKING (a model can be a fine executor without being within a few
+    points of the very best; the band decides who WINS, the floor decides who
+    QUALIFIES). Below the floor → not suitable (the UI greys it out but still
+    allows it, with a warning).
+
+    Returns [{id, suitable, capability}] in the INPUT order (the caller already
+    ranked them best-first). When task_type is empty every candidate is marked
+    suitable (no signal). A candidate unbenchmarked FOR THIS task_type but
+    benchmarked for others is judged on its best available cell (so a capable
+    chat model missing one column isn't wrongly greyed); a candidate with NO
+    benchmark at all stays suitable (no signal — don't grey a brand-new model).
+    Non-chat specialists are already filtered out by the caller."""
+    out = []
+    tt = (task_type or "").strip()
+    if not tt:
+        return [{"id": m, "suitable": True, "capability": None} for m in candidates]
+    floor = _complexity_floor(complexity)
+    for m in candidates:
+        cell = bench_cell_value(m, tt)
+        cap = None
+        if cell is not None:
+            c = cell.get("capability")
+            cap = float(c) if isinstance(c, (int, float)) else 0.0
+        else:
+            # No cell for this task_type — fall back to the model's best
+            # benchmarked capability across any task type, if it has one.
+            best = _model_best_capability(m)
+            cap = best  # None when the model has no benchmark at all
+        if cap is None:
+            out.append({"id": m, "suitable": True, "capability": None})
+        else:
+            out.append({"id": m, "suitable": bool(cap >= floor),
+                        "capability": cap})
+    return out
+
+
+def _model_best_capability(model: str) -> float | None:
+    """Highest benchmarked capability for a model across ALL task types, or
+    None when it has no benchmark cell at all. Lets suitability judge a model
+    that lacks the exact task_type column but is clearly capable elsewhere."""
+    cfg = _models_config.get(model, {})
+    bench = cfg.get("benchmark") or {}
+    best = None
+    for _tt, cell in bench.items():
+        if not isinstance(cell, dict):
+            continue
+        v = (cell.get("override") or cell.get("measured") or {}).get("capability")
+        if isinstance(v, (int, float)):
+            best = v if best is None else max(best, float(v))
+    return best
 
 
 def get_model_info(model: str) -> dict:

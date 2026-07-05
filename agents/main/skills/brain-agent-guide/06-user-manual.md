@@ -342,7 +342,12 @@ Prüf-Karte — Sie können den Plan direkt im Textfeld bearbeiten, dem
 Orchestrator eine Rückfrage bzw. einen Änderungswunsch geben („Neu planen
 lassen" — er legt einen überarbeiteten Plan zur erneuten Prüfung vor, bis
 zu 5 Runden), das **Ausführungs-Modell** per Dropdown wechseln und den Plan
-mit „Plan freigeben & ausführen" starten. Reagieren Sie nicht, wird der
+mit „Plan freigeben & ausführen" starten. Im Modell-Dropdown steht das
+automatisch empfohlene (geeignetste) Modell oben; Modelle, die laut
+Fähigkeits-Benchmark für die Art dieses Plans wenig geeignet sind, sind
+ausgegraut und mit „— wenig geeignet" markiert — Sie können sie trotzdem
+wählen, sehen dann aber eine Warnung, dass das Ergebnis schwächer ausfallen
+kann (9.286.2). Reagieren Sie nicht, wird der
 aktuelle Stand nach 15 Minuten automatisch freigegeben; Abbrechen des
 Turns bricht auch den Review ab. Jeder geprüfte Planstand (Entwurf,
 Überarbeitungen, Ihre freigegebene Fassung) landet zusätzlich als

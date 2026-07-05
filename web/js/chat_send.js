@@ -1091,8 +1091,21 @@ function buildStreamCallbacks(chat, isActive) {
         card.className = 'worker-question-card';
         card.id = `pr-${d.session_id}`;
         const cands = Array.isArray(d.executor_candidates) ? d.executor_candidates : [];
-        const optHtml = cands.map((m) =>
-          `<option value="${esc(m)}" ${m === d.executor ? 'selected' : ''}>${esc(typeof modelShortName === 'function' ? modelShortName(m, false) : m)}</option>`).join('');
+        // Suitability for this plan (server-computed, same order as cands):
+        // suitable models are normal, unsuitable ones greyed + marked, still
+        // selectable but they trigger a warning on selection.
+        const suitList = Array.isArray(d.executor_suitability) ? d.executor_suitability : [];
+        const suitMap = {};
+        suitList.forEach((s) => { if (s && s.id) suitMap[s.id] = s.suitable !== false; });
+        const isSuitable = (m) => suitMap[m] !== false;  // unknown → treat suitable
+        const optHtml = cands.map((m) => {
+          const ok = isSuitable(m);
+          const label = (typeof modelShortName === 'function' ? modelShortName(m, false) : m)
+            + (ok ? '' : ' — für diesen Plan wenig geeignet');
+          return `<option value="${esc(m)}" ${m === d.executor ? 'selected' : ''}`
+            + `${ok ? '' : ' style="color:var(--text-400,#9ca3af)"'} data-suitable="${ok ? '1' : '0'}">`
+            + `${esc(label)}</option>`;
+        }).join('');
         const verdictBad = (d.verdict || 'ready') !== 'ready';
         card.innerHTML = `
           <div class="wq-header">
@@ -1103,8 +1116,11 @@ function buildStreamCallbacks(chat, isActive) {
             <div class="wq-context">Plan von ${esc(typeof modelShortName === 'function' ? modelShortName(d.planner || '', false) : (d.planner || '?'))}${verdictBad ? ' · <span style="color:var(--danger,#dc2626);font-weight:600">Orchestrator hält den Plan selbst für unzureichend</span>' : ''} — Sie können den Plan bearbeiten, das Ausführungs-Modell ändern, eine Überarbeitung anfordern oder freigeben.</div>
             <textarea class="pr-plan" style="width:100%;min-height:160px;margin-top:6px;border:1px solid var(--border-100);border-radius:6px;padding:8px;font-size:12.5px;line-height:1.45;background:var(--bg-000);color:var(--text-200);resize:vertical;font-family:ui-monospace,monospace">${esc(d.plan || '')}</textarea>
             <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12.5px;color:var(--text-200)">Ausführungs-Modell
-              <select class="pr-exec form-select" style="flex:0 1 260px">${optHtml}</select>
+              <select class="pr-exec form-select" style="flex:0 1 300px">${optHtml}</select>
             </label>
+            <div class="pr-exec-warn" style="display:${isSuitable(d.executor) ? 'none' : 'flex'};gap:6px;align-items:flex-start;margin-top:6px;font-size:12px;color:var(--danger,#dc2626)">
+              <span>⚠️</span><span>Dieses Modell ist laut Fähigkeits-Benchmark für die Art dieses Plans nur bedingt geeignet — das Ergebnis kann schwächer ausfallen als mit dem vorgeschlagenen Modell.</span>
+            </div>
             <textarea class="pr-msg" placeholder="Rückfrage / Änderungswunsch an den Orchestrator (für „Neu planen")…" style="width:100%;min-height:40px;margin-top:8px;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical"></textarea>
             <div class="wq-actions" style="margin-top:10px;display:flex;gap:8px">
               <button class="wq-btn-answer pr-approve">Plan freigeben &amp; ausführen</button>
@@ -1138,6 +1154,14 @@ function buildStreamCallbacks(chat, isActive) {
         };
         card.querySelector('.pr-approve').addEventListener('click', () => submit('approve'));
         card.querySelector('.pr-clarify').addEventListener('click', () => submit('clarify'));
+        // Toggle the suitability warning as the reviewer changes the executor.
+        const _execSel = card.querySelector('.pr-exec');
+        const _execWarn = card.querySelector('.pr-exec-warn');
+        if (_execSel && _execWarn) {
+          _execSel.addEventListener('change', () => {
+            _execWarn.style.display = isSuitable(_execSel.value) ? 'none' : 'flex';
+          });
+        }
         container.appendChild(card);
         scrollToBottom();
       },

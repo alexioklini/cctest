@@ -336,7 +336,17 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   eval/TUI/Telegram/scheduler never do) the worker pauses between plan
   synthesis and executor run: `_run_plan_review_loop` emits SSE
   `moa_plan_review` {plan, planner, executor, executor_candidates
-  (enabled+cloud+ACL), verdict, round} and BLOCKS (slot registry
+  (enabled + CHAT-capable cloud models — `"chat" in capabilities`, excludes
+  voxtral-*/mistral-ocr audio/OCR specialists that were never valid executors
+  — PLANNER excluded, ACL-scoped, sorted best-first with the proposed executor
+  hoisted to position 1), executor_suitability (v9.286.2 — per-candidate
+  {id, suitable, capability} from `brain.classify_executor_suitability`;
+  "suitable" = clears the complexity-adjusted capability FLOOR for the plan's
+  task_type (capable ENOUGH, not the near-frontier band the auto-pick uses for
+  RANKING — floor qualifies, band decides who wins); unbenchmarked-for-this-
+  task_type falls back to the model's best capability across task types, a
+  fully unbenchmarked model stays suitable. The dropdown greys out unsuitable
+  models — still selectable, with a warning), verdict, round} and BLOCKS (slot registry
   `_plan_reviews`, the `_ask_user_pending` pattern; per-round timeout
   `moa.plan_review_timeout_s` (900) → auto-approve; cancel token aborts; max
   5 clarify rounds) until `POST /v1/chat/plan-review` {action:

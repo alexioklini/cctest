@@ -994,11 +994,12 @@ def _persist_plan_artifact(sid, session, live, plan_text, *, planner="",
 
 
 def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
-                          plan_text, planner_meta, exec_proposal):
+                          plan_text, planner_meta, exec_proposal,
+                          exec_analysis=None):
     """Block the interactive delegate turn on the human plan review.
 
     Emits `moa_plan_review` {plan, planner, executor, executor_candidates,
-    verdict, round} and waits for the decision:
+    executor_suitability, verdict, round} and waits for the decision:
       - approve  → optional edited `plan` + optional `executor` override
       - clarify  → `message` (+ optional edited `plan` as revision base) →
                    planner revision call → NEW plan → next review round
@@ -1013,11 +1014,61 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
     except (TypeError, ValueError):
         _timeout = 900.0
     allowed = moa_plan.get("allowed")
+    # Exclude the PLANNER from the executor candidates — it authored the plan
+    # and resolve_moa_executor never picks it (the plan's author executing =
+    # re-paying the expensive model). Keeping it out also keeps the band anchor
+    # (_bench_top_cap below) identical to the auto-pick's, so suitability here
+    # matches the recommendation exactly (v9.286.2).
+    _planner_id = (moa_plan.get("planner") or "").strip()
+
+    def _is_chat_model(mid):
+        # Only chat-capable models can execute a tool turn. Excludes audio/OCR/
+        # TTS specialist models (voxtral-*, mistral-ocr) that carry no "chat"
+        # capability — they were never valid executors (v9.286.2).
+        caps = engine.get_model_info(mid).get("capabilities") or []
+        return "chat" in caps
+
     candidates = [m for m in engine.get_enabled_models()
                   if not engine.is_model_local(m)
+                  and m != _planner_id
+                  and _is_chat_model(m)
                   and (not allowed or m in allowed)]
+    # Suitability for THIS plan's task shape (v9.286.2): the plan-classification
+    # task_type/complexity from resolve_moa_executor if we have it, else the
+    # prompt's gate_hit/complexity. "Suitable" = clears the capability floor +
+    # near-frontier band (same criterion the auto-pick uses). Candidates are
+    # sorted BEST-FIRST by the same _bench_rank_key ranking so the dropdown
+    # lists the most suitable on top and the greyed-out ones at the bottom.
+    _pt = ""
+    _pc = None
+    if exec_analysis and exec_analysis.get("source") == "llm":
+        _tts = [t for t in (exec_analysis.get("task_types") or []) if t]
+        _pt = _tts[0] if _tts else ""
+        _pc = exec_analysis.get("complexity")
+    if not _pt:
+        _pt = moa_plan.get("gate_hit") or ""
+        _pc = moa_plan.get("complexity")
+    if _pt:
+        try:
+            _floor = engine._complexity_floor(_pc)
+            _tc = engine._bench_top_cap(candidates, _pt, _floor)
+            candidates.sort(key=lambda m: engine._bench_rank_key(
+                m, _pt, _floor, _pc, top_cap=_tc))
+        except Exception:
+            pass
     executor = exec_proposal if exec_proposal in candidates else (
         candidates[0] if candidates else exec_proposal)
+    # The auto-PROPOSED executor always leads the dropdown (position 1), the
+    # rest follow best-first by suitability (v9.286.2). Usually the proposal IS
+    # already the top-ranked model; pinning/override can make it differ, so
+    # hoist it explicitly so the reviewer sees the recommendation first.
+    if executor in candidates:
+        candidates = [executor] + [m for m in candidates if m != executor]
+    try:
+        _suit = engine.classify_executor_suitability(
+            candidates, task_type=_pt, complexity=_pc)
+    except Exception:
+        _suit = [{"id": m, "suitable": True, "capability": None} for m in candidates]
     rounds = 0
     meta = {"review": True, "review_rounds": 0}
     _last_persisted = None  # dedupe: identical text never writes twice
@@ -1072,6 +1123,10 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
                 "planner": moa_plan.get("planner") or "",
                 "executor": executor,
                 "executor_candidates": candidates,
+                # Per-candidate suitability for THIS plan (best-first, aligned
+                # with executor_candidates order) — the dropdown greys out the
+                # unsuitable ones and warns on selecting one.
+                "executor_suitability": _suit,
                 "verdict": (planner_meta or {}).get("verdict") or "ready",
             })
             deadline = time.time() + _timeout
@@ -3908,6 +3963,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 # Executor PROPOSAL (no switch yet — the
                                 # interactive review below may override it).
                                 _exec_model = ""
+                                _exec_analysis = None
                                 _pin = getattr(session, "_moa_executor_model", "") or ""
                                 if _plan_text and _pin and _pin == session.model:
                                     # Turns 2+: the send handler already routed
@@ -3954,7 +4010,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                         _run_plan_review_loop(
                                             _moa_plan_now, _drafts,
                                             _wire_messages, sid, live, session,
-                                            _plan_text, _pl_meta, _exec_model))
+                                            _plan_text, _pl_meta, _exec_model,
+                                            exec_analysis=_exec_analysis))
                                     _dmeta.update(_rmeta)
                                 elif (_plan_text
                                       and _pl_meta.get("verdict") == "insufficient"):

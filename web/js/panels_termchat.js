@@ -746,18 +746,28 @@ function _tcCallbacks(tab, live) {
       row.className = 'tc-row tc-plan-review';
       row.style.cssText = 'border:1px solid var(--border-100);border-radius:8px;padding:8px 10px;margin:4px 0';
       const cands = Array.isArray(d.executor_candidates) ? d.executor_candidates : [];
-      const opts = cands.map((m) =>
-        `<option value="${esc(m)}" ${m === d.executor ? 'selected' : ''}>${esc(typeof modelShortName === 'function' ? modelShortName(m, false) : m)}</option>`).join('');
+      const suitList = Array.isArray(d.executor_suitability) ? d.executor_suitability : [];
+      const suitMap = {};
+      suitList.forEach((s) => { if (s && s.id) suitMap[s.id] = s.suitable !== false; });
+      const isSuitable = (m) => suitMap[m] !== false;
+      const opts = cands.map((m) => {
+        const ok = isSuitable(m);
+        const label = (typeof modelShortName === 'function' ? modelShortName(m, false) : m)
+          + (ok ? '' : ' — wenig geeignet');
+        return `<option value="${esc(m)}" ${m === d.executor ? 'selected' : ''}`
+          + `${ok ? '' : ' style="color:var(--text-400,#9ca3af)"'} data-suitable="${ok ? '1' : '0'}">${esc(label)}</option>`;
+      }).join('');
       const verdictBad = (d.verdict || 'ready') !== 'ready';
       row.innerHTML = `
         <div style="font-weight:600;margin-bottom:4px">🧬 Ausführungsplan prüfen${d.round ? ` · Runde ${d.round + 1}` : ''} (Plan von ${esc(d.planner || '?')})${verdictBad ? ' — <span style="color:var(--danger,#dc2626)">Orchestrator: unzureichend</span>' : ''}</div>
         <pre style="white-space:pre-wrap;font-size:12px;max-height:220px;overflow-y:auto;margin:0 0 6px">${esc(d.plan || '')}</pre>
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-          <select class="tcpr-exec form-select" style="font-size:12px;max-width:200px">${opts}</select>
+          <select class="tcpr-exec form-select" style="font-size:12px;max-width:240px">${opts}</select>
           <button class="tcpr-approve btn-secondary" style="font-size:12px">Freigeben &amp; ausführen</button>
           <input class="tcpr-msg form-input" placeholder="Rückfrage / Änderungswunsch…" style="flex:1;min-width:160px;font-size:12px">
           <button class="tcpr-clarify btn-secondary" style="font-size:12px">Neu planen</button>
-        </div>`;
+        </div>
+        <div class="tcpr-warn" style="display:${isSuitable(d.executor) ? 'none' : 'block'};margin-top:5px;font-size:11.5px;color:var(--danger,#dc2626)">⚠️ Dieses Modell ist für die Art dieses Plans nur bedingt geeignet — das Ergebnis kann schwächer ausfallen.</div>`;
       const submit = async (action) => {
         const body = { session_id: tab.sessionId, action,
                        executor: row.querySelector('.tcpr-exec')?.value || '' };
@@ -781,6 +791,13 @@ function _tcCallbacks(tab, live) {
       };
       row.querySelector('.tcpr-approve').addEventListener('click', () => submit('approve'));
       row.querySelector('.tcpr-clarify').addEventListener('click', () => submit('clarify'));
+      const _tcExec = row.querySelector('.tcpr-exec');
+      const _tcWarn = row.querySelector('.tcpr-warn');
+      if (_tcExec && _tcWarn) {
+        _tcExec.addEventListener('change', () => {
+          _tcWarn.style.display = isSuitable(_tcExec.value) ? 'none' : 'block';
+        });
+      }
       _tcLiveInsert(tab, live, row);
       tab._planReviewRow = row;
       _tcSpinSet(tab, 'Wartet auf Plan-Freigabe');

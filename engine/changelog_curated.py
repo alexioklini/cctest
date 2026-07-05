@@ -47,9 +47,12 @@ CURATED_CHANGELOG: list[dict] = [
                 "wählbar (0 = nur protokollieren). Jede Entscheidung — "
                 "Plan-Freigabe, Rückfrage, Executor-Wechsel und das Ergebnis "
                 "der Ergebnis-Prüfung — erscheint als eigene 🧬-Karte im Chat "
-                "und im Aktivität-Tab, jeweils mit Begründung.",
+                "und im Aktivität-Tab, jeweils mit Begründung. Beim Wählen des "
+                "Ausführungs-Modells im Plan-Review sind ungeeignete Modelle "
+                "ausgegraut (weiterhin wählbar, aber mit Warnung); das "
+                "empfohlene Modell steht oben.",
         "audience": "user",
-        "versions": ["9.286.0", "9.286.1"],
+        "versions": ["9.286.0", "9.286.1", "9.286.2"],
     },
     {
         "version": "9.285.0",
