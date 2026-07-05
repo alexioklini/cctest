@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.287.2"
+VERSION = "9.288.0"
 VERSION_DATE = "2026-07-05"
 CHANGELOG = [
+    ("9.288.0", "2026-07-05", "feat(Websuche: spezialisierte Such-Werkzeuge nach Themengebiet — Wissenschaft/Technik/Bilder/Nachrichten). ANLASS (User): searxng_search nutzte NUR die `general`-Kategorie — die installierte + aktivierte SearXNG-Instanz kann aber ~30 Kategorien (images: 16 Engines, science: arxiv/pubmed/scholar/semantic-scholar, it: stackoverflow/mdn/github/pypi, news: reuters/google-news …), die alle unerreichbar brachlagen ('Funktionalität auf der Straße'). NEU 4 Werkzeuge, alle über einen GETEILTEN Kern (_searxng_query in misc_tools.py — dieselbe Instanz, dieselbe {title,link,score}-Form, Score-Filter, Infobox; feedback_single_fix_point): science_search (science → Paper mit Publikationsdaten), dev_search (it → Programmier-Q&A/Docs; bewusst NICHT 'code_search' benannt — Namenskollision mit dem bestehenden CodeGraph-Tool code_search, hätte den Dispatch überschrieben), image_search (images → jedes Ergebnis trägt image_url = direkte Bild-URL neben der Quellseite; want_images-Passthrough), news_search (news → datierte Nachrichten). BEWUSST SEPARATE Werkzeuge statt eines `category`-Params: ein explizit vom Modell gewähltes news_search kann den v9.124.0-Footgun (ad-hoc category='news' auf allgemeiner Query verdrängte die autoritative Quelle unter Presse) NICHT reproduzieren. Alle DEFAULT-AKTIV (kein tool_settings-Record nötig — Default=active), 4-Site-registriert (Schema/Group/Dispatch/Impl, konsistenz-verifiziert). LOCKOUT-HÄRTUNG: neue Kanon-Konstante brain.WEB_SEARCH_TOOLS (7 Web-Tools) ersetzt die an 2 Stellen hartkodierte 3-Tool-Liste (handlers/chat.py Websuche-Basket-Lockout + brain.py disable_web_search) — die Spezial-Tools nutzen DIESELBE Instanz, ein Lockout ohne sie hätte geleakt; Scheduler-Lockout deckt apply_domain_context automatisch mit ab. SETTINGS-UI (Settings→Server→Websuche): der Engine-Health-Panel gruppiert Engines jetzt nach Kategorie mit Nennung des tragenden Werkzeugs + je Kategorie ein An/Aus-Schalter fürs Werkzeug (POST /v1/tools/settings state); searxng_health.enabled_engines_by_category + kategorisierter run_health_check (jede Engine 1× via !shortcut geprobt, Kategorie nur zur Anzeige) — der bestehende 4-Stunden-Auto-Check deckt damit auch die Spezial-Engines ab. VERIFIZIERT live gegen die laufende Instanz: science→arxiv/pubmed/scholar mit Daten, dev(it)→stackoverflow/mdn, images→238 Treffer mit image_url, news→datierte Items; 4-Site-Konsistenz-Check grün; py_compile (brain/misc_tools/chat/searxng_health) OK; js_gate GRÜN (eslint clean, net-globals 1844→1845 = neues toggleSearchTool, Baseline mitgezogen, smoke 5/5). Skill 02-tools + 06-user-manual + SKILL.md (1.147.0 / brain 9.288.0) im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar)."),
     ("9.287.2", "2026-07-05", "fix(SearXNG: Engine-Pool an die Realität angepasst): chat f33ff6e4 — deepseek meldete zu Recht, dass searxng_search kaputt ist: JEDE Query lieferte query-fremden Müll mit score 1.0 (französische Facebook-Foren für '\"Alexander Klinsky\"', Adobe-Hilfe für 'Pergamonmuseum'). DIAGNOSE per Einzel-Engine-Probe (/search?engines=<name>): der 2026-05-24 kuratierte 'reliable'-Pool ist GEDRIFTET — google liefert still 0 Ergebnisse, startpage 'Suspended: CAPTCHA' (In-Process-State, Restart heilt), bing antwortet mit von der Query ENTKOPPELTEN Ergebnissen (kaputter Scrape → vergiftet als einziger Antworter das Konsens-Ranking); die damals als 'always errors' deaktivierten duckduckgo (perfekt: richtiges LinkedIn-Profil als Top-Hit) + mojeek (intermittierend) funktionieren heute. FIX searxng_settings.yml: bing disabled (Müll ist schlimmer als nichts), duckduckgo + mojeek enabled, google + startpage bleiben als billige Recovery-Wetten (fail fast / auto-suspend). Kommentar dokumentiert jetzt den DRIFT-Charakter + die Re-Mess-Methode. VERIFIZIERT nach POST /v1/searxng/restart: '\"Alexander Klinsky\"' → LinkedIn score 4.0 (Cross-Engine-Konsens), Wiener-Privatbank-Query → evi.gv.at-Firmenbuch, Pergamonmuseum → smb.museum top (via erholtem startpage, ddg zwischenzeitlich CAPTCHA-suspendiert — der Mehr-Engine-Pool ist genau dafür da). Kein Code-Change, kein Brain-Restart nötig (nur SearXNG-Restart). Kuratiert: eigener Eintrag (user)."),
     ("9.287.1", "2026-07-05", "fix(HTML-Report-Hero: Turn-Fetches als Mining-Quelle): das 9.287.0-Hero-Mining lief in chat 5142a07f leer — der Turn hatte 6 smb.museum-Seiten per web_fetch geholt (beide MIT og:image, live verifiziert), aber das Modell (glm-5.2) schrieb den Report OHNE einen einzigen [text](url)-Link und ohne hero_image-Param → 0 Kandidaten → SVG-Banner. ROOT CAUSE: beide 9.287.0-Wege hängen am Modellverhalten (Param setzen ODER Links zitieren); Modelle schreiben Quellen oft als Prosa. FIX (deterministisch, Choke-Point): (1) tool_web_fetch registriert jede erfolgreich geholte HTML-Seite via _note_turn_fetched_url auf dem RequestContext (dynamic key turn_fetched_urls, https-only, dedupe, Cap 10; auch beim Cache-Hit, dort nur wenn fetch_method markitdown/crawl4ai/scrapling = sicher HTML). Turn-scoped by construction — Kontext wird pro Turn neu betreten, kein Leak. (2) _mine_hero_image nimmt diese URLs als Fallback-Kandidaten NACH den im Markdown zitierten Links (zusammen max. 4 Versuche, je 8s/200KB via _fetch_og_image). Grenze: Recherche in Turn N, Report in Turn N+1 → Kontext leer, dann greift weiterhin nur Link-Mining/Param/Banner. py_compile OK. Skill 02-tools + SKILL.md im selben Commit; kuratiert: 9.287.1 in die versions-Liste des 9.287.0-Eintrags. Server-Restart nötig."),
     ("9.287.0", "2026-07-05", "feat(HTML-Report: echtes Hero-Image statt SVG-Banner): write_document mit style='report' bekam bisher IMMER den synthetischen SVG-Banner (_hero_banner_svg), weil file_tools.py render_report_html ohne hero_image aufrief — nur Deep Research holte per _fetch_og_image ein echtes Bild (User-Wunsch: den Report-Pfad analog aufwerten). ZWEI Wege, Priorität: (1) NEUER optionaler Schema-Param hero_image (tool_schemas.py write_document) — https-URL eines Lead-Bilds, das das Modell während der Recherche gesehen hat (og:image/Artikelbild); nur https akzeptiert. (2) Fallback AUTO-MINING (_mine_hero_image in file_tools.py): og:image/twitter:image der ersten ≤3 im Markdown zitierten https-Links ([text](url), NICHT ![..](..)-Bilder), via Reuse von deep_research._fetch_og_image (8s/200KB-Cap pro Fetch, never-raise). (3) Letzter Fallback unverändert der deterministische SVG-Banner. Greift NUR im Editorial-Branch (.html + style='report'/'editorial'); alle anderen write_document-Pfade unberührt. py_compile OK. Skill 02-tools + SKILL.md im selben Commit; kuratierter Eintrag (user). Server-Restart nötig."),
@@ -1241,7 +1242,8 @@ TOOL_GROUPS = {
                "mempalace_kg_neighbors"},
     "wiki": {"wiki_write", "wiki_read", "wiki_delete", "wiki_structure"},
     "context": {"context_search", "context_detail", "context_recall"},
-    "web": {"web_fetch", "exa_search", "searxng_search"},
+    "web": {"web_fetch", "exa_search", "searxng_search",
+            "science_search", "dev_search", "image_search", "news_search"},
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
     "documents": {"read_document", "write_document", "edit_document", "render_diagram",
                   "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff"},
@@ -1265,6 +1267,16 @@ TOOL_GROUPS = {
                 "worker_ask_user"},
     "image_gen": {"generate_image"},
 }
+
+# Canonical list of the model-callable web-search/fetch tools — the set the
+# Websuche-basket lockout and the per-project `disable_web_search` switch
+# subtract, so a curated-source turn is sealed against ALL autonomous web
+# access. Single source of truth: the specialized search tools (science/dev/
+# image/news) route through the SAME SearXNG instance as searxng_search, so a
+# lockout that missed them would leak. Keep this in sync with TOOL_GROUPS["web"]
+# minus nothing (every web-reaching tool belongs here). feedback_single_fix_point.
+WEB_SEARCH_TOOLS = ["web_fetch", "exa_search", "searxng_search",
+                    "science_search", "dev_search", "image_search", "news_search"]
 
 # Default tool groups included for all agents (if no explicit config)
 DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", "skills",
@@ -6896,7 +6908,7 @@ def apply_domain_context(*, agent_id: str, project: str = "",
         except Exception:
             _pcfg = None
         if _pcfg and _pcfg.get("disable_web_search"):
-            _excl |= {"web_fetch", "exa_search", "searxng_search"}
+            _excl |= set(WEB_SEARCH_TOOLS)
         # Code Mode: point file tools at the project's working directory and
         # remove the MemPalace tools (this project doesn't use project memory —
         # the model reads/edits files directly in working_dir + reads BRAIN.md
@@ -13377,6 +13389,10 @@ from engine.tools.misc_tools import (  # noqa: E402
     tool_web_fetch,
     exa_search,
     tool_searxng_search,
+    tool_science_search,
+    tool_dev_search,
+    tool_image_search,
+    tool_news_search,
     tool_passes_purpose,
     tool_is_enabled,
     tool_is_deferred,
@@ -13412,6 +13428,10 @@ TOOL_DISPATCH = {
         category=args.get("category"),
     ),
     "searxng_search": tool_searxng_search,
+    "science_search": tool_science_search,
+    "dev_search": tool_dev_search,
+    "image_search": tool_image_search,
+    "news_search": tool_news_search,
     "mempalace_query": tool_mempalace_query,
     "mempalace_kg_query": tool_mempalace_kg_query,
     "mempalace_kg_search": tool_mempalace_kg_search,

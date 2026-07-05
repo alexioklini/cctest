@@ -4,12 +4,20 @@
 async function _genTab_server(C) {
   /* ─── SERVER ─── */
     try {
-      const [svc, sx, sxe, c4] = await Promise.all([
+      const [svc, sx, sxe, c4, tset] = await Promise.all([
         API.getServices(),
         API.get('/v1/searxng/status').catch(() => null),
         API.get('/v1/searxng/engines').catch(() => null),
         API.get('/v1/crawl4ai/status').catch(() => null),
+        API.get('/v1/tools/settings').catch(() => null),
       ]);
+      // Map the search tools' current on/off state for the Web-Search panel's
+      // per-tool toggles (searxng_search + the 4 specialized tools).
+      const _searchToolState = {};
+      ((tset && tset.tools) || []).forEach(t => {
+        if (t && t.name) _searchToolState[t.name] = (t.state || (t.enabled === false ? 'inactive' : 'active'));
+      });
+      window._searxngToolState = _searchToolState;
       const srv = svc.server || {};
       applyGdprConfigToScanner(srv.gdpr_scanner);
       let svcRows = '';
@@ -189,7 +197,7 @@ async function _genTab_server(C) {
           note: 'Betreibt das searxng_search-Tool. Websuchen schlagen während des Neustarts kurzzeitig fehl.',
           disabledHint: 'searxng.auto_start=false',
         })}
-        <div id="searxng-engines-panel">${_renderSearxngEngines(sxe)}</div>
+        <div id="searxng-engines-panel">${_renderSearxngEngines(sxe, window._searxngToolState)}</div>
         ${SEC('Web-Rendering (crawl4ai)')}
         ${_renderSupervisorStatus(c4, {
           restartFn: 'restartCrawl4ai',

@@ -1300,6 +1300,15 @@ je Eintrag und können mit einer Zeile antworten.
 Im rechten Panel der **Websuche**-Tab. Damit kuratiert der Nutzer selbst
 Web-Quellen, und der nächste Turn arbeitet strikt aus dieser Menge.
 
+> **Automatische Fachsuchen (ab 9.288.0):** Neben der allgemeinen Websuche kann
+> der Assistent selbstständig gezielt suchen — nach **wissenschaftlichen
+> Arbeiten** (arXiv, PubMed, Google Scholar), nach **Programmier-/Technikwissen**
+> (Stack Overflow, MDN, GitHub), nach **Bildern** und nach **Nachrichten**. Er
+> wählt die passende Suche je nach Frage selbst; man muss nichts umschalten.
+> Unter **Einstellungen → Server → Websuche** lässt sich jede dieser Suchen
+> einzeln ein-/ausschalten, und der Zustand der Suchmaschinen wird dort je
+> Kategorie angezeigt (automatische Prüfung alle 4 Stunden, plus „Jetzt testen").
+
 **Ablauf**:
 1. Im Websuche-Tab eine Suchanfrage eingeben → Treffer erscheinen.
 2. Treffer ankreuzen, um sie in den **Korb** zu legen. URLs lassen sich

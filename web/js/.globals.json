@@ -1537,6 +1537,7 @@
     "toggleRightPanel": "writable",
     "toggleSaveToMemory": "writable",
     "toggleSbAgentDropdown": "writable",
+    "toggleSearchTool": "writable",
     "toggleSidebar": "writable",
     "toggleSidebarSection": "writable",
     "toggleTheme": "writable",

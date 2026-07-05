@@ -437,6 +437,29 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   passes `include_snippets=True` on that path). This is a **standalone
   tool**, not an exa_search backend. Default-disabled at the global gate —
   admin enables it in Settings → Tools.
+- **Specialized searches** (v9.288.0) — same self-hosted SearXNG instance +
+  same `title/link/score` result shape as `searxng_search`, but each scoped to
+  a topic CATEGORY so the model can deliberately target the right sources. All
+  route through the shared `_searxng_query` core; all default-active; all still
+  require a follow-up `web_fetch` to read the pages. Deliberately SEPARATE tools
+  (not a `category` param) so the model opts into each — this is why the old
+  ad-hoc `news` category footgun (v9.124.0) can't recur:
+  - `science_search(query, num_results?)` — `science` category: arxiv, PubMed,
+    Google Scholar, Semantic Scholar. Papers/studies, often with publication
+    dates. For academic/medical/scientific literature.
+  - `dev_search(query, num_results?)` — `it` category: Stack Overflow, MDN,
+    GitHub, Ask Ubuntu, PyPI, Docker Hub. Programming Q&A + docs. DISTINCT from
+    `code_search` (which queries this codebase's own code-structure graph).
+  - `image_search(query, num_results?)` — `images` category: Google/Bing/Qwant/
+    Brave Images, Flickr, Openverse. Each result carries an `image_url` (the
+    DIRECT picture URL) beside the source `link`. To describe a picture,
+    `web_fetch` its `image_url`.
+  - `news_search(query, num_results?)` — `news` category: Google/Bing/DDG/Qwant
+    News, Reuters. Dated news items. Use ONLY when the user wants press coverage/
+    recent events; for facts/live data prefer `searxng_search` (general).
+  The Web-Search settings panel (Settings → Server → Websuche) shows each of
+  these tools with an on/off toggle and the health of the engines backing it,
+  re-probed every 4 hours.
 - `gmail_inbox` / `gmail_read(id)` / `gmail_search(q)` / `gmail_send` /
   `gmail_reply` — requires `gmail.json` configured
 
@@ -618,6 +641,7 @@ memory        mempalace_query save_chat_to_memory
 wiki          wiki_write wiki_read wiki_delete wiki_structure
 context       context_search context_detail context_recall
 web           web_fetch exa_search searxng_search
+              science_search dev_search image_search news_search
 email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply
 delegation    delegate_task task_status task_cancel
 background     run_background_task

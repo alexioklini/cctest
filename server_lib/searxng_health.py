@@ -65,6 +65,13 @@ def _searxng_config(base: str) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+# The search categories whose engine health we surface, in display order.
+# "general" backs searxng_search; the rest back the specialized search tools
+# (science_search/dev_search/image_search/news_search). Each maps to the
+# SearXNG category the corresponding tool passes to _searxng_query.
+_TRACKED_CATEGORIES = ["general", "science", "it", "images", "news"]
+
+
 def enabled_web_engines(base: str) -> list[dict]:
     """Enabled engines that participate in general WEB search (the ones whose
     health affects searxng_search quality): categories include both 'general'
@@ -81,6 +88,31 @@ def enabled_web_engines(base: str) -> list[dict]:
         if is_web or is_wiki:
             out.append({"name": e.get("name", ""), "shortcut": e.get("shortcut", "")})
     return sorted(out, key=lambda x: x["name"])
+
+
+def enabled_engines_by_category(base: str) -> list[dict]:
+    """Enabled engines grouped by the search CATEGORY they serve, for the
+    categories the search tools actually use (_TRACKED_CATEGORIES). Returns
+    [{category, name, shortcut}] — one row per (category, engine), so an engine
+    serving several tracked categories appears once per category. Used by the
+    health panel to show which engines back each specialized search tool.
+    'general' additionally includes wikipedia/wikidata (encyclopedic infobox
+    contributors), mirroring enabled_web_engines."""
+    cfg = _searxng_config(base)
+    out = []
+    for e in cfg.get("engines", []):
+        if not e.get("enabled"):
+            continue
+        name = e.get("name", "")
+        shortcut = e.get("shortcut", "")
+        cats = set(e.get("categories") or [])
+        for cat in _TRACKED_CATEGORIES:
+            in_cat = cat in cats
+            if cat == "general" and name in ("wikipedia", "wikidata"):
+                in_cat = True
+            if in_cat:
+                out.append({"category": cat, "name": name, "shortcut": shortcut})
+    return sorted(out, key=lambda x: (_TRACKED_CATEGORIES.index(x["category"]), x["name"]))
 
 
 def _probe_one(base: str, shortcut: str, name: str) -> dict:
@@ -117,13 +149,24 @@ def _probe_one(base: str, shortcut: str, name: str) -> dict:
 
 
 def run_health_check(base: str) -> dict:
-    """Probe every enabled web/wiki engine in isolation, store + return the
-    snapshot. Caller supplies the SearXNG base URL (brain._searxng_base_url())."""
+    """Probe every enabled engine (grouped by tracked search category) in
+    isolation, store + return the snapshot. Caller supplies the SearXNG base
+    URL (brain._searxng_base_url()). Each engine is probed once via its
+    !shortcut even if it serves several categories (the probe is engine-scoped,
+    not category-scoped) — the category is carried through only for display, so
+    the panel can group engines under the search tool they back."""
     with _lock:
         _snapshot["running"] = True
     try:
-        engines = enabled_web_engines(base) if base else []
-        results = [_probe_one(base, e["shortcut"], e["name"]) for e in engines]
+        rows = enabled_engines_by_category(base) if base else []
+        # Probe each distinct engine once; reuse its result across categories.
+        probed: dict = {}
+        results = []
+        for row in rows:
+            key = row["shortcut"] or row["name"]
+            if key not in probed:
+                probed[key] = _probe_one(base, row["shortcut"], row["name"])
+            results.append({**probed[key], "category": row["category"]})
         snap = {"tested_at": time.time(), "engines": results, "running": False,
                 "base_url": base}
         if not base:

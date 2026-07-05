@@ -805,32 +805,26 @@ def tool_web_fetch(args: dict) -> str:
 # tool_settings.enabled and the LLM picks from whatever is in its tool list.
 # No backend flag, no cross-tool routing.
 
-def tool_searxng_search(args: dict) -> str:
-    """Web search via a self-hosted SearXNG instance. No API key, on-prem.
+def _searxng_query(query: str, num_results: int = 5, *, category: str = "",
+                   include_snippets: bool = False, force_fresh: bool = False,
+                   want_images: bool = False) -> str:
+    """Shared SearXNG query core for all searxng_* tools.
 
-    Talks to the bundled self-hosted SearXNG instance (config.json ->
-    searxng.url, managed by the SearxngSupervisor); an admin can override to
-    an external instance via tools_config.searxng_search.url. Hits
-    <url>/search?format=json, mapping results to the same {title, link} shape
-    exa_search returns. Always searches SearXNG's broad `general` category (no
-    category param): general already surfaces news outlets AND the authoritative
-    source pages for news-y queries, ranked sensibly. The old opt-in `news`
-    category was dropped — it removed the authoritative source (e.g. buried the
-    Bundesbank page under press coverage) on news queries and returned stale
-    regional noise on non-news ones."""
+    Hits the bundled self-hosted instance (config.json -> searxng.url via
+    brain._searxng_base_url(); admin override tools_config.searxng_search.url)
+    at <url>/search?format=json, maps results to the {title, link, score} shape
+    exa_search returns, drops near-zero-score noise, and surfaces the
+    Wikipedia/Wikidata infobox when present.
+
+    `category` selects SearXNG's search category (general/science/it/images/
+    news/…). Empty = SearXNG's own default (general). `want_images` additionally
+    passes through each result's `img_src` (the direct image URL) — image
+    results are URLs to pictures, not web pages, so the caller needs that field.
+
+    This is the single choke point (feedback_single_fix_point): tool_searxng_search
+    + the 4 specialized search tools all call it, so a fix here reaches all of
+    them. See the per-tool wrappers for the category rationale."""
     import brain as _brain
-    query = args.get("query", "")
-    num_results = args.get("num_results", 5)
-    force_fresh = args.get("force_fresh", False)
-    # Snippets are surfaced ONLY to the human-curation Websuche panel
-    # (POST /v1/web/search sets include_snippets=True). The LLM-facing path
-    # gets bare title+link+score: SERP snippets are short, stale, and biased
-    # the model's fetch choice toward whichever result had a tempting blurb
-    # instead of the most on-topic URL (chat 766e3575 — it fetched two news
-    # articles over the #1 weather page because their snippets read better).
-    include_snippets = args.get("include_snippets", False)
-
-    _tcfg = _brain.get_tool_config().get("searxng_search", {})
     base = _brain._searxng_base_url()
     if not base:
         return json.dumps({
@@ -840,7 +834,7 @@ def tool_searxng_search(args: dict) -> str:
                      "tools_config.searxng_search.url for an external instance)",
         })
 
-    cache_key = f"searxng:{base}:{query}:{num_results}:{int(include_snippets)}"
+    cache_key = f"searxng:{base}:{category}:{query}:{num_results}:{int(include_snippets)}"
     if not force_fresh:
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
@@ -848,6 +842,8 @@ def tool_searxng_search(args: dict) -> str:
             return json.dumps(cached, indent=1)
 
     params = {"q": query, "format": "json"}
+    if category:
+        params["categories"] = category
     url = base + "/search?" + urllib.parse.urlencode(params)
 
     headers = {
@@ -879,6 +875,8 @@ def tool_searxng_search(args: dict) -> str:
                 "link": r.get("url", ""),
                 "score": round(r.get("score", 0), 2),
             }
+            if want_images and r.get("img_src"):
+                entry["image_url"] = r.get("img_src")
             if include_snippets:
                 entry["snippet"] = (r.get("content") or "")[:300]
             results.append(entry)
@@ -920,6 +918,74 @@ def tool_searxng_search(args: dict) -> str:
         return json.dumps({"query": query, "results": [], "error": f"SearXNG HTTP {e.code}: {error_body}"})
     except Exception as e:
         return json.dumps({"query": query, "results": [], "error": f"SearXNG: {e}"})
+
+
+def tool_searxng_search(args: dict) -> str:
+    """Web search via a self-hosted SearXNG instance. No API key, on-prem.
+
+    Searches SearXNG's broad `general` category (default — no category param):
+    general already surfaces news outlets AND the authoritative source pages for
+    news-y queries, ranked sensibly. The old opt-in `news` category was dropped
+    here — it buried the authoritative source (e.g. the Bundesbank page under
+    press coverage) on news queries and returned stale regional noise on non-news
+    ones. For deliberately-scoped retrieval use the specialized tools instead:
+    science_search (papers), code_search (programming), image_search (pictures),
+    news_search (dated reporting)."""
+    # Snippets are surfaced ONLY to the human-curation Websuche panel
+    # (POST /v1/web/search sets include_snippets=True). The LLM-facing path
+    # gets bare title+link+score: SERP snippets are short, stale, and biased
+    # the model's fetch choice toward whichever result had a tempting blurb
+    # instead of the most on-topic URL (chat 766e3575 — it fetched two news
+    # articles over the #1 weather page because their snippets read better).
+    return _searxng_query(
+        args.get("query", ""),
+        args.get("num_results", 5),
+        category="general",
+        include_snippets=args.get("include_snippets", False),
+        force_fresh=args.get("force_fresh", False),
+    )
+
+
+def tool_science_search(args: dict) -> str:
+    """Scientific-literature search via SearXNG's `science` category — arxiv,
+    pubmed, google scholar, semantic scholar. Returns papers (title + link +
+    score); many carry publication dates. Then web_fetch the paper/abstract
+    pages for the actual content. Use for research papers, studies, academic
+    or medical literature — NOT general web (use searxng_search for that)."""
+    return _searxng_query(args.get("query", ""), args.get("num_results", 5),
+                          category="science")
+
+
+def tool_dev_search(args: dict) -> str:
+    """Programming/technical WEB search via SearXNG's `it` category —
+    stackoverflow, mdn, github, askubuntu, superuser, pypi, docker hub. Returns
+    Q&A + docs (title + link + score); web_fetch the best pages for the answer
+    text. Use for coding questions, API/library docs, error messages, dev
+    tooling. NOTE: this searches the public web — distinct from code_search,
+    which queries THIS codebase's own code-structure graph."""
+    return _searxng_query(args.get("query", ""), args.get("num_results", 5),
+                          category="it")
+
+
+def tool_image_search(args: dict) -> str:
+    """Image search via SearXNG's `images` category — google/bing/qwant/brave
+    images, flickr, openverse. Each result carries an `image_url` (the DIRECT
+    picture URL) alongside `link` (the source page). Returns picture URLs, not
+    web pages — use when the user wants images/photos/pictures/diagrams of
+    something. To describe or analyse a picture, web_fetch its image_url."""
+    return _searxng_query(args.get("query", ""), args.get("num_results", 5),
+                          category="images", want_images=True)
+
+
+def tool_news_search(args: dict) -> str:
+    """News search via SearXNG's `news` category — google/bing/ddg/qwant news,
+    reuters. Returns recent, dated news items (title + link + score); web_fetch
+    the articles for the reporting. Use ONLY when the user actually wants news
+    coverage / recent events / press reporting on a topic. For factual or live
+    data prefer searxng_search (general) — news engines bury authoritative
+    primary sources under press coverage."""
+    return _searxng_query(args.get("query", ""), args.get("num_results", 5),
+                          category="news")
 
 
 def exa_search(query: str, num_results: int = 5, category: str | None = None,

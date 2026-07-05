@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.288.0",
+        "date": "2026-07-05",
+        "title": "Gezielte Suche nach Wissenschaft, Technik, Bildern und Nachrichten",
+        "body": "Zusätzlich zur allgemeinen Websuche kann der Assistent jetzt "
+                "gezielt in passenden Quellen suchen: nach wissenschaftlichen "
+                "Arbeiten (u. a. arXiv, PubMed, Google Scholar), nach "
+                "Programmier- und Technikwissen (u. a. Stack Overflow, MDN, "
+                "GitHub), nach Bildern sowie nach aktuellen Nachrichten. Der "
+                "Assistent wählt die passende Suche selbst — Sie erhalten so "
+                "relevantere Treffer für Fachfragen, Recherchen und Bildersuchen. "
+                "In den Einstellungen unter Server → Websuche lässt sich jede "
+                "dieser Suchen einzeln ein- oder ausschalten; der Zustand der "
+                "dahinterliegenden Suchdienste wird dort je Kategorie angezeigt "
+                "und alle vier Stunden automatisch geprüft.",
+        "audience": "user",
+        "versions": ["9.288.0"],
+    },
+    {
         "version": "9.287.2",
         "date": "2026-07-05",
         "title": "Websuche liefert wieder relevante Treffer",

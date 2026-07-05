@@ -480,6 +480,101 @@ TOOL_DEFINITIONS = [
         "minimal": True,
         "minimal_role": "to find relevant sources",
     },
+    # Specialized SearXNG searches — same instance + result shape as
+    # searxng_search, but scoped to a topic CATEGORY (science/it/images/news).
+    # Deliberately SEPARATE tools rather than a `category` param: an explicitly
+    # named tool the model opts into (news_search) can't recreate the v9.124.0
+    # failure where an ad-hoc category='news' on a general query buried the
+    # authoritative source under press coverage. All route through _searxng_query.
+    {
+        "name": "science_search",
+        "description": (
+            "Search SCIENTIFIC LITERATURE (arxiv, PubMed, Google Scholar, "
+            "Semantic Scholar) for papers, studies, and academic/medical "
+            "sources. Returns papers (title + link + score), many with "
+            "publication dates. You MUST then web_fetch the paper/abstract "
+            "pages and answer from their text — a title is not evidence. Use "
+            "for research papers, academic questions, medical/scientific "
+            "topics; for general web use searxng_search instead."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "The research topic or paper to look up"},
+                "num_results": {"type": "integer",
+                                "description": "Number of results (default: 5)",
+                                "minimum": 1, "maximum": 20},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "dev_search",
+        "description": (
+            "Search PROGRAMMING/TECHNICAL sources on the web (Stack Overflow, "
+            "MDN, GitHub, Ask Ubuntu, PyPI, Docker Hub) for coding questions, "
+            "API/library docs, error messages, and dev tooling. Returns Q&A + "
+            "docs (title + link + score); web_fetch the best pages for the "
+            "answer. NOTE: this searches the public web — it is DISTINCT from "
+            "code_search, which queries this codebase's own structure graph."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "The programming question or technical topic"},
+                "num_results": {"type": "integer",
+                                "description": "Number of results (default: 5)",
+                                "minimum": 1, "maximum": 20},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "image_search",
+        "description": (
+            "Search for IMAGES (Google/Bing/Qwant/Brave Images, Flickr, "
+            "Openverse). Each result carries an `image_url` (the DIRECT picture "
+            "URL) alongside `link` (the source page). Returns picture URLs, not "
+            "web pages — use when the user wants images/photos/pictures/diagrams "
+            "of something. To describe or analyse a picture, web_fetch its "
+            "image_url (vision models can read it)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "What to find pictures of"},
+                "num_results": {"type": "integer",
+                                "description": "Number of images (default: 5)",
+                                "minimum": 1, "maximum": 20},
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "news_search",
+        "description": (
+            "Search recent NEWS coverage (Google/Bing/DuckDuckGo/Qwant News, "
+            "Reuters). Returns dated news items (title + link + score); "
+            "web_fetch the articles for the reporting. Use ONLY when the user "
+            "actually wants news / recent events / press coverage. For factual "
+            "or live data (weather, prices, facts) prefer searxng_search — news "
+            "engines bury authoritative primary sources under press coverage."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string",
+                          "description": "The news topic or event to look up"},
+                "num_results": {"type": "integer",
+                                "description": "Number of results (default: 5)",
+                                "minimum": 1, "maximum": 20},
+            },
+            "required": ["query"],
+        },
+    },
     # MemPalace migration: built-in memory_* tools unregistered from the
     # LLM-facing schema. Agents now query MemPalace directly via mempalace_query
     # below, which imports mempalace.searcher in-process (no MCP, no subprocess).

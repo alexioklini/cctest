@@ -3121,7 +3121,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             # web lockout is unioned on top inside apply_domain_context.
             if project_name:
                 session.project = project_name
-            _base_excl = (["web_fetch", "exa_search", "searxng_search"]
+            _base_excl = (list(engine.WEB_SEARCH_TOOLS)
                           if web_locked else None)
             engine.apply_domain_context(
                 agent_id=session.agent_id,

@@ -116,7 +116,8 @@ async function restartCrawl4ai(btn) {
 // engine with its last-test state + latency, the time of the last probe, the
 // next scheduled automatic probe (every 4h, anchored to server startup), and a
 // "Test now" button. `sxe` is the /v1/searxng/engines snapshot (may be null).
-function _renderSearxngEngines(sxe) {
+function _renderSearxngEngines(sxe, toolState) {
+  toolState = toolState || (typeof window !== 'undefined' ? window._searxngToolState : null) || {};
   const ROW = 'display:flex;align-items:center;gap:8px;padding:4px 12px';
   const MONO = 'font-family:var(--font-mono);font-size:11px;color:var(--text-300)';
   const fmtAgo = (t) => !t ? 'nie' : (function(s){
@@ -140,22 +141,52 @@ function _renderSearxngEngines(sxe) {
   const engines = (sxe && Array.isArray(sxe.engines)) ? sxe.engines : [];
   const testBtn = `<button class="btn-secondary" onclick="testSearxngEngines(this)">Jetzt testen</button>`;
 
+  // Category → {label, tool}: names the search tool each category backs, so the
+  // panel reads as "these engines power science_search" etc. Order matches the
+  // health probe's _TRACKED_CATEGORIES.
+  const CATS = [
+    { key: 'general', label: 'Allgemeine Websuche', tool: 'searxng_search' },
+    { key: 'science', label: 'Wissenschaft', tool: 'science_search' },
+    { key: 'it',      label: 'Programmierung / Technik', tool: 'dev_search' },
+    { key: 'images',  label: 'Bilder', tool: 'image_search' },
+    { key: 'news',    label: 'Nachrichten', tool: 'news_search' },
+  ];
+  const engineRow = (e) => {
+    const st = STATE[e.state] || { c: 'var(--text-400)', label: esc(e.state || '?') };
+    const healthy = e.state === 'ok' || e.state === 'empty';
+    return `<div style="${ROW}">
+      ${DOT(healthy)}
+      <span style="font-size:13px;color:var(--text-100);flex:1">${esc(e.name || '')}</span>
+      <span style="${MONO}">${e.latency_ms != null ? e.latency_ms + 'ms' : ''}</span>
+      <span style="font-size:11px;color:${st.c};min-width:54px;text-align:right" title="${esc(e.detail||'')}">${st.label}</span>
+    </div>`;
+  };
+
   let body;
   if (!sxe || sxe.error) {
     body = `<div style="${ROW}">${DOT(false)}<span style="font-size:13px;color:var(--text-100);flex:1">${esc(sxe?.error || 'Engine-Zustand nicht verfügbar')}</span></div>`;
   } else if (!engines.length) {
     body = `<div style="${ROW}"><span style="font-size:12px;color:var(--text-400);flex:1">Noch keine Prüfung durchgeführt — der erste automatische Test läuft kurz nach dem Start, oder klicken Sie auf „Jetzt testen".</span></div>`;
-  } else {
-    body = engines.map(e => {
-      const st = STATE[e.state] || { c: 'var(--text-400)', label: esc(e.state || '?') };
-      const healthy = e.state === 'ok' || e.state === 'empty';
-      return `<div style="${ROW}">
-        ${DOT(healthy)}
-        <span style="font-size:13px;color:var(--text-100);flex:1">${esc(e.name || '')}</span>
-        <span style="${MONO}">${e.latency_ms != null ? e.latency_ms + 'ms' : ''}</span>
-        <span style="font-size:11px;color:${st.c};min-width:54px;text-align:right" title="${esc(e.detail||'')}">${st.label}</span>
-      </div>`;
+  } else if (engines.some(e => e.category)) {
+    // Categorized snapshot (v9.288+): group engines under the search tool they
+    // back. An engine with no category (older snapshot rows) falls to 'general'.
+    const grouped = {};
+    engines.forEach(e => { (grouped[e.category || 'general'] ||= []).push(e); });
+    const CATHDR = 'font-size:11px;font-weight:600;color:var(--text-200);padding:8px 12px 2px;display:flex;gap:8px;align-items:center';
+    body = CATS.filter(c => (grouped[c.key] || []).length).map(c => {
+      // Per-tool enable toggle — reflects + writes tool_settings.<tool>.state.
+      // Default 'active' when the tool has no record (matches _global_tool_enabled).
+      const on = (toolState[c.tool] || 'active') !== 'inactive';
+      const toggle = `<label style="margin-left:auto;display:flex;align-items:center;gap:5px;font-weight:400;cursor:pointer" title="Werkzeug ${esc(c.tool)} aktivieren/deaktivieren">
+          <input type="checkbox" ${on ? 'checked' : ''} onchange="toggleSearchTool('${esc(c.tool)}', this)">
+          <span style="font-size:10px;color:var(--text-400)">${on ? 'aktiv' : 'aus'}</span>
+        </label>`;
+      return `<div style="${CATHDR}"><span>${esc(c.label)}</span>` +
+        `<span style="${MONO};font-weight:400">${esc(c.tool)}</span>${toggle}</div>` +
+        grouped[c.key].map(engineRow).join('');
     }).join('');
+  } else {
+    body = engines.map(engineRow).join('');
   }
 
   const tested = (sxe && sxe.tested_at) ? sxe.tested_at : 0;
@@ -165,12 +196,31 @@ function _renderSearxngEngines(sxe) {
       <span>Nächster Auto-Test</span><span style="${MONO}">${nextAt ? fmtIn(nextAt) : 'alle 4 h'}</span>
     </div>`;
 
-  return `<div style="font-size:11px;color:var(--text-400);padding:6px 12px 2px">Zustand pro Engine (isoliert geprüft; fehlerhafte Engines verschwenden bei jeder Suche eine Anfrage).</div>
+  return `<div style="font-size:11px;color:var(--text-400);padding:6px 12px 2px">Such-Werkzeuge nach Kategorie mit dem Zustand ihrer Engines (isoliert geprüft; fehlerhafte Engines verschwenden bei jeder Suche eine Anfrage). Der Schalter je Kategorie aktiviert/deaktiviert das zugehörige Werkzeug.</div>
     ${body}
     ${meta}
     <div style="display:flex;gap:8px;padding:6px 12px 0">${testBtn}
       <span style="font-size:11px;color:var(--text-400);align-self:center">Ein manueller Test ändert den automatischen 4-Stunden-Zeitplan nicht.</span>
     </div>`;
+}
+
+async function toggleSearchTool(tool, cb) {
+  // Enable/disable one search tool via its canonical tool_settings state.
+  // active = the model may call it; inactive = removed from every tool list.
+  const want = cb.checked ? 'active' : 'inactive';
+  cb.disabled = true;
+  try {
+    await API.post('/v1/tools/settings', { name: tool, state: want });
+    if (window._searxngToolState) window._searxngToolState[tool] = want;
+    const lbl = cb.parentElement && cb.parentElement.querySelector('span');
+    if (lbl) lbl.textContent = cb.checked ? 'aktiv' : 'aus';
+    showToast(`${tool}: ${cb.checked ? 'aktiviert' : 'deaktiviert'}`);
+  } catch (e) {
+    cb.checked = !cb.checked;  // revert on failure
+    showToast('Umschalten fehlgeschlagen: ' + (e?.message || e), true);
+  } finally {
+    cb.disabled = false;
+  }
 }
 
 async function testSearxngEngines(btn) {
