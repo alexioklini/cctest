@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.288.0"
+VERSION = "9.289.0"
 VERSION_DATE = "2026-07-05"
 CHANGELOG = [
+    ("9.289.0", "2026-07-05", "feat(Experten-Gremium: Experiment-Schalter moa.allow_local_executor): LOKALE Modelle als Delegate-EXECUTOR zulassen (User-Anlass: MoA-Smoke-Test mit gemma-4-12B-it-qat-4bit als Proposer UND Executor; Proposer war schon immer runtime-fähig — nur die Settings-Matrix-UI filtert lokale Modelle, Config-Edit genügt). Bisher waren lokale Modelle an ZWEI Stellen hart aus dem Executor-Pfad gefiltert: brain.resolve_moa_executor (Pool-Filter) + handlers/chat._run_plan_review_loop (Kandidaten fürs Review-Dropdown), beide `not is_model_local(m)`. NEU: der Filter ist an beiden Stellen auf `(allow_local or not is_model_local(m))` konditionalisiert; Knob in _MOA_DEFAULTS (Default False — lokal grindet Tool-Runden mit ~20 tps und der Lokal-oMLX-Provider hat max_concurrent=1, konkurriert also mit Warmup + Proposer-Calls) + Bool-Handling in admin_config (per Admin-API setzbar, kein Restart nötig — get_moa_config liest live). WICHTIG: das _bench_rank_key-Ranking bevorzugt weiterhin Cloud innerhalb des Fähigkeits-Bands → der AUTO-Pick bleibt praktisch Cloud; ein lokaler Executor wird primär über das Plan-Review-Executor-Dropdown gewählt (erscheint dort automatisch, die Liste kommt vom Server — kein JS-Change). Kein UI-Feld für den Knob (bewusst Config-only, Experiment). Default-Verhalten byte-identisch (Knob aus = alter Filter). py_compile brain/chat/admin_config OK. Kein kuratierter Eintrag (experimenteller Config-only-Schalter). Server-Restart nötig."),
     ("9.288.0", "2026-07-05", "feat(Websuche: spezialisierte Such-Werkzeuge nach Themengebiet — Wissenschaft/Technik/Bilder/Nachrichten). ANLASS (User): searxng_search nutzte NUR die `general`-Kategorie — die installierte + aktivierte SearXNG-Instanz kann aber ~30 Kategorien (images: 16 Engines, science: arxiv/pubmed/scholar/semantic-scholar, it: stackoverflow/mdn/github/pypi, news: reuters/google-news …), die alle unerreichbar brachlagen ('Funktionalität auf der Straße'). NEU 4 Werkzeuge, alle über einen GETEILTEN Kern (_searxng_query in misc_tools.py — dieselbe Instanz, dieselbe {title,link,score}-Form, Score-Filter, Infobox; feedback_single_fix_point): science_search (science → Paper mit Publikationsdaten), dev_search (it → Programmier-Q&A/Docs; bewusst NICHT 'code_search' benannt — Namenskollision mit dem bestehenden CodeGraph-Tool code_search, hätte den Dispatch überschrieben), image_search (images → jedes Ergebnis trägt image_url = direkte Bild-URL neben der Quellseite; want_images-Passthrough), news_search (news → datierte Nachrichten). BEWUSST SEPARATE Werkzeuge statt eines `category`-Params: ein explizit vom Modell gewähltes news_search kann den v9.124.0-Footgun (ad-hoc category='news' auf allgemeiner Query verdrängte die autoritative Quelle unter Presse) NICHT reproduzieren. Alle DEFAULT-AKTIV (kein tool_settings-Record nötig — Default=active), 4-Site-registriert (Schema/Group/Dispatch/Impl, konsistenz-verifiziert). LOCKOUT-HÄRTUNG: neue Kanon-Konstante brain.WEB_SEARCH_TOOLS (7 Web-Tools) ersetzt die an 2 Stellen hartkodierte 3-Tool-Liste (handlers/chat.py Websuche-Basket-Lockout + brain.py disable_web_search) — die Spezial-Tools nutzen DIESELBE Instanz, ein Lockout ohne sie hätte geleakt; Scheduler-Lockout deckt apply_domain_context automatisch mit ab. SETTINGS-UI (Settings→Server→Websuche): der Engine-Health-Panel gruppiert Engines jetzt nach Kategorie mit Nennung des tragenden Werkzeugs + je Kategorie ein An/Aus-Schalter fürs Werkzeug (POST /v1/tools/settings state); searxng_health.enabled_engines_by_category + kategorisierter run_health_check (jede Engine 1× via !shortcut geprobt, Kategorie nur zur Anzeige) — der bestehende 4-Stunden-Auto-Check deckt damit auch die Spezial-Engines ab. VERIFIZIERT live gegen die laufende Instanz: science→arxiv/pubmed/scholar mit Daten, dev(it)→stackoverflow/mdn, images→238 Treffer mit image_url, news→datierte Items; 4-Site-Konsistenz-Check grün; py_compile (brain/misc_tools/chat/searxng_health) OK; js_gate GRÜN (eslint clean, net-globals 1844→1845 = neues toggleSearchTool, Baseline mitgezogen, smoke 5/5). Skill 02-tools + 06-user-manual + SKILL.md (1.147.0 / brain 9.288.0) im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar)."),
     ("9.287.2", "2026-07-05", "fix(SearXNG: Engine-Pool an die Realität angepasst): chat f33ff6e4 — deepseek meldete zu Recht, dass searxng_search kaputt ist: JEDE Query lieferte query-fremden Müll mit score 1.0 (französische Facebook-Foren für '\"Alexander Klinsky\"', Adobe-Hilfe für 'Pergamonmuseum'). DIAGNOSE per Einzel-Engine-Probe (/search?engines=<name>): der 2026-05-24 kuratierte 'reliable'-Pool ist GEDRIFTET — google liefert still 0 Ergebnisse, startpage 'Suspended: CAPTCHA' (In-Process-State, Restart heilt), bing antwortet mit von der Query ENTKOPPELTEN Ergebnissen (kaputter Scrape → vergiftet als einziger Antworter das Konsens-Ranking); die damals als 'always errors' deaktivierten duckduckgo (perfekt: richtiges LinkedIn-Profil als Top-Hit) + mojeek (intermittierend) funktionieren heute. FIX searxng_settings.yml: bing disabled (Müll ist schlimmer als nichts), duckduckgo + mojeek enabled, google + startpage bleiben als billige Recovery-Wetten (fail fast / auto-suspend). Kommentar dokumentiert jetzt den DRIFT-Charakter + die Re-Mess-Methode. VERIFIZIERT nach POST /v1/searxng/restart: '\"Alexander Klinsky\"' → LinkedIn score 4.0 (Cross-Engine-Konsens), Wiener-Privatbank-Query → evi.gv.at-Firmenbuch, Pergamonmuseum → smb.museum top (via erholtem startpage, ddg zwischenzeitlich CAPTCHA-suspendiert — der Mehr-Engine-Pool ist genau dafür da). Kein Code-Change, kein Brain-Restart nötig (nur SearXNG-Restart). Kuratiert: eigener Eintrag (user)."),
     ("9.287.1", "2026-07-05", "fix(HTML-Report-Hero: Turn-Fetches als Mining-Quelle): das 9.287.0-Hero-Mining lief in chat 5142a07f leer — der Turn hatte 6 smb.museum-Seiten per web_fetch geholt (beide MIT og:image, live verifiziert), aber das Modell (glm-5.2) schrieb den Report OHNE einen einzigen [text](url)-Link und ohne hero_image-Param → 0 Kandidaten → SVG-Banner. ROOT CAUSE: beide 9.287.0-Wege hängen am Modellverhalten (Param setzen ODER Links zitieren); Modelle schreiben Quellen oft als Prosa. FIX (deterministisch, Choke-Point): (1) tool_web_fetch registriert jede erfolgreich geholte HTML-Seite via _note_turn_fetched_url auf dem RequestContext (dynamic key turn_fetched_urls, https-only, dedupe, Cap 10; auch beim Cache-Hit, dort nur wenn fetch_method markitdown/crawl4ai/scrapling = sicher HTML). Turn-scoped by construction — Kontext wird pro Turn neu betreten, kein Leak. (2) _mine_hero_image nimmt diese URLs als Fallback-Kandidaten NACH den im Markdown zitierten Links (zusammen max. 4 Versuche, je 8s/200KB via _fetch_og_image). Grenze: Recherche in Turn N, Report in Turn N+1 → Kontext leer, dann greift weiterhin nur Link-Mining/Param/Banner. py_compile OK. Skill 02-tools + SKILL.md im selben Commit; kuratiert: 9.287.1 in die versions-Liste des 9.287.0-Eintrags. Server-Restart nötig."),
@@ -12265,6 +12266,14 @@ _MOA_DEFAULTS: dict = {
     # rounds (0 = audit only, no re-round). Non-interactive turns never verify
     # (eval/scheduler/API stay lean). Bounded like the goal judge loop.
     "executor_verify_max_rounds": 2,
+    # Experiment switch: allow LOCAL models as delegate EXECUTOR (and in the
+    # plan-review executor dropdown). Default OFF — a local model grinding the
+    # tool rounds is slow (~20 tps) and the `Lokal` oMLX provider has a single
+    # concurrency slot, so it also competes with warmup + proposer calls. Note
+    # the auto-pick ranking still prefers cloud within a capability band; with
+    # the switch on, a local executor is primarily chosen via the plan-review
+    # override dropdown.
+    "allow_local_executor": False,
     # PER-TASK fixed aggregator/orchestrator (v9.274.0): {task_type: model_id}.
     # Missing/empty/"auto" → the aggregator is whatever auto-route picked for
     # the turn (the original behavior). A configured model REPLACES the auto
@@ -12430,7 +12439,8 @@ def resolve_moa_executor(plan_text: str, exclude: set[str] | None = None,
 
     Classifies the PLAN text (not the user prompt — the plan reveals the true
     task shape: 'search X, read Y, compute Z' classifies more honestly than
-    the question that produced it) and ranks the enabled CLOUD models with the
+    the question that produced it) and ranks the enabled CLOUD models (local
+    models join the pool only with `moa.allow_local_executor`) with the
     same capability-band ranking auto-route uses — so within the band the
     CHEAPEST capable model wins (the whole point: the expensive planner
     thinks once, a cheap executor grinds the tool rounds). `exclude` = the
@@ -12456,8 +12466,9 @@ def resolve_moa_executor(plan_text: str, exclude: set[str] | None = None,
     else:
         return None, analysis
     enabled = get_enabled_models()
+    allow_local = bool(get_moa_config().get("allow_local_executor"))
     pool = [m for m in enabled
-            if m not in exclude and not is_model_local(m)
+            if m not in exclude and (allow_local or not is_model_local(m))
             and (not allowed_models or m in allowed_models)]
     if not pool:
         return None, analysis

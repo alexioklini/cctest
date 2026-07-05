@@ -303,7 +303,11 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   the true task shape) and the interactive tool turn is handed to the
   cheapest capable cloud **EXECUTOR** (same `_bench_rank_key`
   capability-band ranking as auto-route; planner + current model excluded;
-  ACL honored via `plan.allowed`). The worker switches the session
+  ACL honored via `plan.allowed`; local models join the pool only with the
+  experiment switch `moa.allow_local_executor` (v9.289.0, default false,
+  config-only — no UI field; the ranking still prefers cloud within the
+  band, so a local executor is in practice chosen via the plan-review
+  dropdown). The worker switches the session
   mid-worker (provider/max_context/`_current_model`) and REBUILDS the
   model-dependent turn state (`_inf_params_for` + `_build_prefix_for`
   closures), re-emits `auto_route`, and injects the plan as a wire-only
@@ -336,7 +340,8 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   eval/TUI/Telegram/scheduler never do) the worker pauses between plan
   synthesis and executor run: `_run_plan_review_loop` emits SSE
   `moa_plan_review` {plan, planner, executor, executor_candidates
-  (enabled + CHAT-capable cloud models — `"chat" in capabilities`, excludes
+  (enabled + CHAT-capable cloud models — plus local models when
+  `moa.allow_local_executor` is on — `"chat" in capabilities`, excludes
   voxtral-*/mistral-ocr audio/OCR specialists that were never valid executors
   — PLANNER excluded, ACL-scoped, sorted best-first with the proposed executor
   hoisted to position 1), executor_suitability (v9.286.2 — per-candidate

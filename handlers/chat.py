@@ -1028,8 +1028,9 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
         caps = engine.get_model_info(mid).get("capabilities") or []
         return "chat" in caps
 
+    _allow_local = bool(engine.get_moa_config().get("allow_local_executor"))
     candidates = [m for m in engine.get_enabled_models()
-                  if not engine.is_model_local(m)
+                  if (_allow_local or not engine.is_model_local(m))
                   and m != _planner_id
                   and _is_chat_model(m)
                   and (not allowed or m in allowed)]

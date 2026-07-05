@@ -888,6 +888,10 @@ class AdminConfigHandlers:
             # the turn needs the web (see brain._MOA_DEFAULTS).
             if "delegate_requires_web" in moa_in:
                 mo["delegate_requires_web"] = bool(moa_in["delegate_requires_web"])
+            # Experiment switch: local models as delegate executor (see
+            # brain._MOA_DEFAULTS).
+            if "allow_local_executor" in moa_in:
+                mo["allow_local_executor"] = bool(moa_in["allow_local_executor"])
             if "reference_pool" in moa_in:
                 pool_in = moa_in["reference_pool"] or []
                 if not isinstance(pool_in, list):

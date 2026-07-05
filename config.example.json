@@ -5472,7 +5472,9 @@
       "examples": "",
       "applies_with": [],
       "state": "active",
-      "purposes": [],
+      "purposes": [
+        "interactive"
+      ],
       "states": {
         "interactive": "active",
         "transform": "inactive",
@@ -5650,7 +5652,8 @@
         "kimi-k2.6",
         "deepseek-v4-flash",
         "mistral-small-latest",
-        "deepseek-v4-pro"
+        "deepseek-v4-pro",
+        "gemma-4-12B-it-qat-4bit"
       ],
       "analysis": [
         "glm-5.2",
@@ -5658,7 +5661,8 @@
         "kimi-k2.6",
         "deepseek-v4-flash",
         "mistral-small-latest",
-        "deepseek-v4-pro"
+        "deepseek-v4-pro",
+        "gemma-4-12B-it-qat-4bit"
       ],
       "reporting": [
         "glm-5.2",
@@ -5702,7 +5706,8 @@
       "agentic": "glm-5.2",
       "fast": "glm-5.2"
     },
-    "executor_verify_max_rounds": 2
+    "executor_verify_max_rounds": 2,
+    "allow_local_executor": true
   },
   "benchmark_official": {
     "artificialanalysis_api_key": "YOUR_API_KEY",
