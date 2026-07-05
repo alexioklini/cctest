@@ -2291,6 +2291,31 @@ def _render_cover_page(doc, style, title, frontmatter):
     doc.add_page_break()
 
 
+def _mine_hero_image(markdown: str) -> str:
+    """Best-effort hero image for style='report' HTML — the SAME mechanism Deep
+    Research uses: read the og:image/twitter:image of the first cited https
+    links in the content (markdown [text](url) links, NOT ![..](..) images —
+    those are already in the body). Bounded: max 3 candidate pages, each fetch
+    itself capped (8s / 200KB in _fetch_og_image). Returns "" when nothing
+    usable is found (caller falls back to the generated SVG banner)."""
+    try:
+        from engine.deep_research import _fetch_og_image
+        urls: list = []
+        for m in re.finditer(r"(?<!!)\[[^\]]*\]\((https://[^)\s]+)\)", markdown):
+            u = m.group(1)
+            if u not in urls:
+                urls.append(u)
+            if len(urls) >= 3:
+                break
+        for u in urls:
+            img = _fetch_og_image(u)
+            if img:
+                return img
+    except Exception:
+        pass
+    return ""
+
+
 def tool_write_document(args: dict) -> str:
     """Create documents from markdown content. Markdown ![alt](file) image
     references are EMBEDDED (docx/pptx/pdf) — pair with render_diagram to put
@@ -3204,7 +3229,15 @@ def tool_write_document(args: dict) -> str:
                 _m = re.search(r"^\s*#\s+(.+)$", content, re.MULTILINE)
                 _title = (_m.group(1).strip() if _m
                           else os.path.splitext(os.path.basename(path))[0].replace("_", " "))
-                html_doc = report_html.render_report_html(content, _title, category="report", doc_dir=_doc_dir)
+                # Hero image — analog Deep Research: an explicit hero_image arg
+                # (https URL the model picked, e.g. seen during web_fetch) wins;
+                # else best-effort og:image of the first cited links in the
+                # content; else the renderer's deterministic SVG banner.
+                _hero = (args.get("hero_image", "") or "").strip()
+                if not re.match(r"^https://", _hero, re.I):
+                    _hero = _mine_hero_image(content)
+                html_doc = report_html.render_report_html(content, _title, category="report", doc_dir=_doc_dir,
+                                                          hero_image=_hero or None)
             elif _looks_like_html(content):
                 html_doc = _finalize_raw_html(content, _style, _doc_dir)
             else:

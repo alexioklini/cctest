@@ -146,7 +146,12 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   on-brand letterhead is explicitly required. The model writes plain markdown (the
   first `# Heading` becomes the report title) — do NOT hand-write HTML for this
   (raw HTML can't be re-flowed into the layout, and falls back to the normal
-  preset) (v9.249.0, default-widened v9.260.0).
+  preset) (v9.249.0, default-widened v9.260.0). **Hero image** (v9.287.0, analog
+  Deep Research): optional `hero_image=<https-URL>` puts a real lead image
+  full-width under the report headline — the model should pass one it saw during
+  research (og:image / article lead photo). If omitted, Brain auto-tries the
+  og:image of the first ≤3 links cited in the content; only when nothing is
+  found does the generated abstract SVG banner appear.
   Header/footer text supports `{page}`/`{date}` tokens; the logo + footer render
   on docx/pdf pages, pptx slides, and the html header/footer bands. **Automatic
   footer lines** (v9.208.0, each on its own line, in the footer font): a

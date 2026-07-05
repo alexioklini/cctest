@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.287.0",
+        "date": "2026-07-05",
+        "title": "HTML-Berichte mit echtem Titelbild",
+        "body": "HTML-Berichte im Magazin-Layout beginnen jetzt — wie die "
+                "Deep-Research-Berichte — nach Möglichkeit mit einem echten, "
+                "thematisch passenden Titelbild statt eines abstrakten "
+                "Farbbanners: Der Agent wählt ein Bild aus seinen "
+                "Recherche-Quellen, oder es wird automatisch das Vorschaubild "
+                "der ersten im Bericht zitierten Quelle übernommen. Nur wenn "
+                "kein Bild gefunden wird, erscheint weiterhin der generierte "
+                "Banner.",
+        "audience": "user",
+        "versions": ["9.287.0"],
+    },
+    {
         "version": "9.286.0",
         "date": "2026-07-05",
         "title": "Experten-Gremium: bessere Pläne und geprüfte Ergebnisse",
