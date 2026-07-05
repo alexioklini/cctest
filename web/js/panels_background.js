@@ -442,7 +442,8 @@ function _syncToolEntries() {
     // are real per-turn LLM activity (one card per reference, expandable to
     // the draft text).
     const isMoaRef = m.synthetic && ((m.kind || m.name) === 'moa_reference'
-      || (m.kind || m.name) === 'moa_planner');
+      || (m.kind || m.name) === 'moa_planner'
+      || (m.kind || m.name) === 'moa_verify');
     if (m.synthetic && !isMoaRef) continue;
     // Pair with its result (match by tool_use_id, else name; don't cross turns).
     let result = null, resTs = null;

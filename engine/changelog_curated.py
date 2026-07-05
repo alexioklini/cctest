@@ -29,6 +29,26 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.286.0",
+        "date": "2026-07-05",
+        "title": "Experten-Gremium: bessere Pläne und geprüfte Ergebnisse",
+        "body": "Das Experten-Gremium prüft seine Arbeit jetzt in zwei "
+                "Stufen. Erstens: Findet der Orchestrator die Vorschläge der "
+                "Experten für den Ausführungsplan zu schwach, lässt er genau "
+                "die betreffenden Experten gezielt nachbessern — mit einer "
+                "konkreten Begründung, was gefehlt hat — und plant dann neu. "
+                "Zweitens: Nachdem das ausführende Modell geantwortet hat, "
+                "beurteilt der Orchestrator im Chat, ob die Antwort den Plan "
+                "und Ihre Anfrage wirklich erfüllt; falls nicht, lässt er das "
+                "Modell gezielt nachbessern (bis zu zwei Durchläufe). So "
+                "landen unvollständige Ergebnisse seltener bei Ihnen. Beide "
+                "Prüfungen sind als eigene Karten im Chat nachvollziehbar; die "
+                "Zahl der Nachbesserungen ist in den Server-Einstellungen "
+                "wählbar (0 = nur protokollieren).",
+        "audience": "user",
+        "versions": ["9.286.0"],
+    },
+    {
         "version": "9.285.0",
         "date": "2026-07-05",
         "title": "Ausführungspläne vor dem Start prüfen und steuern",

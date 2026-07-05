@@ -357,6 +357,39 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   (`_persist_plan_artifact` → `_after_file_write` → one `artifact_versions`
   row per state + live `artifact_updated`; metadata header with source/
   round/planner/verdict/timestamp; identical text deduped; best-effort).
+- **Proposer refinement** (v9.286.0, delegate mode): `_MOA_PLANNER_SYSTEM`'s
+  insufficient verdict now carries the WEAK approaches + an actionable reason
+  (`PLAN_VERDICT: insufficient [A, C] — <instruction>`; `_run_moa_planner`
+  parses `weak_letters` + `verdict_reason`). When the planner judges its plan
+  insufficient AND names weak approaches, `_refine_moa_drafts` re-asks EXACTLY
+  those proposers ONCE (positional A=drafts[0]; `_MOA_REF_REFINE_SYSTEM` =
+  previous draft + planner feedback → better standalone approach; same
+  tool-less/single-round/pseudonym/GDPR rules; empty brackets `[]` = the
+  request itself is the blocker → no refine), then re-plans ONCE. Bounded to
+  a single refinement round; still-insufficient flows into the existing
+  self-reject / review fallback. Failed/empty refinement keeps the original
+  draft (never a turn error). Cards: `moa_reference` with a `refine` flag
+  ("· Nachbesserung"). NOTE: the human plan review always goes to the
+  PLANNER, never back to the proposers (they finished their job) — this is
+  the automatic planner↔proposer loop, distinct from the human↔planner review.
+- **Executor post-verification** (v9.286.0, INTERACTIVE delegate turns only):
+  BEFORE persisting the executor's answer, the PLANNER audits it against the
+  plan + request via one `background_call`
+  (`_run_executor_verify`, `_MOA_VERIFY_SYSTEM`, `VERIFY_VERDICT:
+  ok|insufficient — <fix>`; completeness/correctness/not-beyond-evidence, a
+  clean "not found" = ok; `cost_purpose="moa_planner"`, fail-open ok on any
+  error). Insufficient + a concrete fix + budget → the SAME executor is
+  re-driven with the fix as a styled continuation message, REUSING the
+  goal-judge continue machinery (append user msg + reset stream state +
+  `continue`; `_moa_delegate_state` reused → plan + pinned executor
+  unchanged), until ok OR `moa.executor_verify_max_rounds` (default 2, 0 =
+  audit only). Does NOT run when the goal loop owns the turn (its own judge
+  decides — two judge loops would double-count), never on turn error, never
+  non-interactive (eval/scheduler/API stay lean). Verdict folded into the
+  assistant message metadata (`auto_route.moa.verify`, persisted → survives
+  reload). Card `kind="moa_verify"` ("Ergebnis bestätigt" / "Nachbesserung
+  angefordert", expandable = fix instruction); SSE `moa_verify_continue`
+  closes the answer bubble (web + terminal chat).
 - **Fixed orchestrator** (`moa.task_aggregators {task_type: model_id}`,
   v9.274.0; missing/"auto" = auto-route pick, the default): pins WHO
   synthesizes per task type. When the fan-out gates in on that type,
@@ -368,8 +401,9 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
 - **Config** `config.json → moa` {enabled, task_pools (the matrix),
   task_modes, task_aggregators, max_references, reference_max_tokens (600),
   reference_timeout_s (60), reference_input_max_chars (24000),
-  planner_max_tokens (1000, delegate mode); legacy:
-  reference_pool, gate_task_types}
+  planner_max_tokens (1000, delegate mode), plan_review_timeout_s (900),
+  executor_verify_max_rounds (2, delegate post-verify), delegate_requires_web
+  (true); legacy: reference_pool, gate_task_types}
   — Settings → Server → "MoA (Mixture of Agents)" renders a scrollable
   model × task_type checkbox MATRIX (rows = enabled cloud models, columns =
   the 9 classifier task_types; first open without task_pools seeds from

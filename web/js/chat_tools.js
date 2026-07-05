@@ -135,6 +135,7 @@ function toolDescribe(name, args) {
     web_fetch: () => { try { return `Webseite abrufen: ${a.url ? new URL(a.url).hostname : '...'}`; } catch(e) { return `Webseite abrufen: ${a.url || '...'}`; } },
     moa_reference: () => `🧬 Experte: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}${a.mode === 'plan' || a.mode === 'delegate' ? ' (Ansatz)' : ''}`,
     moa_planner: () => `🧬 Plan-Orchestrator: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
+    moa_verify: () => `🧬 Ergebnis-Prüfung: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     run_background_task: () => a.title ? `Hintergrundaufgabe: ${a.title}` : 'Hintergrundaufgabe starten',
@@ -747,6 +748,7 @@ function renderSyntheticGdprCall(msg, idx) {
     deanonymise_file: 'Datei wiederhergestellt',
     moa_reference: 'Experte',
     moa_planner: 'Plan-Orchestrator',
+    moa_verify: 'Ergebnis-Prüfung',
   };
   const title = titleMap[kind] || kind;
 
@@ -772,15 +774,29 @@ function renderSyntheticGdprCall(msg, idx) {
     summary = `${n} Token wiederhergestellt`;
   } else if (kind === 'deanonymise_file') {
     summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' wiederhergestellt';
+  } else if (kind === 'moa_verify') {
+    // Post-verification: the planner audited the executor's answer. The done
+    // result carries the verdict (ok = passed / insufficient = re-round was
+    // triggered with the instruction).
+    const mdl = result.model || msg.args?.model || '';
+    const mName = mdl ? modelShortName(mdl, false) : 'Modell';
+    if (status === 'pending') summary = `${mName} prüft das Ergebnis …`;
+    else if (status === 'error') summary = `${mName}: ${String(result.error || 'fehlgeschlagen').slice(0, 120)}`;
+    else if (result.verdict === 'insufficient')
+      summary = `${mName} · Nachbesserung angefordert`;
+    else summary = `${mName} · Ergebnis bestätigt`;
   } else if (kind === 'moa_reference' || kind === 'moa_planner') {
     // Dispatch args carry the planned model + contribution mode; the done
     // result carries the model that actually ran (GDPR may have swapped it),
     // the draft size and the mode ("answer" = Antwort, "plan"/"delegate" =
-    // Ansatz; moa_planner = the consolidated execution plan).
+    // Ansatz; moa_planner = the consolidated execution plan). result.refine
+    // marks a proposer refinement round (re-asked after an insufficient plan).
     const mdl = result.model || msg.args?.model || '';
     const mName = mdl ? modelShortName(mdl, false) : 'Modell';
     const rMode = result.mode || msg.args?.mode;
+    const isRefine = result.refine || msg.args?.refine;
     const mMode = kind === 'moa_planner' ? ' · Plan'
+      : isRefine ? ' · Nachbesserung'
       : (rMode === 'plan' || rMode === 'delegate') ? ' · Ansatz' : '';
     if (status === 'pending') summary = kind === 'moa_planner' ? `${mName} plant …` : `${mName} arbeitet zu …`;
     else if (status === 'error') summary = `${mName}: ${String(result.error || 'fehlgeschlagen').slice(0, 120)}`;
@@ -802,7 +818,7 @@ function renderSyntheticGdprCall(msg, idx) {
 
   // Per-row marker so users can recognise these at a glance: shield for the
   // GDPR kinds, DNA for MoA reference drafts.
-  const isMoa = kind === 'moa_reference' || kind === 'moa_planner';
+  const isMoa = kind === 'moa_reference' || kind === 'moa_planner' || kind === 'moa_verify';
   const shieldBadge = isMoa
     ? ('<span class="tool-badge-synthetic" title="Experten-Gremium (Mixture of Agents) — Beitrag eines Experten-Modells" '
       + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
@@ -815,7 +831,11 @@ function renderSyntheticGdprCall(msg, idx) {
   // reference model's full draft text (the private context the aggregator
   // got). Note: the draft may show pseudonymised values (it deliberately
   // stays in the wire's pseudonym space — GDPR).
-  const moaDraft = isMoa ? String(result.draft || '') : '';
+  // Expandable body: reference/planner drafts show their full text; the verify
+  // card shows the auditor's instruction (only when it asked for a re-round).
+  const moaDraft = kind === 'moa_verify'
+    ? String(result.instruction || '')
+    : (isMoa ? String(result.draft || '') : '');
   if (isMoa && moaDraft) {
     return `
     <details class="tool-block tool-block-synthetic${done ? ' has-result' : ''}">

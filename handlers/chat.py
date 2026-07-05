@@ -308,6 +308,29 @@ _MOA_REF_SYSTEM_PLAN = (
     "this setup or address the other models."
 )
 
+# Proposer refinement (v9.286.0, delegate mode only): when the planner judged
+# its consolidated plan insufficient AND named the weak approaches, exactly
+# those approach authors are re-asked ONCE with the planner's concrete reason
+# — so the second attempt knows WHY the first fell short. Same tool-less,
+# single-round, pseudonym-space rules as the first fan-out.
+_MOA_REF_REFINE_SYSTEM = (
+    "You are one of several AI models proposing an APPROACH for solving the "
+    "user's latest request (the last USER entry in the conversation below). "
+    "You already proposed one approach; the planning orchestrator reviewed it "
+    "and found it insufficient. Below your previous approach you will find the "
+    "orchestrator's specific feedback. Produce a BETTER, standalone approach "
+    "that directly addresses that feedback — do not reference your previous "
+    "attempt or the feedback. All the original rules still hold: you have no "
+    "tools and you must NOT answer the request itself; return a concise, "
+    "concrete, request-specific plan (ordered steps, which tools/sources/"
+    "queries, how to verify, how to structure the answer, pitfalls). If the "
+    "request depends on the user's own sources, plan the verification instead "
+    "of presenting expected values as findings, and state that a clean 'not "
+    "found in the sources' answer is the correct outcome should the search "
+    "come up empty. No generic advice, no filler. Do not mention this setup "
+    "or address the other models."
+)
+
 # Delegate mode (v9.283.x): the PLANNER (the strongest model — the one that
 # would have aggregated) consolidates the reference approaches into ONE
 # execution plan; a cheaper EXECUTOR model then runs the interactive tool turn
@@ -331,8 +354,34 @@ _MOA_PLANNER_SYSTEM = (
     "numbered steps, no filler. Do not mention this setup. End your reply "
     "with ONE final line of exactly this form: 'PLAN_VERDICT: ready' if the "
     "plan is sound and executable as written, or 'PLAN_VERDICT: insufficient "
-    "— <one short reason>' if the request or the candidate approaches do not "
-    "allow a sound plan."
+    "[<approach letters>] — <one short reason>' if the candidate approaches "
+    "are too weak to build a sound plan. In the insufficient case, list in "
+    "the square brackets the letters of the specific approaches that fell "
+    "short (e.g. '[A, C]'; empty brackets '[]' if the request itself — not "
+    "the approaches — is the blocker), and make the reason a concrete, "
+    "actionable instruction those approach authors could act on to do "
+    "better next time."
+)
+
+# Executor post-verification (v9.286.0, delegate mode, interactive only): after
+# the executor produced its answer, the PLANNER audits it against the plan +
+# the user's request and returns a strict verdict line. Insufficient → the
+# executor gets ONE re-round with the gap as feedback (bounded). The auditor
+# does NOT rewrite the answer — it only judges + names the gap (like the goal
+# judge, whose continue-instruction re-drives the same executor).
+_MOA_VERIFY_SYSTEM = (
+    "You are the verification orchestrator. Below is a user conversation, the "
+    "execution plan that was handed to a tool-using AI model, and that model's "
+    "final ANSWER. Judge ONLY whether the answer actually fulfils the user's "
+    "latest request and honours the plan's intent — completeness (every "
+    "demanded part present), correctness of what it claims, and that it did "
+    "not answer beyond its evidence (a clean 'not found' where sources were "
+    "empty is CORRECT, not a failure). Do NOT rewrite the answer and do NOT "
+    "nitpick style or wording. Reply with ONE line of exactly this form: "
+    "'VERIFY_VERDICT: ok' if the answer is acceptable as-is, or "
+    "'VERIFY_VERDICT: insufficient — <one concrete, actionable instruction "
+    "telling the model exactly what to fix or add>' if it genuinely falls "
+    "short. Prefer 'ok' unless there is a real, fixable gap."
 )
 
 
@@ -612,13 +661,22 @@ def _run_moa_planner(plan, drafts, wire_messages, sid, live, session,
         err = str(e)[:300]
     # Self-assessment: parse + strip the trailing PLAN_VERDICT line. Missing
     # line = "ready" (fail-open — an older/uncooperative planner reply must
-    # not kill the delegation).
-    verdict = "ready"
+    # not kill the delegation). On "insufficient" the line also carries the
+    # weak approaches ('[A, C]') + an actionable reason → the proposer-refine
+    # loop targets exactly those authors with that feedback (v9.286.0).
+    verdict, weak_letters, verdict_reason = "ready", [], ""
     if plan_text:
-        _vm = re.search(r"^\s*PLAN_VERDICT:\s*(ready|insufficient)\b.*$",
-                        plan_text, re.MULTILINE | re.IGNORECASE)
+        _vm = re.search(
+            r"^\s*PLAN_VERDICT:\s*(ready|insufficient)\b"
+            r"(?:\s*\[([^\]]*)\])?\s*(?:[—\-]\s*(.*))?$",
+            plan_text, re.MULTILINE | re.IGNORECASE)
         if _vm:
             verdict = _vm.group(1).lower()
+            if verdict == "insufficient":
+                weak_letters = [c.strip().upper()
+                                for c in re.split(r"[,\s]+", _vm.group(2) or "")
+                                if c.strip()]
+                verdict_reason = (_vm.group(3) or "").strip()
             plan_text = (plan_text[:_vm.start()] + plan_text[_vm.end():]).strip()
     _ms = int((time.time() - t0) * 1000)
     try:
@@ -634,7 +692,124 @@ def _run_moa_planner(plan, drafts, wire_messages, sid, live, session,
     except Exception:
         pass
     return plan_text, {"model": used_model, "error": err, "ms": _ms,
-                       "verdict": verdict}
+                       "verdict": verdict, "weak_letters": weak_letters,
+                       "verdict_reason": verdict_reason}
+
+
+def _refine_moa_drafts(drafts, planner_meta, wire_messages, sid, live, session):
+    """Delegate mode, refinement round (v9.286.0): the planner judged the plan
+    INSUFFICIENT and named the weak approaches (planner_meta['weak_letters'])
+    plus an actionable reason (planner_meta['verdict_reason']). Re-ask exactly
+    those approach authors ONCE — each gets its own previous draft + the
+    planner's reason so the second attempt knows why the first fell short.
+
+    Returns a NEW drafts list (same order as the input): a successfully
+    refined author's slot is replaced by the improved text; every other slot
+    (author not flagged, refinement failed/empty) keeps the original draft.
+    Never raises — a dead refinement leaves that author's first draft in place.
+
+    Letter→index mapping is positional (A=drafts[0], B=drafts[1], …), matching
+    how the approaches were labelled for the planner. Empty brackets (the
+    request itself is the blocker, not any approach) → no author is re-asked
+    and the original drafts are returned unchanged (the caller then falls back
+    to plan-mode; refining approaches can't fix an unanswerable request)."""
+    weak = planner_meta.get("weak_letters") or []
+    reason = (planner_meta.get("verdict_reason") or "").strip()
+    named = [(m, (t or "").strip()) for m, t in (drafts or []) if (t or "").strip()]
+    if not weak or not named or not reason:
+        return drafts
+    # Map declared letters to indices into the ORIGINAL drafts list.
+    targets = []
+    for letter in weak:
+        if len(letter) == 1 and letter.isalpha():
+            idx = ord(letter.upper()) - 65
+            if 0 <= idx < len(drafts) and drafts[idx] and (drafts[idx][1] or "").strip():
+                targets.append(idx)
+    targets = sorted(set(targets))
+    if not targets:
+        return drafts
+
+    import contextvars
+    from concurrent import futures as _futures
+    cfg = engine.get_moa_config()
+    try:
+        _ref_max_tokens = int(cfg.get("reference_max_tokens") or 600)
+        _ref_timeout = float(cfg.get("reference_timeout_s") or 60)
+        _ref_max_chars = int(cfg.get("reference_input_max_chars") or 24000)
+    except (TypeError, ValueError):
+        _ref_max_tokens, _ref_timeout, _ref_max_chars = 600, 60.0, 24000
+    transcript = _flatten_wire_transcript(wire_messages, _ref_max_chars)
+    if not transcript:
+        return drafts
+
+    t0 = time.time()
+    _base = f"moaref_{sid[:8]}_{int(t0 * 1000) % 1_000_000}"
+    tool_ids = {}
+    for idx in targets:
+        tool_ids[idx] = f"{_base}_{idx}"
+        try:
+            _emit_synthetic_tool_event(
+                live=live, sid=sid, kind="moa_reference",
+                tool_use_id=tool_ids[idx], phase="dispatch",
+                args={"model": drafts[idx][0], "mode": "delegate",
+                      "refine": True})
+        except Exception:
+            pass
+
+    def _one(idx):
+        ref_model, prev = drafts[idx]
+        prompt = (f"{transcript}\n\n=== Your previous approach ===\n{prev}"
+                  f"\n\n=== Orchestrator feedback (why it was insufficient) ==="
+                  f"\n{reason}\n\nProduce your improved standalone approach now.")
+        safe_model, (sys_safe, msg_safe), _deanon = (
+            engine.gdpr_pick_model_for_background(
+                ref_model, [_MOA_REF_REFINE_SYSTEM, prompt],
+                purpose="moa_reference"))
+        res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": msg_safe}],
+            model=safe_model, system_prompt=sys_safe, purpose="transform",
+            cost_purpose="moa_reference", session_id=sid,
+            agent_id=session.agent_id, user_id=session.user_id or "",
+            max_rounds=1, max_tokens=_ref_max_tokens, timeout_s=_ref_timeout)
+        if res.get("error") and not (res.get("reply") or "").strip():
+            raise RuntimeError(str(res["error"])[:300])
+        reply = (res.get("reply") or "").strip()
+        if reply.startswith("No response was returned"):
+            raise RuntimeError(f"provider stub reply: {reply[:120]}")
+        return safe_model, reply
+
+    refined = list(drafts)
+    parent_ctx = contextvars.copy_context()
+    with _futures.ThreadPoolExecutor(max_workers=len(targets)) as ex:
+        fut_to_idx = {ex.submit(parent_ctx.copy().run, _one, idx): idx
+                      for idx in targets}
+        for fut in _futures.as_completed(fut_to_idx):
+            idx = fut_to_idx[fut]
+            _ms = int((time.time() - t0) * 1000)
+            try:
+                safe_model, text = fut.result()
+                if text:
+                    refined[idx] = (safe_model, text)
+                    _ev = {"status": "ok",
+                           "result": {"model": safe_model, "chars": len(text),
+                                      "mode": "delegate", "draft": text,
+                                      "refine": True}}
+                else:  # empty refinement → keep the original draft
+                    _ev = {"status": "error",
+                           "result": {"model": safe_model,
+                                      "error": "empty refinement", "refine": True}}
+            except Exception as e:  # dead refinement → keep the original draft
+                _ev = {"status": "error",
+                       "result": {"model": drafts[idx][0],
+                                  "error": str(e)[:300], "refine": True}}
+            try:
+                _emit_synthetic_tool_event(
+                    live=live, sid=sid, kind="moa_reference",
+                    tool_use_id=tool_ids[idx], phase="done",
+                    result=_ev["result"], status=_ev["status"], duration_ms=_ms)
+            except Exception:
+                pass
+    return refined
 
 
 def _build_moa_delegate_suffix(plan_text):
@@ -661,6 +836,87 @@ def _build_moa_delegate_suffix(plan_text):
         "If my request demands specific parts, include every demanded "
         "part.\n\n"
         + plan_text + "\n=== end execution plan ===")
+
+
+def _run_executor_verify(plan_text, reply, wire_messages, planner_model,
+                         sid, live, session):
+    """Delegate post-verify (v9.286.0): ONE background call to the planner
+    model auditing the executor's answer against the plan + request. Returns
+    (ok: bool, instruction: str, meta: dict). ok=True (fail-open) on any
+    error / empty reply / missing planner — a broken audit must never block a
+    delivered answer. instruction is the concrete fix the executor should
+    apply on the re-round (empty when ok). Emits one synthetic card
+    (kind 'moa_verify') for chat + Aktivität-tab visibility."""
+    planner = (planner_model or "").strip()
+    plan_text = (plan_text or "").strip()
+    reply = (reply or "").strip()
+    if not planner or not plan_text or not reply:
+        return True, "", {"skipped": "nothing to verify"}
+    cfg = engine.get_moa_config()
+    try:
+        _max_tokens = int(cfg.get("planner_max_tokens") or 1000)
+        _timeout = float(cfg.get("reference_timeout_s") or 60)
+        _max_chars = int(cfg.get("reference_input_max_chars") or 24000)
+    except (TypeError, ValueError):
+        _max_tokens, _timeout, _max_chars = 1000, 60.0, 24000
+    transcript = _flatten_wire_transcript(wire_messages, _max_chars)
+    if not transcript:
+        return True, "", {"skipped": "no transcript"}
+    t0 = time.time()
+    _tuid = f"moaver_{sid[:8]}_{int(t0 * 1000) % 1_000_000}"
+    try:
+        _emit_synthetic_tool_event(
+            live=live, sid=sid, kind="moa_verify",
+            tool_use_id=_tuid, phase="dispatch", args={"model": planner})
+    except Exception:
+        pass
+    verdict, instruction, err, used_model = "ok", "", "", planner
+    try:
+        prompt = (f"{transcript}\n\n=== Execution plan ===\n{plan_text}"
+                  f"\n\n=== Executor answer ===\n{reply}\n\n=== end ===")
+        safe_model, (sys_safe, msg_safe), _deanon = (
+            engine.gdpr_pick_model_for_background(
+                planner, [_MOA_VERIFY_SYSTEM, prompt],
+                purpose="moa_planner"))
+        used_model = safe_model
+        res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": msg_safe}],
+            model=safe_model, system_prompt=sys_safe, purpose="transform",
+            cost_purpose="moa_planner", session_id=sid,
+            agent_id=session.agent_id, user_id=session.user_id or "",
+            max_rounds=1, max_tokens=_max_tokens, timeout_s=_timeout)
+        _vtext = (res.get("reply") or "").strip()
+        if res.get("error") and not _vtext:
+            err = str(res["error"])[:300]
+        elif _vtext and not _vtext.startswith("No response was returned"):
+            _vm = re.search(
+                r"VERIFY_VERDICT:\s*(ok|insufficient)\b\s*(?:[—\-]\s*(.*))?",
+                _vtext, re.IGNORECASE | re.DOTALL)
+            if _vm:
+                verdict = _vm.group(1).lower()
+                if verdict == "insufficient":
+                    instruction = (_vm.group(2) or "").strip()
+            # No parseable verdict line → fail-open "ok" (don't block on a
+            # non-cooperative auditor reply).
+    except Exception as e:
+        err = str(e)[:300]
+    # An insufficient verdict with no actionable instruction is unusable for a
+    # re-round → treat as ok (nothing concrete to fix).
+    ok = (verdict == "ok") or not instruction
+    _ms = int((time.time() - t0) * 1000)
+    try:
+        _emit_synthetic_tool_event(
+            live=live, sid=sid, kind="moa_verify", tool_use_id=_tuid,
+            phase="done",
+            result=({"model": used_model, "verdict": verdict,
+                     "instruction": instruction}
+                    if not err else {"model": used_model, "error": err}),
+            status=("ok" if not err else "error"), duration_ms=_ms)
+    except Exception:
+        pass
+    return ok, ("" if ok else instruction), {
+        "model": used_model, "verdict": verdict, "ms": _ms,
+        **({"error": err} if err else {})}
 
 
 # ── MoA delegate-plan review (v9.285.0) ─────────────────────────────────────
@@ -3430,6 +3686,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 _goal_web_cache = None   # curated-web fetch: once, reused per iteration
                 _moa_cache = None        # MoA reference fan-out: once, reused per iteration
                 _moa_delegate_state = None  # delegate mode: (plan_text,) once per turn
+                _moa_verify_rounds = 0   # delegate post-verify re-rounds spent (v9.286.0)
 
                 def _goal_set(status=None, iteration=None):
                     """Mirror a goal-state change onto the live Session + DB."""
@@ -3579,6 +3836,31 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     sid, live, session)
                                 _dmeta = {"planner": _pl_meta.get("model", ""),
                                           "planner_ms": _pl_meta.get("ms", 0)}
+                                # PROPOSER REFINEMENT (v9.286.0): the planner
+                                # judged its plan insufficient AND named the
+                                # weak approaches → re-ask exactly those authors
+                                # ONCE with the planner's reason, then re-plan.
+                                # Bounded to a single refinement round; a still-
+                                # insufficient verdict afterwards flows into the
+                                # existing self-reject / review fallback below.
+                                if (_plan_text
+                                        and _pl_meta.get("verdict") == "insufficient"
+                                        and _pl_meta.get("weak_letters")
+                                        and _pl_meta.get("verdict_reason")):
+                                    _dmeta["refine_reason"] = _pl_meta["verdict_reason"]
+                                    _dmeta["refine_targets"] = _pl_meta["weak_letters"]
+                                    _refined = _refine_moa_drafts(
+                                        _drafts, _pl_meta, _wire_messages,
+                                        sid, live, session)
+                                    if _refined is not _drafts and _refined != _drafts:
+                                        _drafts = _refined
+                                        _moa_cache = (_drafts, _moa_meta)
+                                        _plan_text, _pl_meta = _run_moa_planner(
+                                            _moa_plan_now, _drafts, _wire_messages,
+                                            sid, live, session)
+                                        _dmeta["refined"] = True
+                                        _dmeta["planner"] = _pl_meta.get("model", "")
+                                        _dmeta["planner_ms"] = _pl_meta.get("ms", 0)
                                 if _pl_meta.get("error"):
                                     _dmeta["planner_error"] = _pl_meta["error"]
                                 if _pl_meta.get("verdict"):
@@ -4294,7 +4576,90 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     "model": _local_swap,
                                     "active": True,
                                 }
+                        # ── Experten-Gremium: Executor-Post-Verifikation ──
+                        # (v9.286.0, INTERACTIVE delegate turns only) BEFORE
+                        # persisting the answer, the PLANNER audits it against
+                        # the plan + request (so the verdict rides the assistant
+                        # message's persisted metadata → survives reload).
+                        # Insufficient + a concrete gap + budget left → re-drive
+                        # the SAME executor with the gap as a styled continuation
+                        # message (the goal-judge continue machinery, reused).
+                        # Skipped when the goal loop owns this turn (its own judge
+                        # decides continuation — two judge loops on one turn would
+                        # double-count) and on any turn error (terminal). Non-
+                        # interactive turns never verify. Bounded by
+                        # executor_verify_max_rounds.
+                        _mds = _moa_delegate_state
+                        _v_reround = False
+                        if (interactive and not _se and not _goal_active
+                                and _mds and _mds[0] and reply
+                                and not session.cancel_token.cancelled):
+                            try:
+                                _vmax = int(engine.get_moa_config().get(
+                                    "executor_verify_max_rounds") or 0)
+                            except (TypeError, ValueError):
+                                _vmax = 0
+                            if _vmax > 0 and _moa_verify_rounds < _vmax:
+                                _v_ok, _v_instr, _v_meta = _run_executor_verify(
+                                    _mds[0], reply, _wire_messages,
+                                    (_mds[1] or {}).get("planner", ""),
+                                    sid, live, session)
+                                # Fold the audit verdict into the assistant
+                                # message metadata (persisted with add_message
+                                # below → visible on reload + in the inspector).
+                                _ar = dict(msg_metadata.get("auto_route") or {})
+                                _moaam = dict(_ar.get("moa") or {})
+                                _moaam["verify"] = {
+                                    "verdict": _v_meta.get("verdict"),
+                                    "round": _moa_verify_rounds,
+                                    "model": _v_meta.get("model"),
+                                    **({"error": _v_meta["error"]}
+                                       if _v_meta.get("error") else {}),
+                                }
+                                _ar["moa"] = _moaam
+                                msg_metadata["auto_route"] = _ar
+                                _v_reround = (not _v_ok and bool(_v_instr)
+                                              and not session.cancel_token.cancelled)
                         session.add_message("assistant", reply, metadata=msg_metadata or None)
+                        if _v_reround:
+                            # Re-drive the SAME executor with the auditor's gap
+                            # as a styled continuation message, then loop (the
+                            # delegate stage reuses _moa_delegate_state → plan +
+                            # pinned executor unchanged; only the new user
+                            # instruction is added to the wire).
+                            _moa_verify_rounds += 1
+                            _vc_instr = (
+                                "Deine vorige Antwort erfüllt Plan und "
+                                "Anfrage noch nicht vollständig. Bitte "
+                                "korrigiere/ergänze gezielt: " + _v_instr
+                                + " Liefere die vollständige, überarbeitete "
+                                "Antwort in der vom Auftrag geforderten Form.")
+                            live.emit("moa_verify_continue", {
+                                "session_id": sid,
+                                "round": _moa_verify_rounds,
+                                "max": _vmax,
+                                "instruction": _v_instr,
+                                "assistant_text": reply})
+                            session.add_message(
+                                "user", _vc_instr,
+                                metadata={"moa_verify_continue": True,
+                                          "moa_verify_round": _moa_verify_rounds})
+                            # Reset per-iteration stream state — same set the
+                            # goal continue-branch clears.
+                            _partial_reply.clear()
+                            _partial_tools.clear()
+                            _partial_thinking.clear()
+                            _thinking_summary.clear()
+                            _request_payloads.clear()
+                            _nudge_count[0] = 0
+                            created_files.clear()
+                            with session.lock:
+                                session._turn_created_files = []
+                            try:
+                                ChatDB.set_streaming_text(sid, "")
+                            except Exception:
+                                pass
+                            continue
                         # ── Goal-Modus: judge + auto-continue ──
                         # Runs after the iteration's assistant message is
                         # persisted (the judge sees exactly what the user sees).

@@ -538,7 +538,8 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
       // never inside the Datenschutz collapsible: its header counts only anon/
       // de-anon and returns '' otherwise, which swallowed MoA-only turns
       // entirely (chat 58988960), and its body hangs on showGdprDetails.
-      if ((m.kind || m.name) === 'moa_reference' || (m.kind || m.name) === 'moa_planner') {
+      if ((m.kind || m.name) === 'moa_reference' || (m.kind || m.name) === 'moa_planner'
+          || (m.kind || m.name) === 'moa_verify') {
         bodyItems.push({ kind: 'tool', sortTs: sortKey(m), item: { idx, m } });
         continue;
       }

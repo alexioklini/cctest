@@ -688,6 +688,12 @@ function _tcCallbacks(tab, live) {
       tcPrint(tab, `🎯 Iteration ${d.iteration}/${d.max} — automatische Fortsetzung: ${esc(d.text || '')}`, 'tc-inject');
       _tcSpinSet(tab, 'Denkt nach');
     },
+    moa_verify_continue: (d) => {
+      // Post-verify re-round: close the segment, announce the requested fix.
+      live.curTextRow = null; live.lastWasTool = false; live.curSegText = '';
+      tcPrint(tab, `🧬 Nachbesserung ${d.round}/${d.max} — ${esc(d.instruction || '')}`, 'tc-inject');
+      _tcSpinSet(tab, 'Denkt nach');
+    },
     // btw is rendered inline by tcBtw() from the synchronous /v1/chat/btw
     // response (works idle OR mid-stream) — no SSE btw_start/btw_done handling
     // here, which would double-render the row on this same tab.

@@ -131,6 +131,12 @@ async function _genTab_server(C) {
                 <input class="form-input" id="moa-ref-timeout" type="number" min="5" max="600" value="${parseInt(mo.reference_timeout_s)||60}" style="width:100%;margin-top:4px">
               </label>
             </div>
+            <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-top:8px">
+              <label style="font-size:12px;color:var(--text-200)">Ergebnis-Prüfung: max. Nachbesserungen (nur Plan-Delegation, interaktiv)
+                <input class="form-input" id="moa-verify-rounds" type="number" min="0" max="5" value="${mo.executor_verify_max_rounds != null ? parseInt(mo.executor_verify_max_rounds) : 2}" style="width:100%;margin-top:4px">
+                <span style="display:block;font-size:11px;color:var(--text-300);margin-top:2px">Nach dem Executor-Lauf prüft der Planner die Antwort; 0 = nur protokollieren, ohne erneuten Versuch.</span>
+              </label>
+            </div>
             <div><button class="btn-secondary" onclick="saveMoaConfig()">Experten-Gremium speichern</button></div>
           </div>`;
         })()}
@@ -2747,6 +2753,7 @@ async function saveMoaConfig() {
     max_references: Math.max(1, Math.min(5, parseInt(document.getElementById('moa-max-refs')?.value) || 3)),
     reference_max_tokens: parseInt(document.getElementById('moa-ref-tokens')?.value) || 600,
     reference_timeout_s: parseInt(document.getElementById('moa-ref-timeout')?.value) || 60,
+    executor_verify_max_rounds: Math.max(0, Math.min(5, parseInt(document.getElementById('moa-verify-rounds')?.value ?? 2))),
   }};
   try {
     const r = await API.post('/v1/services/server', body);

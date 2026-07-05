@@ -1294,6 +1294,36 @@ function buildStreamCallbacks(chat, isActive) {
           updateStatusBar();
         }
       },
+      moa_verify_continue: (d) => {
+        // Experten-Gremium post-verify (v9.286.0): the planner judged the
+        // executor's answer insufficient and re-drives the executor with a
+        // concrete gap. Structurally identical to goal_continue — commit the
+        // current answer, push the styled re-round user message, reset buffers.
+        const _hasLiveSegments = chat.messages.some(
+          m => m && m.role === 'assistant_segment');
+        const _content = _hasLiveSegments
+          ? (chat.streamingText || '')
+          : (d.assistant_text || chat.streamingText || '');
+        const assistantMsg = { role: 'assistant', content: _content, metadata: { model: chat.model } };
+        if (chat.files && chat.files.length) assistantMsg._files = chat.files;
+        if (chat.thinkingText) assistantMsg._thinking = chat.thinkingText;
+        if (chat.thinkingSummary) assistantMsg._thinkingSummary = chat.thinkingSummary;
+        chat.messages.push(assistantMsg);
+        chat.messages.push({
+          role: 'user',
+          content: `Nachbesserung angefordert: ${d.instruction || ''}`,
+          metadata: { moa_verify_continue: true, moa_verify_round: d.round || 0 },
+        });
+        chat.streamingText = '';
+        chat.thinkingText = '';
+        chat.thinkingSummary = null;
+        chat.files = [];
+        if (isActive()) {
+          setStreamStatus(chat, 'label', `🧬 Nachbesserung ${d.round}/${d.max}…`);
+          try { renderMessages(); } catch (_) {}
+          updateStatusBar();
+        }
+      },
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
         // Chronological interleave: if we committed 'assistant_segment' rows

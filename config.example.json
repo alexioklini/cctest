@@ -5627,7 +5627,8 @@
       "orchestration": "glm-5.2",
       "agentic": "glm-5.2",
       "fast": "glm-5.2"
-    }
+    },
+    "executor_verify_max_rounds": 2
   },
   "benchmark_official": {
     "artificialanalysis_api_key": "YOUR_API_KEY",

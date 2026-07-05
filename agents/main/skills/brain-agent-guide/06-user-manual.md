@@ -350,7 +350,23 @@ versioniertes Artefakt „ausfuehrungsplan.md" in der Sitzung — der
 Versionsverlauf ist im Artefakte-Panel einsehbar (9.285.1). Geplante Aufgaben und andere automatische
 Abläufe halten nicht an — dort beurteilt der Orchestrator selbst, ob sein
 Plan trägt (hält er ihn für unzureichend, behält das antwortende Modell
-die Arbeit ohne Delegation). Jeder Beitrag erscheint live als eigene 🧬-Karte im
+die Arbeit ohne Delegation). **Nachbesserung der Experten-Vorschläge**
+(9.286.0): Findet der Orchestrator die Ansätze für einen tragfähigen Plan zu
+schwach, benennt er die betroffenen Experten und lässt GENAU diese einmal
+gezielt nachbessern — mit einer konkreten Begründung, was gefehlt hat — und
+plant anschließend neu (die nachgebesserten Beiträge erscheinen als 🧬-Karte
+„· Nachbesserung"). Wichtig: Ihre Plan-Rückfragen im Review gehen immer an
+den Orchestrator, nie an die Experten — die haben ihre Arbeit mit ihrem
+Vorschlag erledigt. **Ergebnis-Prüfung nach der Ausführung** (9.286.0, nur
+im interaktiven Chat): Nachdem das ausführende Modell geantwortet hat,
+beurteilt der Orchestrator, ob die Antwort den Plan und Ihre Anfrage wirklich
+erfüllt (Vollständigkeit, Korrektheit, keine Behauptungen ohne Beleg — ein
+sauberes „nicht gefunden" gilt als richtig). Fehlt etwas, lässt er das Modell
+gezielt nachbessern und wiederholt das, bis das Ergebnis passt oder die
+eingestellte Obergrenze erreicht ist (Standard: bis zu 2 Nachbesserungen; in
+den Server-Einstellungen wählbar, 0 = nur protokollieren). Die Prüfung
+erscheint als 🧬-Karte „Ergebnis-Prüfung" („Ergebnis bestätigt" bzw.
+„Nachbesserung angefordert", aufklappbar mit der konkreten Anweisung). Jeder Beitrag erscheint live als eigene 🧬-Karte im
 Chat (Modell, Größe, Dauer, ggf. „· Ansatz"; Fehler einzelner Experten
 brechen die Anfrage nie ab) — **ein Klick auf die Karte klappt den
 vollständigen Beitragstext auf** (seit 9.270.0; enthielt die Anfrage
@@ -1465,8 +1481,12 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   finale Antwort erstellt (es wird automatisch aus dem Gremium der Spalte
   ausgelassen, damit es sich nicht selbst berät).
   Dazu: max. Experten je Anfrage (1–5), max. Tokens je Beitrag und Timeout je
-  Experte. Komplett leere Matrix oder deaktiviert = der 🧬-Eintrag
-  verschwindet aus dem Verfasser.
+  Experte. Das Feld **„Ergebnis-Prüfung: max. Nachbesserungen"** (9.286.0,
+  0–5, Standard 2) steuert die Post-Verifikation der Plan-Delegation: nach dem
+  Executor-Lauf prüft der Orchestrator im interaktiven Chat, ob die Antwort
+  Plan und Anfrage erfüllt, und fordert bis zu so vielen Nachbesserungen
+  gezielt an (0 = nur protokollieren, ohne erneuten Versuch). Komplett leere
+  Matrix oder deaktiviert = der 🧬-Eintrag verschwindet aus dem Verfasser.
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost).

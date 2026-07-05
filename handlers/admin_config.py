@@ -1001,7 +1001,8 @@ class AdminConfigHandlers:
                                 ("reference_timeout_s", 5, 600),
                                 ("reference_input_max_chars", 1000, 200000),
                                 ("planner_max_tokens", 128, 8000),
-                                ("plan_review_timeout_s", 30, 3600)):
+                                ("plan_review_timeout_s", 30, 3600),
+                                ("executor_verify_max_rounds", 0, 5)):
                 if key in moa_in:
                     try:
                         mo[key] = min(max(int(moa_in[key]), lo), hi)
