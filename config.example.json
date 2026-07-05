@@ -5652,15 +5652,15 @@
       "windows": [
         {
           "kind": "session_5h",
-          "limit_tokens": 12500000
+          "limit_tokens": 6022035
         },
         {
           "kind": "weekly",
-          "limit_tokens": 63000000,
+          "limit_tokens": 50292703,
           "anchor": "2026-07-04"
         }
       ],
-      "calibrated_at": "2026-07-04",
+      "calibrated_at": "2026-07-05",
       "since": "2026-07-04 14:17:00"
     },
     {
@@ -5678,15 +5678,15 @@
       "windows": [
         {
           "kind": "session_5h",
-          "limit_tokens": 340000
+          "limit_tokens": 1027340
         },
         {
           "kind": "weekly",
-          "limit_tokens": 1900000,
+          "limit_tokens": 1771712,
           "anchor": "2026-07-04"
         }
       ],
-      "calibrated_at": "2026-07-04",
+      "calibrated_at": "2026-07-05",
       "since": "2026-07-04 14:40:00"
     },
     {
@@ -5704,11 +5704,11 @@
       "windows": [
         {
           "kind": "monthly",
-          "limit_tokens": 7700000,
+          "limit_tokens": 17522512,
           "anchor": "2026-07-01"
         }
       ],
-      "calibrated_at": "2026-07-04",
+      "calibrated_at": "2026-07-05",
       "since": "2026-07-01 00:00:00"
     },
     {

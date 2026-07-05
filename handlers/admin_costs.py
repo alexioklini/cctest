@@ -219,8 +219,11 @@ class AdminCostsHandlers:
         # REGULAR cost_* fields. Computed at READ time from the summed tokens via
         # the normal rate lookup — no schema change, retroactive for all rows.
         def _list_cost(model: str, purpose: str, t_in: int, t_out: int, t_cr: int) -> float | None:
-            cfg = (getattr(engine, "_models_config", None) or {}).get(model) or {}
-            if not cfg.get("flat_plan"):
+            # model_is_flat_plan, NOT the raw flat_plan field: since 9.283.0
+            # flat status also comes from the coding_plan LINK (type != credit)
+            # — the raw-field check silently showed list price $0 for glm/kimi
+            # (found 2026-07-05 while answering a usage question).
+            if not engine.model_is_flat_plan(model):
                 return None          # not flat → list price == real cost
             from engine.quotas import _get_cost_rate, _unit_list_cost
             # Synthetic unit-billed rows (OCR pages / TTS chars in tokens_in)
