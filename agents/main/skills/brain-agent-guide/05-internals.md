@@ -318,6 +318,13 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   failure → fallback to the prompt's gate_hit/complexity; empty executor
   pool → stay on the current model. Delegate meta
   (planner/executor/plan_task_types/planner_ms) rides `auto_route.moa`.
+  **Memory-only downgrade** (v9.284.1): when the classifier's tools are
+  ⊆ {memory} (internal document/policy QA), the mode silently downgrades to
+  "plan" — the aggregator executes itself. Policies eval 2026-07-05:
+  delegating those turns LOST 0.774 vs 0.854 (refusal −0.23: the cheap
+  executor echoes the plan structure into the answer, breaking the
+  not-found-first shape; precision/multi_doc ≈ −0.11). Delegation stays for
+  web/multi-source turns (quality parity at −69% list cost).
 - **Fixed orchestrator** (`moa.task_aggregators {task_type: model_id}`,
   v9.274.0; missing/"auto" = auto-route pick, the default): pins WHO
   synthesizes per task type. When the fan-out gates in on that type,

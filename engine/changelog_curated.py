@@ -44,7 +44,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "Server-Einstellungen über den neuen Beitrags-Modus "
                 "„Plan-Delegation“ in der Gremium-Matrix.",
         "audience": "admin",
-        "versions": ["9.284.0"],
+        "versions": ["9.284.0", "9.284.1"],
     },
     {
         "version": "9.283.0",
