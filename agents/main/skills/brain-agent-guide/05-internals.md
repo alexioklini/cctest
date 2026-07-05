@@ -350,7 +350,13 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   ready|insufficient` line (parsed + stripped, fail-open ready);
   insufficient → no delegation, drafts fall back plan-style onto the current
   model. Review meta (review_rounds/review_outcome/plan_edited/
-  executor_overridden) rides `auto_route.moa`.
+  executor_overridden) rides `auto_route.moa`. **Versioned plan artifacts**
+  (v9.285.1, interactive review only): every plan state the reviewer sees
+  (draft / each revision / an edited approval) is persisted to the session
+  artifact folder as ONE stable `ausfuehrungsplan.md`
+  (`_persist_plan_artifact` → `_after_file_write` → one `artifact_versions`
+  row per state + live `artifact_updated`; metadata header with source/
+  round/planner/verdict/timestamp; identical text deduped; best-effort).
 - **Fixed orchestrator** (`moa.task_aggregators {task_type: model_id}`,
   v9.274.0; missing/"auto" = auto-route pick, the default): pins WHO
   synthesizes per task type. When the fan-out gates in on that type,

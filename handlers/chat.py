@@ -689,6 +689,48 @@ def deliver_plan_review_decision(session_id: str, decision: dict) -> bool:
     return True
 
 
+def _persist_plan_artifact(sid, session, live, plan_text, *, planner="",
+                           verdict="", round_no=0, source="Planner-Entwurf"):
+    """Persist the delegate plan VERSIONED into the session's artifact folder
+    (called from the INTERACTIVE review loop only — the reviewer's audit
+    trail; non-interactive turns don't persist plans). ONE stable file per
+    session (ausfuehrungsplan.md): every planner draft / revision / edited
+    approval overwrites it and registers via _after_file_write → a new
+    `artifact_versions` row per state (the versioning) + live
+    `artifact_updated` into the stream (right panel refresh). Best-effort:
+    persistence failure must never break the turn."""
+    try:
+        folder = engine._get_artifact_session_folder(sid)
+        d = os.path.join(engine.AGENTS_DIR, session.agent_id, "artifacts", folder)
+        os.makedirs(d, exist_ok=True)
+        path = os.path.join(d, "ausfuehrungsplan.md")
+        existed = os.path.exists(path)
+        head = (f"<!-- Experten-Gremium Ausführungsplan · Session {sid[:8]} · "
+                f"{source} · Runde {round_no} · Planner {planner or '?'} · "
+                f"Verdict {verdict or '-'} · "
+                f"{time.strftime('%Y-%m-%d %H:%M:%S')} -->\n\n")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(head + "# Ausführungsplan (Experten-Gremium)\n\n"
+                    + (plan_text or "").strip() + "\n")
+
+        def _cb(event_type, data):
+            if event_type in ("file_created", "artifact_updated"):
+                try:
+                    live.emit(event_type, data)
+                except Exception:
+                    pass
+        _ctx = engine.get_request_context()
+        _prev = _ctx.event_callback
+        _ctx.event_callback = _cb
+        try:
+            engine._after_file_write(
+                path, "modified" if existed else "created", session.agent_id)
+        finally:
+            _ctx.event_callback = _prev
+    except Exception as e:
+        print(f"[chat] plan artifact persist failed: {e}", flush=True)
+
+
 def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
                           plan_text, planner_meta, exec_proposal):
     """Block the interactive delegate turn on the human plan review.
@@ -716,7 +758,19 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
         candidates[0] if candidates else exec_proposal)
     rounds = 0
     meta = {"review": True, "review_rounds": 0}
+    _last_persisted = None  # dedupe: identical text never writes twice
     while True:
+        # Versioned plan persistence (interactive only — this loop IS the
+        # interactive path): each state the reviewer gets to see becomes an
+        # artifact version of ausfuehrungsplan.md.
+        if plan_text != _last_persisted:
+            _persist_plan_artifact(
+                sid, session, live, plan_text,
+                planner=moa_plan.get("planner") or "",
+                verdict=(planner_meta or {}).get("verdict") or "",
+                round_no=rounds,
+                source=("Revision" if rounds else "Planner-Entwurf"))
+            _last_persisted = plan_text
         review_id = f"planrev_{sid[:8]}_{int(time.time() * 1000) % 1_000_000}"
         slot = {"event": threading.Event(), "decision": None}
         with _plan_reviews_lock:
@@ -777,6 +831,14 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
             continue
         meta["review_outcome"] = "approved"
         break
+    # Final approved state — persisted only when the reviewer EDITED the text
+    # (an unchanged approval would just duplicate the last version).
+    if plan_text != _last_persisted:
+        _persist_plan_artifact(
+            sid, session, live, plan_text,
+            planner=moa_plan.get("planner") or "",
+            verdict=(planner_meta or {}).get("verdict") or "",
+            round_no=rounds, source="Freigabe (vom Reviewer bearbeitet)")
     live.emit("moa_plan_review_done", {
         "session_id": sid, "executor": executor, "rounds": rounds,
         "outcome": meta.get("review_outcome")})

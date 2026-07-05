@@ -344,7 +344,10 @@ lassen" — er legt einen überarbeiteten Plan zur erneuten Prüfung vor, bis
 zu 5 Runden), das **Ausführungs-Modell** per Dropdown wechseln und den Plan
 mit „Plan freigeben & ausführen" starten. Reagieren Sie nicht, wird der
 aktuelle Stand nach 15 Minuten automatisch freigegeben; Abbrechen des
-Turns bricht auch den Review ab. Geplante Aufgaben und andere automatische
+Turns bricht auch den Review ab. Jeder geprüfte Planstand (Entwurf,
+Überarbeitungen, Ihre freigegebene Fassung) landet zusätzlich als
+versioniertes Artefakt „ausfuehrungsplan.md" in der Sitzung — der
+Versionsverlauf ist im Artefakte-Panel einsehbar (9.285.1). Geplante Aufgaben und andere automatische
 Abläufe halten nicht an — dort beurteilt der Orchestrator selbst, ob sein
 Plan trägt (hält er ihn für unzureichend, behält das antwortende Modell
 die Arbeit ohne Delegation). Jeder Beitrag erscheint live als eigene 🧬-Karte im

@@ -41,9 +41,12 @@ CURATED_CHANGELOG: list[dict] = [
                 "Arbeit. Automatische Abläufe (geplante Aufgaben, "
                 "Hintergrund-Anfragen) bleiben ohne Zwischenstopp: dort "
                 "beurteilt der Orchestrator selbst, ob sein Plan trägt, und "
-                "führt nur dann aus.",
+                "führt nur dann aus. Jeder geprüfte Planstand — Entwurf, "
+                "Überarbeitungen, Ihre freigegebene Fassung — wird zudem als "
+                "versioniertes Artefakt der Sitzung abgelegt "
+                "(ausfuehrungsplan.md, Versionsverlauf im Artefakte-Panel).",
         "audience": "user",
-        "versions": ["9.285.0"],
+        "versions": ["9.285.0", "9.285.1"],
     },
     {
         "version": "9.284.0",
