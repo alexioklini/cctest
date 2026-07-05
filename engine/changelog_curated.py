@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.287.2",
+        "date": "2026-07-05",
+        "title": "Websuche liefert wieder relevante Treffer",
+        "body": "Die eingebaute Websuche hatte zuletzt teils völlig "
+                "themenfremde Ergebnisse geliefert, weil sich die "
+                "dahinterliegenden Suchdienste verändert hatten. Der "
+                "Suchdienst-Pool wurde neu vermessen und bereinigt — "
+                "Suchanfragen finden jetzt wieder zuverlässig die richtigen "
+                "Seiten (z. B. das passende Profil oder die offizielle "
+                "Museumsseite als Top-Treffer).",
+        "audience": "user",
+        "versions": ["9.287.2"],
+    },
+    {
         "version": "9.287.0",
         "date": "2026-07-05",
         "title": "HTML-Berichte mit echtem Titelbild",
