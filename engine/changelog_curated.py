@@ -37,11 +37,11 @@ CURATED_CHANGELOG: list[dict] = [
                 "thematisch passenden Titelbild statt eines abstrakten "
                 "Farbbanners: Der Agent wählt ein Bild aus seinen "
                 "Recherche-Quellen, oder es wird automatisch das Vorschaubild "
-                "der ersten im Bericht zitierten Quelle übernommen. Nur wenn "
-                "kein Bild gefunden wird, erscheint weiterhin der generierte "
-                "Banner.",
+                "einer im Bericht zitierten oder während der Recherche "
+                "besuchten Quelle übernommen. Nur wenn kein Bild gefunden "
+                "wird, erscheint weiterhin der generierte Banner.",
         "audience": "user",
-        "versions": ["9.287.0"],
+        "versions": ["9.287.0", "9.287.1"],
     },
     {
         "version": "9.286.0",

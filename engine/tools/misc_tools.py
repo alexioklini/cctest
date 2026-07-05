@@ -556,6 +556,24 @@ def _fetch_academic_pdf(pdf_url: str, max_length: int, timeout: int, max_size_mb
         return None
 
 
+def _note_turn_fetched_url(url: str) -> None:
+    """Record a successfully fetched HTML page URL on the turn's RequestContext
+    (dynamic key `turn_fetched_urls`, capped). write_document's style='report'
+    hero-image mining falls back to these when the report markdown itself cites
+    no links (chat 5142a07f: 6 pages fetched, report written link-less → banner
+    instead of a real hero). Turn-scoped by construction — the context is
+    re-entered per turn, so the list never leaks across turns."""
+    try:
+        if not (url or "").lower().startswith("https://"):
+            return
+        from engine.context import get_request_context
+        lst = get_request_context()._dynamic.setdefault("turn_fetched_urls", [])
+        if url not in lst and len(lst) < 10:
+            lst.append(url)
+    except Exception:
+        pass
+
+
 def tool_web_fetch(args: dict) -> str:
     import brain as _brain
     url = args.get("url", "")
@@ -586,6 +604,10 @@ def tool_web_fetch(args: dict) -> str:
                     if _tr is not None:
                         cached = dict(cached, content=_tr, length=len(_tr),
                                       fetch_method=f"{cached.get('fetch_method','raw')}+brain_code_regions")
+            # A cached hit is still a hero-image candidate for this turn — but
+            # only when it was an HTML page (these fetch_methods imply HTML).
+            if (cached.get("fetch_method") or "").split("+")[0] in ("markitdown", "crawl4ai", "scrapling"):
+                _note_turn_fetched_url(cached.get("url") or url)
             return _ok(cached)
 
     # Academic inlining: if this is a known academic landing/abstract page,
@@ -743,6 +765,8 @@ def tool_web_fetch(args: dict) -> str:
         # ONLY to the returned content — the cache keeps the FULL file so a
         # later non-Brainy fetch (or a fetch without a recorded hit) of the same
         # URL still gets everything.
+        if is_html:
+            _note_turn_fetched_url(final_url or url)
         result = {"url": final_url, "status": resp.status, "length": len(text),
                   "content": text, "fetch_method": fetch_method,
                   # Caching validators — additive; ignored by every caller except

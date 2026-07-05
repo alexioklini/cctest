@@ -2293,9 +2293,13 @@ def _render_cover_page(doc, style, title, frontmatter):
 
 def _mine_hero_image(markdown: str) -> str:
     """Best-effort hero image for style='report' HTML — the SAME mechanism Deep
-    Research uses: read the og:image/twitter:image of the first cited https
-    links in the content (markdown [text](url) links, NOT ![..](..) images —
-    those are already in the body). Bounded: max 3 candidate pages, each fetch
+    Research uses: read the og:image/twitter:image of candidate source pages.
+    Candidates, in order: (1) the https links cited in the content (markdown
+    [text](url) links, NOT ![..](..) images — those are already in the body),
+    (2) the HTML pages web_fetch fetched EARLIER THIS TURN (RequestContext
+    `turn_fetched_urls`) — models often write reports without citing a single
+    markdown link (chat 5142a07f), but the pages they researched from are
+    exactly the right hero sources. Bounded: max 4 candidate pages, each fetch
     itself capped (8s / 200KB in _fetch_og_image). Returns "" when nothing
     usable is found (caller falls back to the generated SVG banner)."""
     try:
@@ -2307,7 +2311,15 @@ def _mine_hero_image(markdown: str) -> str:
                 urls.append(u)
             if len(urls) >= 3:
                 break
-        for u in urls:
+        try:
+            for u in get_request_context()._dynamic.get("turn_fetched_urls", []):
+                if u not in urls:
+                    urls.append(u)
+                if len(urls) >= 4:
+                    break
+        except Exception:
+            pass
+        for u in urls[:4]:
             img = _fetch_og_image(u)
             if img:
                 return img
