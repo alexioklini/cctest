@@ -63,7 +63,15 @@ async function _genTab_server(C) {
           const ttDe = {coding:'Programmierung', math:'Mathematik', research:'Recherche',
                         analysis:'Analyse', reporting:'Berichte', creative:'Kreativ',
                         orchestration:'Orchestrierung', agentic:'Agentisch', fast:'Schnell'};
-          const cloudModels = enabledModelsWithCapability('chat').filter(([id]) => !isModelLocal(id));
+          // Gremium candidates: cloud models AND local models. Local models
+          // used to be filtered out here (MoA was cloud-only), which meant a
+          // local model configured into task_pools was silently DROPPED on the
+          // next matrix save. They are now first-class rows (tagged [lokal]);
+          // the server validates against `enabled`, not cloud-vs-local. Local
+          // as a delegate EXECUTOR additionally needs the allow_local_executor
+          // switch below (experiment; local grinds tool rounds slowly).
+          const poolModels = enabledModelsWithCapability('chat');
+          const cloudModels = poolModels;  // legacy alias for the render below
           // Seed: per-task matrix if configured, else derive from the legacy
           // flat pool × gate (so the first open of the new UI shows the
           // effective current behavior instead of an empty grid).
@@ -105,8 +113,10 @@ async function _genTab_server(C) {
           const rows = cloudModels.map(([id]) => {
             const cells = vocab.map(tt =>
               `<td style="text-align:center;padding:3px 6px"><input type="checkbox" class="moa-tp-cb" data-tt="${esc(tt)}" data-mid="${esc(id)}" ${isOn(tt, id)?'checked':''}></td>`).join('');
+            const localTag = isModelLocal(id)
+              ? ' <span style="font-size:10px;color:var(--text-300)">[lokal]</span>' : '';
             return `<tr>
-              <td style="padding:3px 8px 3px 0;font-size:12px;color:var(--text-100);white-space:nowrap">${esc(modelShortName(id))}</td>
+              <td style="padding:3px 8px 3px 0;font-size:12px;color:var(--text-100);white-space:nowrap">${esc(modelShortName(id))}${localTag}</td>
               ${cells}
             </tr>`;
           }).join('');
@@ -116,6 +126,9 @@ async function _genTab_server(C) {
             </label>
             <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text-200)" title="Bei Aufgabentypen mit Beitrags-Modus „Plan-Delegation": nur delegieren, wenn der Klassifikator für die Anfrage Web-Recherche vorsieht. Interne Dokument-/Wissensfragen (nur Memory/Dateien) führt der Orchestrator dann selbst aus — dort verschlechtert die Delegation die Antwortqualität nachweislich, während sie bei Web-Recherchen die Kosten um ~2/3 senkt.">
               <input type="checkbox" id="moa-delegate-web" ${mo.delegate_requires_web !== false?'checked':''}> Plan-Delegation nur bei Web-Bezug (empfohlen)
+            </label>
+            <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text-200)" title="EXPERIMENT: erlaubt, dass bei „Plan-Delegation" ein LOKALES Modell als Executor gewählt wird (über das Plan-Prüfungs-Dropdown im Chat). Standardmäßig aus, weil lokale Modelle Tool-Runden langsam abarbeiten (~20 tps) und der lokale oMLX-Provider nur einen Slot hat (konkurriert mit Warmup + Experten-Entwürfen). Die automatische Executor-Wahl bleibt praktisch immer Cloud; dieser Schalter macht lokale Modelle im Dropdown nur wählbar. Tool-schwächere lokale Modelle können mandatierte Recherchen überspringen — für Tests gedacht.">
+              <input type="checkbox" id="moa-allow-local-exec" ${mo.allow_local_executor?'checked':''}> Lokale Modelle als Plan-Executor zulassen (experimentell)
             </label>
             <div style="font-size:12px;color:var(--text-200);font-weight:600">Gremium-Matrix: welches Modell tritt bei welchem Aufgabentyp an — und ob es eine Antwort oder einen Ansatz beisteuert</div>
             <div style="overflow-x:auto;border:1px solid var(--border-100);border-radius:8px;padding:8px;background:var(--bg-100)">
@@ -2755,6 +2768,7 @@ async function saveMoaConfig() {
   const body = {moa: {
     enabled: !!document.getElementById('moa-enabled')?.checked,
     delegate_requires_web: !!document.getElementById('moa-delegate-web')?.checked,
+    allow_local_executor: !!document.getElementById('moa-allow-local-exec')?.checked,
     task_pools: taskPools,
     task_modes: taskModes,
     task_aggregators: taskAggs,

@@ -1478,7 +1478,8 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   Beitrags-Modi + Umbenennung 9.271.0) — schaltet das
   „🧬 Experten-Gremium"-Modell im Verfasser frei und konfiguriert es über
   eine **Matrix „Modell × Aufgabentyp"**: Zeilen sind die aktivierten
-  Cloud-Modelle, Spalten die Aufgabentypen des Klassifikators (Recherche,
+  Modelle — Cloud UND lokal (lokale mit „[lokal]"-Kennzeichnung; seit
+  9.289.1, vorher cloud-only), Spalten die Aufgabentypen des Klassifikators (Recherche,
   Analyse, Berichte, …). Pro Spalte haken Sie an, welche Modelle bei diesem
   Aufgabentyp antreten; eine Spalte ohne Häkchen heißt: für diesen Typ tritt
   kein Gremium an (die Anfrage verhält sich wie „Smart (Cloud)"). Die zweite
@@ -1496,6 +1497,13 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   verschlechtert die Delegation die Antwortqualität nachweislich, bei
   Web-Recherchen senkt sie die Kosten um ~2/3). Das Modell,
   das die Anfrage gerade selbst beantwortet, wird automatisch ausgelassen.
+  Die Checkbox **„Lokale Modelle als Plan-Executor zulassen (experimentell)"**
+  (9.289.1, Standard aus) erlaubt, dass bei „Plan-Delegation" ein LOKALES
+  Modell als ausführendes Modell gewählt wird — die automatische Wahl
+  bevorzugt weiter Cloud, ein lokales Modell wählen Sie im Plan-Prüfungs-
+  Dropdown des Chats. Standardmäßig aus, weil lokale Modelle Tool-Runden
+  langsam abarbeiten und tool-schwächere Modelle mandatierte Recherchen
+  überspringen können; für Tests gedacht.
   Die dritte
   Kopfzeile wählt je Spalte den **Orchestrator** (9.274.0): „Auto (Smart)" =
   das per Auto-Routing gewählte Modell führt die Beiträge zusammen

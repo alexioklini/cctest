@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.289.1",
+        "date": "2026-07-05",
+        "title": "Lokale Modelle im Experten-Gremium konfigurierbar",
+        "body": "Die Gremium-Matrix in den Servereinstellungen zeigt jetzt "
+                "auch lokale Modelle (gekennzeichnet mit „[lokal]“) und "
+                "speichert sie zuverlässig — bisher fielen lokale Modelle "
+                "beim Speichern der Matrix still heraus. Zusätzlich lässt sich "
+                "über einen neuen Schalter erlauben, dass bei der "
+                "Plan-Delegation ein lokales Modell die Ausführung übernimmt. "
+                "Diese Option ist standardmäßig aus und für Tests gedacht: "
+                "lokale Modelle arbeiten langsamer und überspringen "
+                "gelegentlich vorgesehene Recherche-Schritte.",
+        "audience": "admin",
+        "versions": ["9.289.1"],
+    },
+    {
         "version": "9.288.0",
         "date": "2026-07-05",
         "title": "Gezielte Suche nach Wissenschaft, Technik, Bildern und Nachrichten",

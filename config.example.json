@@ -5644,7 +5644,7 @@
     ],
     "max_references": 5,
     "reference_max_tokens": 500,
-    "reference_timeout_s": 60,
+    "reference_timeout_s": 120,
     "task_pools": {
       "research": [
         "glm-5.2",
@@ -5707,7 +5707,8 @@
       "fast": "glm-5.2"
     },
     "executor_verify_max_rounds": 2,
-    "allow_local_executor": true
+    "allow_local_executor": true,
+    "delegate_requires_web": true
   },
   "benchmark_official": {
     "artificialanalysis_api_key": "YOUR_API_KEY",
