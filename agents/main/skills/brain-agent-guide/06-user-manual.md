@@ -336,7 +336,18 @@ Experten-Ansätze in EINEN Ausführungsplan zusammen (eigene 🧬-Karte
 „Plan-Orchestrator", aufklappbar), und ein **günstigeres Modell**, das
 anhand des Plans automatisch gewählt und für den Chat gemerkt wird, führt
 den Plan mit den Tools aus — das teure Modell denkt einmal, das günstige
-erledigt die Werkzeug-Arbeit. Jeder Beitrag erscheint live als eigene 🧬-Karte im
+erledigt die Werkzeug-Arbeit. **Plan-Review** (9.285.0): Im Chat und im
+Terminal-Chat pausiert die Delegation vor der Ausführung mit einer
+Prüf-Karte — Sie können den Plan direkt im Textfeld bearbeiten, dem
+Orchestrator eine Rückfrage bzw. einen Änderungswunsch geben („Neu planen
+lassen" — er legt einen überarbeiteten Plan zur erneuten Prüfung vor, bis
+zu 5 Runden), das **Ausführungs-Modell** per Dropdown wechseln und den Plan
+mit „Plan freigeben & ausführen" starten. Reagieren Sie nicht, wird der
+aktuelle Stand nach 15 Minuten automatisch freigegeben; Abbrechen des
+Turns bricht auch den Review ab. Geplante Aufgaben und andere automatische
+Abläufe halten nicht an — dort beurteilt der Orchestrator selbst, ob sein
+Plan trägt (hält er ihn für unzureichend, behält das antwortende Modell
+die Arbeit ohne Delegation). Jeder Beitrag erscheint live als eigene 🧬-Karte im
 Chat (Modell, Größe, Dauer, ggf. „· Ansatz"; Fehler einzelner Experten
 brechen die Anfrage nie ab) — **ein Klick auf die Karte klappt den
 vollständigen Beitragstext auf** (seit 9.270.0; enthielt die Anfrage

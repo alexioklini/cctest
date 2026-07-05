@@ -331,6 +331,26 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   narrating steps (9.284.2). Settings checkbox "Plan-Delegation nur bei
   Web-Bezug (empfohlen)" in the Gremium section. Delegation stays for
   web/multi-source turns (quality parity at −69% list cost).
+- **Interactive plan review** (v9.285.0): on INTERACTIVE turns
+  (`body.interactive=true` — web chat + terminal chat always send it;
+  eval/TUI/Telegram/scheduler never do) the worker pauses between plan
+  synthesis and executor run: `_run_plan_review_loop` emits SSE
+  `moa_plan_review` {plan, planner, executor, executor_candidates
+  (enabled+cloud+ACL), verdict, round} and BLOCKS (slot registry
+  `_plan_reviews`, the `_ask_user_pending` pattern; per-round timeout
+  `moa.plan_review_timeout_s` (900) → auto-approve; cancel token aborts; max
+  5 clarify rounds) until `POST /v1/chat/plan-review` {action:
+  approve|clarify, plan?, executor?, message?} — approve executes the
+  (possibly edited) plan on the (possibly overridden, ACL-validated) model;
+  clarify feeds the feedback + current plan into a planner REVISION call
+  (`_run_moa_planner(revise=…)`, own moa_planner card) → new review round.
+  `moa_plan_review_done` clears the UI cards; reconnect-safe (LiveStream
+  replay). NON-interactive turns instead honor the planner's
+  self-assessment: `_MOA_PLANNER_SYSTEM` demands a trailing `PLAN_VERDICT:
+  ready|insufficient` line (parsed + stripped, fail-open ready);
+  insufficient → no delegation, drafts fall back plan-style onto the current
+  model. Review meta (review_rounds/review_outcome/plan_edited/
+  executor_overridden) rides `auto_route.moa`.
 - **Fixed orchestrator** (`moa.task_aggregators {task_type: model_id}`,
   v9.274.0; missing/"auto" = auto-route pick, the default): pins WHO
   synthesizes per task type. When the fan-out gates in on that type,

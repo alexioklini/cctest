@@ -2194,6 +2194,8 @@ class BrainAgentHandler(
             self._send_json({"warmup": warmup_enabled, "warming_up": s._warmup_active})
         elif path == "/v1/chat/answer":
             self._handle_chat_answer()
+        elif path == "/v1/chat/plan-review":
+            self._handle_chat_plan_review()
         elif path == "/v1/chat/gdpr-recovery":
             self._handle_chat_gdpr_recovery()
         elif path == "/v1/chat/handover":

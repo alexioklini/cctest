@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.285.0",
+        "date": "2026-07-05",
+        "title": "Ausführungspläne vor dem Start prüfen und steuern",
+        "body": "Wenn das Experten-Gremium einen Ausführungsplan delegiert, "
+                "können Sie ihn im Chat und im Terminal-Chat jetzt VOR der "
+                "Ausführung prüfen: den Plan direkt bearbeiten, dem "
+                "Orchestrator Rückfragen oder Änderungswünsche geben (er legt "
+                "daraufhin einen überarbeiteten Plan vor), das ausführende "
+                "Modell wechseln — und erst mit Ihrer Freigabe startet die "
+                "Arbeit. Automatische Abläufe (geplante Aufgaben, "
+                "Hintergrund-Anfragen) bleiben ohne Zwischenstopp: dort "
+                "beurteilt der Orchestrator selbst, ob sein Plan trägt, und "
+                "führt nur dann aus.",
+        "audience": "user",
+        "versions": ["9.285.0"],
+    },
+    {
         "version": "9.284.0",
         "date": "2026-07-04",
         "title": "Experten-Gremium: Plan-Delegation an günstigere Modelle",

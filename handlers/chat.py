@@ -5,6 +5,7 @@ import json
 import mimetypes
 import os
 import queue
+import re
 import socket
 import threading
 import time
@@ -327,7 +328,11 @@ _MOA_PLANNER_SYSTEM = (
     "memory, live web); where the request depends on them, plan the "
     "verification and state that a clean 'not found in the sources' answer "
     "is the correct outcome should the search come up empty. Concise, "
-    "numbered steps, no filler. Do not mention this setup."
+    "numbered steps, no filler. Do not mention this setup. End your reply "
+    "with ONE final line of exactly this form: 'PLAN_VERDICT: ready' if the "
+    "plan is sound and executable as written, or 'PLAN_VERDICT: insufficient "
+    "— <one short reason>' if the request or the candidate approaches do not "
+    "allow a sound plan."
 )
 
 
@@ -525,12 +530,21 @@ def _build_moa_suffix(drafts, mode="answer"):
         "part.\n\n" + block + "\n=== end candidate answers ===")
 
 
-def _run_moa_planner(plan, drafts, wire_messages, sid, live, session):
+def _run_moa_planner(plan, drafts, wire_messages, sid, live, session,
+                     revise=None):
     """Delegate mode, stage 1: ONE background call to the PLANNER model (the
     would-have-been aggregator, e.g. glm-5.2) that consolidates the reference
     approaches into a single execution plan. Returns (plan_text, meta);
     plan_text == "" on any failure — the caller falls back to the plain
     plan-mode suffix on the current model (fail-safe, never an error).
+
+    `revise` = {"prev_plan", "instruction"} → REVISION round of the
+    interactive plan review (v9.285.0): the planner gets its previous plan
+    plus the human reviewer's feedback and produces a fresh standalone plan.
+
+    The planner self-assesses via a trailing 'PLAN_VERDICT: ready|insufficient'
+    line (parsed + stripped here → meta["verdict"]) — non-interactive turns
+    use it to decide whether the plan is good enough to delegate at all.
 
     Same rules as the references: GDPR background gate, pseudonym space
     preserved (no de-anonymisation), stub filter, one cost_log row
@@ -553,16 +567,28 @@ def _run_moa_planner(plan, drafts, wire_messages, sid, live, session):
     t0 = time.time()
     _tuid = f"moaplan_{sid[:8]}_{int(t0 * 1000) % 1_000_000}"
     try:
+        _args = {"model": planner, "mode": "delegate"}
+        if revise:
+            _args["revision"] = True
         _emit_synthetic_tool_event(
             live=live, sid=sid, kind="moa_planner",
-            tool_use_id=_tuid, phase="dispatch",
-            args={"model": planner, "mode": "delegate"})
+            tool_use_id=_tuid, phase="dispatch", args=_args)
     except Exception:
         pass
     plan_text, err, used_model = "", "", planner
     try:
         prompt = (f"{transcript}\n\n=== Candidate approaches ===\n\n{approaches}"
                   f"\n\n=== end candidate approaches ===")
+        if revise:
+            prompt += (
+                "\n\n=== Your previous plan ===\n"
+                + (revise.get("prev_plan") or "")
+                + "\n\n=== Human reviewer feedback ===\n"
+                + (revise.get("instruction") or "")
+                + "\n\nProduce the REVISED complete plan honoring the "
+                  "reviewer feedback — standalone (do not reference the "
+                  "previous plan or the feedback), same rules as above "
+                  "including the final PLAN_VERDICT line.")
         safe_model, (sys_safe, msg_safe), _deanon = (
             engine.gdpr_pick_model_for_background(
                 planner, [_MOA_PLANNER_SYSTEM, prompt],
@@ -584,18 +610,31 @@ def _run_moa_planner(plan, drafts, wire_messages, sid, live, session):
         # pseudonymised wire history (same rule as the reference drafts).
     except Exception as e:
         err = str(e)[:300]
+    # Self-assessment: parse + strip the trailing PLAN_VERDICT line. Missing
+    # line = "ready" (fail-open — an older/uncooperative planner reply must
+    # not kill the delegation).
+    verdict = "ready"
+    if plan_text:
+        _vm = re.search(r"^\s*PLAN_VERDICT:\s*(ready|insufficient)\b.*$",
+                        plan_text, re.MULTILINE | re.IGNORECASE)
+        if _vm:
+            verdict = _vm.group(1).lower()
+            plan_text = (plan_text[:_vm.start()] + plan_text[_vm.end():]).strip()
     _ms = int((time.time() - t0) * 1000)
     try:
         _emit_synthetic_tool_event(
             live=live, sid=sid, kind="moa_planner", tool_use_id=_tuid,
             phase="done",
             result=({"model": used_model, "chars": len(plan_text),
-                     "mode": "delegate", "draft": plan_text}
+                     "mode": "delegate", "draft": plan_text,
+                     "verdict": verdict,
+                     **({"revision": True} if revise else {})}
                     if plan_text else {"model": used_model, "error": err}),
             status=("ok" if plan_text else "error"), duration_ms=_ms)
     except Exception:
         pass
-    return plan_text, {"model": used_model, "error": err, "ms": _ms}
+    return plan_text, {"model": used_model, "error": err, "ms": _ms,
+                       "verdict": verdict}
 
 
 def _build_moa_delegate_suffix(plan_text):
@@ -622,6 +661,126 @@ def _build_moa_delegate_suffix(plan_text):
         "If my request demands specific parts, include every demanded "
         "part.\n\n"
         + plan_text + "\n=== end execution plan ===")
+
+
+# ── MoA delegate-plan review (v9.285.0) ─────────────────────────────────────
+# Interactive turns (web chat + terminal chat send body.interactive=true)
+# pause the delegate flow between "plan synthesized" and "executor runs":
+# the worker emits `moa_plan_review` and BLOCKS here until the reviewer
+# answers via POST /v1/chat/plan-review — approve (optionally with an edited
+# plan text and/or a different executor model) or clarify (feedback → the
+# planner produces a fresh plan → new review round). One slot per session,
+# mirroring the _ask_user_pending pattern. Non-interactive callers (eval
+# harnesses, API clients, TUI, scheduler) never send the flag → no review;
+# the planner's own PLAN_VERDICT decides (insufficient → plan-mode fallback).
+_plan_reviews: dict[str, dict] = {}
+_plan_reviews_lock = threading.Lock()
+_PLAN_REVIEW_MAX_ROUNDS = 5
+
+
+def deliver_plan_review_decision(session_id: str, decision: dict) -> bool:
+    """Called by POST /v1/chat/plan-review. True iff a review was pending."""
+    with _plan_reviews_lock:
+        slot = _plan_reviews.get(session_id)
+        if not slot:
+            return False
+        slot["decision"] = decision
+        slot["event"].set()
+    return True
+
+
+def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
+                          plan_text, planner_meta, exec_proposal):
+    """Block the interactive delegate turn on the human plan review.
+
+    Emits `moa_plan_review` {plan, planner, executor, executor_candidates,
+    verdict, round} and waits for the decision:
+      - approve  → optional edited `plan` + optional `executor` override
+      - clarify  → `message` (+ optional edited `plan` as revision base) →
+                   planner revision call → NEW plan → next review round
+    Capped at _PLAN_REVIEW_MAX_ROUNDS clarification rounds; per-round timeout
+    `moa.plan_review_timeout_s` (default 900s) → auto-approve the current
+    state (a walked-away reviewer must not hang the turn forever); a turn
+    cancel aborts the wait immediately (run_turn sees the token right after).
+    Returns (plan_text, executor, meta)."""
+    cfg = engine.get_moa_config()
+    try:
+        _timeout = float(cfg.get("plan_review_timeout_s") or 900)
+    except (TypeError, ValueError):
+        _timeout = 900.0
+    allowed = moa_plan.get("allowed")
+    candidates = [m for m in engine.get_enabled_models()
+                  if not engine.is_model_local(m)
+                  and (not allowed or m in allowed)]
+    executor = exec_proposal if exec_proposal in candidates else (
+        candidates[0] if candidates else exec_proposal)
+    rounds = 0
+    meta = {"review": True, "review_rounds": 0}
+    while True:
+        review_id = f"planrev_{sid[:8]}_{int(time.time() * 1000) % 1_000_000}"
+        slot = {"event": threading.Event(), "decision": None}
+        with _plan_reviews_lock:
+            _plan_reviews[sid] = slot
+        decision = None
+        try:
+            live.emit("moa_plan_review", {
+                "session_id": sid, "review_id": review_id, "round": rounds,
+                "plan": plan_text,
+                "planner": moa_plan.get("planner") or "",
+                "executor": executor,
+                "executor_candidates": candidates,
+                "verdict": (planner_meta or {}).get("verdict") or "ready",
+            })
+            deadline = time.time() + _timeout
+            while time.time() < deadline:
+                if slot["event"].wait(0.5):
+                    decision = slot["decision"]
+                    break
+                _ct = getattr(session, "cancel_token", None)
+                if _ct is not None and getattr(_ct, "cancelled", False):
+                    meta["review_outcome"] = "cancelled"
+                    live.emit("moa_plan_review_done",
+                              {"session_id": sid, "outcome": "cancelled"})
+                    return plan_text, executor, meta
+        finally:
+            with _plan_reviews_lock:
+                _plan_reviews.pop(sid, None)
+        if decision is None:
+            meta["review_outcome"] = "timeout_auto_approved"
+            break
+        # Edited plan text (both actions may carry it — a clarify uses it as
+        # the revision base, an approve executes it verbatim).
+        if isinstance(decision.get("plan"), str) and decision["plan"].strip():
+            if decision["plan"].strip() != plan_text:
+                meta["plan_edited"] = True
+            plan_text = decision["plan"].strip()
+        _ex = (decision.get("executor") or "").strip()
+        if _ex and _ex in candidates:
+            if _ex != executor:
+                meta["executor_overridden"] = True
+            executor = _ex
+        action = (decision.get("action") or "").strip().lower()
+        _msg = (decision.get("message") or "").strip()
+        if action == "clarify" and _msg:
+            rounds += 1
+            meta["review_rounds"] = rounds
+            if rounds > _PLAN_REVIEW_MAX_ROUNDS:
+                meta["review_outcome"] = "max_rounds_auto_approved"
+                break
+            _new_plan, _pmeta2 = _run_moa_planner(
+                moa_plan, drafts, wire_messages, sid, live, session,
+                revise={"prev_plan": plan_text, "instruction": _msg})
+            if _new_plan:
+                plan_text = _new_plan
+                planner_meta = _pmeta2
+            # revision failure → keep the current plan, next round shows it
+            continue
+        meta["review_outcome"] = "approved"
+        break
+    live.emit("moa_plan_review_done", {
+        "session_id": sid, "executor": executor, "rounds": rounds,
+        "outcome": meta.get("review_outcome")})
+    return plan_text, executor, meta
 
 
 def _session_attachment_paths(session_id: str) -> list[str]:
@@ -2452,7 +2611,7 @@ def _run_deep_research_turn(session, sid, message, live, *, saved_paths=None,
     return {"reply": card, "error": None, "_dr_meta": meta, "_dr_files": _dr_files}
 
 
-def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False):
+def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False):
     """Run one chat turn for `session`, end to end.
 
     Extracted verbatim from the former `_handle_chat.worker()` closure (it
@@ -3360,11 +3519,16 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                           "planner_ms": _pl_meta.get("ms", 0)}
                                 if _pl_meta.get("error"):
                                     _dmeta["planner_error"] = _pl_meta["error"]
+                                if _pl_meta.get("verdict"):
+                                    _dmeta["planner_verdict"] = _pl_meta["verdict"]
+                                # Executor PROPOSAL (no switch yet — the
+                                # interactive review below may override it).
+                                _exec_model = ""
                                 _pin = getattr(session, "_moa_executor_model", "") or ""
                                 if _plan_text and _pin and _pin == session.model:
                                     # Turns 2+: the send handler already routed
                                     # this turn onto the pinned executor.
-                                    _dmeta["executor"] = _pin
+                                    _exec_model = _pin
                                     _dmeta["executor_pinned"] = True
                                 elif _plan_text:
                                     # First delegate turn (or the pin became
@@ -3389,65 +3553,91 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     if _exec_analysis and _exec_analysis.get("source") == "llm":
                                         _dmeta["plan_task_types"] = (
                                             _exec_analysis.get("task_types") or [])
-                                    if _exec_model and _exec_model != session.model:
-                                        # Hand the turn to the executor: switch
-                                        # model/provider and REBUILD the model-
-                                        # dependent turn state (params, prefix)
-                                        # so run_turn below runs the executor.
-                                        try:
-                                            _xp = engine.resolve_provider_for_model(_exec_model)
-                                            with session.lock:
-                                                session.model = _exec_model
-                                                session.api_key = _xp["api_key"]
-                                                session.base_url = _xp["base_url"]
-                                                session.max_context = engine.get_model_max_context(_exec_model)
-                                                session._auto_route_model = _exec_model
-                                                session._moa_executor_model = _exec_model
-                                                session._moa_planner_model = (
-                                                    _moa_plan_now.get("planner") or "")
-                                                # Move the cache freeze onto the
-                                                # executor — IT holds the session's
-                                                # conversation (and its prompt
-                                                # cache) from now on.
-                                                if engine.model_is_cache_priced(_exec_model):
-                                                    session._cache_freeze_model = _exec_model
-                                                    _cache_freeze_groups(session)[_exec_model] = (
-                                                        session._auto_tool_groups)
-                                            engine.get_request_context()._current_model = session.model
-                                            inf_params = _inf_params_for(_exec_model)
-                                            _sampling = {
-                                                "temperature": inf_params.get("temperature"),
-                                                "top_p": inf_params.get("top_p"),
-                                                "top_k": inf_params.get("top_k"),
-                                                "stop_sequences": inf_params.get("stop") or inf_params.get("stop_sequences"),
-                                            }
-                                            _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
-                                            _system_prompt, _active_tools, _active_tool_names = (
-                                                _build_prefix_for(_exec_model, inf_params))
-                                            _dmeta["executor"] = _exec_model
-                                            # Update the spinner/status: the
-                                            # executor is doing the work now.
-                                            if isinstance(auto_route, dict):
-                                                auto_route["model"] = _exec_model
-                                                auto_route["reason"] = (
-                                                    "Experten-Gremium: Plan-Delegation an "
-                                                    f"günstigeres Modell (Plan von "
-                                                    f"{_moa_plan_now.get('planner') or '?'})")
-                                                live.emit("auto_route", auto_route)
-                                        except Exception as _de:
-                                            # Switch failed → keep the planner's
-                                            # model; the plan still helps.
-                                            print(f"[chat] moa delegate switch failed: {_de}", flush=True)
-                                            _dmeta["executor_error"] = str(_de)[:200]
-                                    else:
-                                        # Pool collapsed / plan classified to the
-                                        # same model → execute here; still pin so
-                                        # later turns don't re-classify.
+                                    _exec_model = _exec_model or session.model
+                                # HUMAN PLAN REVIEW (v9.285.0) — interactive
+                                # clients only (web chat + terminal chat send
+                                # body.interactive=true): block until the
+                                # reviewer approves/edits the plan, asks for a
+                                # revision, or overrides the executor. Non-
+                                # interactive turns instead honor the
+                                # planner's own PLAN_VERDICT: insufficient →
+                                # no delegation, drafts fall back to the
+                                # plan-mode suffix on the current model (the
+                                # aggregator decides its plan wasn't good
+                                # enough and keeps the work itself).
+                                if _plan_text and interactive:
+                                    _plan_text, _exec_model, _rmeta = (
+                                        _run_plan_review_loop(
+                                            _moa_plan_now, _drafts,
+                                            _wire_messages, sid, live, session,
+                                            _plan_text, _pl_meta, _exec_model))
+                                    _dmeta.update(_rmeta)
+                                elif (_plan_text
+                                      and _pl_meta.get("verdict") == "insufficient"):
+                                    _dmeta["self_rejected"] = True
+                                    _plan_text = ""
+                                if _plan_text and _exec_model and _exec_model == session.model:
+                                    # Executor == current model (pin, pool
+                                    # collapse, or reviewer's choice): pin so
+                                    # later turns don't re-classify.
+                                    with session.lock:
+                                        session._moa_executor_model = session.model
+                                        session._moa_planner_model = (
+                                            _moa_plan_now.get("planner") or "")
+                                    _dmeta["executor"] = session.model
+                                elif _plan_text and _exec_model:
+                                    # Hand the turn to the executor: switch
+                                    # model/provider and REBUILD the model-
+                                    # dependent turn state (params, prefix)
+                                    # so run_turn below runs the executor.
+                                    try:
+                                        _xp = engine.resolve_provider_for_model(_exec_model)
                                         with session.lock:
-                                            session._moa_executor_model = session.model
+                                            session.model = _exec_model
+                                            session.api_key = _xp["api_key"]
+                                            session.base_url = _xp["base_url"]
+                                            session.max_context = engine.get_model_max_context(_exec_model)
+                                            session._auto_route_model = _exec_model
+                                            session._moa_executor_model = _exec_model
                                             session._moa_planner_model = (
                                                 _moa_plan_now.get("planner") or "")
-                                        _dmeta["executor"] = session.model
+                                            # Move the cache freeze onto the
+                                            # executor — IT holds the session's
+                                            # conversation (and its prompt
+                                            # cache) from now on.
+                                            if engine.model_is_cache_priced(_exec_model):
+                                                session._cache_freeze_model = _exec_model
+                                                _cache_freeze_groups(session)[_exec_model] = (
+                                                    session._auto_tool_groups)
+                                        engine.get_request_context()._current_model = session.model
+                                        inf_params = _inf_params_for(_exec_model)
+                                        _sampling = {
+                                            "temperature": inf_params.get("temperature"),
+                                            "top_p": inf_params.get("top_p"),
+                                            "top_k": inf_params.get("top_k"),
+                                            "stop_sequences": inf_params.get("stop") or inf_params.get("stop_sequences"),
+                                        }
+                                        _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
+                                        _system_prompt, _active_tools, _active_tool_names = (
+                                            _build_prefix_for(_exec_model, inf_params))
+                                        _dmeta["executor"] = _exec_model
+                                        # Update the spinner/status: the
+                                        # executor is doing the work now.
+                                        if isinstance(auto_route, dict):
+                                            auto_route["model"] = _exec_model
+                                            auto_route["reason"] = (
+                                                "Experten-Gremium: Plan-Delegation an "
+                                                + ("vom Reviewer gewähltes Modell"
+                                                   if _dmeta.get("executor_overridden")
+                                                   else "günstigeres Modell")
+                                                + f" (Plan von "
+                                                  f"{_moa_plan_now.get('planner') or '?'})")
+                                            live.emit("auto_route", auto_route)
+                                    except Exception as _de:
+                                        # Switch failed → keep the planner's
+                                        # model; the plan still helps.
+                                        print(f"[chat] moa delegate switch failed: {_de}", flush=True)
+                                        _dmeta["executor_error"] = str(_de)[:200]
                                 _moa_delegate_state = (_plan_text, _dmeta)
                                 if isinstance(auto_route, dict):
                                     _m = dict(auto_route.get("moa") or {})
@@ -6129,6 +6319,9 @@ class ChatHandlerMixin:
             project_name=project_name, preamble_text=preamble_text,
             content_blocks=content_blocks, disk_files=disk_files,
             auto_route=auto_route, want_auto=want_auto, deep_research=deep_research,
+            # Interactive clients (web chat + terminal chat) send this flag —
+            # it gates the MoA delegate-plan review (headless callers: none).
+            interactive=bool(body.get("interactive")),
         )
 
         # Stream this turn's events to the originating connection. The worker is
@@ -6262,6 +6455,53 @@ class ChatHandlerMixin:
             self._send_json({"error": "no pending question for this session"}, 404)
             return
         self._send_json({"delivered": True, "session_id": session_id})
+
+    def _handle_chat_plan_review(self):
+        """POST /v1/chat/plan-review — deliver the reviewer's decision for a
+        pending MoA delegate-plan review (v9.285.0).
+
+        Body: {session_id, action: "approve"|"clarify",
+               plan?: str        # edited plan text (approve: executed verbatim;
+                                 # clarify: used as the revision base)
+               executor?: str    # model override (enabled + ACL-checked)
+               message?: str}    # clarify: the feedback for the planner
+        """
+        try:
+            body = self._read_json()
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        session_id = (body.get("session_id") or "").strip()
+        action = (body.get("action") or "").strip().lower()
+        message = (body.get("message") or "").strip()
+        if not session_id or action not in ("approve", "clarify"):
+            self._send_json({"error": "session_id and action "
+                                      "('approve'|'clarify') required"}, 400)
+            return
+        if action == "clarify" and not message:
+            self._send_json({"error": "clarify requires a message"}, 400)
+            return
+        if self._session_access_check(session_id) is None:
+            return
+        executor = (body.get("executor") or "").strip()
+        if executor:
+            _mcfg = (engine._models_config or {}).get(executor) or {}
+            user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
+            if not _mcfg.get("enabled") or not _auth_mod.can_access_model(user, executor):
+                self._send_json({"error": f"Modell '{executor}' nicht verfügbar"}, 400)
+                return
+        decision = {"action": action}
+        if isinstance(body.get("plan"), str):
+            decision["plan"] = body["plan"]
+        if executor:
+            decision["executor"] = executor
+        if message:
+            decision["message"] = message
+        if not deliver_plan_review_decision(session_id, decision):
+            self._send_json({"error": "no pending plan review for this session"}, 404)
+            return
+        self._send_json({"delivered": True, "session_id": session_id,
+                         "action": action})
 
     def _handle_chat_gdpr_recovery(self):
         """POST /v1/chat/gdpr-recovery — deliver the user's response to the

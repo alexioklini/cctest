@@ -730,6 +730,61 @@ function _tcCallbacks(tab, live) {
       }
     },
     error: (d) => { _tcFinishTurn(tab, live); tcPrint(tab, esc(d.message || 'Fehler'), 'tc-err'); },
+    // MoA delegate-plan review (v9.285.0), terminal flavor: plan text +
+    // executor dropdown + Rückfrage input + Freigeben button in one row.
+    // Buttons wired via addEventListener (no globals). Plan-EDITING is a
+    // web-chat feature — the terminal offers approve / model change / revise.
+    moa_plan_review: (d) => {
+      if (tab._planReviewRow && tab._planReviewRow.parentNode) tab._planReviewRow.remove();
+      const row = document.createElement('div');
+      row.className = 'tc-row tc-plan-review';
+      row.style.cssText = 'border:1px solid var(--border-100);border-radius:8px;padding:8px 10px;margin:4px 0';
+      const cands = Array.isArray(d.executor_candidates) ? d.executor_candidates : [];
+      const opts = cands.map((m) =>
+        `<option value="${esc(m)}" ${m === d.executor ? 'selected' : ''}>${esc(typeof modelShortName === 'function' ? modelShortName(m, false) : m)}</option>`).join('');
+      const verdictBad = (d.verdict || 'ready') !== 'ready';
+      row.innerHTML = `
+        <div style="font-weight:600;margin-bottom:4px">🧬 Ausführungsplan prüfen${d.round ? ` · Runde ${d.round + 1}` : ''} (Plan von ${esc(d.planner || '?')})${verdictBad ? ' — <span style="color:var(--danger,#dc2626)">Orchestrator: unzureichend</span>' : ''}</div>
+        <pre style="white-space:pre-wrap;font-size:12px;max-height:220px;overflow-y:auto;margin:0 0 6px">${esc(d.plan || '')}</pre>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <select class="tcpr-exec form-select" style="font-size:12px;max-width:200px">${opts}</select>
+          <button class="tcpr-approve btn-secondary" style="font-size:12px">Freigeben &amp; ausführen</button>
+          <input class="tcpr-msg form-input" placeholder="Rückfrage / Änderungswunsch…" style="flex:1;min-width:160px;font-size:12px">
+          <button class="tcpr-clarify btn-secondary" style="font-size:12px">Neu planen</button>
+        </div>`;
+      const submit = async (action) => {
+        const body = { session_id: tab.sessionId, action,
+                       executor: row.querySelector('.tcpr-exec')?.value || '' };
+        if (action === 'clarify') {
+          body.message = (row.querySelector('.tcpr-msg')?.value || '').trim();
+          if (!body.message) { tcPrint(tab, 'Bitte erst eine Rückfrage eingeben.', 'tc-err'); return; }
+        }
+        row.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+        try {
+          const r = await fetch(`${BASE_URL}/v1/chat/plan-review`, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('auth-token') || ''), 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          if (action === 'clarify') _tcSpinSet(tab, 'Orchestrator plant neu');
+        } catch (e) {
+          tcPrint(tab, esc('Plan-Review fehlgeschlagen: ' + (e.message || e)), 'tc-err');
+          row.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+        }
+      };
+      row.querySelector('.tcpr-approve').addEventListener('click', () => submit('approve'));
+      row.querySelector('.tcpr-clarify').addEventListener('click', () => submit('clarify'));
+      _tcLiveInsert(tab, live, row);
+      tab._planReviewRow = row;
+      _tcSpinSet(tab, 'Wartet auf Plan-Freigabe');
+      _tcScroll(tab);
+    },
+    moa_plan_review_done: (d) => {
+      if (tab._planReviewRow && tab._planReviewRow.parentNode) tab._planReviewRow.remove();
+      tab._planReviewRow = null;
+      _tcSpinSet(tab, 'Denkt nach');
+    },
   };
 }
 

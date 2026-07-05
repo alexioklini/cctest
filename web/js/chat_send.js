@@ -1075,6 +1075,76 @@ function buildStreamCallbacks(chat, isActive) {
         const card = document.getElementById(`aq-${d.session_id}`);
         if (card) card.remove();
       },
+      // MoA delegate-plan review (v9.285.0): the worker pauses between "plan
+      // synthesized" and "executor runs" — this card lets the reviewer edit
+      // the plan, request a revision (planner produces a fresh plan → new
+      // card), change the executor model, or approve. Buttons are wired via
+      // addEventListener (no new globals). Reconnect-safe: the LiveStream
+      // replay re-emits the event; a later moa_plan_review_done removes it.
+      moa_plan_review: (d) => {
+        if (!isActive()) return;
+        const container = document.getElementById('messages-container');
+        if (!container) return;
+        const old = document.getElementById(`pr-${d.session_id}`);
+        if (old) old.remove();
+        const card = document.createElement('div');
+        card.className = 'worker-question-card';
+        card.id = `pr-${d.session_id}`;
+        const cands = Array.isArray(d.executor_candidates) ? d.executor_candidates : [];
+        const optHtml = cands.map((m) =>
+          `<option value="${esc(m)}" ${m === d.executor ? 'selected' : ''}>${esc(typeof modelShortName === 'function' ? modelShortName(m, false) : m)}</option>`).join('');
+        const verdictBad = (d.verdict || 'ready') !== 'ready';
+        card.innerHTML = `
+          <div class="wq-header">
+            <span class="wq-badge">GREMIUM</span>
+            <span>Ausführungsplan prüfen${d.round ? ` · Runde ${d.round + 1}` : ''}</span>
+          </div>
+          <div class="wq-body">
+            <div class="wq-context">Plan von ${esc(typeof modelShortName === 'function' ? modelShortName(d.planner || '', false) : (d.planner || '?'))}${verdictBad ? ' · <span style="color:var(--danger,#dc2626);font-weight:600">Orchestrator hält den Plan selbst für unzureichend</span>' : ''} — Sie können den Plan bearbeiten, das Ausführungs-Modell ändern, eine Überarbeitung anfordern oder freigeben.</div>
+            <textarea class="pr-plan" style="width:100%;min-height:160px;margin-top:6px;border:1px solid var(--border-100);border-radius:6px;padding:8px;font-size:12.5px;line-height:1.45;background:var(--bg-000);color:var(--text-200);resize:vertical;font-family:ui-monospace,monospace">${esc(d.plan || '')}</textarea>
+            <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-size:12.5px;color:var(--text-200)">Ausführungs-Modell
+              <select class="pr-exec form-select" style="flex:0 1 260px">${optHtml}</select>
+            </label>
+            <textarea class="pr-msg" placeholder="Rückfrage / Änderungswunsch an den Orchestrator (für „Neu planen")…" style="width:100%;min-height:40px;margin-top:8px;border:1px solid var(--border-100);border-radius:6px;padding:6px 8px;font-size:13px;background:var(--bg-000);color:var(--text-200);resize:vertical"></textarea>
+            <div class="wq-actions" style="margin-top:10px;display:flex;gap:8px">
+              <button class="wq-btn-answer pr-approve">Plan freigeben &amp; ausführen</button>
+              <button class="btn-secondary pr-clarify">Neu planen lassen</button>
+            </div>
+          </div>`;
+        const sid = d.session_id;
+        const submit = async (action) => {
+          const body = {
+            session_id: sid, action,
+            plan: card.querySelector('.pr-plan')?.value ?? '',
+            executor: card.querySelector('.pr-exec')?.value || '',
+          };
+          if (action === 'clarify') {
+            body.message = (card.querySelector('.pr-msg')?.value || '').trim();
+            if (!body.message) { showToast('Bitte Rückfrage/Änderungswunsch eingeben', true); return; }
+          }
+          card.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+          try {
+            await API.post('/v1/chat/plan-review', body);
+            if (action === 'clarify') {
+              const hint = document.createElement('div');
+              hint.style.cssText = 'font-size:12px;color:var(--text-300);margin-top:6px';
+              hint.textContent = 'Überarbeitung angefordert — der Orchestrator plant neu…';
+              card.querySelector('.wq-body').appendChild(hint);
+            }
+          } catch (e) {
+            showToast('Übermittlung fehlgeschlagen: ' + (e.message || e), true);
+            card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
+          }
+        };
+        card.querySelector('.pr-approve').addEventListener('click', () => submit('approve'));
+        card.querySelector('.pr-clarify').addEventListener('click', () => submit('clarify'));
+        container.appendChild(card);
+        scrollToBottom();
+      },
+      moa_plan_review_done: (d) => {
+        const card = document.getElementById(`pr-${d.session_id}`);
+        if (card) card.remove();
+      },
       fallback: (d) => {
         if (d.to) {
           chat.model = d.to;

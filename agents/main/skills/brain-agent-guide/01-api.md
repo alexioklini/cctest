@@ -194,6 +194,10 @@ streaming call, per-USER history, fixed read-only tool set. See
   single terminal `done` carries `goal {status, iteration, max, reasoning}`.
   `fulfilled` auto-ends the loop (badge ✓ until the goal is cleared/replaced).
 - `POST /v1/chat/answer` — `{session_id, answer}` unblocks `AskUserQuestion`
+- `POST /v1/chat/plan-review` — `{session_id, action: approve|clarify, plan?,
+  executor?, message?}` resolves a pending MoA delegate-plan review (9.285.0;
+  fired only on `body.interactive=true` turns; SSE `moa_plan_review` /
+  `moa_plan_review_done`); executor is enabled+ACL-validated
 - `POST /v1/chat/gdpr-recovery` — `{session_id, action}` resolve a
   pre-send PII modal (`block`, `proceed_local`, `proceed_pseudo`, …)
 - `POST /v1/chat/handover` — `{session_id}` generate a handover for a chat.
