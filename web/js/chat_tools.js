@@ -136,6 +136,7 @@ function toolDescribe(name, args) {
     moa_reference: () => `🧬 Experte: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}${a.mode === 'plan' || a.mode === 'delegate' ? ' (Ansatz)' : ''}`,
     moa_planner: () => `🧬 Plan-Orchestrator: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
     moa_verify: () => `🧬 Ergebnis-Prüfung: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
+    moa_plan_review: () => `🧬 Plan-Review: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     run_background_task: () => a.title ? `Hintergrundaufgabe: ${a.title}` : 'Hintergrundaufgabe starten',
@@ -749,6 +750,7 @@ function renderSyntheticGdprCall(msg, idx) {
     moa_reference: 'Experte',
     moa_planner: 'Plan-Orchestrator',
     moa_verify: 'Ergebnis-Prüfung',
+    moa_plan_review: 'Plan-Review',
   };
   const title = titleMap[kind] || kind;
 
@@ -777,7 +779,7 @@ function renderSyntheticGdprCall(msg, idx) {
   } else if (kind === 'moa_verify') {
     // Post-verification: the planner audited the executor's answer. The done
     // result carries the verdict (ok = passed / insufficient = re-round was
-    // triggered with the instruction).
+    // triggered with the instruction) plus a short reason (both verdicts).
     const mdl = result.model || msg.args?.model || '';
     const mName = mdl ? modelShortName(mdl, false) : 'Modell';
     if (status === 'pending') summary = `${mName} prüft das Ergebnis …`;
@@ -785,6 +787,24 @@ function renderSyntheticGdprCall(msg, idx) {
     else if (result.verdict === 'insufficient')
       summary = `${mName} · Nachbesserung angefordert`;
     else summary = `${mName} · Ergebnis bestätigt`;
+  } else if (kind === 'moa_plan_review') {
+    // Plan-review DECISION card (persisted, distinct from the transient
+    // moa_plan_review question card). result.outcome = the reviewer's verdict.
+    const mdl = result.model || msg.args?.model || '';
+    const mName = mdl ? modelShortName(mdl, false) : 'Modell';
+    const outMap = {
+      approved: 'Plan freigegeben',
+      clarify: 'Neu planen lassen',
+      cancelled: 'Abgebrochen',
+      timeout_auto_approved: 'Auto-Freigabe (Timeout)',
+      max_rounds_auto_approved: 'Auto-Freigabe (max. Runden)',
+    };
+    const outLabel = outMap[result.outcome] || (result.outcome || 'Entscheidung');
+    const extras = [];
+    if (result.executor_overridden) extras.push('Executor gewechselt');
+    if (result.plan_edited) extras.push('Plan bearbeitet');
+    if (status === 'pending') summary = `${mName} · Plan-Review …`;
+    else summary = `${outLabel}${extras.length ? ' · ' + extras.join(' · ') : ''}`;
   } else if (kind === 'moa_reference' || kind === 'moa_planner') {
     // Dispatch args carry the planned model + contribution mode; the done
     // result carries the model that actually ran (GDPR may have swapped it),
@@ -818,7 +838,8 @@ function renderSyntheticGdprCall(msg, idx) {
 
   // Per-row marker so users can recognise these at a glance: shield for the
   // GDPR kinds, DNA for MoA reference drafts.
-  const isMoa = kind === 'moa_reference' || kind === 'moa_planner' || kind === 'moa_verify';
+  const isMoa = kind === 'moa_reference' || kind === 'moa_planner' || kind === 'moa_verify'
+    || kind === 'moa_plan_review';
   const shieldBadge = isMoa
     ? ('<span class="tool-badge-synthetic" title="Experten-Gremium (Mixture of Agents) — Beitrag eines Experten-Modells" '
       + 'style="font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:8px;'
@@ -832,10 +853,16 @@ function renderSyntheticGdprCall(msg, idx) {
   // got). Note: the draft may show pseudonymised values (it deliberately
   // stays in the wire's pseudonym space — GDPR).
   // Expandable body: reference/planner drafts show their full text; the verify
-  // card shows the auditor's instruction (only when it asked for a re-round).
-  const moaDraft = kind === 'moa_verify'
-    ? String(result.instruction || '')
-    : (isMoa ? String(result.draft || '') : '');
+  // card shows the auditor's reason (both verdicts) or the concrete fix; the
+  // plan-review card shows the reviewer's clarify feedback (if any).
+  let moaDraft;
+  if (kind === 'moa_verify') {
+    moaDraft = String(result.reason || result.instruction || '');
+  } else if (kind === 'moa_plan_review') {
+    moaDraft = String(result.feedback || '');
+  } else {
+    moaDraft = isMoa ? String(result.draft || '') : '';
+  }
   if (isMoa && moaDraft) {
     return `
     <details class="tool-block tool-block-synthetic${done ? ' has-result' : ''}">

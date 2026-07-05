@@ -443,7 +443,8 @@ function _syncToolEntries() {
     // the draft text).
     const isMoaRef = m.synthetic && ((m.kind || m.name) === 'moa_reference'
       || (m.kind || m.name) === 'moa_planner'
-      || (m.kind || m.name) === 'moa_verify');
+      || (m.kind || m.name) === 'moa_verify'
+      || (m.kind || m.name) === 'moa_plan_review');
     if (m.synthetic && !isMoaRef) continue;
     // Pair with its result (match by tool_use_id, else name; don't cross turns).
     let result = null, resTs = null;
@@ -456,11 +457,21 @@ function _syncToolEntries() {
       }
       if (n.role === 'assistant' || n.role === 'user') break;
     }
-    // MoA entries: surface the DRAFT TEXT as the expandable result body
-    // (the {model, chars, draft} object would render as JSON noise).
+    // MoA entries: surface a READABLE body instead of the raw {model,…} object
+    // (which would render as JSON noise). Reference/planner → draft text;
+    // verify → verdict + reason/fix; plan_review → outcome + feedback.
     if (isMoaRef && result && typeof result === 'object') {
-      result = result.draft || result.error
-        || (result.model ? `${result.model} · ${result.chars || 0} Zeichen` : null);
+      const _k = m.kind || m.name;
+      if (_k === 'moa_verify') {
+        const _v = result.verdict === 'insufficient' ? 'Nachbesserung angefordert' : 'Ergebnis bestätigt';
+        result = result.error || `${_v}${result.reason || result.instruction ? ' — ' + (result.reason || result.instruction) : ''}`;
+      } else if (_k === 'moa_plan_review') {
+        result = result.error
+          || `${result.outcome || 'Entscheidung'}${result.feedback ? ' — ' + result.feedback : ''}`;
+      } else {
+        result = result.draft || result.error
+          || (result.model ? `${result.model} · ${result.chars || 0} Zeichen` : null);
+      }
     }
     out.push({
       kind: 'tool',

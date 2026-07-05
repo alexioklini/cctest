@@ -366,7 +366,15 @@ gezielt nachbessern und wiederholt das, bis das Ergebnis passt oder die
 eingestellte Obergrenze erreicht ist (Standard: bis zu 2 Nachbesserungen; in
 den Server-Einstellungen wählbar, 0 = nur protokollieren). Die Prüfung
 erscheint als 🧬-Karte „Ergebnis-Prüfung" („Ergebnis bestätigt" bzw.
-„Nachbesserung angefordert", aufklappbar mit der konkreten Anweisung). Jeder Beitrag erscheint live als eigene 🧬-Karte im
+„Nachbesserung angefordert", aufklappbar mit der Begründung des Orchestrators
+bzw. der konkreten Nachbesserungs-Anweisung). **Nachvollziehbarkeit**
+(9.286.1): Jede Delegations-Entscheidung hinterlässt eine eigene 🧬-Karte im
+Chat-Verlauf UND im Aktivität-Tab des rechten Panels — die Plan-Review-Karte
+„Plan-Review" zeigt das Ergebnis Ihrer Prüfung („Plan freigegeben", „Neu
+planen lassen" mit Ihrem Feedback zum Aufklappen, „Executor gewechselt",
+„Plan bearbeitet", „Abgebrochen" oder eine Auto-Freigabe bei Zeitablauf), und
+die Ergebnis-Prüfung wie oben. So bleibt im Verlauf sichtbar, was geprüft,
+entschieden und nachgebessert wurde. Jeder Beitrag erscheint live als eigene 🧬-Karte im
 Chat (Modell, Größe, Dauer, ggf. „· Ansatz"; Fehler einzelner Experten
 brechen die Anfrage nie ab) — **ein Klick auf die Karte klappt den
 vollständigen Beitragstext auf** (seit 9.270.0; enthielt die Anfrage

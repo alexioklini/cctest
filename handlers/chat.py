@@ -378,10 +378,12 @@ _MOA_VERIFY_SYSTEM = (
     "not answer beyond its evidence (a clean 'not found' where sources were "
     "empty is CORRECT, not a failure). Do NOT rewrite the answer and do NOT "
     "nitpick style or wording. Reply with ONE line of exactly this form: "
-    "'VERIFY_VERDICT: ok' if the answer is acceptable as-is, or "
+    "'VERIFY_VERDICT: ok — <one short sentence on why the answer is "
+    "acceptable>' if the answer is acceptable as-is, or "
     "'VERIFY_VERDICT: insufficient — <one concrete, actionable instruction "
     "telling the model exactly what to fix or add>' if it genuinely falls "
-    "short. Prefer 'ok' unless there is a real, fixable gap."
+    "short. Always give the short reason after the dash. Prefer 'ok' unless "
+    "there is a real, fixable gap."
 )
 
 
@@ -870,7 +872,7 @@ def _run_executor_verify(plan_text, reply, wire_messages, planner_model,
             tool_use_id=_tuid, phase="dispatch", args={"model": planner})
     except Exception:
         pass
-    verdict, instruction, err, used_model = "ok", "", "", planner
+    verdict, instruction, reason, err, used_model = "ok", "", "", "", planner
     try:
         prompt = (f"{transcript}\n\n=== Execution plan ===\n{plan_text}"
                   f"\n\n=== Executor answer ===\n{reply}\n\n=== end ===")
@@ -894,8 +896,12 @@ def _run_executor_verify(plan_text, reply, wire_messages, planner_model,
                 _vtext, re.IGNORECASE | re.DOTALL)
             if _vm:
                 verdict = _vm.group(1).lower()
+                _tail = (_vm.group(2) or "").strip()
+                # ok → the tail is the acceptance rationale; insufficient → the
+                # tail is the actionable fix (also kept as the shown reason).
                 if verdict == "insufficient":
-                    instruction = (_vm.group(2) or "").strip()
+                    instruction = _tail
+                reason = _tail
             # No parseable verdict line → fail-open "ok" (don't block on a
             # non-cooperative auditor reply).
     except Exception as e:
@@ -909,13 +915,13 @@ def _run_executor_verify(plan_text, reply, wire_messages, planner_model,
             live=live, sid=sid, kind="moa_verify", tool_use_id=_tuid,
             phase="done",
             result=({"model": used_model, "verdict": verdict,
-                     "instruction": instruction}
+                     "instruction": instruction, "reason": reason}
                     if not err else {"model": used_model, "error": err}),
             status=("ok" if not err else "error"), duration_ms=_ms)
     except Exception:
         pass
     return ok, ("" if ok else instruction), {
-        "model": used_model, "verdict": verdict, "ms": _ms,
+        "model": used_model, "verdict": verdict, "reason": reason, "ms": _ms,
         **({"error": err} if err else {})}
 
 
@@ -1015,6 +1021,33 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
     rounds = 0
     meta = {"review": True, "review_rounds": 0}
     _last_persisted = None  # dedupe: identical text never writes twice
+
+    def _emit_review_outcome_card(outcome, fb=""):
+        """One PERSISTENT synthetic card recording the review DECISION (visible
+        in the chat tool-flow + the Aktivität tab, unlike the transient
+        moa_plan_review question card). Fires once per review cycle at the
+        decisive exit. result carries the outcome + what the reviewer changed
+        (executor override, plan edit, clarify feedback) — the plan text itself
+        lives in the versioned ausfuehrungsplan.md artifact, not here."""
+        try:
+            _tuid = f"planrevres_{sid[:8]}_{int(time.time() * 1000) % 1_000_000}"
+            _res = {"model": moa_plan.get("planner") or "",
+                    "outcome": outcome, "executor": executor,
+                    "rounds": rounds,
+                    "executor_overridden": bool(meta.get("executor_overridden")),
+                    "plan_edited": bool(meta.get("plan_edited"))}
+            if fb:
+                _res["feedback"] = fb[:600]
+            _emit_synthetic_tool_event(
+                live=live, sid=sid, kind="moa_plan_review",
+                tool_use_id=_tuid, phase="dispatch",
+                args={"model": moa_plan.get("planner") or ""})
+            _emit_synthetic_tool_event(
+                live=live, sid=sid, kind="moa_plan_review",
+                tool_use_id=_tuid, phase="done", result=_res,
+                status=("error" if outcome == "cancelled" else "ok"))
+        except Exception:
+            pass
     while True:
         # Versioned plan persistence (interactive only — this loop IS the
         # interactive path): each state the reviewer gets to see becomes an
@@ -1049,6 +1082,7 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
                 _ct = getattr(session, "cancel_token", None)
                 if _ct is not None and getattr(_ct, "cancelled", False):
                     meta["review_outcome"] = "cancelled"
+                    _emit_review_outcome_card("cancelled")
                     live.emit("moa_plan_review_done",
                               {"session_id": sid, "outcome": "cancelled"})
                     return plan_text, executor, meta
@@ -1072,6 +1106,9 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
         action = (decision.get("action") or "").strip().lower()
         _msg = (decision.get("message") or "").strip()
         if action == "clarify" and _msg:
+            # Reviewer asked for a revision — record the decision (with the
+            # feedback) as its own card before the planner re-plans.
+            _emit_review_outcome_card("clarify", fb=_msg)
             rounds += 1
             meta["review_rounds"] = rounds
             if rounds > _PLAN_REVIEW_MAX_ROUNDS:
@@ -1095,6 +1132,9 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
             planner=moa_plan.get("planner") or "",
             verdict=(planner_meta or {}).get("verdict") or "",
             round_no=rounds, source="Freigabe (vom Reviewer bearbeitet)")
+    # Final decision card (approved / timeout auto-approve / max-rounds
+    # auto-approve — the cancel + clarify paths already emitted their own).
+    _emit_review_outcome_card(meta.get("review_outcome") or "approved")
     live.emit("moa_plan_review_done", {
         "session_id": sid, "executor": executor, "rounds": rounds,
         "outcome": meta.get("review_outcome")})

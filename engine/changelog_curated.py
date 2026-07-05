@@ -44,9 +44,12 @@ CURATED_CHANGELOG: list[dict] = [
                 "landen unvollständige Ergebnisse seltener bei Ihnen. Beide "
                 "Prüfungen sind als eigene Karten im Chat nachvollziehbar; die "
                 "Zahl der Nachbesserungen ist in den Server-Einstellungen "
-                "wählbar (0 = nur protokollieren).",
+                "wählbar (0 = nur protokollieren). Jede Entscheidung — "
+                "Plan-Freigabe, Rückfrage, Executor-Wechsel und das Ergebnis "
+                "der Ergebnis-Prüfung — erscheint als eigene 🧬-Karte im Chat "
+                "und im Aktivität-Tab, jeweils mit Begründung.",
         "audience": "user",
-        "versions": ["9.286.0"],
+        "versions": ["9.286.0", "9.286.1"],
     },
     {
         "version": "9.285.0",

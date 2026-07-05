@@ -388,8 +388,23 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   non-interactive (eval/scheduler/API stay lean). Verdict folded into the
   assistant message metadata (`auto_route.moa.verify`, persisted → survives
   reload). Card `kind="moa_verify"` ("Ergebnis bestätigt" / "Nachbesserung
-  angefordert", expandable = fix instruction); SSE `moa_verify_continue`
-  closes the answer bubble (web + terminal chat).
+  angefordert", expandable = the auditor's reason (BOTH verdicts, v9.286.1 —
+  `_MOA_VERIFY_SYSTEM` demands a reason after the dash on ok too) or the fix);
+  SSE `moa_verify_continue` closes the answer bubble (web + terminal chat).
+- **Decision visibility** (v9.286.1): the plan-review + verify + refinement
+  loops all emit PERSISTENT synthetic cards (chat tool-flow + Aktivität tab),
+  so every delegation decision + its OUTCOME is auditable (the earlier
+  transient `moa_plan_review` question card vanished on `_done`, leaving
+  nothing behind). NEW `kind="moa_plan_review"` (`_emit_review_outcome_card`
+  in `_run_plan_review_loop`): ONE result card per decision point —
+  cancel/clarify emit immediately (clarify carries the reviewer feedback as
+  the expandable body), approved/timeout/max_rounds at loop end; result =
+  {outcome, executor, executor_overridden, plan_edited, feedback} (the plan
+  text itself stays in the versioned `ausfuehrungsplan.md` artifact, not
+  duplicated in the card). Outcome labels: "Plan freigegeben" / "Neu planen
+  lassen" / "Abgebrochen" / "Auto-Freigabe (Timeout|max. Runden)". All MoA
+  cards route generically through `synthetic_tool_use`/`synthetic_tool_result`
+  (kind-based) — no new SSE handler, no new JS globals.
 - **Fixed orchestrator** (`moa.task_aggregators {task_type: model_id}`,
   v9.274.0; missing/"auto" = auto-route pick, the default): pins WHO
   synthesizes per task type. When the fan-out gates in on that type,
