@@ -1437,7 +1437,12 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   Ansätzen EINEN Ausführungsplan, der Plan wird klassifiziert und ein
   günstigeres, dazu passendes Modell führt ihn mit den Tools aus (es wird
   für die Session gepinnt; der Plan-Aufruf erscheint im Kosten-Popover als
-  „moa_planner"). Das Modell,
+  „moa_planner"). Die Checkbox **„Plan-Delegation nur bei Web-Bezug
+  (empfohlen)"** (9.284.2, Standard an) begrenzt die Delegation auf
+  Anfragen, für die der Klassifikator Web-Recherche vorsieht — interne
+  Dokument-/Wissensfragen führt der Orchestrator selbst aus (dort
+  verschlechtert die Delegation die Antwortqualität nachweislich, bei
+  Web-Recherchen senkt sie die Kosten um ~2/3). Das Modell,
   das die Anfrage gerade selbst beantwortet, wird automatisch ausgelassen.
   Die dritte
   Kopfzeile wählt je Spalte den **Orchestrator** (9.274.0): „Auto (Smart)" =

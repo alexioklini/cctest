@@ -884,6 +884,10 @@ class AdminConfigHandlers:
             mo = server_config.setdefault("moa", {})
             if "enabled" in moa_in:
                 mo["enabled"] = bool(moa_in["enabled"])
+            # Delegate-mode web gate: delegate only when the classifier says
+            # the turn needs the web (see brain._MOA_DEFAULTS).
+            if "delegate_requires_web" in moa_in:
+                mo["delegate_requires_web"] = bool(moa_in["delegate_requires_web"])
             if "reference_pool" in moa_in:
                 pool_in = moa_in["reference_pool"] or []
                 if not isinstance(pool_in, list):

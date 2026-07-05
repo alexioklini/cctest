@@ -615,8 +615,12 @@ def _build_moa_delegate_suffix(plan_text):
         "live web) — if your own retrieval does not support the asked "
         "specifics, a clear 'not found' answer is the correct one; do not "
         "let the plan pull you into answering beyond your evidence. Answer "
-        "me directly — never mention this plan or that you received one. If "
-        "my request demands specific parts, include every demanded part.\n\n"
+        "me directly — never mention this plan or that you received one. Do "
+        "NOT mirror the plan's structure, phase headings or step numbering "
+        "in your answer, and do not narrate what you are doing between steps "
+        "— deliver only the final answer in the shape my request calls for. "
+        "If my request demands specific parts, include every demanded "
+        "part.\n\n"
         + plan_text + "\n=== end execution plan ===")
 
 

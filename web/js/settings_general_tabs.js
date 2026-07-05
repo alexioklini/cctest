@@ -106,6 +106,9 @@ async function _genTab_server(C) {
             <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-100)">
               <input type="checkbox" id="moa-enabled" ${mo.enabled?'checked':''}> Experten-Gremium aktiviert (blendet das 🧬-Modell im Verfasser ein)
             </label>
+            <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--text-200)" title="Bei Aufgabentypen mit Beitrags-Modus „Plan-Delegation": nur delegieren, wenn der Klassifikator für die Anfrage Web-Recherche vorsieht. Interne Dokument-/Wissensfragen (nur Memory/Dateien) führt der Orchestrator dann selbst aus — dort verschlechtert die Delegation die Antwortqualität nachweislich, während sie bei Web-Recherchen die Kosten um ~2/3 senkt.">
+              <input type="checkbox" id="moa-delegate-web" ${mo.delegate_requires_web !== false?'checked':''}> Plan-Delegation nur bei Web-Bezug (empfohlen)
+            </label>
             <div style="font-size:12px;color:var(--text-200);font-weight:600">Gremium-Matrix: welches Modell tritt bei welchem Aufgabentyp an — und ob es eine Antwort oder einen Ansatz beisteuert</div>
             <div style="overflow-x:auto;border:1px solid var(--border-100);border-radius:8px;padding:8px;background:var(--bg-100)">
               ${cloudModels.length ? `<table style="border-collapse:collapse;min-width:100%">
@@ -2737,6 +2740,7 @@ async function saveMoaConfig() {
   });
   const body = {moa: {
     enabled: !!document.getElementById('moa-enabled')?.checked,
+    delegate_requires_web: !!document.getElementById('moa-delegate-web')?.checked,
     task_pools: taskPools,
     task_modes: taskModes,
     task_aggregators: taskAggs,
