@@ -800,6 +800,13 @@ class _WorkflowInterpreter:
             for node in self.program.body:
                 if self.execution._cancel.is_set():
                     return None
+                # Cooperative pause: block between top-level statements while
+                # the run is paused (wakes on resume or cancel).
+                pw = getattr(self.execution, "_pause_wait", None)
+                if pw:
+                    pw()
+                    if self.execution._cancel.is_set():
+                        return None
                 self._exec(node)
         except _WFReturnValue as rv:
             self.execution._return_value = rv.value
@@ -1051,19 +1058,29 @@ class _WorkflowInterpreter:
                 if fp:
                     in_files.append(str(fp))
             if instruction:
-                ex.record_message("user", instruction, files=in_files, line=line)
-            # Assistant turn = the agent's full answer.
+                # The user turn must sit BEFORE the assistant answer. The live
+                # progress turn (already appended when the step began) IS the
+                # assistant turn — so when it was finalised in place, insert the
+                # user turn just before it instead of appending after.
+                done_inplace = isinstance(parsed, dict) and parsed.get("_transcript_done")
+                if done_inplace:
+                    ex.insert_user_before_last_answer(instruction, files=in_files, line=line)
+                else:
+                    ex.record_message("user", instruction, files=in_files, line=line)
+            # Record output paths + (unless the live turn already became the
+            # answer) the assistant answer turn.
             text = ""
             files = []
             model = ""
             if isinstance(parsed, dict):
-                text = str(parsed.get("text") or "")
+                text = str(parsed.get("display_text") or parsed.get("text") or "")
                 model = str(parsed.get("model") or "")
                 for p in (parsed.get("files") or []):
                     if p:
                         files.append(p)
                         ex.record_output_path(p)
-            ex.record_message("assistant", text, model=model, files=files, line=line)
+            if not (isinstance(parsed, dict) and parsed.get("_transcript_done")):
+                ex.record_message("assistant", text, model=model, files=files, line=line)
         elif tool in ("write_file", "edit_file"):
             p = ""
             if isinstance(parsed, dict):

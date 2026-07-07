@@ -416,10 +416,17 @@ def run_turn_blocking(
     turn_id: str | None = None,
     forced_tool: dict | None = None,
     prompt_cache_key: str = "",
+    emit: Callable | None = None,
 ) -> dict:
     """Non-streaming variant for background callers (scheduler, summariser,
     classifier, refine, …). Same return shape as run_turn() minus the live
     event_callback hook.
+
+    `emit`: optional per-round event sink `(type, data)` for callers that want
+    incremental progress (e.g. a workflow agent_step surfacing each tool call in
+    the run view). Defaults to a no-op — background callers that only need the
+    final reply pass nothing. This does NOT install a session LiveStream; it's a
+    lightweight tap on the loop's event stream.
 
     `forced_tool`: structured-output mode. An Anthropic-shape tool def
     {name, description, input_schema}. When set, the model is offered ONLY this
@@ -456,6 +463,7 @@ def run_turn_blocking(
 
     def _noop_emit(_t, _d):
         pass
+    _emit = emit or _noop_emit
 
     # Register a cancel flag so detached background tasks can stop this turn via
     # cancel_turn(turn_id) (the in-process replacement for the sidecar cancel).
@@ -474,7 +482,7 @@ def run_turn_blocking(
                 disable_parallel_tool_use=False,
                 prompt_cache_key=(prompt_cache_key or ""),
                 forced_tool=forced_tool, api_key=api_key, base_url=base_url,
-                emit=_noop_emit, is_cancelled=_cancel_ev.is_set)
+                emit=_emit, is_cancelled=_cancel_ev.is_set)
     except Exception as e:
         error_msg = f"inprocess loop {type(e).__name__}: {e}"
     finally:
@@ -516,9 +524,14 @@ def background_call(
     forced_tool: dict | None = None,
     temperature: float | None = None,
     prompt_cache_key: str = "",
+    emit: Callable | None = None,
 ) -> dict:
     """Thin convenience wrapper around `run_turn_blocking` for background /
     non-interactive LLM calls.
+
+    `emit`: optional per-round progress sink `(type, data)` forwarded to
+    run_turn_blocking — used by the workflow agent_step to surface incremental
+    tool activity in the run view. Default None (no-op).
 
     `bg_task=True` marks this as a detached background-task run so the tool
     dispatch context carries `current_bg_task` — the run_background_task nesting
@@ -596,6 +609,7 @@ def background_call(
         timeout_s=timeout_s,
         turn_id=turn_id,
         forced_tool=forced_tool,
+        emit=emit,
         # Prompt-cache key for background calls: default to the cost-purpose tag
         # (or `purpose`), so all same-purpose calls share one cache key and their
         # byte-stable instruction/schema prefix bills the repeated span at the

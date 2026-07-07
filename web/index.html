@@ -339,6 +339,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <button class="lcm-warn-compact" onclick="triggerLCM();document.getElementById('lcm-warn-banner').classList.remove('visible')">Jetzt komprimieren</button>
           <button class="lcm-warn-dismiss" onclick="document.getElementById('lcm-warn-banner').classList.remove('visible')" title="Schließen">×</button>
         </div>
+        <!-- Workflow upload prompt — replaces the composer while a live run
+             blocks on ask_user_for_file. Stable host (renderMessages() never
+             touches it), so the file <input> survives poll re-renders. -->
+        <div id="wf-upload-host" class="hidden"></div>
         <!-- chat composer injected by initComposers() -->
         <div id="chat-composer-mount"></div>
         <div class="chat-disclaimer">Brain Agent kann Fehler machen. Bitte überprüfen Sie die Antworten.</div>
@@ -1306,7 +1310,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <div id="wf-line-numbers" class="wf-line-numbers"></div>
         <div class="wf-editor-area">
           <pre id="wf-highlight" class="wf-highlight" aria-hidden="true"></pre>
-          <textarea id="wf-editor" class="wf-editor" spellcheck="false" wrap="off"
+          <textarea id="wf-editor" class="wf-editor" spellcheck="false" wrap="soft"
                     oninput="wfOnInput(); wfOnScriptChange()" onscroll="wfSyncScroll()"
                     onkeydown="wfOnKeydown(event)"
                     onblur="wfOnEditorBlur()"

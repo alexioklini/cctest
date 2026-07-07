@@ -7353,9 +7353,15 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   margin: 0;
   padding: 12px 14px;
   font: 13px/1.55 'SF Mono', 'Monaco', 'Menlo', monospace;
-  white-space: pre;
-  word-wrap: normal;
-  overflow: auto;
+  /* Soft word-wrap: long lines wrap instead of scrolling off-screen. The
+     overlay <pre> and the <textarea> MUST use identical wrapping so the syntax
+     highlight stays aligned with the caret/text — same white-space + break
+     rules on both (they share this rule). */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 0;
   background: transparent;
   color: inherit;
@@ -7542,6 +7548,30 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 }
 
 /* Upload prompt — replaces raw <input type=file> with a styled drop zone */
+/* Host wrapper: sits in the chat-input-area (where the composer normally is)
+   while a live workflow run needs an upload or shows run controls. */
+.wf-upload-host {
+  margin: 0 auto 8px;
+  width: 100%;
+}
+.wf-upload-host.hidden { display: none; }
+
+/* Inline pause/resume + stop buttons on the workflow "in Bearbeitung" status
+   message in the chat. */
+.wf-msg-controls {
+  display: flex; gap: 8px; align-items: center;
+  margin-top: 8px;
+}
+.wf-msg-ctrl {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; font-size: 12px; line-height: 1.4;
+  border: 1px solid var(--border, #e2e2e5); border-radius: 6px;
+  background: var(--surface-2, #f7f7f8); color: var(--text, #1f2937);
+  cursor: pointer;
+}
+.wf-msg-ctrl:hover { background: var(--surface-hover, #ececed); }
+.wf-msg-ctrl-stop { color: #dc2626; }
+.wf-msg-ctrl-stop:hover { background: #fecaca33; }
 .wf-upload { display: flex; flex-direction: column; gap: 12px; }
 .wf-upload-header { display: flex; align-items: flex-start; gap: 12px; }
 .wf-upload-icon {

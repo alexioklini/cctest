@@ -1,11 +1,11 @@
 WORKFLOW "Ausweisprüfung – Sicherheitsmerkmale & Manipulationserkennung"
 DESCRIPTION "Vollständige forensische Ausweisprüfung eines hochgeladenen Ausweisfotos: Metadaten, MRZ-Validierung, Datenkonsistenz, Manipulationsanalyse und Sicherheitsmerkmale."
 TRIGGER manual
-MODEL kimi-k2.6
+MODEL mistral-small-latest
 
 SET f = CALL ask_user_for_file prompt="Bitte lade das Ausweis-Foto (Reisepass, ID-Karte etc.) als Bild hoch." accept="image/*"
 
-SET r = CALL agent_step plan=plan_md instruction="Führe die vollständige Ausweisprüfung gemäss Plan an dem hochgeladenen Ausweisbild durch. Arbeite jeden Schritt nacheinander ab: kopiere das Bild, extrahiere Metadaten, bestimme Dokumenttyp und Land, schneide die MRZ-Region aus und führe OCR durch, validiere alle ICAO-9303-Prüfziffern per Python, gleiche sichtbare Felder gegen die MRZ ab, führe forensische Bildanalyse durch (ELA, Noise-Konsistenz, Kantenanalyse, EXIF-Konsistenz), bewerte sichtbare Sicherheitsmerkmale und recherchiere Referenzmerkmale. Schreibe alle Zwischenergebnisse in Dateien (mrz_check.txt, ela_result.jpg etc.) und den fertigen Prüfbericht als Markdown-Datei. Der Bericht muss alle Plan-Schritte dokumentieren und ein Gesamturteil enthalten." files=[f.path] max_rounds=20 expected_output="Vollständiger Markdown-Bericht mit MRZ-Validierung, forensischer Analyse, Sicherheitsmerkmalen und Gesamturteil; Zwischendateien mrz_check.txt, ela_result.jpg"
+SET r = CALL agent_step plan=plan_md instruction="Führe die vollständige Ausweisprüfung gemäss Plan an dem hochgeladenen Ausweisbild durch. Arbeite jeden Schritt nacheinander ab: kopiere das Bild, extrahiere Metadaten, bestimme Dokumenttyp und Land, schneide die MRZ-Region aus und führe OCR durch, validiere alle ICAO-9303-Prüfziffern per Python, gleiche sichtbare Felder gegen die MRZ ab, führe forensische Bildanalyse durch (ELA, Noise-Konsistenz, Kantenanalyse, EXIF-Konsistenz), bewerte sichtbare Sicherheitsmerkmale und recherchiere Referenzmerkmale. Schreibe alle Zwischenergebnisse in Dateien (mrz_check.txt, ela_result.jpg etc.) und den fertigen Prüfbericht als Markdown-Datei. Der Bericht muss alle Plan-Schritte dokumentieren und ein Gesamturteil enthalten." model="mistral-small-latest" files=[f.path] max_rounds=20 expected_output="Vollständiger Markdown-Bericht mit MRZ-Validierung, forensischer Analyse, Sicherheitsmerkmalen und Gesamturteil; Zwischendateien mrz_check.txt, ela_result.jpg"
 
 SET report_path = "ausweispruefung_" + now("%Y%m%d_%H%M%S") + ".md"
 

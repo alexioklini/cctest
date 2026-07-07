@@ -2129,6 +2129,10 @@ class BrainAgentHandler(
             self._handle_workflow_approve(path)
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/cancel"):
             self._handle_workflow_cancel(path)
+        elif path.startswith("/v1/workflows/executions/") and path.endswith("/pause"):
+            self._handle_workflow_pause(path)
+        elif path.startswith("/v1/workflows/executions/") and path.endswith("/resume"):
+            self._handle_workflow_resume(path)
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/upload-file"):
             self._handle_workflow_upload_file(path)
         elif path.startswith("/v1/workflows/history/") and "/promote-session/" in path:

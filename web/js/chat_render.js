@@ -1143,10 +1143,16 @@ function renderAssistantMessage(msg, idx) {
   const cavEff = (parseInt(meta?.caveman_chat) || 0) || (parseInt(meta?.caveman_system) || 0);
   const cavClass = cavEff ? ` msg-caveman-${cavEff}` : '';
 
+  // Workflow run status line ("in Bearbeitung" / "pausiert") gets inline
+  // pause/resume + stop buttons appended to its content block (wfRunControlsHtml
+  // defined in workflows.js). Only on the synthetic control message.
+  const wfControlsHtml = (msg._wfControls && typeof wfRunControlsHtml === 'function')
+    ? wfRunControlsHtml(!!msg._wfPaused) : '';
+
   return `
     <div class="msg-turn msg-turn-assistant"${msg.id != null ? ` data-msg-id="${msg.id}"` : ''}>
       ${thinkingHtml}
-      <div class="msg-assistant msg-content${cavClass}">${rendered}</div>
+      <div class="msg-assistant msg-content${cavClass}">${rendered}${wfControlsHtml}</div>
       ${citationWarnHtml}
       ${citationLegendHtml}
       ${filesHtml}

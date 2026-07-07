@@ -593,6 +593,9 @@ already anonymises (see 05-internals).
 - `GET /v1/workflows/history` / `.../<id>` / `.../<id>/file[-preview]`
 - `GET /v1/agents/<id>/workflows` / `POST /v1/agents/<id>/workflows/<wid>/run`
 - `POST /v1/workflows/executions/<id>/approve` / `/cancel` / `/upload-file`
+- `POST /v1/workflows/executions/<id>/pause` / `/resume` (v9.291.2) —
+  kooperative Pause: greift am nächsten Top-Level-Statement, ein laufender
+  agent_step-LLM-Turn läuft erst zu Ende. `to_dict()`/GET liefert `paused`.
 - `POST /v1/workflows/history/<id>/promote-session/<sid>` / `/session`
 - `POST /v1/workflows/generate` — KI-Workflow-Generierung (v9.290.0): body
   `{source: {type: chat|plan|nl, session_id?|text?}, agent_id?, instructions?,

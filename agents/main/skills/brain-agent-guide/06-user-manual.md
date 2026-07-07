@@ -1171,6 +1171,33 @@ Datei-Uploads und `ask_user_for_file` / `ask_llm`-Blöcken. Aus der
 Workflows-Ansicht starten; das **Ausführungen**-Panel zeigt den
 Live-Status mit Freigeben-/Abbrechen-Knöpfen.
 
+Während ein Workflow-Lauf läuft, ist das normale Eingabefeld ausgeblendet
+(Chatten mitten im Lauf ist nicht vorgesehen). Im Chat-Verlauf zeigt eine
+Statuszeile **„Workflow-Lauf in Bearbeitung …"** (bzw. „pausiert") mit direkt
+daneben liegenden Knöpfen **Pause** / **Fortsetzen** und **Stopp** (bricht den
+Lauf ab). Pause greift kooperativ am nächsten Schritt — ein gerade laufender
+Teilschritt wird erst zu Ende geführt.
+
+Während ein Arbeitsschritt läuft, erscheint sein **Fortschritt live** im
+Verlauf — genau wie in einem normalen Chat: jeder Werkzeug-Aufruf als Zeile mit
+Beschreibung (z. B. „Befehl ausführen: `cp …`", „Im Web suchen nach …",
+„Datei lesen: …"), Haken/Spinner und Dauer; ein Klick öffnet das
+Aktivitäts-Panel mit den vollen Parametern und dem Ergebnis. Denk-Schritte und
+der entstehende Antworttext werden ebenfalls inline angezeigt. Die Statuszeile
+nennt zudem, **welcher** Workflow-Schritt gerade läuft (die Instruktion des
+Schritts). Nach Abschluss des Schritts bleibt diese Aktivität sichtbar — sie
+verschwindet nicht. Erreicht ein Schritt sein Runden-/Zeitbudget, bricht der
+Lauf nicht mehr mit „Keine Antwort" ab, sondern behält die Zwischenergebnisse
+und weist per Hinweis darauf hin, dass das Ergebnis unvollständig sein kann.
+
+Wartet der Lauf auf eine Datei (`ask_user_for_file`, z. B. das Ausweis-Foto
+in der Ausweisprüfung), erscheint an derselben Stelle die **Upload-Karte** —
+mit dem Aufforderungstext des Schritts, einem Datei-auswählen-Feld (respektiert
+den Dateityp-Filter, etwa nur Bilder) und Drag-&-Drop. Drei Knöpfe:
+**Abbrechen** stoppt den gesamten Lauf, **Zurücksetzen** löscht nur die
+Dateiauswahl, **Hochladen** sendet die Datei — danach läuft der Workflow
+weiter.
+
 ### Workflow von der KI erzeugen lassen (v9.290.0)
 
 Statt einen Workflow von Hand zu schreiben, kann Brain-Agent ihn entwerfen —

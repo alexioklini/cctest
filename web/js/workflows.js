@@ -3,9 +3,13 @@
    ═══════════════════════════════════════════════════════════ */
 
 const WF_AGENT = 'main';  // MVP: single agent
+// Mirror engine/workflow.py `_WF_KEYWORDS` exactly (source of truth for the
+// lexer). AGENT + MODEL are header keywords (AGENT main / MODEL kimi-k2.6) —
+// they were missing here, so the MODEL line in a .flow wasn't syntax-coloured.
 const WF_KEYWORDS = new Set([
-  'WORKFLOW','DESCRIPTION','TRIGGER','SET','CALL','IF','ELSE','FOR','EACH',
-  'IN','RETURN','AND','OR','NOT','TRUE','FALSE','NULL'
+  'WORKFLOW','DESCRIPTION','TRIGGER','AGENT','MODEL',
+  'SET','CALL','IF','ELSE','FOR','EACH','IN','RETURN',
+  'AND','OR','NOT','TRUE','FALSE','NULL'
 ]);
 const WF_BUILTINS = new Set(['len','str','int','float','bool','now','lower','upper','trim','contains','split','join','replace','plan_steps']);
 
@@ -1537,8 +1541,10 @@ async function wfBannerFetch(initial) {
   if (initial && data && WF_LIVE_STATUSES.has(data.status || '')) {
     wfBannerStartPolling();
   } else if (data && WF_TERMINAL_STATUSES.has(data.status || '')) {
-    // Re-fetch the persisted /history row once so the banner shows the
+    // Terminal — stop polling (was leaking a 800ms timer for the session's
+    // life) and re-fetch the persisted /history row once so the run shows the
     // full final trace + return value instead of the truncated live data.
+    wfBannerStopPolling();
     try {
       const persisted = await API.get(`/v1/workflows/history/${id}`);
       if (persisted && !persisted.error) {
@@ -1564,8 +1570,12 @@ function wfBannerStopPolling() {
 function wfBannerHide() {
   // Deactivating the workflow run: drop the injected main-area turn-group
   // (renderMessages() will now skip it since wfBanner.data is cleared) and
-  // hide the workflow-only right-panel tabs.
+  // hide the workflow-only right-panel tabs. Tear down the upload card + give
+  // the composer back (the run is no longer the active view).
   wfBanner._loadError = null;
+  const host = document.getElementById('wf-upload-host');
+  if (host) { host.innerHTML = ''; host.classList.add('hidden'); delete host.dataset.wfKey; }
+  _wfSetComposerHidden(false);
   if (typeof renderMessages === 'function') {
     try { renderMessages(); } catch (_) {}
   }
@@ -1819,6 +1829,26 @@ function _wfSteps(data) {
   return [];
 }
 
+// A live run is blocked on an upload when its most recent step is an
+// `ask_user_for_file` CALL with no matching call_done yet. The backend emits
+// the prompt + accept inline in that step's detail (engine/workflow.py), so we
+// parse them straight out of it. Returns {prompt, accept} or null.
+function _wfPendingUpload(data) {
+  if (!data || !WF_LIVE_STATUSES.has(data.status || '')) return null;
+  const steps = _wfSteps(data);
+  // Walk from the end: the first ask_user_for_file we hit decides — if its
+  // call_done already came through (later or as the same tail), it's answered.
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i];
+    const detail = s && s.detail || '';
+    if (s && s.kind === 'call_done' && detail.includes('ask_user_for_file ')) return null;
+    if (s && s.kind === 'call' && detail.includes('ask_user_for_file(')) {
+      return wfParseAskFileDetail(detail);
+    }
+  }
+  return null;
+}
+
 // Central re-render: refresh the main-area run turn-group AND the workflow
 // right-panel tabs from wfBanner.data. Called on every poll tick + on
 // terminal transition + after save/cancel.
@@ -1831,6 +1861,11 @@ function renderWorkflowRunUI() {
   if (typeof renderMessages === 'function') {
     try { renderMessages(); } catch (_) {}
   }
+  // Render the run control bar into the stable #wf-upload-host: upload card
+  // when blocked on ask_user_for_file, otherwise pause/resume+stop. Hides the
+  // composer while the run is live (no chatting mid-run), restores it on a
+  // terminal run. All three states handled inside _wfRenderRunControls.
+  _wfRenderRunControls();
   if (typeof updateWorkflowTabs === 'function') updateWorkflowTabs();
   // Refresh whichever workflow tab is currently open.
   const tab = state.rightPanelTab;
@@ -1843,6 +1878,12 @@ function renderWorkflowRunUI() {
   if (typeof updateRightPanelBadges === 'function') updateRightPanelBadges();
   // Statusline: reflect the run's token/cost totals (workflow_history rollup).
   if (typeof updateStatusBar === 'function') updateStatusBar();
+  // Composer visibility is derived ONCE here, LAST, from the single source of
+  // truth (run active + live) — so no earlier/async render step can leave it in
+  // the wrong state. Hidden only while a live run owns the view.
+  const _live = _wfRunActive() && wfBanner.data
+    && WF_LIVE_STATUSES.has(wfBanner.data.status || '');
+  _wfSetComposerHidden(!!_live);
 }
 
 // Reload the bound session's artifacts so freshly-written workflow outputs
@@ -1911,7 +1952,26 @@ function _wfSyncTranscriptMessages() {
       const bn = (a.path || a.name || '').split('/').pop();
       if (bn) artByName[bn] = a;
     }
-    for (const m of transcript) {
+    const pending = _wfPendingUpload(data);
+    // The in-flight step's live-progress turn (_wf_live) is the LAST assistant
+    // turn while live+unblocked, so it renders as the main response (not folded
+    // into the collapsed Aktivität) AND carries the pause/resume/stop buttons.
+    const liveIdx = (isLive && !pending)
+      ? transcript.map((m, i) => (m && m._wf_live ? i : -1)).filter(i => i >= 0).pop()
+      : -1;
+    const paused = !!data.paused;
+    for (let ti = 0; ti < transcript.length; ti++) {
+      const m = transcript[ti];
+      // A step turn carrying _wf_events expands into REAL chat rows (thinking /
+      // tool_call+tool_result / answer-text) so the renderer draws it exactly
+      // like a normal turn — args tables, result blocks, streamed text. While
+      // LIVE (ti===liveIdx) it also gets the status + pause/stop line; once
+      // FINALISED the same events stay visible with the answer text (so the tool
+      // history doesn't vanish when the step ends). See _wfLiveRows.
+      if (Array.isArray(m._wf_events)) {
+        for (const r of _wfLiveRows(m, ti === liveIdx, paused)) synth.push(r);
+        continue;
+      }
       const role = m.role === 'user' ? 'user' : 'assistant';
       const content = typeof m.content === 'string' ? m.content : '';
       const files = Array.isArray(m.files) ? m.files.filter(Boolean) : [];
@@ -1950,12 +2010,176 @@ function _wfSyncTranscriptMessages() {
           content: '_Dieser Lauf hat keinen Text erzeugt — Details im Protokoll-Reiter._' });
       }
     }
-    // While live with nothing yet, show a working indicator (still chat-style).
-    if (isLive && !synth.length) {
-      synth.push({ role: 'assistant', _wfSynthetic: true, content: '_⏵ Workflow-Lauf in Bearbeitung …_' });
+    // Live + unblocked but NO in-flight step turn yet (between steps, or the
+    // very first tick): still show the status line + pause/resume/stop buttons
+    // as a standalone message so the controls are always reachable.
+    if (isLive && !pending && liveIdx === -1) {
+      synth.push({
+        role: 'assistant', _wfSynthetic: true,
+        _wfControls: true, _wfPaused: paused,
+        content: paused ? '_⏸ Workflow-Lauf pausiert_' : `_⏵ ${_wfRunStatusLine(data)}_`,
+      });
     }
   }
   chat.messages = synth.concat(real);
+}
+
+/* Expand the live in-flight step (_wf_live turn, carrying _wf_events) into REAL
+   chat message rows so the normal renderer draws it like any turn:
+     - thinking segment → a `thinking` row
+     - tool_call (+result) → a `tool_call` row + paired `tool_result` row
+       (renderToolCall shows the args table + result block, ✓/spinner)
+     - answer-text segment → an assistant content row
+   The LAST row is the assistant status+controls line (so it's the turn's main
+   response, carrying the pause/stop buttons — not folded into Aktivität). */
+function _wfLiveRows(m, live, paused) {
+  const rows = [];
+  const events = Array.isArray(m && m._wf_events) ? m._wf_events : [];
+  let seq = 0;
+  let lastTextSeg = '';
+  for (const ev of events) {
+    seq += 1;
+    if (ev.kind === 'thinking') {
+      const t = (ev.text || '').trim();
+      if (t) rows.push({ role: 'thinking', content: t, _wfSynthetic: true, _seq: seq });
+    } else if (ev.kind === 'text') {
+      const t = (ev.text || '').trim();
+      // Trailing text after the last tool = the answer-in-progress; when the
+      // turn is finalised the real `content` holds the full answer, so drop the
+      // last streamed segment to avoid double text. Keep intermediate segments.
+      lastTextSeg = t;
+      if (t) rows.push({ role: 'assistant_segment', content: t, _wfSynthetic: true, _seq: seq });
+    } else if (ev.kind === 'tool_call') {
+      const tuid = ev.tool_use_id || `wflive-${seq}`;
+      rows.push({ role: 'tool_call', name: ev.name, args: ev.args || {},
+        tool_use_id: tuid, _wfSynthetic: true, _seq: seq,
+        duration_ms: (typeof ev.duration_ms === 'number' ? ev.duration_ms : undefined) });
+      if (ev._done) {
+        rows.push({ role: 'tool_result', name: ev.name, tool_use_id: tuid,
+          result: ev.result, is_error: !!ev.is_error, _wfSynthetic: true, _seq: seq + 0.5 });
+      }
+      lastTextSeg = '';
+    }
+  }
+  if (live) {
+    // LIVE: trailing status + controls line = the turn's LAST assistant response.
+    rows.push({
+      role: 'assistant', _wfSynthetic: true, _wfControls: true, _wfPaused: paused,
+      content: paused ? '_⏸ Workflow-Lauf pausiert_'
+        : `_⏵ ${_wfRunStatusLine(wfBanner.data)}_`,
+    });
+  } else {
+    // FINALISED: the answer text (m.content) is the LAST assistant response.
+    // If it equals the last streamed segment, drop that segment row to avoid a
+    // duplicate (pop it — it was the answer-in-progress).
+    const answer = typeof m.content === 'string' ? m.content : '';
+    if (answer && lastTextSeg && answer.startsWith(lastTextSeg) && rows.length
+        && rows[rows.length - 1].role === 'assistant_segment') {
+      rows.pop();
+    }
+    const files = Array.isArray(m.files) ? m.files.filter(Boolean) : [];
+    const arow = { role: 'assistant', content: answer, _wfSynthetic: true, _wfModel: m.model || '' };
+    if (files.length) arow._files = files.map(f => ({ path: f, action: 'created' }));
+    rows.push(arow);
+  }
+  return rows;
+}
+
+/* Human-readable "which step is running" line. The backend labels the live
+   turn (_wf_label) with the step's own instruction excerpt (set by agent_step),
+   so the user sees WHERE in the workflow they are — plus the current step's
+   DSL line number from the run steps for orientation. */
+function _wfRunStatusLine(data) {
+  const label = ((data && data.transcript) || [])
+    .filter(x => x && x._wf_live).map(x => x._wf_label).filter(Boolean).pop();
+  // Current agent_step line (for a "Schritt Zeile N" prefix).
+  let line = 0;
+  const steps = _wfSteps(data);
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s && s.kind === 'call' && /agent_step\(/.test(s.detail || '')) { line = s.line; break; }
+  }
+  if (label && line) return `Schritt (Zeile ${line}): ${label}`;
+  if (label) return label;
+  if (line) return `Führt Workflow-Schritt in Zeile ${line} aus …`;
+  return 'Workflow-Lauf in Bearbeitung …';
+}
+
+/* ── Upload prompt: shown when a live run blocks on ask_user_for_file.
+   The host (#wf-upload-host) is a STABLE element in the chat-input-area (see
+   index.html) — renderMessages() never touches it, so the file <input>
+   survives poll re-renders and the OS file dialog stays bound to a live input.
+   The card's inner HTML is rebuilt ONLY when the prompt string changes (poll
+   ticks with the same pending prompt are no-ops), so a picked file / open
+   dialog is never clobbered. While blocked, the composer is hidden — the user
+   shouldn't chat mid-workflow. */
+function _wfRenderRunControls() {
+  const host = document.getElementById('wf-upload-host');
+  if (!host) return;
+  const data = _wfRunActive() ? wfBanner.data : null;
+  const live = !!(data && WF_LIVE_STATUSES.has(data.status || ''));
+  const pending = live ? _wfPendingUpload(data) : null;
+  // Upload card in the stable host ONLY while blocked on ask_user_for_file.
+  // (Pause/resume/stop live inline in the chat status message; composer
+  // visibility is handled centrally in renderWorkflowRunUI.)
+  if (pending) {
+    host.classList.remove('hidden');
+    const key = `upload:${pending.prompt} ${pending.accept}`;
+    if (host.dataset.wfKey === key) return;   // same prompt already rendered — leave the live input alone
+    host.dataset.wfKey = key;
+    wfRenderUploadPrompt(host, pending.prompt, pending.accept);
+    return;
+  }
+  if (host.dataset.wfKey) { host.innerHTML = ''; host.classList.add('hidden'); delete host.dataset.wfKey; }
+}
+
+// Inline pause/resume + stop buttons appended to the workflow status message in
+// the chat (rendered by renderAssistantMessage when msg._wfControls is set).
+function wfRunControlsHtml(paused) {
+  const toggle = paused
+    ? `<button class="wf-msg-ctrl" onclick="wfRunResume()" title="Lauf fortsetzen">
+         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Fortsetzen</button>`
+    : `<button class="wf-msg-ctrl" onclick="wfRunPause()" title="Lauf pausieren (am nächsten Schritt)">
+         <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg> Pause</button>`;
+  return `
+    <div class="wf-msg-controls">
+      ${toggle}
+      <button class="wf-msg-ctrl wf-msg-ctrl-stop" onclick="wfBannerCancel()" title="Workflow-Lauf abbrechen">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg> Stopp</button>
+    </div>`;
+}
+
+async function wfRunPause() {
+  const id = wfBanner.execId;
+  if (!id) return;
+  try {
+    const r = await API.post(`/v1/workflows/executions/${id}/pause`, {});
+    if (r && r.error) { await showAlert('Pausieren fehlgeschlagen: ' + r.error); return; }
+    wfBannerFetch(false);
+  } catch (e) { await showAlert('Pause-Fehler: ' + e.message); }
+}
+
+async function wfRunResume() {
+  const id = wfBanner.execId;
+  if (!id) return;
+  try {
+    const r = await API.post(`/v1/workflows/executions/${id}/resume`, {});
+    if (r && r.error) { await showAlert('Fortsetzen fehlgeschlagen: ' + r.error); return; }
+    wfBannerFetch(false);
+  } catch (e) { await showAlert('Resume-Fehler: ' + e.message); }
+}
+
+
+// Hide/show the chat composer + disclaimer while a workflow run is active.
+// Chatting mid-run is neither needed nor safe, and while blocked on an upload
+// the card takes the composer's place. Toggles the mount + disclaimer only
+// (leaves the input-area wrapper so the upload host stays visible).
+function _wfSetComposerHidden(hidden) {
+  const mount = document.getElementById('chat-composer-mount');
+  if (mount) mount.classList.toggle('hidden', hidden);
+  const area = document.querySelector('.chat-input-area');
+  const disc = area && area.querySelector('.chat-disclaimer');
+  if (disc) disc.classList.toggle('hidden', hidden);
 }
 
 /* ── Right-panel tab: Statistik (stats + run actions) ── */
@@ -2144,7 +2368,8 @@ function wfRenderUploadPrompt(root, prompt, accept) {
         </div>
       </label>
       <div class="wf-upload-actions">
-        <button class="wf-btn wf-btn-ghost" onclick="wfCancelUpload()">Abbrechen</button>
+        <button class="wf-btn wf-btn-ghost wf-upload-cancel" onclick="wfBannerCancel()" title="Den gesamten Workflow-Lauf abbrechen">Abbrechen</button>
+        <button class="wf-btn wf-btn-ghost" onclick="wfResetUpload()" title="Dateiauswahl zurücksetzen">Zurücksetzen</button>
         <button class="wf-btn wf-btn-primary" id="wf-upload-submit" onclick="wfUploadFile()" disabled>Hochladen</button>
       </div>
     </div>`;
@@ -2185,9 +2410,14 @@ function wfOnFilePicked() {
   }
 }
 
-function wfCancelUpload() {
+// Reset the upload card's file selection (the "Zurücksetzen" button) — clears
+// the picked file + any inline error, re-disabling the submit button. Does NOT
+// cancel the run (that's the "Abbrechen" button → wfBannerCancel).
+function wfResetUpload() {
   const input = document.getElementById('wf-upload-input');
   if (input) { input.value = ''; }
+  const submit = document.getElementById('wf-upload-submit');
+  if (submit) { submit.disabled = true; submit.textContent = 'Hochladen'; }
   wfOnFilePicked();
 }
 
@@ -2220,7 +2450,11 @@ async function wfUploadFile() {
       if (nameEl) nameEl.innerHTML = `<span class="wf-upload-error">${escapeHtml(data.error)}</span>`;
       return;
     }
-    document.getElementById('wf-run-prompt').classList.add('hidden');
+    // Upload accepted — the workflow unblocks server-side. Drop the card now;
+    // the next poll tick re-renders the run (which will no longer be pending).
+    const host = document.getElementById('wf-upload-host');
+    if (host) host.remove();
+    wfBannerFetch(false);
   } catch (e) {
     if (submit) { submit.disabled = false; submit.textContent = 'Hochladen'; }
     const nameEl = document.getElementById('wf-upload-filename');

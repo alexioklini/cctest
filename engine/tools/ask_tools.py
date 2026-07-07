@@ -254,8 +254,23 @@ def tool_agent_step(args: dict) -> str:
 
     turn_id = f"wfstep-{execution_id or 'chat'}-{_uuid.uuid4().hex[:8]}"
     execution = _brain.workflow_get_execution(execution_id) if execution_id else None
+    # Live progress: surface each round's tool activity + streamed text in the
+    # run view WHILE the step runs (it's a blocking call that would otherwise
+    # look frozen for its whole duration). The emit callback feeds the
+    # execution's live-progress transcript turn, which the run poll picks up.
+    _emit = None
     if execution is not None:
         execution.register_step_turn(turn_id)
+        try:
+            # Label = the step's own instruction (first line / excerpt) so the
+            # run view shows WHICH step is running, not just "a step".
+            _first = (instruction or "").strip().splitlines()[0] if instruction else ""
+            _label = _first[:140] + ("…" if len(_first) > 140 else "") if _first \
+                else "Führt den Workflow-Schritt aus …"
+            execution.begin_live_progress(_label)
+            _emit = execution.live_progress_event
+        except Exception:
+            _emit = None
     try:
         from handlers import sidecar_proxy as _sidecar_proxy
         res = _sidecar_proxy.background_call(
@@ -269,41 +284,82 @@ def tool_agent_step(args: dict) -> str:
             user_id=(ctx.current_user_id or None),
             max_rounds=max_rounds,
             turn_id=turn_id,
+            emit=_emit,
         )
     except Exception as e:
+        if execution is not None:
+            try: execution.end_live_progress()
+            except Exception: pass
         return _err(f"agent_step: {e}")
     finally:
         if execution is not None:
             execution.unregister_step_turn(turn_id)
+    # Hard failures (real error / cancel): drop the live turn, fail the step.
     if res.get("cancelled"):
+        if execution is not None:
+            try: execution.end_live_progress()
+            except Exception: pass
         return _err("agent_step: cancelled")
     if res.get("error"):
+        if execution is not None:
+            try: execution.end_live_progress()
+            except Exception: pass
         return _err(f"agent_step: {res['error']}")
     text = (res.get("reply") or "").strip()
+    hit_cap = (res.get("stop_reason") or "") == "max_rounds"
+    # Empty final reply: NOT necessarily a failure — the step may have hit its
+    # round budget mid-tool-loop (tools DID run, files may exist). Salvage it
+    # instead of failing the WHOLE workflow (the '429/round-limit → No response'
+    # dead-end). Only a truly empty AND uncapped turn (no tools, no cap) fails.
+    tool_evs = res.get("tool_events") or []
     if not text:
-        return _err("agent_step: model returned an empty reply")
+        if hit_cap or tool_evs:
+            text = ("_Kein abschließender Antworttext — der Schritt hat die "
+                    "Werkzeuge ausgeführt, aber das Runden-/Zeitbudget vor einer "
+                    "Zusammenfassung erreicht. Die Zwischenergebnisse und "
+                    "geschriebenen Dateien liegen vor._")
+        else:
+            if execution is not None:
+                try: execution.end_live_progress()
+                except Exception: pass
+            return _err("agent_step: model returned an empty reply")
     # Collect files written by the step's file tools (paths from tool args).
     written: list[str] = []
     _write_tools = {"write_file", "edit_file", "write_document", "edit_document",
                     "xlsx_create", "xlsx_edit", "render_diagram"}
-    for ev in res.get("tool_events") or []:
+    for ev in tool_evs:
         if ev.get("is_error") or ev.get("name") not in _write_tools:
             continue
         p = ((ev.get("args") or {}).get("path") or "").strip()
         if p and p not in written:
             written.append(p)
+    display_text = text
+    # Surface a hit round-cap so downstream steps (verify) / the run log can
+    # tell "finished" from "ran out of budget mid-plan".
+    if hit_cap:
+        display_text += ("\n\n[Hinweis: Runden-Limit erreicht — das Ergebnis "
+                         "ist möglicherweise unvollständig.]")
+    # FREEZE the live progress turn into the completed answer turn — keeps the
+    # tool calls/thinking/streamed text the user watched VISIBLE, and appends the
+    # final answer. Returns True when it took over the transcript turn, so the
+    # interpreter's _capture_transcript must NOT record a second assistant turn.
+    finalized = False
+    if execution is not None:
+        try:
+            finalized = execution.finalize_live_progress(
+                text=display_text, model=model, files=written)
+        except Exception:
+            finalized = False
     out = {
         "text": text,
+        "display_text": display_text,
         "model": model,
         "rounds": int(res.get("rounds") or 0),
         "files": written,
+        "_transcript_done": finalized,
     }
-    # Surface a hit round-cap so downstream steps (verify) / the run log can
-    # tell "finished" from "ran out of budget mid-plan".
-    if (res.get("stop_reason") or "") == "max_rounds":
+    if hit_cap:
         out["stop_reason"] = "max_rounds"
-        out["text"] += ("\n\n[Hinweis: Runden-Limit erreicht — das Ergebnis "
-                        "ist möglicherweise unvollständig.]")
     return _ok(out)
 
 

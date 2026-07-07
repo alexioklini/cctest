@@ -347,6 +347,39 @@ class AdminWorkflowHandlers:
         )
         self._send_json({"status": "cancelled", "execution_id": exec_id, "zombie": True})
 
+    def _handle_workflow_pause(self, path):
+        """POST /v1/workflows/executions/{id}/pause — pause a live run.
+
+        Cooperative: takes effect at the next top-level statement boundary; an
+        in-flight agent_step LLM turn runs to completion first. No-op on a
+        zombie/terminal run.
+        """
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        ex = engine.workflow_get_execution(exec_id)
+        if not ex:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        ex.pause()
+        self._send_json({"status": "paused", "execution_id": exec_id})
+
+    def _handle_workflow_resume(self, path):
+        """POST /v1/workflows/executions/{id}/resume — resume a paused run."""
+        parts = path.split("/")
+        if len(parts) < 5:
+            self._send_json({"error": "Invalid path"}, 400)
+            return
+        exec_id = parts[4]
+        ex = engine.workflow_get_execution(exec_id)
+        if not ex:
+            self._send_json({"error": "Execution not found"}, 404)
+            return
+        ex.resume()
+        self._send_json({"status": "running", "execution_id": exec_id})
+
     def _handle_workflow_history(self, path, query_params=None):
         """GET /v1/workflows/history — list execution history with filtering.
         Query: workflow=<name>, user=<id>, status=<state>, mine=1, limit=N, offset=N.

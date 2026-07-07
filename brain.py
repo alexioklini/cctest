@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.291.0"
-VERSION_DATE = "2026-07-06"
+VERSION = "9.291.2"
+VERSION_DATE = "2026-07-07"
 CHANGELOG = [
+    ("9.291.2", "2026-07-07", "fix+feat(Workflow-Lauf: Upload wirklich funktionsfähig + Steuerleiste Pause/Fortsetzen/Stopp + Komposer während Lauf ausgeblendet): Nachbesserung zu 9.291.1 (mehrere vom Nutzer gemeldete Defekte). (1) UPLOAD TAT NICHTS: die Upload-Karte hing in #messages-container, das der 800ms-Poll (renderWorkflowRunUI → renderMessages) JEDEN Tick komplett neu aufbaut → das <input type=file> wurde mitten im Auswählen abgehängt, der OS-Dateidialog verlor seine Bindung, das onchange feuerte ins Leere (JPG wählen → nichts). FIX: STABILER Host #wf-upload-host jetzt fest in .chat-input-area (index.html), den renderMessages() NIE anfasst; die Karte wird nur neu gerendert, wenn sich der Zustands-Key ändert (dataset.wfKey: 'upload:<prompt> <accept>' bzw. 'run:<paused>') — gleiche Pending-Prompt über Poll-Ticks = No-op, gewählte Datei/offener Dialog bleiben erhalten. E2E (Playwright, echter Browser): JPG wählen → Submit aktiv, Auswahl übersteht 2s Poll-Ticks, Hochladen → Karte weg, Lauf läuft weiter. (2) KOMPOSER WÄHREND LAUF AUSGEBLENDET (Nutzerwunsch — Chatten mitten im Workflow unnötig + fehleranfällig): _wfSetComposerHidden blendet #chat-composer-mount + Disclaimer aus, solange ein Lauf LIVE ist; bei Upload-Block nimmt die Karte den Platz ein, sonst die Steuerleiste; terminaler Lauf/Verlassen → Komposer zurück (wfBannerHide). (3) DREI BUTTONS auf der Upload-Karte: 'Abbrechen' bricht jetzt den GESAMTEN Lauf ab (wfBannerCancel, war vorher nur Datei-Löschen), NEU 'Zurücksetzen' (wfResetUpload, ex-wfCancelUpload) löscht nur die Dateiauswahl, 'Hochladen'. (4) PAUSE/FORTSETZEN/STOPP als INLINE-Buttons AM Status-Block (Nutzer-Korrektur: die Chat-Zeile '⏵ Workflow-Lauf in Bearbeitung' SOLL bleiben, nur Buttons daneben — NICHT durch eine separate Leiste ersetzen): _wfSyncTranscriptMessages behält den synthetischen Status-Turn (live/pausiert) und markiert ihn _wfControls; renderAssistantMessage hängt via wfRunControlsHtml(paused) die Buttons in den Nachrichten-Block (Pause↔Fortsetzen-Umschalter + Stopp=wfBannerCancel). BACKEND (Pause/Resume neu): WorkflowExecution._pause (threading.Event, gesetzt=laufend) + _paused-Flag; pause()/resume(); der Interpreter (engine/workflow.py run()) blockiert KOOPERATIV am nächsten Top-Level-Statement über _pause_wait() (weckt bei Resume ODER Cancel; ein laufender agent_step-LLM-Turn läuft erst zu Ende — Pause ist kein Mid-Generation-Kill); cancel() setzt _pause frei, damit ein pausierter Lauf aufwacht und den Cancel sieht. to_dict() liefert paused. Endpunkte POST /v1/workflows/executions/{id}/pause|resume (server.py + handlers/admin_workflows.py). (5) LIVE-FORTSCHRITT während agent_step (Nutzer: 'agent_step läuft still im Hintergrund, keine Ausgabe/kein Fortschritt bis Fertigstellung'): agent_step war ein blockierender background_call OHNE event_callback → drainte alle Runden und lieferte erst am Ende. NEU: run_turn_blocking + background_call akzeptieren ein optionales emit-Callback (per-Runde-Event-Sink, Default no-op); agent_step öffnet eine LIVE-Transcript-Zeile (WorkflowExecution.begin_live_progress/live_progress_event/end_live_progress) und speist tool_call/tool_result/text_delta ein → der Lauf-Poll (/executions → transcript) zeigt '🔧 execute_command / ✓ execute_command / 🔧 python_exec …' in Echtzeit, plus den letzten Antworttext-Ausschnitt; die Live-Zeile wird am Ende entfernt, die echte Antwort-Zeile kommt regulär via _capture_transcript. RENDER-FIX (der Live-Fortschritt war zunächst UNSICHTBAR): _wfSyncTranscriptMessages hatte den Live-Turn als SEPARATE Assistenten-Nachricht VOR dem Status-Turn eingefügt — renderTurnBody rendert aber nur die LETZTE Assistenten-Antwort einer Anfrage als Hauptantwort und faltet frühere in die zugeklappte 'Aktivität'-Sektion → der Live-Inhalt verschwand, nur 'in Bearbeitung' blieb sichtbar. FIX: der Live-Turn IST jetzt die letzte Antwort — der Status-Präfix ('⏵ in Bearbeitung') + die Pause/Stopp-Buttons (_wfControls) werden AUF den _wf_live-Transcript-Eintrag gelegt (liveIdx), sodass EIN sichtbarer Block Status + Live-Tools + Buttons trägt; nur wenn es (noch) keinen Live-Turn gibt (zwischen Schritten) kommt eine eigenständige Status-Zeile. E2E gegen echtes Modell (kimi-k2.6, echtes JPEG) im Browser verifiziert: DOM zeigt '🔧 execute_command' tickweise NEBEN 'in Bearbeitung' + Buttons. (7) LIVE-FORTSCHRITT ALS ECHTE CHAT-TOOL-ZEILEN + PERSISTENZ + Runden-Limit-Rettung (User: 'Tool-Calls bitte wie im Chat rendern, welcher Befehl/Suche/Fetch läuft; keine doppelten Zeilen; LLM-Output+Thinking zeigen; welcher Workflow-Schritt läuft; im Turn 1 sind nach Schritt-Ende alle Tool-Infos WEG; Runden-Limit → No response was returned'). Der Live-Turn trägt jetzt STRUKTURIERTE _wf_events (tool_call{name,args,tool_use_id}, tool_result{result,is_error,duration}, text, thinking) statt eines '🔧 name'-Strings; _wfLiveRows expandiert sie in ECHTE Chat-Message-Rows (tool_call+tool_result-Paar → renderToolCall = chat-identische .tool-line mit toolDescribe: Befehl ausführen `cp …` / Im Web suchen nach dem Query / Datei lesen Pfad + ✓/Spinner + Timing + Klick öffnet Aktivitäts-Panel; assistant_segment → Antworttext inline; thinking → Denkblock). Der Step-LABEL zeigt jetzt die INSTRUKTION des Schritts (agent_step setzt _wf_label = erste Instruktionszeile) + DSL-Zeilennummer ('Schritt (Zeile 8): Führe die vollständige Ausweisprüfung…') statt generisch 'ein Schritt'. PERSISTENZ (der Verschwinde-Bug): end_live_progress hat den Live-Turn beim Schritt-Ende GELÖSCHT und nur die blanke Antwort neu erfasst → alle Tool-Zeilen weg. Jetzt friert finalize_live_progress(text,model,files) den Live-Turn IN PLACE zur fertigen Antwort-Zeile ein (_wf_live→false, Antworttext gesetzt, _wf_events BLEIBEN) → Tool-Historie bleibt nach Schritt-Ende sichtbar; _capture_transcript erkennt _transcript_done und erfasst KEINE zweite Assistenten-Zeile, fügt die User-Instruktion via insert_user_before_last_answer davor ein. RUNDEN-LIMIT-RETTUNG: leere Endantwort mit stop_reason=max_rounds (oder vorhandenen tool_events) fällt NICHT mehr auf _err('empty reply') (das die GANZE Workflow-Ausführung failte → 'No response was returned'); stattdessen Salvage-Text + '[Hinweis: Runden-Limit erreicht]' + die Tool-Ergebnisse/Dateien bleiben. Nur ein WIRKLICH leerer + ungecappter Turn failt noch. E2E im Browser: '✓ Befehl ausführen: `cp /tmp/…`  0.5s' als .tool-line gerendert. (8) EDITOR-BEIFANG: (a) Syntax-Highlighting — WF_KEYWORDS (web/js/workflows.js) fehlten AGENT + MODEL (echte Header-Keywords laut engine/workflow.py _WF_KEYWORDS), daher war die 'MODEL kimi-k2.6'-Zeile nicht eingefärbt; Set an die Backend-Wahrheit angeglichen (MODEL/AGENT + der model=-Kwarg färben jetzt als wf-tok-keyword). (b) WORD-WRAP — der Code-Editor (#wf-editor + Overlay #wf-highlight) stand auf white-space:pre + wrap='off' → lange Instruktionszeilen scrollten horizontal aus dem Bild; jetzt white-space:pre-wrap + overflow-wrap/word-break + overflow-x:hidden auf BEIDEN (Textarea wrap='soft'), sodass Zeilen umbrechen und das Highlight-Overlay deckungsgleich bleibt. E2E: 2287-Zeichen-.flow, scrollWidth==clientWidth (kein Horizontal-Scroll). (6) KOMPOSER-SICHTBARKEIT ZENTRALISIERT (Bugfix: nach Stopp blieb der Komposer versteckt): die Sichtbarkeit wird jetzt EINMAL am Ende von renderWorkflowRunUI aus der einzigen Wahrheit (Lauf aktiv UND live) abgeleitet, statt an mehreren Stellen in _wfRenderRunControls getoggelt — ein asynchroner Nach-Render (refreshWorkflowArtifacts) konnte den Zustand sonst stale lassen. E2E verifiziert: pause→paused=True, resume→paused=False, Stopp→cancelled + Komposer zurück; Reset leert Auswahl. js_gate GRÜN (eslint clean, net-globals-Baseline mitgezogen, smoke passed). Server-Neustart nötig (neue Endpunkte + WorkflowExecution-Methoden + Interpreter-Pause-Gate + emit-Durchreichung). Kein kuratierter Eintrag (Regressions-/Bedien-Fix an einer erst in 9.290.x eingeführten, für Endnutzer nie funktionierenden Fläche)."),
+    ("9.291.1", "2026-07-07", "fix(Workflow-Lauf: Upload-Aufforderung erscheint wieder, wenn der Workflow auf eine Datei wartet): ANLASS (User): Beim Start der ausweispruefung-manipulationserkennung erschien KEIN Upload-Popup — der Workflow blockierte still auf `ask_user_for_file` (300s Timeout, dann tot). ROOT CAUSE: Der Workflow-Lauf-als-Chat-Umbau (v9.290.x/9.291.0) ersetzte das alte step-basierte Lauf-Rendering (renderWorkflowBanner, das die letzten Steps auf ein wartendes `ask_user_for_file(`-CALL ohne `call_done` scannte und wfRenderUploadPrompt aufrief) durch das transcript-basierte Chat-Rendering (_wfSyncTranscriptMessages). Die Upload-Erkennung ging dabei ersatzlos verloren — wfRenderUploadPrompt + wfParseAskFileDetail blieben zwar in workflows.js DEFINIERT, wurden aber von NIRGENDS mehr aufgerufen (toter Code, per grep bestätigt: 0 Call-Sites). Der Nutzer sah nur '⏵ Workflow-Lauf in Bearbeitung …'. FIX (web/js/workflows.js): (1) NEUE _wfPendingUpload(data) — kapselt die Erkennung: bei einem LIVE-Lauf rückwärts durch die Steps; erstes `ask_user_for_file `-call_done → beantwortet (null), erstes `ask_user_for_file(`-CALL → wartend → wfParseAskFileDetail liefert {prompt, accept} aus dem Step-Detail (das Backend emittiert prompt+accept inline, engine/workflow.py:987). (2) NEUE _wfRenderPendingUpload() — hängt die Upload-Karte (wfRenderUploadPrompt, mit Drag&Drop-Wiring) in einen #wf-upload-host-Container am Ende von #messages-container, IDEMPOTENT pro Poll-Tick: bei bereits gewählter Datei bleibt die Karte stehen (kein Clobbern der laufenden Auswahl), sonst frisch gerendert; kein Pending → Karte entfernt. Aufgerufen in renderWorkflowRunUI() direkt nach renderMessages() (das #messages-container jeden Tick neu aufbaut, daher Re-Append nötig). (3) BEIFANG-FIX in wfUploadFile(): Erfolg referenzierte `document.getElementById('wf-run-prompt')` — ein Element der ALTEN Banner-UI, das es nicht mehr gibt → warf still. Jetzt: #wf-upload-host entfernen + wfBannerFetch(false) (nächster Poll rendert den entblockten Lauf). CSS: .wf-upload-host zentriert die Karte in der Nachrichtenspalte (max-width 760px). E2E in Playwright gegen den Live-Server verifiziert: ausweispruefung gestartet → #wf-upload-host .wf-upload sichtbar, Titel enthält 'Ausweis', #wf-upload-input accept='image/*', keine Konsolenfehler. js_gate GRÜN (eslint clean, net-globals 1870→1872 = 2 neue Helfer, Baseline mitgezogen, Smoke passed). Server-Neustart NICHT nötig (reines Frontend). Kein kuratierter Eintrag (Regressions-Fix einer erst in 9.290.x eingeführten Lücke, für den End-Nutzer nie funktionierend sichtbar gewesen)."),
     ("9.291.0", "2026-07-07", "feat(Bild-Anhang: universeller Graceful-Degrade wenn das laufende Modell nicht multimodal ist): ANLASS (User): im MoA-Flow (aber generell, nicht nur MoA) wurde nach dem Planen ein Executor vorgeschlagen/gewählt, der KEINE Bilder versteht — bei Bildanhang → Provider-API-Error statt Fallback. ROOT CAUSE: das image_url-vs-Disk-Routing (handlers/chat.py, gegen session.model beim SENDEN) wird EINMAL entschieden und NIE gegen das tatsächlich laufende Modell neu bewertet; wenn das echte Modell (MoA-Executor, expliziter User-Override, Quota-/GDPR-Swap, Auto-Route) nicht multimodal ist, trägt der Wire trotzdem den image_url-Block → 400. Der v9.289.2-require_mimes-Filter verhinderte das nur für den AUTO-Pick (Pool schrumpfen) und ließ einen expliziten User-Override eines Text-only-Modells STILL fallen (_ex in candidates-Guard in _run_plan_review_loop) — Client dachte, seine Wahl sei honoriert, Server lief still auf einem anderen Modell. FIX (User-Entscheidungen: 'Vision-Beschreibung injizieren' + 'universell am Wire-Choke-Point'): (1) NEUE _sanitize_multimodal_for_model(messages, model) läuft am EINZIGEN universellen Choke-Point — direkt vor sidecar_proxy.run_turn, wenn session.model FINAL ist (nach allen Swaps). No-op wenn das Modell alle Bild-MIMEs nativ kann (byte-identischer Wire, Warm-Prefix unberührt). Sonst: jeder image_url-Block wird per _describe_image_with_vision (attachment_image_model, live mistral-medium-3.5) beschrieben und die Textbeschreibung ersetzt den Block — so bekommt ein Text-only-Modell den ECHTEN Bildinhalt (read_document liefert bei Bildern NUR Metadaten, nie den visuellen Inhalt — file_tools:420). Transient Wire-Copy (shallow), Original-image_url-Blöcke bleiben in session.messages/DB → ein späteres fähiges Modell sieht das echte Bild weiter. (2) _run_plan_review_loop honoriert jetzt einen expliziten Executor-Override AUSSERHALB des MIME-gefilterten Pools, sofern er die NICHT-MIME-Gates besteht (enabled, chat-capable, ACL, local-policy) — meta.executor_mime_degraded gesetzt; die Bild-Degradierung macht die Wahl nutzbar statt sie still zu verwerfen. Vorauswahl passender Modelle (require_mimes im Auto-Pick) bleibt — nur der explizite Nutzer-Wille überschreibt sie jetzt mit Degrade. Unit-getestet (capable→unverändert/gleiche Objektidentität, incapable→image-Block weg + Beschreibung+Prompt+Hinweis im Text, Original unmutiert, kein-Bild→no-op). py_compile OK. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar)."),
     ("9.290.4", "2026-07-07", "fix(Chat-Titel bei Bild-Anhängen + Workflow-Lauf-Artefakt-Cards/Token/Kosten): DREI zusammenhängende Fixes am Workflow-Lauf-als-Chat + ein genereller Titel-Bug. (1) CHAT-TITEL bei multimodalen Nachrichten: _derive_session_title (server.py) bekam bei Bild-Anhängen `str(content)` einer Multimodal-LISTE `[{'type':'image_url',...},{'type':'text',...}]` → der Titel wurde wörtlich '[{\\'type\\': \\'image_url\\', \\'image_url\\': {\\'url\\':' (in der Sidebar sichtbar, z.B. die ausweispruefung-Chats). FIX: _derive_session_title akzeptiert jetzt str ODER Liste; bei einer Liste werden NUR die text-Parts extrahiert und verkettet (Bild-Parts ignoriert), reiner-Bild-Fall → 'Anhang'. Beide Aufrufer durchgereicht (add_message + der GDPR-anonymise-Pfad in handlers/chat.py, der ebenfalls str(user_content) machte). Nur NEUE Chats betroffen; 5 bestehende Alt-Titel bleiben (Backfill separat). (2) ARTEFAKT-CARDS im Lauf-Chat: agent_step erzeugt jetzt einen echten user-Turn (Instruktion = 'die Anfrage') + assistant-Turn (Antwort), und die vom workflow-seitigen write_file (content=r.text) erzeugte Datei wird via attach_output_to_last_answer an den letzten assistant-Turn gehängt → rendert als klickbare artifact-card IM Nachrichtenfluss (openArtifactPanel), exakt wie in einem normalen Chat; _wfSyncTranscriptMessages mappt transcript-files über Basename auf die geseedeten Artefakte (artifact_id) und baut msg._files, das der normale Chat-Renderer zeichnet (📎 Eingabe-Anhänge auf user-Turns, artifact-cards auf assistant-Turns). refreshWorkflowArtifacts re-synct+rendert, sobald die Artefakte nach dem ersten Render geladen sind. (3) TOKEN + KOSTEN des Laufs sichtbar: Statistik-Reiter zeigt eine neue Token-Zeile (ein/aus), die Statusleiste addiert die workflow_history-Rollup-Totals (tokens_in/out + cost_usd) für den lauf-gebundenen Chat (updateStatusBar, gated auf _wfRunActive), und der Sitzungs-Inspektor bekommt eine 'Workflow-Lauf'-Kachelzeile (LLM/Tool-Aufrufe, Token ein/aus, Kosten, Dauer, Status, Modell). Damit ist auch die '110K Token'-Falschanzeige erklärt+erledigt: die war stale State eines früheren Test-Chats — synthetische Transcript-Zeilen tragen KEINE token-metadata, der Kontext-Meter liest also 0, und die ECHTEN Lauf-Totals kommen jetzt aus workflow_history. E2E in Safari verifiziert (Lauf b7731adee5): user+assistant-Turn-Paar, 1 artifact-card im Fluss, Statusleiste 'Aus: 249', Statistik 'Token 0 ein / 249 aus'. js_gate GRÜN. Server-Restart nötig (Titel-Deriver + attach_output_to_last_answer). KURATIERTER Eintrag angepasst (user-sichtbar)."),
     ("9.290.3", "2026-07-07", "fix(Workflow-Lauf-Transcript: agent_step erzeugt ANFRAGE + Antwort, nicht nur Antwort): der 9.290.2-Transcript zeigte pro agent_step NUR die Assistenten-Antwort — es fehlte der vorausgehende User-Turn, also erschien im Chat eine kopflose Antwort statt eines echten Anfrage/Antwort-Paars (User-Ziel: die Lauf-Anzeige soll nachbilden, ALS HÄTTE ein User im Chat die Aufgabe gestellt und das Ergebnis erhalten). FIX engine/workflow.py:_capture_transcript: agent_step schreibt jetzt ZWEI Transcript-Turns — einen `user`-Turn aus der `instruction` (= 'die Anfrage', die ein Chat-User getippt hätte, samt Eingabe-Dateien aus kwargs.files als Anhänge) + den bestehenden `assistant`-Turn (voller Text). So rendert renderMessages() ein echtes Q&A: Turn-Header 'Anfrage N' + Instruktionstext, darunter die Antwort. FRONTEND (_wfSyncTranscriptMessages): Datei-Fußnote rollenabhängig — user-Turns zeigen ihre Eingabe-Anhänge (📎), assistant-Turns die erzeugten Dateien (📄). Rein additive Transcript-Änderung; Alt-Läufe (ohne transcript) nutzen weiter den return_value-Fallback. Server-Restart nötig (Interpreter-Capture). E2E-Verifikation im Browser ausstehend beim Schreiben dieses Eintrags — wird vor Abschluss nachgezogen. KURATIERTER Eintrag angepasst (user-sichtbar)."),
@@ -7762,6 +7764,12 @@ class WorkflowExecution:
         self.finished_at: str | None = None
         self.error: str | None = None
         self._cancel = threading.Event()
+        # Pause gate: when SET the run is RUNNING; when CLEAR the interpreter
+        # blocks between top-level nodes until resumed (or cancelled). Starts
+        # set (running). A separate `_paused` bool mirrors it for to_dict().
+        self._pause = threading.Event()
+        self._pause.set()
+        self._paused = False
         self._thread: threading.Thread | None = None
         self._return_value = None
         self._program: _WFProgram | None = None
@@ -7770,6 +7778,10 @@ class WorkflowExecution:
         # for the LLM turn to finish on its own.
         self._step_turn_ids: set[str] = set()
         self._step_turn_lock = threading.Lock()
+        # Live-progress transcript turn for an in-flight agent_step (see
+        # begin_live_progress / live_progress_event / end_live_progress).
+        self._live_progress: dict | None = None
+        self._live_progress_idx: int = -1
         # Parse upfront to surface parse errors before run()
         try:
             self._program = _wf_parse(source)
@@ -7898,6 +7910,22 @@ class WorkflowExecution:
                 msg[k] = v
         self.transcript.append(msg)
 
+    def insert_user_before_last_answer(self, content: str, **meta) -> None:
+        """Insert a user turn just BEFORE the most recent assistant turn — used
+        when the live-progress turn was finalised IN PLACE as the answer (so the
+        instruction/request must appear above it, not after)."""
+        msg = {"role": "user", "content": content or "",
+               "at": datetime.datetime.now().isoformat()}
+        for k, v in meta.items():
+            if v is not None:
+                msg[k] = v
+        with self._step_turn_lock:
+            for i in range(len(self.transcript) - 1, -1, -1):
+                if self.transcript[i].get("role") == "assistant":
+                    self.transcript.insert(i, msg)
+                    return
+            self.transcript.append(msg)
+
     def record_output_path(self, path: str) -> None:
         """Record a FULL output-file path (untruncated) a write/edit tool
         produced, so artifact seeding is reliable regardless of step-detail
@@ -7921,6 +7949,123 @@ class WorkflowExecution:
         # No assistant turn yet — create a lightweight carrier turn.
         self.record_message("assistant", "", files=[path])
 
+    def begin_live_progress(self, label: str = "") -> None:
+        """Open a LIVE progress transcript turn for an in-flight agent_step.
+
+        agent_step is a blocking background_call that used to surface NOTHING
+        until it fully returned (a 20-round forensic run looked frozen). We now
+        maintain ONE live assistant turn (`_wf_live: True`) carrying an ordered
+        `_wf_events` list — real tool_call/tool_result/thinking/text rows the
+        FRONTEND renders exactly like a normal chat turn (args tables, result
+        blocks, streamed answer text). The poll (`/executions/{id}` →
+        transcript) ships the events; the live turn is dropped by
+        `end_live_progress()` and the step's real answer turn is recorded by
+        `_capture_transcript` as usual."""
+        with self._step_turn_lock:
+            # events: ordered [{kind:'tool_call'|'tool_result'|'text'|'thinking', ...}]
+            self._live_progress = {"label": label or "Arbeitet …", "events": []}
+            self._live_progress_idx = len(self.transcript)
+            self.transcript.append({
+                "role": "assistant", "_wf_live": True,
+                "_wf_label": self._live_progress["label"],
+                "_wf_events": self._live_progress["events"],
+                "at": datetime.datetime.now().isoformat(),
+            })
+
+    def live_progress_event(self, etype: str, data: dict) -> None:
+        """Feed one loop event into the live progress turn (thread-safe).
+
+        Builds structured rows the chat renderer understands:
+          - tool_call   → a new event with name+args+tool_use_id
+          - tool_result → attach result to the matching tool_call event
+          - text_delta  → append to the current trailing text segment (a new
+                          segment starts after each tool call, so the turn reads
+                          text → tool → text like a real chat)
+          - thinking_delta → append to the current trailing thinking segment
+        """
+        lp = getattr(self, "_live_progress", None)
+        if lp is None:
+            return
+        try:
+            with self._step_turn_lock:
+                evs = lp["events"]
+                d = data or {}
+                if etype == "tool_call":
+                    evs.append({
+                        "kind": "tool_call",
+                        "name": d.get("name") or d.get("tool") or "tool",
+                        "args": d.get("args") or {},
+                        "tool_use_id": d.get("tool_use_id") or "",
+                    })
+                elif etype == "tool_result":
+                    tuid = d.get("tool_use_id") or ""
+                    name = d.get("name") or d.get("tool") or ""
+                    # Attach to the matching tool_call (by id, else last unmatched
+                    # call with the same name).
+                    for ev in reversed(evs):
+                        if ev.get("kind") != "tool_call" or ev.get("_done"):
+                            continue
+                        if (tuid and ev.get("tool_use_id") == tuid) or (not tuid and ev.get("name") == name):
+                            ev["_done"] = True
+                            ev["result"] = d.get("result", "")
+                            ev["is_error"] = bool(d.get("is_error"))
+                            ev["duration_ms"] = d.get("elapsed_ms")
+                            break
+                elif etype in ("text_delta", "text"):
+                    seg = evs[-1] if (evs and evs[-1].get("kind") == "text") else None
+                    if seg is None:
+                        seg = {"kind": "text", "text": ""}
+                        evs.append(seg)
+                    seg["text"] += d.get("text", "") or ""
+                elif etype == "thinking_delta":
+                    seg = evs[-1] if (evs and evs[-1].get("kind") == "thinking") else None
+                    if seg is None:
+                        seg = {"kind": "thinking", "text": ""}
+                        evs.append(seg)
+                    seg["text"] += d.get("text", "") or ""
+                else:
+                    return
+                # to_dict serialises self.transcript; the live turn's _wf_events
+                # IS this same list object, so the mutation is already visible.
+        except Exception:
+            pass
+
+    def finalize_live_progress(self, text: str = "", model: str = "", files=None) -> bool:
+        """FREEZE the live progress turn into a permanent completed turn: flip
+        `_wf_live` off (so the status/controls line drops), set the final answer
+        text/model/files, and KEEP the collected `_wf_events` so the tool calls
+        + thinking + streamed text the user watched STAY visible after the step
+        ends (the v9.291.x bug: they vanished because the live turn was popped
+        and only the bare answer was re-recorded).
+
+        Returns True if it finalised a live turn — the caller (agent_step's
+        transcript capture) then SKIPS recording a second assistant turn."""
+        with self._step_turn_lock:
+            idx = getattr(self, "_live_progress_idx", -1)
+            ok = 0 <= idx < len(self.transcript) and self.transcript[idx].get("_wf_live")
+            if ok:
+                turn = self.transcript[idx]
+                turn["_wf_live"] = False
+                turn["content"] = text or ""
+                if model:
+                    turn["model"] = model
+                if files:
+                    turn["files"] = list(files)
+                # _wf_events stays on the turn → the frontend keeps rendering the
+                # tool calls/thinking/text as a normal completed turn.
+            self._live_progress = None
+            self._live_progress_idx = -1
+            return bool(ok)
+
+    def end_live_progress(self) -> None:
+        """Abort path (error/exception before an answer): drop the live turn."""
+        with self._step_turn_lock:
+            idx = getattr(self, "_live_progress_idx", -1)
+            if 0 <= idx < len(self.transcript) and self.transcript[idx].get("_wf_live"):
+                self.transcript.pop(idx)
+            self._live_progress = None
+            self._live_progress_idx = -1
+
     def register_step_turn(self, turn_id: str) -> None:
         with self._step_turn_lock:
             self._step_turn_ids.add(turn_id)
@@ -7929,8 +8074,33 @@ class WorkflowExecution:
         with self._step_turn_lock:
             self._step_turn_ids.discard(turn_id)
 
+    def pause(self) -> None:
+        """Request a pause. Takes effect at the next top-level node boundary
+        (the interpreter blocks on `_pause_wait()` between statements). An
+        in-flight agent_step LLM turn runs to completion first — pause is
+        cooperative, not a mid-generation kill."""
+        if self.status in ("running", "pending"):
+            self._paused = True
+            self._pause.clear()
+
+    def resume(self) -> None:
+        self._paused = False
+        self._pause.set()
+
+    def _pause_wait(self) -> None:
+        """Block while paused, waking periodically so a concurrent cancel is
+        honoured promptly. Called by the interpreter between top-level nodes."""
+        while not self._pause.is_set():
+            if self._cancel.is_set():
+                return
+            self._pause.wait(timeout=0.5)
+
     def cancel(self) -> None:
         self._cancel.set()
+        # A paused run must be un-paused so its interpreter thread wakes, sees
+        # the cancel, and exits instead of blocking forever on the pause gate.
+        self._paused = False
+        self._pause.set()
         # Also unblock any pending file-upload wait
         try:
             deliver_workflow_file_answer(self.execution_id, None)
@@ -7973,6 +8143,7 @@ class WorkflowExecution:
             "current_stage": self.current_stage_name,
             "current_stage_idx": self.current_stage_idx,
             "total_stages": len(self.steps),
+            "paused": bool(self._paused),
             "stages": stages,
             "steps": self.steps,
             "transcript": self.transcript,
