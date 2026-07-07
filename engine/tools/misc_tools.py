@@ -81,9 +81,16 @@ def tool_use_skill(args: dict) -> str:
     if not agent:
         return _err("use_skill: no active agent")
 
+    # Resolve the caller so per-user (shared) skills can be access-gated.
+    _user = _current_user_for_skills()
+
     body = agent.load_skill(skill_name)
     if body is None:
+        # Fall back to the caller's visible per-user skills (own + shared).
+        body = agent.load_user_skill_body(skill_name, _user)
+    if body is None:
         available = [s.get("slug", s["name"]) for s in agent.list_skills()]
+        available += [s.get("slug", s["name"]) for s in agent.list_user_skills(_user)]
         return _err(f"use_skill: skill '{skill_name}' not found. Available: {', '.join(available) or 'none'}")
 
     out = {"skill": skill_name, "instructions": body}
@@ -92,7 +99,7 @@ def tool_use_skill(args: dict) -> str:
     # (the skill text references e.g. "06-user-manual.md" but the skill dir is
     # NOT the working dir — guessed relative reads fail and waste tool rounds).
     try:
-        for sk in agent.list_skills():
+        for sk in (agent.list_skills() + agent.list_user_skills(_user)):
             if sk.get("slug") == skill_name or sk.get("name") == skill_name:
                 skill_md = sk.get("path") or ""
                 skill_dir = os.path.dirname(skill_md)
@@ -111,6 +118,106 @@ def tool_use_skill(args: dict) -> str:
     except OSError:
         pass
     return _ok(out)
+
+
+def _current_user_for_skills():
+    """Resolve the caller's user dict from the request context, for ACL-gating
+    per-user skills. Returns None for anonymous/background turns."""
+    try:
+        uid = get_request_context().current_user_id or ""
+        if not uid:
+            return None
+        from server_lib.auth import AuthDB as _AuthDB
+        return _AuthDB.get_user(uid)
+    except Exception:
+        return None
+
+
+def _score_skill(task_terms: set, skill: dict) -> int:
+    """Keyword-overlap score of a task against one skill's name+description+slug.
+    Deterministic, no embeddings — a term appearing in the skill's text scores 1,
+    a term in the name/slug scores an extra point (title matches weigh more)."""
+    name = (skill.get("name") or "").lower()
+    slug = (skill.get("slug") or "").lower()
+    desc = (skill.get("description") or "").lower()
+    hay = f"{name} {slug} {desc}"
+    strong = f"{name} {slug}"
+    score = 0
+    for t in task_terms:
+        if t in hay:
+            score += 1
+            if t in strong:
+                score += 1
+    return score
+
+
+def tool_find_skills(args: dict) -> str:
+    """Search the caller's visible per-user skills for ones matching a task."""
+    import brain as _brain
+    task = (args.get("task") or "").strip()
+    if not task:
+        return _err("find_skills: task is required")
+    agent = get_request_context().current_agent or _brain._current_agent
+    if not agent:
+        return _err("find_skills: no active agent")
+    user = _current_user_for_skills()
+    skills = agent.list_user_skills(user)  # already ACL-filtered (own + shared)
+    if not skills:
+        return _ok({"matches": [], "note": "Der Nutzer hat (noch) keine passenden "
+                                            "persönlichen Skills — normal weitermachen."})
+    by_slug = {s.get("slug", ""): s for s in skills}
+
+    # (1) Semantic recall over the user's OWN skills (their private wing) — this
+    # catches cross-language / paraphrased tasks ("check a passport" ↔
+    # "Ausweisprüfung") that keyword overlap misses. Best-effort: empty on any
+    # store failure, and shared (team/global) skills live in the OWNER's wing so
+    # they aren't covered here — the keyword pass below covers the full set.
+    sem_score: dict[str, float] = {}
+    uid = (user or {}).get("id") or ""
+    if uid:
+        try:
+            for hit in _brain._search_skills_semantic(uid, task, limit=8):
+                sl = hit.get("slug", "")
+                if sl in by_slug:
+                    sem_score[sl] = hit.get("score", 0.0)
+        except Exception:
+            pass
+
+    # (2) Keyword overlap over the FULL visible set (own + shared).
+    terms = {t for t in re.split(r"[^a-zA-Z0-9äöüßÄÖÜ]+", task.lower())
+             if len(t) >= 3}
+    kw_score = {sl: _score_skill(terms, s) for sl, s in by_slug.items()}
+
+    # Merge: a skill ranks if EITHER signal fires. Sort by semantic similarity
+    # first (0–1), then keyword overlap, then slug for stability.
+    scored = []
+    for sl, s in by_slug.items():
+        sem = sem_score.get(sl, 0.0)
+        kw = kw_score.get(sl, 0)
+        if sem > 0 or kw > 0:
+            scored.append((sem, kw, s))
+    scored.sort(key=lambda x: (-x[0], -x[1], x[2].get("slug", "")))
+
+    matches = [{
+        "slug": s.get("slug", ""),
+        "name": s.get("name", ""),
+        "description": s.get("description", ""),
+        "visibility": s.get("visibility", ""),
+        "score": round(sem, 3) if sem > 0 else 0,
+        "matched_via": ("semantic" if sem > 0 else "keyword"),
+    } for sem, kw, s in scored[:8]]
+    if not matches:
+        # Neither signal fired — surface the full (small) visible set so the
+        # model can still pick if the task wording just didn't overlap.
+        matches = [{
+            "slug": s.get("slug", ""), "name": s.get("name", ""),
+            "description": s.get("description", ""),
+            "visibility": s.get("visibility", ""), "score": 0,
+            "matched_via": "listed",
+        } for s in skills[:8]]
+    return _ok({"matches": matches,
+                "load_with": "Call use_skill(skill=\"<slug>\") to load a match's "
+                             "full instructions before doing the task."})
 
 
 # ─── Remote nodes ─────────────────────────────────────────────────────────────

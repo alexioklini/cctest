@@ -576,7 +576,26 @@ state (indexed / stale / not-indexed). Querying an unbuilt index returns a
 ## Skills
 
 - `use_skill(skill="<slug>")` — load full SKILL.md body into context.
-  This is how you load THIS skill; load others the same way.
+  This is how you load THIS skill; load others the same way. Resolves in this
+  order: built-in agent skills (`skills/` + main's global), then the caller's
+  visible **per-user skills** (`user_skills/`, own + shared) — the latter are
+  access-gated by the same sharing block as chats, so a user only loads a
+  per-user skill they own or that was shared with them (v9.294.0).
+- `find_skills(task="<description>")` — search the current user's PERSONAL
+  skills (own + shared) for ones matching a task (v9.294.0). Built-in skills are
+  listed in the system prompt, but per-user skills are NOT (that would break the
+  cached KV prefix) — they are discovered via this tool instead. Returns
+  `[{slug, name, description, score, matched_via}]` (ACL-filtered; empty list =
+  no match, just proceed). Then `use_skill(skill="<slug>")` loads the winner.
+  This is the discovery half of "personal skills as tools": the tool DEFINITION
+  is static (cache-safe), the per-user matches ride in the tool RESULT.
+  Matching (v9.294.1) merges two signals: **semantic** (vector search over the
+  user's OWN skills, embedded in their `user__<uid>` wing via MemPalace/MLX — so
+  a paraphrased or cross-language task like "check a passport" finds a German
+  "Ausweisprüfung" skill; `matched_via:"semantic"`, score = similarity 0–1) and
+  **keyword** overlap over the full visible set incl. team/global-shared skills
+  (`matched_via:"keyword"`). Falls back to keyword-only if the vector store is
+  unavailable.
 
 ## Discovery
 

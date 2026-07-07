@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.294.0",
+        "date": "2026-07-07",
+        "title": "Aus einem Chat einen Skill erstellen",
+        "body": "Wenn ein Chat eine gelungene Vorgehensweise gezeigt hat, "
+                "können Sie diese jetzt mit einem Klick als wiederverwendbaren "
+                "„Skill“ sichern (neue Schaltfläche 🎓 in der Eingabezeile). "
+                "Brain-Agent destilliert aus dem Gespräch — oder aus dem "
+                "freigegebenen Plan eines Experten-Gremiums — eine klare "
+                "Anleitung (Auslöser, Voraussetzungen, Schritte, Fallstricke, "
+                "Beispiel), die der Agent bei ähnlichen Aufgaben künftig "
+                "eigenständig heranzieht. Der Entwurf wird Ihnen zunächst zur "
+                "Prüfung vorgelegt; Sie passen ihn bei Bedarf an und legen fest, "
+                "ob der Skill privat bleibt oder mit Ihrem Team bzw. allen "
+                "geteilt wird — genau wie bei einem Chat. So wächst mit jeder "
+                "guten Arbeit eine persönliche, teilbare Wissensbasis.",
+        "audience": "user",
+        "versions": ["9.294.0"],
+    },
+    {
         "version": "9.293.2",
         "date": "2026-07-07",
         "title": "Bilder an Text-Modelle: exakt statt vage",

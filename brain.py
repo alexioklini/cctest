@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.293.4"
+VERSION = "9.294.1"
 VERSION_DATE = "2026-07-07"
 CHANGELOG = [
+    ("9.294.1", "2026-07-07", "feat(find_skills: semantische Skill-Suche über MemPalace — cross-language/Paraphrase): das in 9.294.0 eingeführte find_skills-Discovery-Tool nutzt jetzt VEKTOR-Suche statt nur Keyword-Overlap. ANLASS (User-Feedback): Keyword-Match verfehlt paraphrasierte/anderssprachige Aufgaben — 'how do I verify a passport is genuine' fand den deutschen Skill 'Ausweisprüfung auf Echtheit' NICHT (Keyword-Score 0). LÖSUNG: Skills werden bei /v1/skills/save in die MemPalace eingebettet (embeddinggemma-300m via MLX, dasselbe Embedding wie alle Drawer) und in den PRIVATEN Wing des Nutzers gelegt — `user__<uid>`, room='skills' — damit _wing_visible sie exakt wie den Rest des Privatgedächtnisses isoliert (ein `skills__<uid>`-Wing würde als geteilter/untypisierter Name lesen und leaken). Identität reist in source_file='skill/<uid>/<slug>' (tool_add_drawer trägt keine Custom-Metadaten). DREI Helfer in engine/mempalace_glue.py (alle best-effort, leerer Rückgabewert bei Fehler → Tool stirbt nie): _embed_and_store_skill (delete-then-add, weil drawer_ids content-addressiert sind — eine editierte Beschreibung würde sonst den alten Drawer verwaisen lassen), _search_skills_semantic (col.query where {wing,room}, distance→similarity), _delete_skill_vector (scan-then-delete-by-ids, robust bei gechunkten Beschreibungen); alle Writes unter _palace_write_lock. find_skills MERGT jetzt zwei Signale: (1) SEMANTIK über die EIGENEN Skills des Nutzers (deren privater Wing) — fängt Paraphrase/Sprache; (2) KEYWORD über die VOLLE sichtbare Menge (own + geteilt) — geteilte Skills liegen im Wing des OWNERS, nicht im eigenen, also deckt Keyword sie ab. Sortierung: Semantik-Similarity zuerst, dann Keyword, dann slug; matched_via-Feld je Treffer. save_user_skill embeddet nach dem Schreiben, delete_user_skill räumt den Vektor (liest owner aus meta VOR rmtree). Keyword-Fallback bleibt voll funktionsfähig, wenn Qdrant/Embedder nicht verfügbar. LIVE VERIFIZIERT (echte API, Restart): deutscher Skill gespeichert+eingebettet (Drawer in user__<uid>/skills gefiltert) → englische Paraphrase 'detect if a photo on an ID card was swapped' findet 'passfoto-manipulation' Score 0.833 via semantic (Keyword-Score 0); Löschung entfernt den Vektor (0.806→[] gegengeprüft, kein Orphan). py_compile OK. Server-Restart nötig. Skill 02-tools/03-storage + SKILL.md im selben Commit. Kein neuer kuratierter Eintrag (der 9.294.0-Eintrag deckt die user-sichtbare Wirkung ab — Skills werden zuverlässiger gefunden; dies ist die Engine dahinter)."),
+    ("9.294.0", "2026-07-07", "feat(Skill aus Chat/Plan erstellen — persönliche, teilbare Skills): analog zum Workflow-Generator (9.290.0) wird ein gelungener Chat (oder sein freigegebener MoA-Plan) per Klick zu einer wiederverwendbaren SKILL.md, die ein Agent künftig via use_skill lädt. Deliverable ist NICHT ein .flow-Workflow, sondern ein PER-USER-Skill (Auslöser + Voraussetzungen + nummerierte Schritte + Fallstricke + Beispiel), der wie ein Chat geteilt werden kann (privat/Team/global). ARCHITEKTUR = 1:1-Klon von engine/workflow_gen.py: neue Tabelle skill_gen (server_lib/db.py, Klon workflow_gen + Boot-Crash-Reconcile), Daemon-Thread, EIN forced_tool-Call submit_skill {slug, display_name, description, body_md, notes} (max_rounds=1, cost_purpose='skill_gen'). Quellaufbereitung WIEDERVERWENDET workflow_gen._chat_source_material → der freigegebene ausfuehrungsplan.md-Artifact + moa_planner/moa_plan_review-Karten speisen den Skill-Generator identisch (MoA-Plan gratis). System-Prompt = deutscher 'Skill-Autor', der die METHODE destilliert (kein Transkript-Replay); VALIDIERUNG in Code, nicht LLM: slug-Regex + Pflichtfelder + Anti-Transkript-Guard (Body darf keine wörtliche Abschrift des Quellmaterials sein), 1 Retry, sonst ready_with_warnings (review-before-save — nichts wird automatisch geschrieben). SPEICHER: agents/<agent>/user_skills/<slug>/SKILL.md + skill.meta.json (identischer 6-Key-Sharing-Block wie Workflows: owner_user_id/visibility/owner_team_id/extra_member_user_ids/excluded_user_ids/created_at). AgentConfig bekommt user_skill_exists/get_skill_meta/update_skill_meta/skill_block/save_user_skill/delete_user_skill/list_user_skills/load_user_skill_body; use_skill (engine/tools/misc_tools.py) fällt nach load_skill auf load_user_skill_body zurück, ACL-gegated per can_access (Nutzer aus ctx.current_user_id → AuthDB.get_user). KV-INVARIANTE (kritisch): die eingebaute Skills-Registry steht im GECACHTEN System-Prompt (prompt_build.py:609, list_skills() bleibt user-agnostisch — own+main), also werden PER-USER-Skills NICHT dort gelistet, sondern über eine First-User-Message-PREAMBLE (_user_skills_preamble_text, wire-only, von _ALLOWED_MSG_KEYS gestrippt) — der Warm-Pool-KV-Prefix bleibt byte-stabil (dasselbe Muster wie das User-Profil). ENDPUNKTE (handlers/admin_skills_gen.py, spiegelt admin_workflows): POST /v1/skills/generate {source:{type:chat|plan|nl,session_id?|text?},agent_id?,instructions?,attachments?} → GET /v1/skills/generate/<id> (+/cancel via cancel_turn), RBAC owner-or-admin, Chat-Quelle access-checked; POST /v1/skills/save persistiert den geprüften Entwurf (owner=caller, normalize_share_block, Team-Sichtbarkeit erfordert Team-Mitgliedschaft). SHARING gratis: 'skill' in handlers/share.py _LOADERS/_SAVERS/_TRANSFERRERS + TRANSFERABLE registriert → GET/POST /v1/share?item_type=skill funktioniert mit derselben Modal (legacy_open=False — generierte Skills haben immer einen Owner). MODELL-KNOB: Service-Modelle-Slot skill_gen_model (admin_observability Slot-Tupel + read/write + server.py-Boot-Copy — die CLAUDE.md-Falle, an der instruction_gen_model scheiterte). UI: Composer-🎓-Button (btn-skill, neben btn-workflow) → skillGenerateFromChat; self-contained Modal (Form → Live-Fortschritt → Review mit slug/Titel/Beschreibung/Body-Textarea + Sichtbarkeit privat/Team/global) → Speichern (web/js/skills_gen.js). LIVE E2E VERIFIZIERT (echte API, Chat 2100ffcb 'Ausweisprüfung' → glm-5.2): generate→ready in ~39s, Body ist eine echte destillierte Prozedur (Auslöser/Voraussetzungen/5 Schritte/Fallstricke/Beispiel, KEIN Transkript, 0 Warnungen), save→SKILL.md+meta auf Disk, alle 4 Sichtbarkeits-Stufen + Load-Gate unit-geprüft (Owner sieht+lädt, Fremder auf privat blockiert, global offen, users-Grant, None sieht nichts), Test-Skill danach entfernt. DISCOVERY-TOOL (User-Feedback 'Skills wie Tools behandeln — das LLM fragt nach passenden Skills'): NEUES Tool find_skills(task) (4-Site-Wiring) durchsucht die SICHTBAREN persönlichen Skills des Nutzers (list_user_skills, ACL-gefiltert), keyword-rankt Name+Beschreibung+slug gegen die Task-Terme und liefert [{slug,name,description,score}]; danach use_skill zum Laden. ERSETZT den First-Turn-Preamble (_user_skills_preamble_text + Wiring entfernt): der Preamble kostete pro Erst-Turn Tokens pro Skill und skaliert nicht — die Tool-DEFINITION ist statisch (cache-sicher), die per-user Treffer reisen im Tool-ERGEBNIS (nie im gecachten Prompt). Eingebaute Skills bleiben in der Prompt-Registry (klein, universell); NUR die unbegrenzte per-user-Menge geht über Discovery. Statische, cache-sichere Prompt-Zeile ('PERSONAL SKILLS … call find_skills') weist das Modell auf die Existenz hin. Keyword-Match bewusst (kein Embedding — deterministisch, keine Infra; Upgrade auf Vektor später ohne Vertrags-Änderung möglich). find_skills-Ranking + ACL unit-verifiziert (Owner Score 4, Fremder [], anonym []). py_compile aller Python-Dateien OK; js_gate GRÜN (eslint clean, net-globals 1879→1890 = 11 neue Globals, Baseline mitgezogen, smoke passed). Skill 01/02/03/05/06 + SKILL.md im selben Commit. Server-Restart nötig (neue Tabelle/Routen/Tool). KURATIERTER Eintrag (user-sichtbar)."),
     ("9.293.4", "2026-07-07", "fix(QR/Barcode-Dekodierung via OpenCV statt pyzbar — pyzbar SEGFAULTET auf Python 3.14): bei der Host-Installation der optionalen QR/Barcode-Erkennung (9.293.2) stellte sich heraus, dass `pyzbar` 0.1.9 auf diesem Setup (Homebrew-Python 3.14 / macOS) bei JEDEM decode()-Aufruf hart segfaultet (Exit 139) — sogar auf einem leeren Bild, VERIFIZIERT. Ein Segfault killt den GESAMTEN Server-Prozess und ist von Python aus NICHT per try/except fangbar (der 9.293.2-Guard hätte nicht geholfen). LÖSUNG: engine/image_features._decode_codes von pyzbar auf OpenCVs EIGENE Detektoren umgestellt (cv2.QRCodeDetector.detectAndDecodeMulti für QR-Codes + cv2.barcode.BarcodeDetector für lineare Barcodes EAN/UPC/Code128) — OpenCV ist bereits installiert (opencv-contrib, für die Gesichtszählung), braucht KEINE externe System-Lib (kein zbar) und crasht nicht. VERIFIZIERT: echter QR (via segno erzeugt, nur zum Test, danach deinstalliert) → 'QRCODE: https://beleg.example/2024-0815' exakt dekodiert; leeres Bild → [] ohne Crash. pyzbar wieder deinstalliert, die brew-Formel zbar entfernt (nicht mehr gebraucht). NEBENBEFUND (kein Bug, Test-Fixture-Anpassung): nach `brew install tesseract-lang` (deutsches Sprachpaket jetzt da) liest der deu+eng-Default die synthetische Test-Rechnung als '20240815' OHNE Bindestrich (der 9px-Testfont rendert den Bindestrich zu dünn; deu interpretiert ihn nicht als solchen) — die 3 betroffenen OCR-Test-Asserts prüfen jetzt die ZIFFERNFOLGE (hyphen-normalisiert) statt des exakten '2024-0815'-Formats; das OCR selbst ist korrekt, nur das Fixture-Rendering ist fontabhängig. HOST-STATUS nach dieser Sitzung: tesseract-lang (deu + 160 weitere Sprachen) installiert → deutscher Fließtext-OCR aktiv; QR/Barcode via OpenCV ohne Zusatz-Lib. Tests: test_image_features +2 (OpenCV-QR crash-safe auf leerem Bild + echter QR-Decode wenn ein Generator da ist, sonst skip). py_compile OK, 19 Tests grün (1 skip). Server-Restart nötig. Kein neuer kuratierter Eintrag (die user-sichtbare Wirkung deckt 9.293.2 ab; dies ist die robuste Engine dahinter)."),
     ("9.293.3", "2026-07-07", "fix(Bild-Anhang an Text-Modell wurde GAR NICHT beschrieben — Disk-Routing umging den Degrade): Nachbesserung zu 9.293.2, aufgedeckt durch einen echten End-to-End-Test (Beleg-PNG an mistral-small-latest → Modell antwortete 'keine OCR von Bildinhalten möglich, nicht gefunden'). ROOT CAUSE (per Live-Turn reproduziert, nicht vermutet): der in 9.293.2 verbesserte Degrade-Choke-Point _sanitize_multimodal_for_model verarbeitet NUR image_url-Wire-Blöcke — aber handlers/chat.py Zeile 6590 legt einen image_url-Block NUR an, wenn das aktive Session-Modell das MIME nativ akzeptiert (_mime_matches(mime, raw_formats)). Bei einem TEXT-Modell matcht das nicht → das Bild wird auf Disk geroutet (/tmp/brain-attachments/<sid>/) und NUR als '[User attached files saved to disk]'-Pfad genannt; es entsteht nie ein image_url-Block, also lief mein 9.293.2-Degrade für disk-geroutete Bilder NIE. read_document auf ein Bild liefert nur Metadaten → das Modell war effektiv blind. FIX (User-Entscheidung: 'Disk-Notice mit OCR+Merkmalen anreichern' statt für Text-Modelle künstlich image_url-Blöcke zu erzeugen): im disk_files-Block (chat.py ~6716), wenn KEINE inline-Bilder existieren (die deckt der Wire-Degrade schon ab), wird für jede disk-geroutete BILDDATEI (.png/.jpg/.jpeg/.tif/.bmp/.webp/.gif, base64) brain._describe_image_deterministic aufgerufen (lokales OCR + Bildmerkmale + QR/Barcodes, KEIN LLM) und das Ergebnis an die 'saved to disk'-Notice angehängt ('[Bild-Anhänge — automatisch, ohne KI erkannt (Text via OCR + deterministische Merkmale):]' + Beschreibung je Bild). Das Bild bleibt zusätzlich auf Disk fürs Tool-Processing (magick/python_exec). So bekommt ein Text-Modell den echten Belegtext, ohne dass ein image_url-Block oder ein Vision-LLM nötig ist. Kein image_url für Text-Modelle erzwungen (bewusst — hätte die Wire-Form/Cache-Prefix für alle Text-Turns mit Bild geändert). Scope-Fix: _brain lokal im Block importiert (die Funktion ist NICHT _sanitize_multimodal_for_model, wo _brain schon lokal existiert). py_compile OK. Server-Restart nötig. Skill 05-internals + SKILL.md im selben Commit. KURATIERTER Eintrag von 9.293.2 deckt es ab (dieselbe user-sichtbare Wirkung — jetzt auch auf dem Disk-Pfad wirksam)."),
     ("9.293.2", "2026-07-07", "feat(Bild-Anhang an Text-Modelle: deterministische Beschreibung ZUERST, Vision-LLM nur als Fallback): der automatische Bild-Degrade-Choke-Point (_describe_image_with_vision, gerufen aus handlers/chat.py _sanitize_multimodal_for_model, wenn ein Bild an ein nicht-vision-fähiges Modell geht) rief bisher IMMER ein Vision-LLM, um das Bild frei zu beschreiben. ANLASS (User-Frage): 'wird das OCR auch für die Bildbeschreibung genutzt, wenn kein vision-fähiges LLM die Anhänge kriegt?' — bisher NEIN (zwei getrennte Pfade). NEU (User-Entscheidung: 'deterministisch, LLM nur als Fallback'): _describe_image_deterministic läuft VOR jedem Modell-Aufruf und kombiniert (1) LOKALES OCR der Bildbytes (_ocr_image_bytes → dieselbe tesseract-Primitive _page_tsv/_words_to_text wie das OCR-Toolset, kein LLM) + (2) MODELLFREIE Bildmerkmale (engine/image_features.py NEU, via OpenCV+Pillow, beide schon installiert): Maße, EXIF (Kamera/Aufnahmedatum/GPS), dominante Farben (k-means, deterministische PP-Center-Init), Helligkeit, Foto-vs-Grafik-Heuristik (Kantendichte+Farbvielfalt), Gesichts-ZÄHLUNG (OpenCV Haar-Cascade) + (3) QR/Barcode-Dekodierung (pyzbar, optional/guarded — exakter Code-Inhalt wie OCR). Liefert etwas SUBSTANZIELLES (OCR-Text ≥20 Zeichen ODER dekodierte Codes ODER sicherer Merkmalsbefund) → das Vision-LLM wird KOMPLETT übersprungen (gratis, lokal, keine Cloud). Nur wenn der deterministische Durchgang DÜNN ist (textloses Szenen-Foto), fällt es auf das Vision-LLM zurück (attachment_image_model bzw. günstigstes image-fähiges Modell) — und selbst dann werden die deterministischen Fakten VORANGESTELLT (additiv, nie verworfen). Kein image-Modell konfiguriert + dünnes Signal → gibt trotzdem die gesammelten Fakten zurück statt der alten nutzlosen Platzhaltermeldung. BUG GEFANGEN (End-to-End-Test, nicht nur py_compile): _describe_image_deterministic nutzte base64.b64decode, aber `base64` ist im brain-Namespace NICHT modul-global (überall sonst lokal `import base64 as _b64`) → NameError vom try/except verschluckt → still leerer OCR-Text; lokalen `import base64` ergänzt. image_features.describe_image_features fail-safe (unlesbare Bytes → has_signal=False, kein Raise); GPS-IFD via getexif().get_ifd(0x8825). KOSTEN: das OCR im Degrade loggt 1 Seite (tesseract/local/$0) wie das Toolset. ABGRENZUNG: rein deterministisch, KEIN lokales-Vision-Modell-für-Beschreibung-bevorzugen (bewusst vom User abgewählt); die local_vision/mistral_ocr-PDF-Fallback-Kette bleibt unberührt. Tests: tests/test_image_features.py NEU (6 Fälle — modellfreie Fakten, unlesbare Bytes ohne Raise, Text-Bild=strong→Vision übersprungen, textloses Flachbild=thin→Fallback würde feuern, kaputtes base64=leer; OCR-abhängige Fälle skippen ohne tesseract). py_compile OK. Server-Restart nötig (Choke-Point-Logik). HINWEIS: QR/Barcode braucht `brew install zbar && pip install pyzbar` auf dem Host (ohne bleibt der Rest voll funktionsfähig, Codes werden nur nicht dekodiert). Skill 05-internals + SKILL.md im selben Commit. KURATIERTER Eintrag (user-sichtbar: Belege/Scans an Text-Modelle werden jetzt exakt statt vage übergeben)."),
@@ -1282,7 +1284,7 @@ TOOL_GROUPS = {
     "git": {"git_command", "github_command"},
     "scheduler": {"schedule_list", "schedule_history"},
     "mcp": {"mcp_connect", "mcp_disconnect", "mcp_servers"},
-    "skills": {"use_skill"},
+    "skills": {"use_skill", "find_skills"},
     "helpdesk": {"helpdesk_session_info", "helpdesk_user_context",
                  "helpdesk_user_activity"},
     "nodes": {"list_nodes"},
@@ -4244,6 +4246,198 @@ Adapt your behavior to the tasks you are given.
         if fm_match:
             return fm_match.group(1).strip()
         return raw.strip()
+
+    # ── Per-user skills (generated from chats, shared like chats) ─────────────
+    # These live in agents/<agent>/user_skills/<slug>/ (SKILL.md +
+    # skill.meta.json) and are OWNED by a user + shared via the generic 5-field
+    # block (private/users/team/global) — distinct from the built-in skills/
+    # dir (agent-global, user-agnostic) which stays in the cached system prompt.
+    # Per-user visibility is surfaced via the first-user-message preamble
+    # (wire-only), NOT the cached prompt, so the warm-pool KV prefix is stable.
+
+    @staticmethod
+    def _user_skills_root(agent_id: str) -> str:
+        return os.path.join(AGENTS_DIR, agent_id, "user_skills")
+
+    @staticmethod
+    def user_skill_exists(agent_id: str, slug: str) -> bool:
+        """True if a slug is already taken by EITHER a built-in skill or a
+        per-user skill (slugs are agent-global unique to keep use_skill simple)."""
+        if not slug:
+            return False
+        if os.path.isfile(os.path.join(AGENTS_DIR, agent_id, "skills", slug, "SKILL.md")):
+            return True
+        return os.path.isfile(
+            os.path.join(AgentConfig._user_skills_root(agent_id), slug, "SKILL.md"))
+
+    @staticmethod
+    def get_skill_meta(agent_id: str, slug: str) -> dict | None:
+        """Return the per-user skill's sharing block. None if the skill dir
+        doesn't exist. Mirrors WorkflowEngine.get_workflow_meta."""
+        sd = os.path.join(AgentConfig._user_skills_root(agent_id), slug)
+        if not os.path.isfile(os.path.join(sd, "SKILL.md")):
+            return None
+        meta = {"owner_user_id": "", "visibility": "private", "owner_team_id": "",
+                "extra_member_user_ids": [], "excluded_user_ids": [], "created_at": ""}
+        mp = os.path.join(sd, "skill.meta.json")
+        if os.path.exists(mp):
+            try:
+                with open(mp, "r") as f:
+                    stored = json.load(f)
+                if isinstance(stored, dict):
+                    meta.update({k: stored[k] for k in stored if k in meta})
+            except (OSError, json.JSONDecodeError):
+                pass
+        return meta
+
+    @staticmethod
+    def update_skill_meta(agent_id: str, slug: str, updates: dict) -> dict:
+        meta = AgentConfig.get_skill_meta(agent_id, slug)
+        if meta is None:
+            return {"error": "skill not found"}
+        for k in ("owner_user_id", "visibility", "owner_team_id",
+                  "extra_member_user_ids", "excluded_user_ids", "created_at"):
+            if k in updates:
+                meta[k] = updates[k]
+        if not meta.get("created_at"):
+            meta["created_at"] = datetime.datetime.now(
+                datetime.timezone.utc).isoformat()
+        mp = os.path.join(AgentConfig._user_skills_root(agent_id), slug,
+                          "skill.meta.json")
+        try:
+            os.makedirs(os.path.dirname(mp), exist_ok=True)
+            with open(mp, "w") as f:
+                json.dump(meta, f, indent=2)
+        except OSError as e:
+            return {"error": str(e)}
+        return {"status": "updated"}
+
+    @staticmethod
+    def skill_block(meta: dict) -> dict:
+        return {
+            "owner_user_id": (meta or {}).get("owner_user_id", "") or "",
+            "visibility": (meta or {}).get("visibility", "private") or "private",
+            "owner_team_id": (meta or {}).get("owner_team_id", "") or "",
+            "extra_member_user_ids": (meta or {}).get("extra_member_user_ids", []) or [],
+            "excluded_user_ids": (meta or {}).get("excluded_user_ids", []) or [],
+        }
+
+    @staticmethod
+    def save_user_skill(agent_id: str, *, slug: str, display_name: str,
+                        description: str, body_md: str, owner_user_id: str,
+                        source_kind: str = "", source_ref: str = "",
+                        share: dict | None = None) -> dict:
+        """Write a per-user skill (SKILL.md + skill.meta.json). Owner is the
+        caller; sharing defaults to private. Returns {status, slug} or {error}."""
+        slug = re.sub(r"[^a-z0-9]+", "-", (slug or "").lower()).strip("-")[:56]
+        if not slug:
+            return {"error": "slug ist leer/ungültig"}
+        if not body_md.strip():
+            return {"error": "body_md ist leer"}
+        sd = os.path.join(AgentConfig._user_skills_root(agent_id), slug)
+        # Frontmatter: only name + description are parsed by _scan_skills; the
+        # rest is provenance the editor/UI can read.
+        fm_lines = [
+            "---",
+            f"name: {display_name or slug}",
+            f"description: {' '.join((description or '').split())}",
+            "metadata:",
+            "  type: user",
+            f"  owner: {owner_user_id}",
+        ]
+        if source_kind:
+            fm_lines.append(f"  source: {source_kind}")
+        if source_ref:
+            fm_lines.append(f"  generated_from: {source_ref}")
+        fm_lines.append("---")
+        content = "\n".join(fm_lines) + "\n\n" + body_md.strip() + "\n"
+        try:
+            os.makedirs(sd, exist_ok=True)
+            with open(os.path.join(sd, "SKILL.md"), "w") as f:
+                f.write(content)
+        except OSError as e:
+            return {"error": str(e)}
+        # Sharing sidecar — normalize the block before persisting.
+        from server_lib.auth import normalize_share_block
+        blk = {"owner_user_id": owner_user_id, "visibility": "private",
+               "owner_team_id": "", "extra_member_user_ids": [],
+               "excluded_user_ids": []}
+        if isinstance(share, dict):
+            for k in ("visibility", "owner_team_id", "extra_member_user_ids",
+                      "excluded_user_ids"):
+                if k in share:
+                    blk[k] = share[k]
+        blk = normalize_share_block(blk)
+        AgentConfig.update_skill_meta(agent_id, slug, blk)
+        # Index the skill for semantic discovery (find_skills). Best-effort —
+        # keyword matching still works if the vector store is unavailable. Text
+        # = title + description (what a task query is matched against).
+        try:
+            _idx = f"{display_name or slug}\n{description or ''}".strip()
+            _embed_and_store_skill(owner_user_id, slug, _idx)
+        except Exception:
+            pass
+        return {"status": "saved", "slug": slug}
+
+    @staticmethod
+    def delete_user_skill(agent_id: str, slug: str) -> dict:
+        sd = os.path.join(AgentConfig._user_skills_root(agent_id), slug)
+        if not os.path.isdir(sd):
+            return {"error": "skill not found"}
+        # Drop the semantic-index drawer first (needs the owner uid from meta,
+        # which the rmtree below removes). Best-effort.
+        try:
+            meta = AgentConfig.get_skill_meta(agent_id, slug) or {}
+            owner = meta.get("owner_user_id") or ""
+            if owner:
+                _delete_skill_vector(owner, slug)
+        except Exception:
+            pass
+        import shutil
+        shutil.rmtree(sd, ignore_errors=True)
+        return {"status": "deleted"}
+
+    def list_user_skills(self, user: dict | None) -> list[dict]:
+        """List the per-user skills VISIBLE to `user` (own + shared via the
+        generic block). Empty when `user` is None. Owner-less skills are NOT
+        world-visible (legacy_open=False) — a generated skill always has an
+        owner. Distinct from list_skills() (built-in, user-agnostic)."""
+        if not user:
+            return []
+        from server_lib.auth import can_access
+        root = self._user_skills_root(self.agent_id)
+        out = []
+        if not os.path.isdir(root):
+            return out
+        for slug in sorted(os.listdir(root)):
+            meta = AgentConfig.get_skill_meta(self.agent_id, slug)
+            if meta is None:
+                continue
+            if not can_access(user, AgentConfig.skill_block(meta), legacy_open=False):
+                continue
+            info = self._scan_skills(root, source="user").get(slug)
+            if not info:
+                continue
+            info = dict(info)
+            info["owner_user_id"] = meta.get("owner_user_id", "")
+            info["visibility"] = meta.get("visibility", "private")
+            out.append(info)
+        return out
+
+    def load_user_skill_body(self, slug: str, user: dict | None) -> str | None:
+        """Load a per-user skill body IFF `user` may access it (gate for
+        use_skill). Returns None when not found or not permitted."""
+        meta = AgentConfig.get_skill_meta(self.agent_id, slug)
+        if meta is None:
+            return None
+        from server_lib.auth import can_access
+        if not can_access(user or {}, AgentConfig.skill_block(meta),
+                          legacy_open=False):
+            return None
+        path = os.path.join(self._user_skills_root(self.agent_id), slug, "SKILL.md")
+        if os.path.isfile(path):
+            return self._read_skill_body(path)
+        return None
 
 
 def scan_claude_code_skills() -> list[dict]:
@@ -13258,7 +13452,7 @@ TOOL_ICONS = {
     "list_directory": "d", "search_files": "s", "execute_command": "$",
     "web_fetch": "~", "exa_search": "?",
     "wiki_write": "+", "wiki_read": "m", "wiki_delete": "-", "wiki_structure": "M",
-    "delegate_task": ">", "use_skill": "*",
+    "delegate_task": ">", "use_skill": "*", "find_skills": "*",
     "helpdesk_session_info": "i", "helpdesk_user_context": "i", "helpdesk_user_activity": "i",
     "gmail_inbox": "@", "gmail_read": "@", "gmail_search": "@",
     "gmail_send": "@", "gmail_reply": "@",
@@ -13279,7 +13473,7 @@ TOOL_VERBS = {
     "list_directory": "Listing", "search_files": "Searching", "execute_command": "Executing",
     "web_fetch": "Fetching", "exa_search": "Searching",
     "wiki_write": "Writing Wiki", "wiki_read": "Reading Wiki", "wiki_delete": "Deleting Wiki Page", "wiki_structure": "Wiki Structure",
-    "delegate_task": "Delegating", "use_skill": "Loading Skill",
+    "delegate_task": "Delegating", "use_skill": "Loading Skill", "find_skills": "Finding Skills",
     "helpdesk_session_info": "Session-Info", "helpdesk_user_context": "Nutzer-Kontext", "helpdesk_user_activity": "Nutzer-Aktivität",
     "gmail_inbox": "Inbox", "gmail_read": "Reading Email", "gmail_search": "Searching Email",
     "gmail_send": "Sending Email", "gmail_reply": "Replying",
@@ -13815,6 +14009,9 @@ from engine.mempalace_glue import (  # noqa: E402
     _load_mempalace_config,
     _ensure_mempalace_importable,
     _wing_visible,
+    _embed_and_store_skill,
+    _search_skills_semantic,
+    _delete_skill_vector,
     tool_mempalace_query,
     tool_save_chat_to_memory,
     _save_chat_to_memory_callback,
@@ -13876,6 +14073,7 @@ from engine.tools.delegation_tools import (  # noqa: E402
 )
 from engine.tools.misc_tools import (  # noqa: E402
     tool_use_skill,
+    tool_find_skills,
     tool_list_nodes,
     tool_mcp_connect,
     tool_mcp_disconnect,
@@ -13948,6 +14146,7 @@ TOOL_DISPATCH = {
     "task_cancel": tool_task_cancel,
     "run_background_task": tool_run_background_task,
     "use_skill": tool_use_skill,
+    "find_skills": tool_find_skills,
     "helpdesk_session_info": tool_helpdesk_session_info,
     "helpdesk_user_context": tool_helpdesk_user_context,
     "helpdesk_user_activity": tool_helpdesk_user_activity,

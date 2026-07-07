@@ -1824,3 +1824,110 @@ def indexed_source_files_for_wing(palace_path: str, wing: str) -> set:
     except Exception:
         pass
     return out
+
+
+# ── Per-user SKILL semantic index (v9.294.1) ─────────────────────────────────
+# Skills are stored as drawers in the user's OWN private wing (`user__<uid>`,
+# room="skills") so `_wing_visible` isolates them exactly like the rest of the
+# user's private memory — a `skills__<uid>` wing would read as a shared/untyped
+# name and leak. Identity travels in `source_file = "skill/<uid>/<slug>"`
+# (tool_add_drawer carries no custom metadata). Embedding is done by the package
+# (MLX embeddinggemma) — we only pass text. Every write/delete holds
+# `_palace_write_lock`. All three helpers are best-effort: on any failure they
+# return a falsy/empty result so the caller (find_skills) falls back to keyword
+# matching and the tool never dies.
+
+def _skill_wing(uid: str) -> str:
+    return f"user__{uid}"
+
+
+def _skills_palace_path() -> str:
+    ok, _ = _ensure_mempalace_importable()
+    if not ok:
+        return ""
+    return (_load_mempalace_config() or {}).get("palace_path", "") or ""
+
+
+def _embed_and_store_skill(uid: str, slug: str, text: str) -> bool:
+    """Embed + store a skill's searchable text in the user's private wing.
+    Replace-on-edit: delete any prior vector for this slug first (drawer ids are
+    content-addressed, so an edited description would otherwise orphan the old
+    drawer). Returns True on success."""
+    if not (uid and slug and (text or "").strip()):
+        return False
+    pp = _skills_palace_path()
+    if not pp:
+        return False
+    try:
+        _delete_skill_vector(uid, slug)
+        os.environ.setdefault("MEMPALACE_PALACE_PATH", pp)
+        from mempalace.mcp_server import tool_add_drawer
+        from server_daemons import _palace_write_lock
+        with _palace_write_lock:
+            res = tool_add_drawer(
+                wing=_skill_wing(uid), room="skills", content=text,
+                source_file=f"skill/{uid}/{slug}", added_by="brain-skills")
+        return bool(res and res.get("success"))
+    except Exception:
+        return False
+
+
+def _search_skills_semantic(uid: str, task: str, limit: int = 8) -> list[dict]:
+    """Vector-search the user's skill drawers by task. Returns
+    [{slug, text, score}] ranked by similarity, or [] on any failure."""
+    if not (uid and (task or "").strip()):
+        return []
+    pp = _skills_palace_path()
+    if not pp:
+        return []
+    try:
+        from mempalace.palace import get_collection
+        col = get_collection(pp, create=False)
+        if col is None:
+            return []
+        res = col.query(
+            query_texts=[task], n_results=max(1, limit),
+            where={"$and": [{"wing": _skill_wing(uid)}, {"room": "skills"}]},
+            include=["documents", "metadatas", "distances"])
+        docs = (res.get("documents") or [[]])[0]
+        metas = (res.get("metadatas") or [[]])[0]
+        dists = (res.get("distances") or [[]])[0]
+        out = []
+        for doc, meta, dist in zip(docs, metas, dists):
+            sf = (meta or {}).get("source_file", "") or ""
+            slug = sf.split("/")[-1] if sf.startswith(f"skill/{uid}/") else ""
+            if not slug:
+                continue
+            out.append({"slug": slug, "text": doc or "",
+                        "score": round(max(0.0, 1.0 - float(dist or 0.0)), 3)})
+        return out
+    except Exception:
+        return []
+
+
+def _delete_skill_vector(uid: str, slug: str) -> bool:
+    """Remove a skill's drawer(s) from the user's wing. Scan-then-delete-by-ids
+    (robust if an oversized description was chunked). Best-effort."""
+    if not (uid and slug):
+        return False
+    pp = _skills_palace_path()
+    if not pp:
+        return False
+    try:
+        from mempalace.palace import get_collection
+        from server_daemons import _palace_write_lock
+        col = get_collection(pp, create=False)
+        if col is None:
+            return False
+        got = col.get(where={"wing": _skill_wing(uid)}, include=["metadatas"])
+        ids = got.get("ids") or []
+        metas = got.get("metadatas") or []
+        target = f"skill/{uid}/{slug}"
+        del_ids = [i for i, m in zip(ids, metas)
+                   if ((m or {}).get("source_file") or "").startswith(target)]
+        if del_ids:
+            with _palace_write_lock:
+                col.delete(ids=del_ids)
+        return True
+    except Exception:
+        return False

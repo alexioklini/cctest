@@ -1454,6 +1454,27 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "find_skills",
+        "description": (
+            "Search the current user's PERSONAL skills — reusable procedures the user (or their "
+            "team) saved from past chats — for ones matching the task at hand. These are NOT listed "
+            "up front, so call this whenever a task looks like something the user has done before "
+            "(a recurring analysis, check, or workflow). Returns matching skills ranked by relevance "
+            "as [{slug, name, description, score}]; then call use_skill(skill=\"<slug>\") to load the "
+            "best match's instructions. Returns an empty list if the user has no matching skill — "
+            "that's normal, just proceed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string",
+                         "description": "A short description of the task you're about to do, "
+                                        "in the user's language — used to rank the user's skills."},
+            },
+            "required": ["task"],
+        },
+    },
+    {
         "name": "helpdesk_session_info",
         "description": (
             "Helpdesk only. Get metadata and the recent messages of the chat session the user "

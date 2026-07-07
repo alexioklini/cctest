@@ -548,6 +548,29 @@ already anonymises (see 05-internals).
 - `POST /v1/skills/install-zip` — multipart zip upload (skill folder)
 - `POST /v1/skills/remove` — `{slug, agent}`
 
+### KI-Skill-Generierung (v9.294.0) — Skill aus Chat/Plan erstellen
+
+Parallel zur KI-Workflow-Generierung, aber das Ergebnis ist ein **per-user
+Skill** (SKILL.md), der wie ein Chat geteilt werden kann. Jeder eingeloggte
+Nutzer darf generieren (nicht admin-gated).
+
+- `POST /v1/skills/generate` — body `{source:{type:"chat"|"plan"|"nl",
+  session_id?|text?}, agent_id?, instructions?, attachments?:[{name,text}]}`
+  → `{gen_id, status:"generating"}`. Async; Quelle `chat` wird access-checked.
+- `GET /v1/skills/generate/<gen_id>` — Poll: `{status: generating|ready|
+  ready_with_warnings|error, phase, steps, ...}`; bei ready zusätzlich
+  `{slug, display_name, description, body_md, notes, warnings}`. RBAC
+  owner-or-admin.
+- `POST /v1/skills/generate/<gen_id>/cancel` — laufende Generierung abbrechen.
+- `POST /v1/skills/save` — geprüften Entwurf persistieren: body `{agent_id?,
+  slug, display_name, description, body_md, visibility?, owner_team_id?,
+  extra_member_user_ids?, excluded_user_ids?, source_kind?, source_ref?}`
+  → `{status:"saved", slug}`. Owner = Aufrufer; Team-Sichtbarkeit erfordert
+  Team-Mitgliedschaft. Schreibt `agents/<agent>/user_skills/<slug>/SKILL.md`
+  + `skill.meta.json`.
+- Sharing: `GET/POST /v1/share?item_type=skill&item_id=<slug>&agent_id=` nutzt
+  denselben generischen Block wie Chats/Workflows.
+
 ## MCP
 
 - `GET /v1/mcp/connections` — current MCP connections

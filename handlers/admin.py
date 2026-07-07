@@ -13,6 +13,7 @@ import uuid
 from urllib.parse import unquote, urlencode
 
 from handlers.admin_workflows import AdminWorkflowHandlers
+from handlers.admin_skills_gen import AdminSkillsGenHandlers
 from handlers.admin_agents import AdminAgentsHandlers
 from handlers.admin_costs import AdminCostsHandlers
 from handlers.admin_config import AdminConfigHandlers
@@ -22,6 +23,7 @@ from handlers.admin_artifacts import AdminArtifactsHandlers
 
 class AdminHandlerMixin(
     AdminWorkflowHandlers,
+    AdminSkillsGenHandlers,
     AdminAgentsHandlers,
     AdminCostsHandlers,
     AdminConfigHandlers,

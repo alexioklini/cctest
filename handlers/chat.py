@@ -6666,6 +6666,10 @@ class ChatHandlerMixin:
             if _art_pre:
                 preamble_text = _art_pre
                 message = f"{_art_pre}\n\n{message}"
+        # Per-user skills are NOT injected here — they're discovered on demand
+        # via the find_skills tool (a static, cache-safe tool whose per-user
+        # matches ride in the tool result, never the cached prompt). This
+        # replaced the earlier first-turn preamble.
 
         # Build user_content with any multimodal blocks
         if content_blocks:

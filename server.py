@@ -1063,6 +1063,7 @@ from handlers.projects import ProjectsHandlerMixin
 from handlers.wiki import WikiHandlerMixin
 from handlers.admin import AdminHandlerMixin
 from handlers.admin_workflows import AdminWorkflowHandlers
+from handlers.admin_skills_gen import AdminSkillsGenHandlers
 from handlers.admin_agents import AdminAgentsHandlers
 from handlers.admin_costs import AdminCostsHandlers
 from handlers.admin_config import AdminConfigHandlers
@@ -1106,6 +1107,7 @@ def _inject_server_globals():
         ProjectsHandlerMixin.__module__,
         AdminHandlerMixin.__module__,
         AdminWorkflowHandlers.__module__,
+        AdminSkillsGenHandlers.__module__,
         AdminAgentsHandlers.__module__,
         AdminCostsHandlers.__module__,
         AdminConfigHandlers.__module__,
@@ -1669,6 +1671,8 @@ class BrainAgentHandler(
             self._handle_agents_activity()
         elif path.startswith("/v1/workflows/generate/"):
             self._handle_workflow_generate_get(path)
+        elif path.startswith("/v1/skills/generate/"):
+            self._handle_skill_generate_get(path)
         elif path == "/v1/workflows/executions":
             self._handle_workflow_list_executions()
         elif path.startswith("/v1/workflows/executions/"):
@@ -2125,6 +2129,12 @@ class BrainAgentHandler(
             self._handle_workflow_generate()
         elif path.startswith("/v1/workflows/generate/") and path.endswith("/cancel"):
             self._handle_workflow_generate_cancel(path)
+        elif path == "/v1/skills/generate":
+            self._handle_skill_generate()
+        elif path.startswith("/v1/skills/generate/") and path.endswith("/cancel"):
+            self._handle_skill_generate_cancel(path)
+        elif path == "/v1/skills/save":
+            self._handle_skill_save()
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/approve"):
             self._handle_workflow_approve(path)
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/cancel"):
@@ -3678,6 +3688,7 @@ def main():
     # saw it, so instruction generation silently used the background default.
     server_config["instruction_gen_model"] = file_config.get("instruction_gen_model", "") or ""
     server_config["workflow_gen_model"] = file_config.get("workflow_gen_model", "") or ""
+    server_config["skill_gen_model"] = file_config.get("skill_gen_model", "") or ""
     server_config["wiki_gate_model"] = file_config.get("wiki_gate_model", "") or ""
     server_config["auto_route"] = file_config.get("auto_route", {}) or {}
     server_config["moa"] = file_config.get("moa", {}) or {}

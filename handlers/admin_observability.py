@@ -1005,6 +1005,7 @@ class AdminObservabilityHandlers:
         ("studio_model", "Studio (Projekt-Outputs)", "config", None),
         ("instruction_gen_model", "Projektanweisungen (KI-Generierung)", "config", None),
         ("workflow_gen_model", "Workflow-Generator (KI-Erstellung)", "config", None),
+        ("skill_gen_model", "Skill-Generator (KI-Erstellung)", "config", None),
         ("audio_overview_model", "Audio Overview (Podcast-Skript)", "config", None),
         ("code_graph_model", "Code-Graph (Symbol-Zusammenfassungen)", "config", None),
         ("deep_research_model", "Deep Research (Recherche-Loop)", "config", None),
@@ -1048,6 +1049,7 @@ class AdminObservabilityHandlers:
             "studio_model": cfg.get("studio_model", "") or "",
             "instruction_gen_model": cfg.get("instruction_gen_model", "") or "",
             "workflow_gen_model": cfg.get("workflow_gen_model", "") or "",
+            "skill_gen_model": cfg.get("skill_gen_model", "") or "",
             "audio_overview_model": cfg.get("audio_overview_model", "") or "",
             "code_graph_model": cfg.get("code_graph_model", "") or "",
             "deep_research_model": cfg.get("deep_research_model", "") or "",
@@ -1219,6 +1221,8 @@ class AdminObservabilityHandlers:
                 cfg["instruction_gen_model"] = _validate_model(body["instruction_gen_model"])
             if "workflow_gen_model" in body:
                 cfg["workflow_gen_model"] = _validate_model(body["workflow_gen_model"])
+            if "skill_gen_model" in body:
+                cfg["skill_gen_model"] = _validate_model(body["skill_gen_model"])
             if "audio_overview_model" in body:
                 cfg["audio_overview_model"] = _validate_model(body["audio_overview_model"])
             if "code_graph_model" in body:

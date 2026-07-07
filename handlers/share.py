@@ -27,7 +27,7 @@ def _srv():
 
 ITEM_TYPES = ("chat", "project_chat", "project", "schedule", "workflow", "artifact")
 # Item types that have a transferable owner (artifacts inherit their parent's).
-TRANSFERABLE = ("chat", "project_chat", "project", "schedule", "workflow")
+TRANSFERABLE = ("chat", "project_chat", "project", "schedule", "workflow", "skill")
 
 
 # ── per-item-type block loaders / savers ─────────────────────────────
@@ -135,12 +135,33 @@ def _transfer_workflow(item_id: str, ctx: dict, new_owner: str):
     engine.WorkflowEngine.update_workflow_meta(ctx["agent_id"], ctx["name"], {"owner_user_id": new_owner})
 
 
+def _load_skill(item_id: str, agent_id: str):
+    meta = engine.AgentConfig.get_skill_meta(agent_id or "main", item_id)
+    if meta is None:
+        return None, "Skill not found"
+    return engine.AgentConfig.skill_block(meta), {"agent_id": agent_id or "main", "slug": item_id, "meta": meta}
+
+
+def _save_skill(item_id: str, ctx: dict, block: dict):
+    engine.AgentConfig.update_skill_meta(ctx["agent_id"], ctx["slug"], {
+        "visibility": block["visibility"],
+        "owner_team_id": block.get("owner_team_id", ""),
+        "extra_member_user_ids": block.get("extra_member_user_ids", []),
+        "excluded_user_ids": block.get("excluded_user_ids", []),
+    })
+
+
+def _transfer_skill(item_id: str, ctx: dict, new_owner: str):
+    engine.AgentConfig.update_skill_meta(ctx["agent_id"], ctx["slug"], {"owner_user_id": new_owner})
+
+
 _LOADERS = {
     "chat": _load_chat,
     "project_chat": _load_chat,
     "project": _load_project,
     "schedule": _load_schedule,
     "workflow": _load_workflow,
+    "skill": _load_skill,
 }
 _SAVERS = {
     "chat": _save_chat,
@@ -148,6 +169,7 @@ _SAVERS = {
     "project": _save_project,
     "schedule": _save_schedule,
     "workflow": _save_workflow,
+    "skill": _save_skill,
 }
 _TRANSFERRERS = {
     "chat": _transfer_chat,
@@ -155,6 +177,7 @@ _TRANSFERRERS = {
     "project": _transfer_project,
     "schedule": _transfer_schedule,
     "workflow": _transfer_workflow,
+    "skill": _transfer_skill,
 }
 
 

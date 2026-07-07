@@ -1230,6 +1230,26 @@ Bericht in der Qualität des ursprünglichen Chats. Welches Modell die
 Workflows entwirft, legen Admins unter **Einstellungen → Service-Modelle →
 Workflow-Generator** fest.
 
+### Skill aus einem Chat erstellen (v9.294.0)
+
+Nah verwandt mit dem Workflow-Generator, aber das Ergebnis ist ein **Skill** —
+eine wiederverwendbare Anleitung, die der Agent bei ähnlichen Aufgaben künftig
+von selbst heranzieht (er lädt sie über `use_skill`). Der **Skill-Knopf**
+(Doktorhut 🎓, in der Knopfreihe unter dem Eingabefeld neben dem
+Workflow-Knopf) destilliert aus dem aktuellen Chat — oder aus dessen
+freigegebenem Ausführungsplan (Experten-Gremium) — eine Anleitung mit Auslöser,
+Voraussetzungen, nummerierten Schritten, Fallstricken und einem Beispiel. Es
+ist **keine Abschrift** des Gesprächs, sondern die herausgelöste Methode.
+
+Der Entwurf öffnet sich **zur Prüfung**: Kurzname, Titel, Beschreibung und der
+Skill-Inhalt sind editierbar. Vor dem Speichern legen Sie die **Sichtbarkeit**
+fest — **privat** (nur Sie), **Team** oder **alle** —, genau wie beim Teilen
+eines Chats. Ein gespeicherter Skill gehört Ihnen; über den Teilen-Dialog
+lässt sich die Freigabe später ändern oder der Skill übertragen. Unterschied
+zum Workflow: ein Workflow ist ein ausführbares Skript, ein Skill ist Wissen,
+das der Agent beim Arbeiten berücksichtigt. Welches Modell die Skills entwirft,
+legen Admins unter **Einstellungen → Service-Modelle → Skill-Generator** fest.
+
 ### Einen Lauf ansehen (v9.290.2)
 
 Ein Workflow-Lauf öffnet sich wie eine normale Chat-Sitzung: Klick auf eine

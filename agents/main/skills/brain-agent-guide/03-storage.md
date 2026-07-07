@@ -11,8 +11,19 @@ agents/
     mcp.json                   # MCP server definitions
     commands.json              # slash-command definitions
     hooks/                     # per-event hook scripts
-    skills/                    # SKILL.md skills (this file lives here)
-      <slug>/SKILL.md
+    skills/                    # built-in SKILL.md skills (agent-global,
+      <slug>/SKILL.md          #   user-agnostic; this file lives here)
+    user_skills/               # per-user skills generated from chats/plans
+      <slug>/SKILL.md          #   (v9.294.0) — owned by a user, shared via
+      <slug>/skill.meta.json   #   the same block as chats (private/users/
+                               #   team/global). Discovered by the agent via
+                               #   the find_skills tool (NOT the cached system
+                               #   prompt — that keeps the KV prefix stable).
+                               #   Also embedded into MemPalace on save
+                               #   (v9.294.1): the skill's title+description is a
+                               #   drawer in the owner's user__<uid> wing,
+                               #   room="skills", source_file="skill/<uid>/<slug>"
+                               #   — powers find_skills' semantic search.
     projects/                  # per-project folder
       <project_name>/
         project.json           # id, instructions, instruction_files,

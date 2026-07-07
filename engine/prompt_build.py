@@ -606,7 +606,13 @@ def _build_system_prompt(include_memory_summary: bool = True,
     if agent_registry:
         system_instruction += f"\n{agent_registry}\n\n"
 
-    # Build skills registry (names + descriptions only, load on demand)
+    # Build skills registry (names + descriptions only, load on demand).
+    # NOTE: this list is user-AGNOSTIC (built-in agent + main-global skills only)
+    # so it stays byte-stable in the cached warm-pool KV prefix. The user's
+    # PERSONAL skills are deliberately NOT listed here (per-user content would
+    # break the prefix) — they are discovered on demand via the find_skills tool
+    # (a static tool definition; the per-user matches ride in the tool RESULT,
+    # never the cached prompt). See the find_skills line below.
     _agent = get_request_context().current_agent or _brain._current_agent
     if _agent:
         skills = _agent.list_skills()
@@ -619,6 +625,14 @@ def _build_system_prompt(include_memory_summary: bool = True,
                 label = f"{slug}" + (f" ({display})" if display else "")
                 system_instruction += f"  - {label}: {s['description']}{source_tag}\n"
             system_instruction += "\n"
+        # Static, cache-safe hint that the user may have PERSONAL skills not in
+        # the list above — discoverable via find_skills. Constant string (no
+        # per-user data) → does not vary the KV prefix.
+        system_instruction += (
+            "PERSONAL SKILLS — the user may have saved their own reusable skills "
+            "that are NOT listed above. When a task looks like something the user "
+            "has a routine for, call find_skills(task=\"…\") to search them, then "
+            "use_skill to load the best match.\n")
 
     # Scheduler status — deliberately NOT listed in the system prompt. Dumping
     # every active task's name + description into the context (a) leaks
@@ -968,3 +982,5 @@ def _files_in_chat_preamble_text(session_id: str) -> str:
         + "\n".join(lines)
         + "]"
     )
+
+
