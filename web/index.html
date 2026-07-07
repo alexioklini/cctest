@@ -307,11 +307,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span>Neuer Chat</span>
     </button>
     <div class="messages-scroll" id="messages-scroll">
-      <!-- Workflow-run banner: rendered when the active chat is bound to a
-           workflow run (has workflow_run_id). Carries header (agent/model/
-           timestamps), files (refs + artifacts), collapsed run trace, and
-           workflow actions. Empty + hidden otherwise. -->
-      <div id="workflow-run-banner" class="workflow-run-banner hidden"></div>
+      <!-- Workflow runs no longer use a banner: when the active chat is bound
+           to a workflow run, the run output renders as a chat-style
+           turn-group at the top of #messages-container (see
+           chat_render.js + workflows.js:buildWorkflowRunBlock), and the
+           run's stats/source/protocol live in dedicated right-panel tabs. -->
       <div class="messages-container" id="messages-container">
         <!-- Messages rendered here -->
       </div>
@@ -778,6 +778,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <div class="wf-container">
       <div class="wf-header">
         <h1 class="wf-title">Workflows</h1>
+        <button class="wf-new-btn" onclick="wfOpenGenerateModal('nl')" title="Workflow aus einer natürlichsprachlichen Beschreibung erzeugen lassen (KI)">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z"/></svg>
+          Neu aus Beschreibung
+        </button>
         <button class="wf-new-btn" onclick="wfOpenEditor(null)">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Neuer Workflow
@@ -810,9 +814,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       </div>
 
       <!-- (Inline wf-detail surface removed v8.24.2 — workflow runs now
-           open in the regular chat view via openSession(); the
-           workflow-run-banner above messages-container carries all the
-           run-specific UI.) -->
+           open in the regular chat view via openSession(). The run output
+           renders as a chat-style turn-group in #messages-container; run
+           stats/source/protocol live in dedicated right-panel tabs.) -->
     </div>
   </div>
 
@@ -1293,7 +1297,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
                     oninput="wfOnMetaChange('description')"></textarea>
         </label>
       </div>
-      <div class="wf-editor-wrap">
+      <div class="wf-editor-tabs" id="wf-editor-tabs">
+        <button class="wf-subtab active" id="wf-tab-flow" onclick="wfSwitchEditorTab('flow')">Flow</button>
+        <button class="wf-subtab" id="wf-tab-plan" onclick="wfSwitchEditorTab('plan')"
+                title="Ausführungsplan (plan.md) — die natürlichsprachliche Methodik, die agent_step ausführt; im Lauf als Variable plan_md verfügbar">Plan</button>
+      </div>
+      <div class="wf-editor-wrap" id="wf-flow-wrap">
         <div id="wf-line-numbers" class="wf-line-numbers"></div>
         <div class="wf-editor-area">
           <pre id="wf-highlight" class="wf-highlight" aria-hidden="true"></pre>
@@ -1305,6 +1314,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
                     onkeyup="if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) wfACMaybeOpen(false)"></textarea>
         </div>
       </div>
+      <div class="wf-editor-wrap hidden" id="wf-plan-wrap">
+        <textarea id="wf-plan-editor" class="wf-editor" spellcheck="false"
+                  placeholder="Kein Plan hinterlegt. Hier den Ausführungsplan als Markdown mit '### Schritt N — Titel'-Überschriften pflegen — agent_step führt ihn aus; plan_steps(plan_md) zerlegt ihn in Einzelschritte."
+                  style="position:static;width:100%;padding:10px 14px"></textarea>
+      </div>
       <div class="wf-editor-footer">
         <div id="wf-editor-status" class="wf-editor-status"></div>
         <div class="wf-editor-hint">Strg-Leertaste für Vervollständigungen</div>
@@ -1314,6 +1328,46 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 
   <!-- (Workflow Run Modal removed in v8.24.0 — replaced by inline wf-detail.) -->
   <!-- (Tool Palette removed — completion now inline via Ctrl-Space in editor.) -->
+
+  <!-- ═══ Workflow-Generator (KI) ═══ -->
+  <div id="wf-generate-modal" class="wf-modal hidden">
+    <div class="wf-modal-backdrop" onclick="wfCloseGenerateModal()"></div>
+    <div class="wf-modal-content" style="max-width:640px;height:auto;max-height:85vh">
+      <div class="wf-modal-header">
+        <div class="wf-header-titles">
+          <div class="wf-title-input" id="wf-gen-title" style="border:none">Workflow erzeugen (KI)</div>
+          <div class="wf-header-name-row" id="wf-gen-source-line"></div>
+        </div>
+        <div class="wf-modal-actions">
+          <button class="wf-icon-btn" onclick="wfCloseGenerateModal()" title="Schließen" aria-label="Schließen">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="wf-gen-form" style="padding:14px 16px;display:flex;flex-direction:column;gap:10px;overflow-y:auto">
+        <label style="display:flex;flex-direction:column;gap:4px">
+          <span class="wf-editor-field-label" id="wf-gen-instr-label">Beschreibung / zusätzliche Vorgaben</span>
+          <textarea id="wf-gen-instructions" class="wf-editor-field-input" rows="4"
+                    placeholder="Was soll der Workflow tun? Eingaben, Schritte, gewünschtes Ergebnis …"></textarea>
+        </label>
+        <div>
+          <span class="wf-editor-field-label">Kontext-Dateien (.md/.txt, optional)</span>
+          <div id="wf-gen-files" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0"></div>
+          <button class="wf-btn wf-btn-ghost" onclick="document.getElementById('wf-gen-file-input').click()">Datei anhängen…</button>
+          <input type="file" id="wf-gen-file-input" accept=".md,.markdown,.txt" multiple class="hidden" onchange="wfGenAddFiles(this)" />
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="wf-btn wf-btn-primary" id="wf-gen-start-btn" onclick="wfStartGenerate()">Erzeugen</button>
+        </div>
+      </div>
+      <div id="wf-gen-progress" class="hidden" style="padding:14px 16px;overflow-y:auto">
+        <div id="wf-gen-steps" style="font-family:var(--font-mono);font-size:12px;display:flex;flex-direction:column;gap:4px"></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+          <button class="wf-btn wf-btn-ghost" id="wf-gen-cancel-btn" onclick="wfCancelGenerate()">Abbrechen</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- ═══ Wiki View ═══ -->
   <div id="wiki-view">
@@ -1569,6 +1623,18 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
         <span class="right-panel-tab-badge" id="tab-badge-artifacts">0</span>
       </button>
+      <!-- Workflow-run tabs — shown only when the active chat is bound to a
+           workflow run (toggled by updateWorkflowTabs). Statistik / Quellcode /
+           Protokoll; artifacts reuse the normal Dateien tab above. -->
+      <button class="right-panel-tab wf-only-tab" data-tab="wf-statistik" onclick="selectRightTab('wf-statistik')" title="Statistik" style="display:none">
+        <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      </button>
+      <button class="right-panel-tab wf-only-tab" data-tab="wf-quellcode" onclick="selectRightTab('wf-quellcode')" title="Quellcode" style="display:none">
+        <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      </button>
+      <button class="right-panel-tab wf-only-tab" data-tab="wf-protokoll" onclick="selectRightTab('wf-protokoll')" title="Protokoll" style="display:none">
+        <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg>
+      </button>
       <button class="right-panel-tab" data-tab="websuche" onclick="selectRightTab('websuche')" title="Websuche">
         <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
         <span class="right-panel-tab-badge" id="tab-badge-websuche">0</span>
@@ -1630,7 +1696,22 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/><line x1="15.4" y1="6.5" x2="8.6" y2="10.5"/></svg>
         Teilen
       </button>
+      <button class="artifact-action-btn hidden" id="artifact-workflow-btn" onclick="artifactCreateWorkflowFromPlan()" title="Workflow aus diesem Plan erstellen — der Plan wird zur wiederverwendbaren Methodik eines KI-generierten Workflows">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h6a2 2 0 0 1 2 2v4"/><path d="M15 18H9a2 2 0 0 1-2-2v-4"/></svg>
+        Workflow
+      </button>
     </div>
+  </div>
+
+  <!-- Workflow-run panes (shown only for workflow-bound chats) -->
+  <div class="right-tab-pane wf-only-pane" id="tab-pane-wf-statistik">
+    <div class="wf-tab-content" id="wf-statistik-content"></div>
+  </div>
+  <div class="right-tab-pane wf-only-pane" id="tab-pane-wf-quellcode">
+    <div class="wf-tab-content" id="wf-quellcode-content"></div>
+  </div>
+  <div class="right-tab-pane wf-only-pane" id="tab-pane-wf-protokoll">
+    <div class="wf-tab-content" id="wf-protokoll-content"></div>
   </div>
 
   <!-- Websuche (manual web search) pane -->
@@ -1778,6 +1859,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
              Colored when active (updateStatusBar); opens the goal popover. -->
         <button class="composer-btn" data-id="btn-goal" data-composer-toggle="btn-goal" onclick="openGoalPopover(event)" title="Ziel setzen (Goal-Modus) — der Assistent arbeitet weiter, bis das Ziel erreicht ist">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg>
+        </button>
+        <!-- KI-Workflow-Generator (v9.290.0): turn THIS chat into a reusable
+             workflow (opens the generate modal, source = current session). -->
+        <button class="composer-btn" data-id="btn-workflow" data-composer-toggle="btn-workflow" onclick="wfGenerateFromChat()" title="Workflow aus diesem Chat erstellen — die gezeigte Arbeitsweise als wiederverwendbaren Workflow speichern">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/><path d="M9 6h6a2 2 0 0 1 2 2v4"/><path d="M15 18H9a2 2 0 0 1-2-2v-4"/></svg>
         </button>
         <!-- Transparent-anonymisation sticky preference (step 6.3). Hidden by
              default; surfaced when chat.gdprActionPref is set so the user can

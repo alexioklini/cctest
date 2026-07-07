@@ -29,6 +29,83 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.291.0",
+        "date": "2026-07-07",
+        "title": "Bild-Anhänge funktionieren mit jedem Modell",
+        "body": "Ein Bild-Anhang führt jetzt auch dann zu einem sinnvollen "
+                "Ergebnis, wenn das antwortende Modell selbst keine Bilder "
+                "sehen kann. Bislang konnte das — etwa nach einer Plan-"
+                "Delegation im Experten-Gremium oder bei bewusster Wahl eines "
+                "textbasierten Modells — zu einem Fehler führen. Ab sofort "
+                "beschreibt in solchen Fällen automatisch ein bildfähiges "
+                "Modell den Anhang, und das gewählte Modell arbeitet mit "
+                "dieser Beschreibung weiter. Bildfähige Modelle sehen das Bild "
+                "unverändert direkt. Die Vorauswahl passender Modelle bleibt "
+                "erhalten — wählen Sie jedoch bewusst ein nicht-bildfähiges "
+                "Modell, wird diese Wahl nun respektiert statt stillschweigend "
+                "übergangen.",
+        "audience": "user",
+        "versions": ["9.291.0"],
+    },
+    {
+        "version": "9.290.2",
+        "date": "2026-07-07",
+        "title": "Workflow-Läufe wie ein Chat",
+        "body": "Ein Workflow-Lauf öffnet sich jetzt wie eine gewohnte "
+                "Chat-Sitzung: Das Ergebnis des Laufs — die Antwort, die der "
+                "Agent erarbeitet hat — erscheint im Hauptbereich als "
+                "normale Chat-Nachricht in gewohnter Darstellung und "
+                "aktualisiert sich live, während der Lauf arbeitet. Direkt "
+                "darunter schreiben Sie wie in jedem Chat weiter. Die vom "
+                "Lauf erzeugten Dateien liegen im Dateien-Reiter und lassen "
+                "sich dort ansehen und herunterladen wie in jedem Chat. Die "
+                "Detail-Ansichten sind in eigene Reiter der rechten "
+                "Seitenleiste gewandert: Statistik (Modell, Dauer, Kosten, "
+                "Status und die Aktionen zum Abbrechen, Herunterladen und "
+                "Speichern), Quellcode und Protokoll.",
+        "audience": "user",
+        "versions": ["9.290.1", "9.290.2"],
+    },
+    {
+        "version": "9.290.0",
+        "date": "2026-07-06",
+        "title": "Workflows aus Chats erzeugen",
+        "body": "Ein gelungener Chat lässt sich jetzt per Klick in einen "
+                "wiederverwendbaren Workflow verwandeln: Brain-Agent übernimmt "
+                "den dort erarbeiteten Ausführungsplan und baut daraus einen "
+                "Workflow, der dieselbe Arbeitsweise auf neue Eingaben "
+                "anwendet — aus einer einmaligen Ausweisprüfung wird so eine "
+                "Vorlage, bei der Kollegen nur noch das nächste Passbild "
+                "hochladen und automatisch einen gleichwertigen Prüfbericht "
+                "samt Qualitätskontrolle erhalten. Vier Wege führen dorthin: "
+                "der neue Knopf in der Statusleiste des Chats, der Befehl "
+                "/workflow im Terminal-Chat, der „Workflow“-Knopf auf "
+                "Plan-Dokumenten in der Artefakt-Ansicht sowie „Neu aus "
+                "Beschreibung“ im Workflows-Bereich, wo Sie den gewünschten "
+                "Ablauf in eigenen Worten beschreiben (auf Wunsch mit "
+                "beigelegten Markdown-Notizen). Jeder Entwurf wird vor dem "
+                "Speichern im Editor zur Prüfung vorgelegt; der Plan selbst "
+                "bleibt als eigener „Plan“-Reiter lesbar und anpassbar. Admins "
+                "wählen unter Service-Modelle, welches Modell die Workflows "
+                "entwirft.",
+        "audience": "user",
+        "versions": ["9.290.0"],
+    },
+    {
+        "version": "9.289.2",
+        "date": "2026-07-06",
+        "title": "Experten-Gremium: Bild-Anhänge zuverlässig",
+        "body": "Wenn Sie im Experten-Gremium eine Anfrage mit einem "
+                "Bild-Anhang stellen und die Ausführung an ein günstigeres "
+                "Modell delegiert wird, wird nun garantiert nur ein Modell "
+                "gewählt, das Bilder auch verarbeiten kann. Zuvor konnte die "
+                "Anfrage an ein reines Text-Modell geraten und scheitern. Die "
+                "Auswahl gleicht die Dateitypen des Anhangs jetzt gegen die "
+                "Fähigkeiten der Modelle ab.",
+        "audience": "admin",
+        "versions": ["9.289.2"],
+    },
+    {
         "version": "9.289.1",
         "date": "2026-07-05",
         "title": "Lokale Modelle im Experten-Gremium konfigurierbar",

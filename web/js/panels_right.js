@@ -65,6 +65,8 @@ function openRightPanel(tab) {
   // BEFORE picking the tab so a hidden tab isn't chosen. No-op in normal chats.
   // (The working-directory tree now lives in the bottom panel, not a tab.)
   if (typeof updateCodeModeTabs === 'function') updateCodeModeTabs();
+  // Show/hide the workflow-run tabs based on whether this chat is a run.
+  if (typeof updateWorkflowTabs === 'function') updateWorkflowTabs();
   // Tab selection priority: explicit arg (e.g. artifact auto-open) wins;
   // else the user's last chosen tab if they've picked one this session;
   // else the first tab that has data; else fall back to attachments.
@@ -149,8 +151,12 @@ function refreshRightPanelContent() {
   // Keep the code-mode tab set in sync (hide Artefakte/Web-Adressen). No-op
   // in normal chats.
   if (typeof updateCodeModeTabs === 'function') updateCodeModeTabs();
+  if (typeof updateWorkflowTabs === 'function') updateWorkflowTabs();
   const tab = state.rightPanelTab;
   if (tab === 'attachments') renderAttachmentsPane();
+  else if (tab === 'wf-statistik' && typeof renderWorkflowStatistikPane === 'function') renderWorkflowStatistikPane();
+  else if (tab === 'wf-quellcode' && typeof renderWorkflowQuellcodePane === 'function') renderWorkflowQuellcodePane();
+  else if (tab === 'wf-protokoll' && typeof renderWorkflowProtokollPane === 'function') renderWorkflowProtokollPane();
   else if (tab === 'references') renderReferencesPane();
   else if (tab === 'artifacts' && !state.activeArtifactId) showArtifactList();
   else if (tab === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
@@ -185,6 +191,9 @@ function switchRightTab(tabName) {
     renderBackgroundTasksPane();
   }
   if (tabName === 'btw' && typeof ChatTurnControl !== 'undefined') ChatTurnControl.renderBtwPane();
+  if (tabName === 'wf-statistik' && typeof renderWorkflowStatistikPane === 'function') renderWorkflowStatistikPane();
+  if (tabName === 'wf-quellcode' && typeof renderWorkflowQuellcodePane === 'function') renderWorkflowQuellcodePane();
+  if (tabName === 'wf-protokoll' && typeof renderWorkflowProtokollPane === 'function') renderWorkflowProtokollPane();
   updateRightPanelBadges();
   // Re-apply the active-turn focus to the freshly rendered pane.
   if (_activePanelTurn != null) syncRightPanelToActiveTurn(_activePanelTurn);

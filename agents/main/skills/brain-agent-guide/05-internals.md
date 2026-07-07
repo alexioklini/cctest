@@ -307,7 +307,27 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   experiment switch `moa.allow_local_executor` (v9.289.0, default false,
   config-only — no UI field; the ranking still prefers cloud within the
   band, so a local executor is in practice chosen via the plan-review
-  dropdown). The worker switches the session
+  dropdown). **Input-MIME gate** (v9.289.2): when the turn carries native
+  multimodal content blocks (an attached image → `image_url` data URI), the
+  executor pool is filtered to models whose config `raw_formats` accept those
+  MIMEs (`brain.model_supports_mimes` matched against the block MIMEs) — so the
+  auto-pick prefers an image-capable executor. Disk-routed attachments are
+  exempt (read via `read_document`). No matching model → empty pool → stay on
+  the current model. **BUT this MIME filter is now a preference, not a hard
+  wall** (v9.291.0): if the turn ends up on a model that can't accept the
+  images — a MoA executor, an explicit reviewer/user override of a text-only
+  model (`_run_plan_review_loop` honors an override outside the MIME-filtered
+  pool as long as it passes the enabled/chat/ACL/local gates), a quota/GDPR
+  swap, or the auto-router — the UNIVERSAL wire-degrade
+  `_sanitize_multimodal_for_model(messages, session.model)` runs right before
+  `run_turn` (the single choke point, after all model swaps) and replaces each
+  unsupported `image_url` block with a VISION-MODEL description
+  (`_describe_image_with_vision` via `attachment_image_model`) so the text-only
+  model still gets the real image content (`read_document` on an image yields
+  only metadata, never the visual content). Transient wire copy — the original
+  `image_url` blocks stay in `session.messages`/DB, so a later capable model
+  still sees the real image. No-op (byte-identical wire) when the model handles
+  the MIMEs natively. The worker switches the session
   mid-worker (provider/max_context/`_current_model`) and REBUILDS the
   model-dependent turn state (`_inf_params_for` + `_build_prefix_for`
   closures), re-emits `auto_route`, and injects the plan as a wire-only
@@ -1591,6 +1611,40 @@ against, auto-continuing until fulfilled — like Claude Code's `/goal`.
   left. German result suffix (`Ziel: erreicht nach N Iteration(en)` /
   `nicht erreicht (Limit N)` / `Ziel-Prüfung fehlgeschlagen`);
   `schedule_history.goal_iterations` records the count.
+
+## Plan-driven workflows + KI workflow generation (v9.290.0)
+
+"Der Plan ist das Programm": a workflow's METHOD lives as natural-language
+markdown in the sidecar `agents/<id>/workflows/<name>.plan.md`, not as
+per-step DSL calls. The `.flow` script is a thin deterministic spine —
+collect inputs (`ask_user_for_file`), execute the plan agentically
+(`agent_step`), persist the report (`write_file`), verify (a second
+`agent_step` auditing the report against the plan), `RETURN`.
+
+- `workflow_start` seeds the sidecar's content into the interpreter env as
+  the `plan_md` variable; the DSL builtin `plan_steps(md)` splits it
+  deterministically (Schritt/Step/Phase/numbered headings) into
+  `[{index, title, body}]` for per-step loops.
+- `agent_step` = one bounded `background_call` under the dedicated purpose
+  `workflow_step` (tool-matrix column "Workflow-Schritt"; no workflows
+  group / delegation / ask_user — recursion + blocking guard). Shared
+  workspace `/tmp/brain-workflow-runs/<exec_id>/` via `ctx.working_dir`;
+  cancel: step turn-ids register on the `WorkflowExecution`, `cancel()`
+  also fires `sidecar_proxy.cancel_turn`.
+- **Generator** (`engine/workflow_gen.py`, instruction_gen pattern:
+  `workflow_gen` row in chats.db + daemon thread + poll endpoints): builds
+  the source material DETERMINISTICALLY (chat → `_build_conversation_markdown`
+  transcript; approved MoA plan from the `ausfuehrungsplan.md` artifact,
+  executor pinned from `metadata.auto_route.moa.executor`), then ONE
+  forced-tool call (`submit_workflow`, model = Service-Modelle slot
+  `workflow_gen_model` → background default). Validation is CODE:
+  `_wf_parse` + AST walk against `TOOL_DISPATCH` + `_WF_BUILTINS`, one
+  retry with the error list, then `ready_with_warnings`. Draft-only —
+  review-before-save in the editor (Flow/Plan tabs); only the terminal-chat
+  `/workflow` path auto-saves warning-free drafts.
+- Why not trace replay: interactive chats persist NO tool_use rounds
+  (in-memory only) and traces.db tool spans are scheduler-path-only — the
+  reproducible essence of a good chat is its PLAN, not its call sequence.
 
 ## Scheduler
 

@@ -10,6 +10,9 @@
 #                         worker registry).
 #   - ask_llm           — one-shot LLM text-in/text-out via the sidecar (no
 #                         loop, no tools).
+#   - agent_step        — ONE bounded agentic turn (background_call with the
+#                         'workflow_step' purpose toolset) — the workflow
+#                         "plan is the program" execution primitive.
 #
 # ⚠️ BLOCKING STATE STAYS IN BRAIN. The pending-answer / pending-file registries
 # and their lifecycle helpers MUST remain single-instance in brain.py because
@@ -127,6 +130,181 @@ def tool_ask_llm(args: dict) -> str:
         return _ok({"text": text.strip(), "model": model})
     except Exception as e:
         return _err(f"ask_llm: {e}")
+
+
+def tool_agent_step(args: dict) -> str:
+    """Run ONE bounded agentic LLM turn as a workflow step ("Der Plan ist das
+    Programm"): the .flow script stays the deterministic spine (order, inputs,
+    report), while judgment-heavy plan steps run agentically with tools.
+
+    Args:
+        instruction:     what this step must do (required; may be a whole plan
+                         section or the entire plan)
+        plan:            optional full plan markdown, injected as context so a
+                         single step knows the overall method
+        files:           optional list of input file paths (uploads from
+                         ask_user_for_file, outputs of earlier steps)
+        model:           model id (defaults to workflow MODEL header, then the
+                         background default)
+        max_rounds:      agentic round cap (default 16, hard cap 24)
+        expected_output: optional description of the required result shape
+
+    Returns: {text, model, rounds, files} — `files` lists paths written by the
+    step's file tools so later steps / artifact seeding can pick them up.
+    """
+    import os as _os
+    import uuid as _uuid
+    import brain as _brain
+    instruction = (args.get("instruction") or "").strip()
+    if not instruction:
+        return _err("agent_step: 'instruction' is required")
+    plan = (args.get("plan") or "").strip()
+    expected_output = (args.get("expected_output") or "").strip()
+    files = args.get("files") or []
+    if isinstance(files, str):
+        files = [files]
+    files = [str(f) for f in files if f]
+    try:
+        max_rounds = int(args.get("max_rounds") or 16)
+    except (TypeError, ValueError):
+        max_rounds = 16
+    max_rounds = max(1, min(max_rounds, 24))
+
+    ctx = get_request_context()
+    execution_id = ctx.workflow_execution_id or ""
+    # Model resolution: explicit arg → workflow MODEL header → background default.
+    model = (args.get("model") or "").strip() or (ctx.workflow_default_model or "").strip()
+    if not model:
+        try:
+            model = _brain._background_model_default()
+        except Exception:
+            model = ""
+    if not model:
+        return _err("agent_step: no model configured (set a MODEL header or pass model=)")
+
+    # Shared workspace = the run's session artifact folder: agent_step sets NO
+    # working_dir, so the executor's relative file writes fall through
+    # _resolve_artifact_dir to the wf-<exec_id> artifact folder — the SAME
+    # folder the .flow-level write_file uses. One folder per run: later steps
+    # (and the verify step) see earlier steps' files, and everything surfaces
+    # in the artifact panel. (A /tmp workspace here split the run's files in
+    # two locations — the verify step couldn't find the report.)
+    parts = []
+    if plan:
+        parts.append("## Gesamtplan (Kontext)\n" + plan)
+    parts.append("## Auftrag dieses Schritts\n" + instruction)
+    if files:
+        parts.append("## Eingabedateien (mit Werkzeugen lesen/verarbeiten)\n"
+                     + "\n".join(f"- {f}" for f in files))
+    parts.append("## Arbeitsordner\nSchreibe Ausgabedateien mit RELATIVEN "
+                 "Dateinamen (nur `name.ext`) — sie landen im Artifact-Ordner "
+                 "dieses Laufs, wo auch die Dateien früherer Schritte liegen.")
+    if expected_output:
+        parts.append("## Erwartetes Ergebnis\n" + expected_output)
+    user_msg = "\n\n".join(parts)
+
+    # Vision: image inputs become native image_url blocks when the model
+    # accepts their MIME (raw_formats match, same gate as chat attachments +
+    # the MoA executor pick) — a plan step like "Bild visuell inspizieren"
+    # needs the model to SEE the image, not just know its path. Non-image or
+    # unsupported files stay path-only (read_document territory).
+    user_content = user_msg
+    img_files = []
+    if files:
+        import base64 as _b64
+        import mimetypes as _mt
+        for f in files:
+            mime = (_mt.guess_type(f)[0] or "")
+            try:
+                if (mime.startswith("image/") and _os.path.isfile(f)
+                        and _os.path.getsize(f) < 20 * 1024 * 1024):
+                    img_files.append((f, mime))
+            except OSError:
+                continue
+        if img_files and _brain.model_supports_mimes(
+                model, [m for _, m in img_files]):
+            blocks = [{"type": "text", "text": user_msg}]
+            for f, mime in img_files:
+                try:
+                    with open(f, "rb") as fh:
+                        b64 = _b64.b64encode(fh.read()).decode()
+                    blocks.append({"type": "image_url",
+                                   "image_url": {"url": f"data:{mime};base64,{b64}"}})
+                except OSError:
+                    continue
+            if len(blocks) > 1:
+                user_content = blocks
+
+    system_prompt = (
+        "Du bist ein Ausführungs-Agent innerhalb eines automatisierten Workflows. "
+        "Arbeite den Auftrag dieses Schritts vollständig und methodisch ab; nutze "
+        "die verfügbaren Werkzeuge, statt Ergebnisse zu erfinden. Was du nicht "
+        "prüfen kannst, kennzeichne explizit als nicht prüfbar. Es gibt keinen "
+        "Nutzer, der Rückfragen beantwortet — triff begründete Annahmen und "
+        "dokumentiere sie. WICHTIG: Dein Runden-Budget ist begrenzt "
+        f"({max_rounds} Werkzeug-Runden) — teile es so ein, dass am Ende sicher "
+        "eine VOLLSTÄNDIGE, STRUKTURIERTE Abschlussantwort steht: dein gesamter "
+        "Antworttext wird als Liefergebnis dieses Schritts übernommen, also "
+        "keine Zwischenkommentare wie 'Nun führe ich Schritt X durch' — halte "
+        "Zwischentexte auf ein Minimum und schreibe konkrete Befunde/Zahlen "
+        "SOFORT in Ergebnisdateien, nicht nur in deinen Kopf. Die letzte "
+        "Antwort muss das Ergebnis selbst enthalten (alle Befunde, Werte, "
+        "Bewertungen, Gesamturteil), nicht eine Ankündigung davon."
+    )
+
+    turn_id = f"wfstep-{execution_id or 'chat'}-{_uuid.uuid4().hex[:8]}"
+    execution = _brain.workflow_get_execution(execution_id) if execution_id else None
+    if execution is not None:
+        execution.register_step_turn(turn_id)
+    try:
+        from handlers import sidecar_proxy as _sidecar_proxy
+        res = _sidecar_proxy.background_call(
+            messages=[{"role": "user", "content": user_content}],
+            model=model,
+            system_prompt=system_prompt,
+            purpose="workflow_step",
+            cost_purpose="workflow_step",
+            agent_id=(ctx.workflow_agent_id or "main"),
+            session_id=(ctx.current_session_id or ""),
+            user_id=(ctx.current_user_id or None),
+            max_rounds=max_rounds,
+            turn_id=turn_id,
+        )
+    except Exception as e:
+        return _err(f"agent_step: {e}")
+    finally:
+        if execution is not None:
+            execution.unregister_step_turn(turn_id)
+    if res.get("cancelled"):
+        return _err("agent_step: cancelled")
+    if res.get("error"):
+        return _err(f"agent_step: {res['error']}")
+    text = (res.get("reply") or "").strip()
+    if not text:
+        return _err("agent_step: model returned an empty reply")
+    # Collect files written by the step's file tools (paths from tool args).
+    written: list[str] = []
+    _write_tools = {"write_file", "edit_file", "write_document", "edit_document",
+                    "xlsx_create", "xlsx_edit", "render_diagram"}
+    for ev in res.get("tool_events") or []:
+        if ev.get("is_error") or ev.get("name") not in _write_tools:
+            continue
+        p = ((ev.get("args") or {}).get("path") or "").strip()
+        if p and p not in written:
+            written.append(p)
+    out = {
+        "text": text,
+        "model": model,
+        "rounds": int(res.get("rounds") or 0),
+        "files": written,
+    }
+    # Surface a hit round-cap so downstream steps (verify) / the run log can
+    # tell "finished" from "ran out of budget mid-plan".
+    if (res.get("stop_reason") or "") == "max_rounds":
+        out["stop_reason"] = "max_rounds"
+        out["text"] += ("\n\n[Hinweis: Runden-Limit erreicht — das Ergebnis "
+                        "ist möglicherweise unvollständig.]")
+    return _ok(out)
 
 
 def tool_ask_user_for_file(args: dict) -> str:

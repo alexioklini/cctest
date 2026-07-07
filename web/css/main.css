@@ -7920,6 +7920,114 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   padding: 2px 8px;
 }
 
+/* ─── Workflow run: main-area turn-group (chat-style run output) ───
+   Renders inside #messages-container like a normal turn-group, so the run
+   reads as a chat answer. Reuses .turn-group / .turn-body collapse; these
+   rules only style the run-specific body items. */
+.wf-run-turn { position: relative; }
+.wf-run-header {
+  display: flex; align-items: center; gap: 8px;
+}
+.wf-run-badge { cursor: pointer; }
+.wf-run-header-name {
+  font-size: 12px; color: var(--text-300);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 40ch;
+}
+.wf-run-header-status {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  font-weight: 700;
+}
+.wf-run-live-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #2563eb; flex-shrink: 0;
+  animation: wf-run-pulse 1.2s ease-in-out infinite;
+}
+@keyframes wf-run-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.wf-run-body { display: flex; flex-direction: column; gap: 10px; padding-top: 6px; }
+.wf-run-step {
+  border: 1px solid var(--border-200);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--bg-page);
+}
+.wf-run-step-label {
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-400); margin-bottom: 4px; font-weight: 600;
+}
+.wf-run-step-tool { background: rgba(59,130,246,0.04); border-color: rgba(59,130,246,0.16); }
+.wf-run-step-error { background: rgba(220,38,38,0.05); border-color: rgba(220,38,38,0.22); }
+.wf-run-step-error .wf-run-step-label { color: #dc2626; }
+.wf-run-call {
+  font: 12px/1.4 'SF Mono', monospace; color: var(--text-100);
+  white-space: pre-wrap; word-break: break-word; margin-bottom: 6px;
+}
+.wf-run-result {
+  font: 12px/1.4 'SF Mono', monospace; color: var(--text-200);
+  background: var(--bg-200); padding: 6px 10px; border-radius: 6px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.wf-run-result.wf-detail-pending { color: var(--text-400); font-style: italic; }
+.wf-run-step-note {
+  display: grid; grid-template-columns: 90px 70px 1fr; gap: 8px;
+  font: 12px/1.4 'SF Mono', monospace; color: var(--text-300);
+  border: none; padding: 2px 6px; background: transparent;
+}
+.wf-run-note-kind { color: var(--text-200); }
+.wf-run-note-line { color: var(--text-400); }
+.wf-run-note-detail { white-space: pre-wrap; word-break: break-word; color: var(--text-200); }
+.wf-run-answer {
+  border: 1px solid rgba(22,163,74,0.22); border-radius: 8px;
+  background: rgba(22,163,74,0.05); padding: 8px 10px;
+}
+.wf-run-answer-failed { border-color: rgba(220,38,38,0.22); background: rgba(220,38,38,0.05); }
+.wf-run-answer-live {
+  border-style: dashed; border-color: rgba(37,99,235,0.3);
+  background: rgba(37,99,235,0.04); color: var(--text-300);
+  font-size: 13px; display: flex; align-items: center; gap: 8px;
+}
+.wf-run-answer-value {
+  margin: 0; font: 12px/1.5 'SF Mono', monospace; color: var(--text-100);
+  white-space: pre-wrap; word-break: break-word;
+}
+.wf-run-spinner {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid rgba(37,99,235,0.25); border-top-color: #2563eb;
+  animation: wf-run-spin 0.7s linear infinite; flex-shrink: 0;
+}
+@keyframes wf-run-spin { to { transform: rotate(360deg); } }
+.wf-run-empty, .wf-run-loading, .wf-run-error {
+  font-size: 13px; color: var(--text-300); padding: 8px 10px;
+}
+.wf-run-error { color: #dc2626; }
+
+/* ─── Workflow right-panel tabs (Statistik / Quellcode / Protokoll) ─── */
+.wf-tab-content { padding: 12px 14px; overflow-y: auto; height: 100%; box-sizing: border-box; }
+.wf-stat-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 12px;
+}
+.wf-stat-name { font-size: 14px; font-weight: 600; color: var(--text-000); }
+.wf-stat-status { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; font-weight: 700; }
+.wf-stat-grid { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
+.wf-stat-row {
+  display: grid; grid-template-columns: 120px 1fr; gap: 8px;
+  padding: 5px 0; border-bottom: 1px solid var(--border-100);
+  font-size: 12px;
+}
+.wf-stat-label { color: var(--text-400); }
+.wf-stat-val { color: var(--text-100); word-break: break-word; }
+.wf-stat-val strong { font-weight: 600; }
+.wf-stat-execid { font: 11px 'SF Mono', monospace; color: var(--text-300); }
+.wf-stat-actions { display: flex; flex-direction: column; gap: 6px; }
+.wf-stat-actions .wf-btn { justify-content: center; }
+.wf-source-pre {
+  margin: 0; font: 12px/1.5 'SF Mono', monospace; color: var(--text-100);
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--bg-200); border-radius: 8px; padding: 12px;
+}
+#wf-protokoll-content { display: flex; flex-direction: column; gap: 8px; }
+
 .hidden { display: none !important; }
 
 /* ═══════════════════════════════════════════════════════════

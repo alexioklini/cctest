@@ -96,6 +96,30 @@ TOOL_DEFINITIONS = [
         "primary_field": "text",
     },
     {
+        "name": "agent_step",
+        "description": (
+            "Run ONE bounded agentic LLM turn as a workflow step. The model gets the "
+            "instruction (plus optional plan context and input files) and works it off "
+            "with tools (read/write files, web, python) inside the workflow's shared "
+            "workspace. Use from .flow scripts for judgment-heavy plan steps; the .flow "
+            "script stays the deterministic spine. "
+            "Returns: {text, model, rounds, files}."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "instruction": {"type": "string", "description": "What this step must do (a plan section or the whole plan)"},
+                "plan": {"type": "string", "description": "Optional full plan markdown injected as context"},
+                "files": {"type": "array", "items": {"type": "string"}, "description": "Input file paths (uploads, outputs of earlier steps)"},
+                "model": {"type": "string", "description": "Model id (defaults to the workflow MODEL header)"},
+                "max_rounds": {"type": "integer", "description": "Agentic round cap (default 16, max 24)"},
+                "expected_output": {"type": "string", "description": "Required result shape (e.g. 'Markdown-Report mit Abschnitten X, Y')"},
+            },
+            "required": ["instruction"],
+        },
+        "primary_field": "text",
+    },
+    {
         "name": "transcribe_audio",
         "description": (
             "Transcribe an audio file (.wav/.mp3/.m4a/.flac/.ogg) to text. "

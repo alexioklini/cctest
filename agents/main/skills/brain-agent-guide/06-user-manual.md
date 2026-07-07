@@ -1171,6 +1171,64 @@ Datei-Uploads und `ask_user_for_file` / `ask_llm`-Blöcken. Aus der
 Workflows-Ansicht starten; das **Ausführungen**-Panel zeigt den
 Live-Status mit Freigeben-/Abbrechen-Knöpfen.
 
+### Workflow von der KI erzeugen lassen (v9.290.0)
+
+Statt einen Workflow von Hand zu schreiben, kann Brain-Agent ihn entwerfen —
+aus einem gelungenen Chat, einem Plan-Dokument oder einer einfachen
+Beschreibung. Vier Einstiegspunkte, alle münden im selben Ablauf:
+
+1. **Composer im Chat** — der Workflow-Knopf (zwei verbundene Kästchen,
+   in der Knopfreihe unter dem Eingabefeld neben dem Ziel-Knopf) erzeugt
+   einen Workflow aus dem aktuellen Chat. Hat der Chat einen freigegebenen
+   Ausführungsplan (Experten-Gremium), wird genau dieser Plan übernommen und
+   das Modell, das die Arbeit ausgeführt hat, im Workflow festgeschrieben.
+2. **Terminal-Chat**: `/workflow` (optional `/workflow <session_id>`) —
+   Fortschritt erscheint als Terminalzeilen; ein fehlerfreier Entwurf wird
+   direkt unter einem Vorschlagsnamen gespeichert.
+3. **Artefakt-Ansicht** — auf Markdown-Dokumenten, die wie ein
+   Ausführungsplan aussehen (Schritt-Überschriften), erscheint ein
+   **Workflow**-Knopf: der Plan wird zur Methodik des neuen Workflows.
+4. **Workflows-Ansicht → „Neu aus Beschreibung"** — den gewünschten Ablauf
+   in eigenen Worten beschreiben, optional Markdown-/Textdateien als
+   Kontext anhängen.
+
+Jeder Entwurf öffnet sich **zur Prüfung im Editor** (nichts wird ungefragt
+gespeichert; nur der Terminal-Weg speichert fehlerfreie Entwürfe direkt).
+Der Editor hat dafür zwei Reiter: **Flow** (das Skript) und **Plan** (die
+Methodik als `plan.md` — im Lauf führt der `agent_step`-Schritt diesen Plan
+mit Werkzeugen aus, und ein Prüf-Schritt kontrolliert den Report gegen den
+Plan). Typisches Ergebnis: eine Fachkraft startet den Workflow, lädt die
+angefragte Datei hoch (z. B. ein Ausweisbild) und erhält automatisch einen
+Bericht in der Qualität des ursprünglichen Chats. Welches Modell die
+Workflows entwirft, legen Admins unter **Einstellungen → Service-Modelle →
+Workflow-Generator** fest.
+
+### Einen Lauf ansehen (v9.290.2)
+
+Ein Workflow-Lauf öffnet sich wie eine normale Chat-Sitzung: Klick auf eine
+Zeile im **Ausführungen**-Panel öffnet den Lauf in der Chat-Ansicht. Das
+**Ergebnis des Laufs** — die Antwort, die der Agent (per `agent_step`)
+erarbeitet hat, samt der erzeugten Dateien — erscheint im Hauptbereich als
+**normale Chat-Nachricht** in gewohnter Darstellung (gleiche Schrift,
+Farben, Abstände, Markdown wie in jedem Chat) und **aktualisiert sich
+live**, solange der Lauf läuft. Nach dem Lauf schreibt man direkt darunter
+weiter — Folgefragen an den Agenten funktionieren wie in jedem Chat.
+(Technischer Hinweis: das Schritt-für-Schritt-Werkzeugprotokoll ist NICHT
+mehr im Hauptbereich, sondern im **Protokoll**-Reiter.)
+
+Die Detail-Informationen liegen in eigenen Reitern der **rechten
+Seitenleiste** (öffnen über den Seitenleisten-Knopf oben rechts):
+
+- **Statistik** — Agent, Modell, Start/Ende, Dauer, Kosten, Status,
+  Ausführungs-ID sowie die Aktionen **Lauf abbrechen** (nur live),
+  **Protokoll herunterladen** (Markdown), **In Chats speichern** und
+  **← Workflows** (zurück zur Liste).
+- **Quellcode** — der `.flow`-Quelltext des Workflows.
+- **Protokoll** — das Schritt-für-Schritt-Ausführungsprotokoll (jeder
+  Werkzeug-Aufruf mit Ein- und Ausgabe, Fehler, Rückgabewert).
+- **Dateien** (der normale Artefakt-Reiter) — die vom Lauf erzeugten
+  Ausgabedateien, ansehen und herunterladen wie in jedem Chat.
+
 ---
 
 ## Artifacts

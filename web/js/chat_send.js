@@ -2091,6 +2091,33 @@ async function openInspectModal() {
         title: 'Was die gecachten Tokens zum vollen Eingabe-Tarif zusätzlich gekostet hätten (voller Tarif minus ~0,1×-Cache-Tarif).' })}
     </div>`;
 
+    // --- Workflow-run summary --- when this session is a workflow run, the
+    // per-turn `totals` above are 0 (the run's tokens live in workflow_history,
+    // not in chat turns). Surface the run's own token/cost/call rollup so the
+    // inspector reflects what the run actually consumed.
+    const _wfd = (typeof _wfRunActive === 'function' && _wfRunActive() && wfBanner && wfBanner.data)
+      ? wfBanner.data : null;
+    if (_wfd) {
+      const _wfTin = Number(_wfd.tokens_in || 0);
+      const _wfTout = Number(_wfd.tokens_out || 0);
+      const _wfCost = (_wfd.cost_usd != null) ? Number(_wfd.cost_usd) : 0;
+      const _wfDur = _wfd.duration_ms ? (_wfd.duration_ms / 1000).toFixed(1) + 's' : '-';
+      html += `<div style="margin-bottom:20px">
+        <div style="font-size:12px;font-weight:600;color:var(--text-100);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Workflow-Lauf</div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+          ${_tile('LLM-Aufrufe', String(_wfd.llm_calls || 0), '')}
+          ${_tile('Tool-Aufrufe', String(_wfd.tool_calls || 0), '')}
+          ${_tile('Token ein', _wfTin.toLocaleString(), '')}
+          ${_tile('Token aus', _wfTout.toLocaleString(), '')}
+          ${_tile('Verrechnete Kosten', '$' + _wfCost.toFixed(4), '', {
+            title: 'Kosten dieses Workflow-Laufs (aus workflow_history, wf-<exec_id>).' })}
+          ${_tile('Dauer', _wfDur, '')}
+          ${_tile('Status', esc(_wfd.status || '—'), '')}
+          ${_tile('Modell', esc(_wfd.model || '—'), '')}
+        </div>
+      </div>`;
+    }
+
     // --- Extract system prompt & tools from first payload (constant per session) ---
     const firstPayload = (data.interactions || []).find(ix => ix.assistant?.request_payloads?.length)?.assistant?.request_payloads?.[0];
     const spContent = firstPayload?.system_prompt || data.system_prompt?.content || '';

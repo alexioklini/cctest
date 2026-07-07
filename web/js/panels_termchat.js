@@ -297,6 +297,7 @@ const _TC_COMMANDS = [
   { name: 'inject', desc: 'Klarstellung in die laufende Antwort einfügen' },
   { name: 'clarify', desc: 'Klarstellung einfügen (Alias für /inject)' },
   { name: 'queue', desc: 'Warteschlange: [list|rm N|mv N M|edit N …|clear]' },
+  { name: 'workflow', desc: 'Workflow aus diesem Chat erzeugen (KI) [<session_id>]' },
   { name: 'help', desc: 'Befehlsübersicht' },
 ];
 
@@ -998,6 +999,7 @@ async function tcSlash(tab, raw) {
     case 'btw': return tcBtw(tab, arg);
     case 'inject': case 'clarify': return tcInject(tab, arg);
     case 'queue': return tcQueueCmd(tab, arg);
+    case 'workflow': return _tcCmdWorkflow(tab, arg);
     default: tcPrint(tab, `Unbekannter Befehl: <b>/${esc(c)}</b> — <b>/help</b> für die Liste.`, 'tc-err');
   }
 }
@@ -1021,6 +1023,7 @@ function _tcHelp(tab) {
     '/btw &lt;frage&gt;          — Nebenfrage (separate Blase; „Was machst du gerade?“)',
     '/inject &lt;text&gt;        — Klarstellung einfügen (Alias /clarify); nächste Runde',
     '/queue [list|rm N|mv N M|edit N …|clear] — Warteschlange verwalten',
+    '/workflow [&lt;session_id&gt;]  — Workflow aus diesem (oder dem angegebenen) Chat erzeugen; Entwurf wird gespeichert und im Workflows-Panel geprüft',
     'einfacher Text während des Streamens → wird in die Warteschlange gestellt',
     '! &lt;befehl&gt;            — Shell-Befehl im Arbeitsverzeichnis ausführen',
   ].map(s => `<div class="tc-help-line">${s}</div>`).join(''), 'tc-sys');
@@ -1039,6 +1042,57 @@ function _tcCmdModel(tab, arg) {
   tcPrint(tab, `Modell → <b>${esc(tab.model)}</b>`, 'tc-sys');
   tcRenderStatus(tab);
   if (typeof _terminalPersist === 'function') _terminalPersist();
+}
+
+// /workflow [<session_id>] — KI-Workflow-Generierung aus dem Chat, komplett im
+// Terminal: startet POST /v1/workflows/generate, pollt, speichert den fertigen
+// Entwurf unter dem vorgeschlagenen Namen (bei Warnungen wird NICHT gespeichert,
+// sondern auf den Editor verwiesen — review-before-save bleibt erhalten).
+async function _tcCmdWorkflow(tab, arg) {
+  const sid = (arg || '').trim() || tab.sessionId || '';
+  if (!sid) { tcPrint(tab, 'Noch keine Sitzung — erst eine Nachricht senden oder /workflow &lt;session_id&gt;.', 'tc-err'); return; }
+  tcPrint(tab, `Erzeuge Workflow aus Chat <b>${esc(sid.substring(0, 8))}</b> …`, 'tc-sys');
+  let genId;
+  try {
+    const res = await API.post('/v1/workflows/generate', {
+      agent_id: 'main', source: { type: 'chat', session_id: sid },
+    });
+    if (res.error) throw new Error(res.error);
+    genId = res.gen_id;
+  } catch (e) {
+    tcPrint(tab, `Start fehlgeschlagen: ${esc(e.message || e)}`, 'tc-err');
+    return;
+  }
+  let lastStep = 0;
+  for (;;) {
+    await new Promise(r => setTimeout(r, 1500));
+    let d;
+    try { d = await API.get(`/v1/workflows/generate/${genId}`); }
+    catch (e) { tcPrint(tab, `Abfrage fehlgeschlagen: ${esc(e.message || e)}`, 'tc-err'); return; }
+    for (const s of (d.steps || [])) {
+      if (s.n > lastStep) { lastStep = s.n; tcPrint(tab, esc(s.text), s.kind === 'error' ? 'tc-err' : 'tc-sys'); }
+    }
+    if (d.status === 'generating') continue;
+    if (d.status === 'error') { tcPrint(tab, `Fehler: ${esc(d.error || 'unbekannt')}`, 'tc-err'); return; }
+    if (d.status === 'cancelled') { tcPrint(tab, 'Abgebrochen.', 'tc-sys'); return; }
+    const warns = d.warnings || [];
+    if (warns.length) {
+      tcPrint(tab, `Entwurf hat ${warns.length} Validierungs-Warnung(en) — bitte im Workflows-Panel unter „Neu aus Beschreibung"/Editor prüfen: ${esc(warns.join('; '))}`, 'tc-err');
+      return;
+    }
+    try {
+      const saved = await API.post('/v1/agents/main/workflows', {
+        name: d.suggested_name || 'workflow',
+        source: d.flow_source || '',
+        plan_md: d.plan_md || '',
+      });
+      if (saved.error) throw new Error(saved.error);
+      tcPrint(tab, `Workflow gespeichert: <b>${esc(saved.name)}</b> — im Workflows-Panel prüfen/ausführen.${d.notes ? '<br>' + esc(d.notes) : ''}`, 'tc-sys');
+    } catch (e) {
+      tcPrint(tab, `Speichern fehlgeschlagen: ${esc(e.message || e)}`, 'tc-err');
+    }
+    return;
+  }
 }
 
 function _tcCmdThink(tab, arg) {

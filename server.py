@@ -285,11 +285,27 @@ class LiveStream:
                 pass
 
 
-def _derive_session_title(text: str) -> str:
+def _derive_session_title(text) -> str:
     """Derive a session title from a user message, stripping any internal
     annotations the chat handler appended to the wire payload (e.g. the
     attachment-routing notice). The title should reflect what the user
-    typed, not Brain's bookkeeping."""
+    typed, not Brain's bookkeeping.
+
+    `text` may be a plain string OR a multimodal content list
+    (`[{"type":"text","text":...}, {"type":"image_url",...}]`) — in the
+    latter case we title on the concatenated TEXT parts only, never the
+    raw list repr (which produced the "[{'type': 'image_url', ..." titles)."""
+    if isinstance(text, list):
+        # Multimodal content: keep only the text parts.
+        parts = []
+        for part in text:
+            if isinstance(part, dict) and part.get("type") == "text":
+                t = part.get("text")
+                if isinstance(t, str) and t.strip():
+                    parts.append(t.strip())
+        text = "\n".join(parts)
+    elif not isinstance(text, str):
+        text = str(text or "")
     # Attachment notice appended in chat.py when files are routed to disk.
     # Pattern: `\n\n[User attached files saved to disk...]\n  - <path>...`
     cut = text.find("\n\n[User attached files")
@@ -299,7 +315,7 @@ def _derive_session_title(text: str) -> str:
     if not text:
         # User sent only attachments without any prose. Fall back to a
         # neutral placeholder so the sidebar isn't blank.
-        return "Attachment"
+        return "Anhang"
     title = text[:80].strip()
     if len(title) > 60:
         # Cut at last word boundary
@@ -417,7 +433,10 @@ class Session:
             # for the wire but is not what the user typed, so titling on it
             # would name the chat "[Session artifact folder ...".
             if not self.title and role == "user":
-                text = content if isinstance(content, str) else str(content)
+                # Pass content THROUGH (str OR multimodal list) so the title
+                # deriver can pull text parts from a multimodal message instead
+                # of titling on the raw list repr.
+                text = content
                 _pre = (metadata or {}).get("preamble") if metadata else None
                 if _pre and isinstance(text, str) and text.startswith(_pre):
                     text = text[len(_pre):].lstrip("\n")
@@ -1648,6 +1667,8 @@ class BrainAgentHandler(
             self._handle_models_config_get()
         elif path == "/v1/agents/activity":
             self._handle_agents_activity()
+        elif path.startswith("/v1/workflows/generate/"):
+            self._handle_workflow_generate_get(path)
         elif path == "/v1/workflows/executions":
             self._handle_workflow_list_executions()
         elif path.startswith("/v1/workflows/executions/"):
@@ -2100,6 +2121,10 @@ class BrainAgentHandler(
             self._handle_restart()
         elif path == "/v1/teams":
             self._handle_teams_post()
+        elif path == "/v1/workflows/generate":
+            self._handle_workflow_generate()
+        elif path.startswith("/v1/workflows/generate/") and path.endswith("/cancel"):
+            self._handle_workflow_generate_cancel(path)
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/approve"):
             self._handle_workflow_approve(path)
         elif path.startswith("/v1/workflows/executions/") and path.endswith("/cancel"):
@@ -3644,6 +3669,11 @@ def main():
     server_config["audio_overview_model"] = file_config.get("audio_overview_model", "") or ""
     server_config["code_graph_model"] = file_config.get("code_graph_model", "") or ""
     server_config["deep_research_model"] = file_config.get("deep_research_model", "") or ""
+    # instruction_gen_model was missing from this boot copy since 9.189.0 — the
+    # Service-Modelle slot persisted to config.json but _server_config() never
+    # saw it, so instruction generation silently used the background default.
+    server_config["instruction_gen_model"] = file_config.get("instruction_gen_model", "") or ""
+    server_config["workflow_gen_model"] = file_config.get("workflow_gen_model", "") or ""
     server_config["wiki_gate_model"] = file_config.get("wiki_gate_model", "") or ""
     server_config["auto_route"] = file_config.get("auto_route", {}) or {}
     server_config["moa"] = file_config.get("moa", {}) or {}
@@ -3778,6 +3808,10 @@ def main():
         server_config["tool_settings"], "instruction_gen", engine._INSTRUCTION_GEN_TOOLS)
     if _bf:
         print(f"Tool settings: backfilled instruction_gen column for {_bf} tool(s)")
+    _bf = engine.backfill_purpose_column(
+        server_config["tool_settings"], "workflow_step", engine._WORKFLOW_STEP_TOOLS)
+    if _bf:
+        print(f"Tool settings: backfilled workflow_step column for {_bf} tool(s)")
     _ts_after = json.dumps(server_config["tool_settings"], sort_keys=True)
     if _ts_before != _ts_after or persisted_during_init:
         try:

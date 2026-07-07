@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.289.1"
-VERSION_DATE = "2026-07-05"
+VERSION = "9.291.0"
+VERSION_DATE = "2026-07-06"
 CHANGELOG = [
+    ("9.291.0", "2026-07-07", "feat(Bild-Anhang: universeller Graceful-Degrade wenn das laufende Modell nicht multimodal ist): ANLASS (User): im MoA-Flow (aber generell, nicht nur MoA) wurde nach dem Planen ein Executor vorgeschlagen/gewählt, der KEINE Bilder versteht — bei Bildanhang → Provider-API-Error statt Fallback. ROOT CAUSE: das image_url-vs-Disk-Routing (handlers/chat.py, gegen session.model beim SENDEN) wird EINMAL entschieden und NIE gegen das tatsächlich laufende Modell neu bewertet; wenn das echte Modell (MoA-Executor, expliziter User-Override, Quota-/GDPR-Swap, Auto-Route) nicht multimodal ist, trägt der Wire trotzdem den image_url-Block → 400. Der v9.289.2-require_mimes-Filter verhinderte das nur für den AUTO-Pick (Pool schrumpfen) und ließ einen expliziten User-Override eines Text-only-Modells STILL fallen (_ex in candidates-Guard in _run_plan_review_loop) — Client dachte, seine Wahl sei honoriert, Server lief still auf einem anderen Modell. FIX (User-Entscheidungen: 'Vision-Beschreibung injizieren' + 'universell am Wire-Choke-Point'): (1) NEUE _sanitize_multimodal_for_model(messages, model) läuft am EINZIGEN universellen Choke-Point — direkt vor sidecar_proxy.run_turn, wenn session.model FINAL ist (nach allen Swaps). No-op wenn das Modell alle Bild-MIMEs nativ kann (byte-identischer Wire, Warm-Prefix unberührt). Sonst: jeder image_url-Block wird per _describe_image_with_vision (attachment_image_model, live mistral-medium-3.5) beschrieben und die Textbeschreibung ersetzt den Block — so bekommt ein Text-only-Modell den ECHTEN Bildinhalt (read_document liefert bei Bildern NUR Metadaten, nie den visuellen Inhalt — file_tools:420). Transient Wire-Copy (shallow), Original-image_url-Blöcke bleiben in session.messages/DB → ein späteres fähiges Modell sieht das echte Bild weiter. (2) _run_plan_review_loop honoriert jetzt einen expliziten Executor-Override AUSSERHALB des MIME-gefilterten Pools, sofern er die NICHT-MIME-Gates besteht (enabled, chat-capable, ACL, local-policy) — meta.executor_mime_degraded gesetzt; die Bild-Degradierung macht die Wahl nutzbar statt sie still zu verwerfen. Vorauswahl passender Modelle (require_mimes im Auto-Pick) bleibt — nur der explizite Nutzer-Wille überschreibt sie jetzt mit Degrade. Unit-getestet (capable→unverändert/gleiche Objektidentität, incapable→image-Block weg + Beschreibung+Prompt+Hinweis im Text, Original unmutiert, kein-Bild→no-op). py_compile OK. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar)."),
+    ("9.290.4", "2026-07-07", "fix(Chat-Titel bei Bild-Anhängen + Workflow-Lauf-Artefakt-Cards/Token/Kosten): DREI zusammenhängende Fixes am Workflow-Lauf-als-Chat + ein genereller Titel-Bug. (1) CHAT-TITEL bei multimodalen Nachrichten: _derive_session_title (server.py) bekam bei Bild-Anhängen `str(content)` einer Multimodal-LISTE `[{'type':'image_url',...},{'type':'text',...}]` → der Titel wurde wörtlich '[{\\'type\\': \\'image_url\\', \\'image_url\\': {\\'url\\':' (in der Sidebar sichtbar, z.B. die ausweispruefung-Chats). FIX: _derive_session_title akzeptiert jetzt str ODER Liste; bei einer Liste werden NUR die text-Parts extrahiert und verkettet (Bild-Parts ignoriert), reiner-Bild-Fall → 'Anhang'. Beide Aufrufer durchgereicht (add_message + der GDPR-anonymise-Pfad in handlers/chat.py, der ebenfalls str(user_content) machte). Nur NEUE Chats betroffen; 5 bestehende Alt-Titel bleiben (Backfill separat). (2) ARTEFAKT-CARDS im Lauf-Chat: agent_step erzeugt jetzt einen echten user-Turn (Instruktion = 'die Anfrage') + assistant-Turn (Antwort), und die vom workflow-seitigen write_file (content=r.text) erzeugte Datei wird via attach_output_to_last_answer an den letzten assistant-Turn gehängt → rendert als klickbare artifact-card IM Nachrichtenfluss (openArtifactPanel), exakt wie in einem normalen Chat; _wfSyncTranscriptMessages mappt transcript-files über Basename auf die geseedeten Artefakte (artifact_id) und baut msg._files, das der normale Chat-Renderer zeichnet (📎 Eingabe-Anhänge auf user-Turns, artifact-cards auf assistant-Turns). refreshWorkflowArtifacts re-synct+rendert, sobald die Artefakte nach dem ersten Render geladen sind. (3) TOKEN + KOSTEN des Laufs sichtbar: Statistik-Reiter zeigt eine neue Token-Zeile (ein/aus), die Statusleiste addiert die workflow_history-Rollup-Totals (tokens_in/out + cost_usd) für den lauf-gebundenen Chat (updateStatusBar, gated auf _wfRunActive), und der Sitzungs-Inspektor bekommt eine 'Workflow-Lauf'-Kachelzeile (LLM/Tool-Aufrufe, Token ein/aus, Kosten, Dauer, Status, Modell). Damit ist auch die '110K Token'-Falschanzeige erklärt+erledigt: die war stale State eines früheren Test-Chats — synthetische Transcript-Zeilen tragen KEINE token-metadata, der Kontext-Meter liest also 0, und die ECHTEN Lauf-Totals kommen jetzt aus workflow_history. E2E in Safari verifiziert (Lauf b7731adee5): user+assistant-Turn-Paar, 1 artifact-card im Fluss, Statusleiste 'Aus: 249', Statistik 'Token 0 ein / 249 aus'. js_gate GRÜN. Server-Restart nötig (Titel-Deriver + attach_output_to_last_answer). KURATIERTER Eintrag angepasst (user-sichtbar)."),
+    ("9.290.3", "2026-07-07", "fix(Workflow-Lauf-Transcript: agent_step erzeugt ANFRAGE + Antwort, nicht nur Antwort): der 9.290.2-Transcript zeigte pro agent_step NUR die Assistenten-Antwort — es fehlte der vorausgehende User-Turn, also erschien im Chat eine kopflose Antwort statt eines echten Anfrage/Antwort-Paars (User-Ziel: die Lauf-Anzeige soll nachbilden, ALS HÄTTE ein User im Chat die Aufgabe gestellt und das Ergebnis erhalten). FIX engine/workflow.py:_capture_transcript: agent_step schreibt jetzt ZWEI Transcript-Turns — einen `user`-Turn aus der `instruction` (= 'die Anfrage', die ein Chat-User getippt hätte, samt Eingabe-Dateien aus kwargs.files als Anhänge) + den bestehenden `assistant`-Turn (voller Text). So rendert renderMessages() ein echtes Q&A: Turn-Header 'Anfrage N' + Instruktionstext, darunter die Antwort. FRONTEND (_wfSyncTranscriptMessages): Datei-Fußnote rollenabhängig — user-Turns zeigen ihre Eingabe-Anhänge (📎), assistant-Turns die erzeugten Dateien (📄). Rein additive Transcript-Änderung; Alt-Läufe (ohne transcript) nutzen weiter den return_value-Fallback. Server-Restart nötig (Interpreter-Capture). E2E-Verifikation im Browser ausstehend beim Schreiben dieses Eintrags — wird vor Abschluss nachgezogen. KURATIERTER Eintrag angepasst (user-sichtbar)."),
+    ("9.290.2", "2026-07-07", "fix(Workflow-Lauf-Anzeige: ECHTE Chat-Nachrichten + zuverlässige Artefakte statt Debug-Trace): der 9.290.1-Umbau renderte den TRACE (steps) als Chat — das zeigte nur redigierte, auf 120 Zeichen GEKÜRZTE Tool-Aufrufe ('agent_step(plan=…, instruction=…)' + 'set r = {text: ...117 Zeichen...}'), NICHT den LLM-Output, und die Artefakte fehlten im Panel. ROOT CAUSE (E2E in Safari gefunden, nicht im Node-Harness — die frühere 'Verifikation' prüfte nur, dass Funktionen nicht werfen): (1) engine/workflow.py:_summary kürzt jedes step-detail auf 120 Zeichen — der volle agent_step-Text (der eigentliche Report) und sogar die write_file-Ausgabepfade werden abgeschnitten, sind also in steps_json STRUKTURELL nicht vorhanden; (2) _seed_artifacts_for_run extrahierte Pfade per Regex aus genau diesen gekürzten steps → write_file-Pfade mitten im Pfad abgeschnitten (kein schließendes Quote) → 0 Artefakte (die 'leeres Panel'-Beschwerde); der return_value ist nur der BLANKE Dateiname (kein '/') → auch übersprungen. FIX BACKEND (neue UNGEKÜRZTE Datenkanäle): WorkflowExecution.transcript (Liste echter user/assistant-Turns) + .output_paths (volle Ausgabepfade), befüllt vom Interpreter (_capture_transcript in _eval_call aus dem VOLLEN parsed-Result, VOR der _summary-Kürzung): ask_user_for_file→user-Turn (prompt+Upload-Pfad), agent_step→assistant-Turn (voller text + model + geschriebene files), write_file/edit_file→output_path. Persistiert als transcript_json/output_paths_json (additive ALTER TABLE, SELECT * nimmt sie mit; to_dict exponiert sie live; history-GET dekodiert sie). _workflow_run_paths_classified nutzt jetzt output_paths_json als AUTORITATIVE Output-Quelle (nicht mehr die kürzungs-lossy Regex) → Artefakte seeden zuverlässig. FIX FRONTEND (User-Ziel: 'wie ein normaler Chat in Font, Farben, Abständen'): _wfSyncTranscriptMessages injiziert data.transcript als ECHTE user/assistant-Nachrichten-Zeilen (_wfSynthetic, nicht persistiert, PREFIX vor echten Folge-Nachrichten) in chat.messages → der NORMALE Chat-Renderer (renderMessages) rendert sie byte-identisch zu jedem Chat (Markdown, gleiche Fonts/Farben/Abstände). agent_step-files als '📄 name'-Footer im assistant-Turn. Fallback für Alt-Läufe ohne transcript: kompakte Antwort aus return_value/error. NICHT an den Wire: streamChat sendet nur text+session_id, der Server lädt History aus der DB → die synthetischen Zeilen erreichen das LLM NIE. Das bespoke wf-run-*-Rendering (buildWorkflowRunBlock/wfRunToggleCollapse + chat_render.js-Injektion) ENTFERNT — kein Custom-CSS mehr im Hauptbereich. E2E in Safari verifiziert (frischer transcript_test-Lauf eac38046f1): Hauptbereich zeigt den vollen LLM-Absatz in Chat-Optik, Artefakte-Reiter listet transcript_test_report.md (ansehbar/ladbar), Statistik-Reiter korrekt (Agent/Modell/Dauer 5.1s/Tool=2/LLM=1/Exec-ID + Protokoll-Download). Server-Restart nötig (Schema-Migration + neue Interpreter-Capture). js_gate GRÜN (net-globals 1871→1870, Baseline mitgezogen). KURATIERTER Eintrag angepasst (user-sichtbar)."),
+    ("9.290.1", "2026-07-06", "feat(Workflow-Lauf-Anzeige: wie eine Chat-Ansicht statt Banner): das Öffnen eines Workflow-Laufs zeigte bislang NUR einen Banner über einer LEEREN Nachrichtenliste (Statistik-Kopf + aufklappbarer Quellcode + Ablaufprotokoll) — der Hauptbereich blieb leer, weil ein Lauf-gebundene Session KEINE Chat-Nachrichten-Zeilen hat (der Lauf-Output lebte ausschließlich als steps_json im Banner, nie als Anfrage-Gruppe). Es sah dadurch nicht wie ein Chat aus. NEU (User-Ziel: 'so nah wie möglich an der normalen Chat-Ansicht, live-Update während des Laufs, Artefakte ansehen/herunterladen wie im Chat'): der Lauf-Ablauf (Werkzeug-Aufrufe + Ergebnisse + Rückgabewert) rendert im HAUPTBEREICH als aufklappbare Chat-artige Anfrage-Gruppe ('Workflow-Lauf', default offen), und Statistik/Quellcode/Protokoll ziehen in eigene RECHTE-Seitenleisten-Reiter um (Artefakte nutzen den bestehenden Dateien-Reiter). ARCHITEKTUR (rein clientseitig, KEINE Backend-/DB-Änderung, User-Entscheidung 'Client-side render from run steps'): buildWorkflowRunBlock() (web/js/workflows.js) baut EINEN keyed Block, den renderMessages() (chat_render.js) OBEN in #messages-container injiziert (wie der LCM-Divider) — überlebt so den Block-Reconciler und bleibt synchron mit echten Folge-Nachrichten (die als normale Anfrage-Gruppen DARUNTER rendern; Folge-Chat funktioniert wie in jedem Chat). LIVE-UPDATE über den bestehenden 800ms-Poll: wfBannerFetch → renderWorkflowRunUI (ersetzt renderWorkflowBanner) ruft renderMessages() + refresht den aktiven WF-Reiter + lädt Artefakte nach (refreshWorkflowArtifacts, so erscheinen frisch geschriebene Ausgaben im Dateien-Reiter wie bei einem Chat-Turn). Der Block-Hash umfasst status|steps.length|answer|collapse|empty → Re-Render bei jedem neuen Schritt / Status-Wechsel / Collapse. DREI neue Reiter (WF_TAB_NAMES, style display:none, per updateWorkflowTabs nur bei Lauf-gebundenem Chat sichtbar — ZUSÄTZLICH zu den normalen Reitern, User-Entscheidung 'Add to existing tabs'; switchRightTab + refreshRightPanelContent + openRightPanel verzweigen): wf-statistik (Agent/Modell/Start/Ende/Dauer/Kosten/Status/Exec-ID + Aktionen Abbrechen/Protokoll-Download/In-Chats-speichern/←Workflows; agent_id ODER agent — Live-Endpoint liefert agent, History-Zeile agent_id), wf-quellcode (.flow-Quelltext), wf-protokoll (Schritt-für-Schritt-Log, nutzt die bestehenden wf-banner-trace-*-Klassen weiter). Collapse-Toggle wfRunToggleCollapse flippt is-open am Live-Knoten (CSS grid-rows-Animation), merkt wfBanner._collapsed für den nächsten Render. BEIFANG-FIXE: wfDetailDownloadTranscript + wfUploadFile referenzierten wfState.detailRun/.currentExecId/.detailFollowups — TOTE Felder seit dem v8.24.2-Banner-Umbau, die Funktionen waren also KAPUTT; jetzt aus wfBanner.data/.execId + der Live-Nachrichtenliste. Banner-Element #workflow-run-banner + renderWorkflowBanner + wfBannerToggleTrace entfernt (Kommentare in index.html/workflows.js nachgezogen). Gegen ECHTE Laufdaten verifiziert (meeting_notes-Lauf bee67c2bb5, failed): Node-Harness rendert alle Funktionen fehlerfrei, korrekte HTML-Struktur (turn-group.wf-run-turn.is-open, Statistik/Quellcode/Protokoll), Collapse-Hash ändert sich. js_gate GRÜN (eslint clean, net-globals 1862→1871 = 11 neu −2 entfernt, Baseline mitgezogen, smoke 5/5). Skill 06-user-manual + SKILL.md im selben Commit. KEIN Server-Restart nötig (rein Frontend). KURATIERTER Eintrag (user-sichtbar)."),
+    ("9.290.0", "2026-07-06", "feat(Workflows: KI-generierte, plan-gesteuerte Workflows — 'Der Plan ist das Programm'): ein gelungener Chat (Anlass: bc73d55f, MoA-Ausweisprüfung — Planner-Plan + kimi-Executor, 17 Tool-Runden) wird per Klick zum wiederverwendbaren Workflow, der die Arbeitsweise für NEUE Eingaben reproduziert (Bank-Mitarbeiter hängt neues Passbild an → Report in Chat-Qualität). ARCHITEKTUR: NICHT Trace-Replay (Tool-Sequenz vergangener interaktiver Chats ist nachweislich nicht rekonstruierbar — traces.db schreibt tool_call-Spans nur im Scheduler-Pfad, tool_use-Runden bleiben in-memory) und NICHT Plan→DSL-Kompilat, sondern zwei Ebenen: (1) dünnes deterministisches .flow-Rückgrat (Inputs via ask_user_for_file, Report via write_file, RETURN), (2) NEUES Tool `agent_step` ({instruction, plan?, files?, model?, max_rounds default 16/cap 24, expected_output?}) führt die natürlichsprachliche Methodik als gebundenen agentischen background_call aus — NEUE Purpose `workflow_step` (_WORKFLOW_STEP_TOOLS: files/exec/documents/web/KG-Query; BEWUSST ohne workflows-Gruppe/delegation/ask_user = Rekursions- und Block-Sperre; admin-editierbar als Matrix-Spalte 'Workflow-Schritt', Boot-Backfill in server.py). Geteilter Workspace = der wf-<exec_id>-ARTIFACT-Ordner: agent_step setzt bewusst KEIN working_dir, relative Schreibpfade fallen via _resolve_artifact_dir in denselben Ordner wie .flow-seitige write_file-Aufrufe (E2E-Befund Lauf 1: ein /tmp-Workspace spaltete die Dateien in zwei Orte — der Verify-Schritt fand den Report nicht). VISION: Bilddateien in files= werden als native image_url-Blöcke gesendet, wenn model_supports_mimes (9.289.2) die MIMEs bestätigt — E2E-Befund: ohne das kann der Executor 'Bild visuell inspizieren'-Schritte nicht ausführen (kimi sah im Original-Chat das Bild nativ). Modell: arg → MODEL-Header → Background-Default, Rückgabe {text, model, rounds, files} (files aus tool_events der Schreib-Tools), Cancel: turn_ids registrieren sich auf der WorkflowExecution (register/unregister_step_turn), WorkflowExecution.cancel() ruft zusätzlich sidecar_proxy.cancel_turn. DSL-PARSER-FIX (vom Generator-E2E aufgedeckt): Kwarg-Namen, die mit DSL-Keywords kollidieren (`model=` → Tokenizer uppercased zu KEYWORD MODEL), waren in CALL unparsebar — _parse_call_expr akzeptiert jetzt KEYWORD gefolgt von '=' als Argumentname (lowercased); Header-Parsing unberührt. Der PLAN lebt als Sidecar `<name>.plan.md` neben der .flow (WorkflowEngine.get/save_workflow_plan, delete räumt mit; Editor-Tab 'Plan'; Save-Endpoint akzeptiert plan_md, Einzel-GET liefert es) und wird von workflow_start als Variable `plan_md` in den Interpreter-Env geseedet; NEUES DSL-Builtin `plan_steps(md)` (engine/workflow.py, deterministischer Splitter auf Schritt/Step/Phase/nummerierte Headings, Fallback beliebige ##/###-Headings; gegen den echten bc73d55f-Plan verifiziert: 7/7 Schritte) + _WF_BUILTINS-Konstante. GENERATOR engine/workflow_gen.py (Muster instruction_gen: Gen-Row workflow_gen in chats.db + Crash-Reconcile, Daemon-Thread, Poll): POST /v1/workflows/generate {source:{type:chat|plan|nl, session_id?|text?}, instructions?, attachments[<=10 {name,text}]} → GET /v1/workflows/generate/<id> (+/cancel via cancel_turn), RBAC owner-or-admin, Chat-Quelle access-checked. Quellenaufbereitung DETERMINISTISCH: Transcript via _build_conversation_markdown; MoA-Kontext: freigegebener Plan = ausfuehrungsplan.md-Artifact (Header-Kommentar gestrippt) → Fallback moa_planner-Draft-Karte; Executor aus metadata.auto_route.moa.executor → moa_plan_review-Karte, wird als MODEL-Header gepinnt; Planner-Modell als Verify-Empfehlung. EIN forced_tool-Call (submit_workflow {name, flow_source, plan_md, notes}, max_rounds=1, cost_purpose='workflow_gen') mit DSL-Spickzettel + kuratierter Tool-Palette (_FLOW_TOOL_ALLOWLIST) + Bauregeln (Verify-agent_step AKTIV per Default — User-Entscheidung); VALIDIERUNG in Code, nicht LLM: _wf_parse + AST-Walk (CALL-Tools ∈ TOOL_DISPATCH, Funktionen ∈ _WF_BUILTINS, {{expr}}-Interpolationen mitgeparst), 1 Retry mit Fehlerliste, danach status ready_with_warnings (Entwurf bleibt editierbar — review-before-save, nichts wird auto-gespeichert; Ausnahme /workflow im Terminal-Chat: warnungsfrei → Auto-Save unter suggested_name, mit Warnungen → Verweis auf Editor). Modell-Knob: Service-Modelle-Slot workflow_gen_model (admin_observability Slot-Tupel + read/write; BEIFANG-FIX: instruction_gen_model fehlte seit 9.189.0 im server_config-Boot-Copy — der Slot wurde persistiert, aber _server_config() sah ihn nie, Generierung lief still auf dem Background-Default; beide Keys jetzt kopiert). VIER EINSTIEGSPUNKTE (gemeinsamer Fluss wfOpenGenerateModal → Poll → Editor mit Entwurf): Composer-Button 'Workflow aus Chat' (btn-workflow, neben Goal-🎯; User-Review: zuerst in der Status-Leiste, auf Wunsch in den Composer verlegt — 'statusline already crowded'), Terminal-Chat /workflow [<sid>] (_TC_COMMANDS + _tcCmdWorkflow, druckt Fortschritt als Terminalzeilen), Artifact-Viewer-Button 'Workflow' (nur auf plan-artigen md via _ARTIFACT_PLAN_RE-Heuristik, Client-Spiegel des Server-Splitters), Workflows-Panel 'Neu aus Beschreibung' (NL-Textarea + .md/.txt-Anhänge via FileReader.readAsText, eigenes Array, NICHT state._pendingFiles). Editor: Tab-Leiste Flow/Plan (wfSwitchEditorTab), wfOpenEditor/wfSaveCurrent laden/speichern plan_md, WF_BUILTINS + Autocomplete kennen plan_steps. py_compile aller Python-Dateien OK; plan_steps gegen echten Plan getestet; js_gate GRÜN (eslint clean, net-globals 1845→1862 = 17 neue Globals, Baseline mitgezogen, smoke passed). Skill 01/02/04/05/06 + SKILL.md (1.151.0) im selben Commit. Server-Restart nötig (neue Tabelle/Routen/Purpose/Tool). KURATIERTER Eintrag (user-sichtbar)."),
+    ("9.289.2", "2026-07-06", "fix(Experten-Gremium: Delegate-Executor gegen Eingabe-MIMEs matchen): der Plan-Delegate-Executor wurde REIN nach Aufgabentyp/Komplexität gewählt (resolve_moa_executor rankt task_type/complexity-Bänder) — OHNE die MIME-Fähigkeiten des Modells gegen die tatsächlichen Anhänge zu prüfen. Folge (Chat 17165661): Anhang = Bild → Executor deepseek gewählt → deepseek nimmt KEINE Bildeingabe → Wire-Build scheitert. FIX: neue brain.model_supports_mimes(model, mimes) matcht die MIME-Muster aus der Modell-Config (raw_formats) gegen die MIMEs, die dieser Turn als native Multimodal-Blöcke sendet; resolve_moa_executor + handlers/chat._run_plan_review_loop filtern den Kandidatenpool jetzt auf Modelle, die ALLE diese MIMEs akzeptieren (require_mimes-Param). Kein passendes Modell → (None) → Turn bleibt auf dem aktuellen Modell, das die Multimodal-Blöcke ohnehin schon hält. Die MIMEs werden aus den image_url-data:-Blöcken des Turns extrahiert (nicht auf 'image' hartkodiert), Disk-geroutete Anhänge sind bewusst ausgenommen (Executor liest die via read_document, braucht keine native MIME-Unterstützung). py_compile brain/chat OK. KURATIERTER Eintrag (admin-sichtbar)."),
     ("9.289.1", "2026-07-05", "feat(Experten-Gremium: allow_local_executor als UI-Schalter + Matrix schließt lokale Modelle ein): der 9.289.0-Knob war bewusst config-only; auf User-Wunsch jetzt UI-gestützt, damit lokale Modelle vollständig übers GUI ein-/ausgeschaltet und GESPEICHERT werden können. ZWEI JS-Änderungen (web/js/settings_general_tabs.js, _genTab_server + saveMoaConfig): (1) die Gremium-Matrix baute ihre Modell-Zeilen aus `enabledModelsWithCapability('chat').filter(!isModelLocal)` — lokale Modelle wurden also NICHT gerendert, und da saveMoaConfig task_pools aus genau diesen gerenderten .moa-tp-cb-Checkboxen rekonstruiert, wurde ein lokales Modell, das per Config in task_pools stand, beim nächsten Matrix-Save STILL GEDROPPT (der in project_moa_local_gemma_test dokumentierte Footgun). Jetzt: Zeilen = ALLE enabled chat-Modelle (cloud + lokal), lokale mit '[lokal]'-Tag; der Server validiert task_pools ohnehin nur gegen `enabled`, nicht cloud-vs-local (admin_config.py:951) — keine Server-Änderung nötig. (2) neue Checkbox 'Lokale Modelle als Plan-Executor zulassen (experimentell)' (id moa-allow-local-exec) unter der Web-Gate-Checkbox, liest/schreibt mo.allow_local_executor über den bestehenden Save-Pfad (das Feld kannte admin_config seit 9.289.0). Der Orchestrator-Dropdown (3. Kopfzeile) listet dadurch auch lokale Modelle als feste Aggregatoren — konsistent (Server validiert auch task_aggregators nur gegen enabled). Default-Verhalten unverändert (Knob aus). js_gate GRÜN (eslint clean, net-globals 1845 unverändert — keine neuen Globals, nur DOM-IDs + Feldzeilen in bestehenden Funktionen; smoke 5/5). Skill 06-user-manual + SKILL.md (1.149.0) im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (admin-sichtbar)."),
     ("9.289.0", "2026-07-05", "feat(Experten-Gremium: Experiment-Schalter moa.allow_local_executor): LOKALE Modelle als Delegate-EXECUTOR zulassen (User-Anlass: MoA-Smoke-Test mit gemma-4-12B-it-qat-4bit als Proposer UND Executor; Proposer war schon immer runtime-fähig — nur die Settings-Matrix-UI filtert lokale Modelle, Config-Edit genügt). Bisher waren lokale Modelle an ZWEI Stellen hart aus dem Executor-Pfad gefiltert: brain.resolve_moa_executor (Pool-Filter) + handlers/chat._run_plan_review_loop (Kandidaten fürs Review-Dropdown), beide `not is_model_local(m)`. NEU: der Filter ist an beiden Stellen auf `(allow_local or not is_model_local(m))` konditionalisiert; Knob in _MOA_DEFAULTS (Default False — lokal grindet Tool-Runden mit ~20 tps und der Lokal-oMLX-Provider hat max_concurrent=1, konkurriert also mit Warmup + Proposer-Calls) + Bool-Handling in admin_config (per Admin-API setzbar, kein Restart nötig — get_moa_config liest live). WICHTIG: das _bench_rank_key-Ranking bevorzugt weiterhin Cloud innerhalb des Fähigkeits-Bands → der AUTO-Pick bleibt praktisch Cloud; ein lokaler Executor wird primär über das Plan-Review-Executor-Dropdown gewählt (erscheint dort automatisch, die Liste kommt vom Server — kein JS-Change). Kein UI-Feld für den Knob (bewusst Config-only, Experiment). Default-Verhalten byte-identisch (Knob aus = alter Filter). py_compile brain/chat/admin_config OK. Kein kuratierter Eintrag (experimenteller Config-only-Schalter). Server-Restart nötig."),
     ("9.288.0", "2026-07-05", "feat(Websuche: spezialisierte Such-Werkzeuge nach Themengebiet — Wissenschaft/Technik/Bilder/Nachrichten). ANLASS (User): searxng_search nutzte NUR die `general`-Kategorie — die installierte + aktivierte SearXNG-Instanz kann aber ~30 Kategorien (images: 16 Engines, science: arxiv/pubmed/scholar/semantic-scholar, it: stackoverflow/mdn/github/pypi, news: reuters/google-news …), die alle unerreichbar brachlagen ('Funktionalität auf der Straße'). NEU 4 Werkzeuge, alle über einen GETEILTEN Kern (_searxng_query in misc_tools.py — dieselbe Instanz, dieselbe {title,link,score}-Form, Score-Filter, Infobox; feedback_single_fix_point): science_search (science → Paper mit Publikationsdaten), dev_search (it → Programmier-Q&A/Docs; bewusst NICHT 'code_search' benannt — Namenskollision mit dem bestehenden CodeGraph-Tool code_search, hätte den Dispatch überschrieben), image_search (images → jedes Ergebnis trägt image_url = direkte Bild-URL neben der Quellseite; want_images-Passthrough), news_search (news → datierte Nachrichten). BEWUSST SEPARATE Werkzeuge statt eines `category`-Params: ein explizit vom Modell gewähltes news_search kann den v9.124.0-Footgun (ad-hoc category='news' auf allgemeiner Query verdrängte die autoritative Quelle unter Presse) NICHT reproduzieren. Alle DEFAULT-AKTIV (kein tool_settings-Record nötig — Default=active), 4-Site-registriert (Schema/Group/Dispatch/Impl, konsistenz-verifiziert). LOCKOUT-HÄRTUNG: neue Kanon-Konstante brain.WEB_SEARCH_TOOLS (7 Web-Tools) ersetzt die an 2 Stellen hartkodierte 3-Tool-Liste (handlers/chat.py Websuche-Basket-Lockout + brain.py disable_web_search) — die Spezial-Tools nutzen DIESELBE Instanz, ein Lockout ohne sie hätte geleakt; Scheduler-Lockout deckt apply_domain_context automatisch mit ab. SETTINGS-UI (Settings→Server→Websuche): der Engine-Health-Panel gruppiert Engines jetzt nach Kategorie mit Nennung des tragenden Werkzeugs + je Kategorie ein An/Aus-Schalter fürs Werkzeug (POST /v1/tools/settings state); searxng_health.enabled_engines_by_category + kategorisierter run_health_check (jede Engine 1× via !shortcut geprobt, Kategorie nur zur Anzeige) — der bestehende 4-Stunden-Auto-Check deckt damit auch die Spezial-Engines ab. VERIFIZIERT live gegen die laufende Instanz: science→arxiv/pubmed/scholar mit Daten, dev(it)→stackoverflow/mdn, images→238 Treffer mit image_url, news→datierte Items; 4-Site-Konsistenz-Check grün; py_compile (brain/misc_tools/chat/searxng_health) OK; js_gate GRÜN (eslint clean, net-globals 1844→1845 = neues toggleSearchTool, Baseline mitgezogen, smoke 5/5). Skill 02-tools + 06-user-manual + SKILL.md (1.147.0 / brain 9.288.0) im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar)."),
@@ -934,17 +941,26 @@ _RESEARCH_MODE_DISCIPLINE_REFUSAL_DEFAULT = (
     "auf …' without a retrieved passage is a fabrication). You may add general "
     "context, but ONLY clearly separated BELOW the not-found statement and "
     "labeled as general knowledge, never blended into it.\n"
-    "(b) GENERAL KNOWLEDGE — applies only when the question is NOT about the "
-    "user's own documents/policies/data: established technical/textbook concepts, standards, "
-    "well-known methods, and order-of-magnitude estimates built from assumptions "
-    "you state yourself: answer these normally from your own knowledge, WITHOUT "
-    "[Quelle:]-brackets, and mark it ONCE (at the top or bottom): 'Hinweis: "
-    "beruht auf allgemeinem Fachwissen, nicht auf abgerufenen Quellen.'\n"
+    "(b) NOT SOURCE-BOUND — the question is NOT about the user's own "
+    "documents/policies/data: general facts, standards, current/verifiable "
+    "information, figures, dates, 'usual' durations or limits, well-known "
+    "methods. TOOLS FIRST: if one or more tools available THIS turn could get "
+    "or confirm the answer, use them before answering — do NOT answer from "
+    "memory and slap on a disclaimer when a tool would give a verifiable, "
+    "current answer. A verifiable fact you could have looked up but answered "
+    "from training data instead is a hallucination hazard, not a shortcut. "
+    "Only when NO available tool can help — a timeless textbook concept, or no "
+    "suitable tool is available this turn — answer from your own knowledge, "
+    "WITHOUT [Quelle:]-brackets, and mark it ONCE (at the top or bottom): "
+    "'Hinweis: beruht auf allgemeinem Fachwissen, nicht auf abgerufenen "
+    "Quellen.' That disclaimer is a LAST RESORT after the available tools were "
+    "genuinely unable to help or came up empty — never a licence to skip a "
+    "tool you could have used.\n"
     "NEVER refuse a task merely because retrieval returned nothing when lane (b) "
-    "can answer it. An empty search means: answer the general parts from lane "
-    "(b) and say 'nicht gefunden' for the lane-(a) specifics — it never means "
-    "refusing the whole task, and never means asking the user to supply sources "
-    "for textbook knowledge."
+    "can answer it. An empty search means: answer the general parts from your "
+    "own knowledge and say 'nicht gefunden' for the lane-(a) specifics — it "
+    "never means refusing the whole task, and never means asking the user to "
+    "supply sources for textbook knowledge."
 )
 
 _RESEARCH_MODE_DISCIPLINE_PRECISION_DEFAULT = (
@@ -1263,7 +1279,7 @@ TOOL_GROUPS = {
     "audio": {"transcribe_audio", "generate_audio_overview"},
     "translation": {"translate_text", "translate_document", "detect_language",
                     "list_glossaries", "get_glossary"},
-    "workflows": {"ask_user_for_file", "ask_llm"},
+    "workflows": {"ask_user_for_file", "ask_llm", "agent_step"},
     "workers": {"get_artifact_detail", "worker_status", "worker_abort",
                 "worker_pause", "worker_resume", "worker_send",
                 "worker_ask_user"},
@@ -1788,6 +1804,7 @@ def seed_tool_purpose_states(settings: dict) -> int:
         "research_minimal": set(minimal),
         "helpdesk": set(_HELPDESK_TOOLS),
         "instruction_gen": set(_INSTRUCTION_GEN_TOOLS),
+        "workflow_step": set(_WORKFLOW_STEP_TOOLS),
     }
     changed = 0
     for name in TOOL_DISPATCH:
@@ -1951,6 +1968,30 @@ _INSTRUCTION_GEN_TOOLS = {
     "web_fetch", "exa_search", "searxng_search",
 }
 
+# workflow_step — default tool set for the `agent_step` workflow primitive
+# (engine/tools/ask_tools.py): one bounded agentic turn per plan step, driven
+# from a .flow script. SEED only — admin-editable in the per-use-case tool
+# matrix (column "Workflow-Schritt") once seeded. Broad read/write/exec/web
+# surface so a step can reproduce what an interactive chat did, but WITHOUT:
+# the `workflows` group (ask_user_for_file/ask_llm/agent_step — no recursion,
+# no mid-step user blocking), `delegation`, `ask_user` (workflow runs are
+# unattended), email/git (side effects a generated workflow must not have by
+# default — admins can enable them in the matrix).
+_WORKFLOW_STEP_TOOLS = {
+    # Files + execution (the shared per-run workspace).
+    "read_file", "write_file", "edit_file", "list_directory", "search_files",
+    "execute_command", "python_exec",
+    # Documents incl. spreadsheets + diagrams.
+    "read_document", "write_document", "edit_document", "render_diagram",
+    "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff",
+    # Web research.
+    "web_fetch", "exa_search", "searxng_search",
+    "science_search", "dev_search", "image_search", "news_search",
+    # Knowledge lookups.
+    "mempalace_query",
+    "mempalace_kg_query", "mempalace_kg_search", "mempalace_kg_neighbors",
+}
+
 # research_minimal — harness-style lean purpose. Tools are discovered
 # dynamically by `minimal: True` flag on their TOOL_DEFINITIONS entry; each
 # such tool may also carry `minimal_role` (a one-line phrase composed into
@@ -1963,7 +2004,7 @@ _INSTRUCTION_GEN_TOOLS = {
 # its final text (not via a tool). Its tool set is admin-configurable in the
 # per-use-case tool matrix (Service-/Tools-Einstellungen), seeded below to the
 # read/research tools. No file-write/email/git/python/delegation tools.
-_VALID_PURPOSES = ("interactive", "transform", "memory_summary", "research_minimal", "helpdesk", "instruction_gen")
+_VALID_PURPOSES = ("interactive", "transform", "memory_summary", "research_minimal", "helpdesk", "instruction_gen", "workflow_step")
 
 # Valid `tool_profile` values for a scheduled task. Empty string = "default"
 # (resolved to research_minimal at fire time, matching Phase A behavior).
@@ -7580,7 +7621,49 @@ class WorkflowEngine:
                 os.remove(meta_path)
             except OSError:
                 pass
+        plan_path = WorkflowEngine._workflow_plan_path(agent_id, name)
+        if os.path.exists(plan_path):
+            try:
+                os.remove(plan_path)
+            except OSError:
+                pass
         return ok
+
+    # ── plan sidecar (<name>.plan.md) ────────────────────────────────
+    # The natural-language plan a plan-driven workflow executes via agent_step
+    # ("Der Plan ist das Programm"). Injected into the interpreter env as the
+    # `plan_md` variable by workflow_start; editable as a second tab in the
+    # workflow editor.
+    @staticmethod
+    def _workflow_plan_path(agent_id: str, name: str) -> str:
+        return os.path.join(WorkflowEngine._workflows_dir(agent_id),
+                            name + ".plan.md")
+
+    @staticmethod
+    def get_workflow_plan(agent_id: str, name: str) -> str:
+        p = WorkflowEngine._workflow_plan_path(agent_id, name)
+        if not os.path.exists(p):
+            return ""
+        try:
+            with open(p, "r") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    @staticmethod
+    def save_workflow_plan(agent_id: str, name: str, plan_md: str) -> None:
+        p = WorkflowEngine._workflow_plan_path(agent_id, name)
+        if not (plan_md or "").strip():
+            # Empty plan = remove the sidecar (workflow becomes plan-less).
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            return
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write(plan_md)
 
     # ── sharing metadata sidecar (<name>.flow.meta.json) ────────────
     @staticmethod
@@ -7668,7 +7751,13 @@ class WorkflowExecution:
         self.status = "pending"
         self.current_stage_idx = -1
         self.current_stage_name = ""
-        self.steps: list[dict] = []   # ordered execution log
+        self.steps: list[dict] = []   # ordered execution log (truncated, diagnostic)
+        # v9.290.2: chat-style transcript (UNTRUNCATED user/assistant turns) +
+        # reliable full output paths — drive the chat-view render + artifact
+        # seeding, which the truncated `steps` can't. Populated by the
+        # interpreter (_eval_call) as meaningful nodes execute.
+        self.transcript: list[dict] = []
+        self.output_paths: list[str] = []
         self.started_at: str | None = None
         self.finished_at: str | None = None
         self.error: str | None = None
@@ -7676,6 +7765,11 @@ class WorkflowExecution:
         self._thread: threading.Thread | None = None
         self._return_value = None
         self._program: _WFProgram | None = None
+        # turn_ids of in-flight agent_step background calls — cancel() trips
+        # them via sidecar_proxy.cancel_turn so a mid-step cancel doesn't wait
+        # for the LLM turn to finish on its own.
+        self._step_turn_ids: set[str] = set()
+        self._step_turn_lock = threading.Lock()
         # Parse upfront to surface parse errors before run()
         try:
             self._program = _wf_parse(source)
@@ -7777,6 +7871,8 @@ class WorkflowExecution:
                         self.execution_id, self.status, self.finished_at,
                         duration_ms, self.error, rv_str,
                         json.dumps(self.steps, default=str),
+                        json.dumps(self.transcript, default=str),
+                        json.dumps(self.output_paths, default=str),
                     )
                 except Exception as e:
                     logging.warning(f"workflow finalize: {e}")
@@ -7791,6 +7887,48 @@ class WorkflowExecution:
         self.current_stage_idx = len(self.steps) - 1
         self.current_stage_name = f"line {line}"
 
+    def record_message(self, role: str, content: str, **meta) -> None:
+        """Append an UNTRUNCATED chat turn to the run transcript (drives the
+        chat-view render). role='user' | 'assistant'. meta may carry model,
+        files (list of output paths written by an agent_step), line."""
+        msg = {"role": role, "content": content or "",
+               "at": datetime.datetime.now().isoformat()}
+        for k, v in meta.items():
+            if v is not None:
+                msg[k] = v
+        self.transcript.append(msg)
+
+    def record_output_path(self, path: str) -> None:
+        """Record a FULL output-file path (untruncated) a write/edit tool
+        produced, so artifact seeding is reliable regardless of step-detail
+        truncation."""
+        if path and path not in self.output_paths:
+            self.output_paths.append(path)
+
+    def attach_output_to_last_answer(self, path: str) -> None:
+        """Attach an output-file path to the most recent assistant transcript
+        turn (so a workflow-level write_file shows as an artifact-card ON the
+        answer that produced its content). If there's no assistant turn yet,
+        record a minimal one so the file still surfaces in the chat view."""
+        if not path:
+            return
+        for msg in reversed(self.transcript):
+            if msg.get("role") == "assistant":
+                files = msg.setdefault("files", [])
+                if path not in files:
+                    files.append(path)
+                return
+        # No assistant turn yet — create a lightweight carrier turn.
+        self.record_message("assistant", "", files=[path])
+
+    def register_step_turn(self, turn_id: str) -> None:
+        with self._step_turn_lock:
+            self._step_turn_ids.add(turn_id)
+
+    def unregister_step_turn(self, turn_id: str) -> None:
+        with self._step_turn_lock:
+            self._step_turn_ids.discard(turn_id)
+
     def cancel(self) -> None:
         self._cancel.set()
         # Also unblock any pending file-upload wait
@@ -7798,6 +7936,16 @@ class WorkflowExecution:
             deliver_workflow_file_answer(self.execution_id, None)
         except Exception:
             pass
+        # Interrupt in-flight agent_step LLM turns.
+        with self._step_turn_lock:
+            pending_turns = list(self._step_turn_ids)
+        if pending_turns:
+            try:
+                from handlers import sidecar_proxy as _sp
+                for tid in pending_turns:
+                    _sp.cancel_turn(tid)
+            except Exception:
+                pass
 
     # No-op approval methods — kept so HTTP handlers can call them harmlessly.
     def approve(self) -> None: pass
@@ -7827,6 +7975,8 @@ class WorkflowExecution:
             "total_stages": len(self.steps),
             "stages": stages,
             "steps": self.steps,
+            "transcript": self.transcript,
+            "output_paths": self.output_paths,
             "variables": self.variables,
             "return_value": self._return_value,
             "started_at": self.started_at,
@@ -7848,6 +7998,14 @@ def workflow_start(agent_id: str, workflow_name: str, variables: dict,
     src = WorkflowEngine.get_workflow_source(agent_id, workflow_name)
     if src is None:
         raise ValueError(f"Workflow '{workflow_name}' not found for agent '{agent_id}'")
+    # Seed the plan sidecar as the `plan_md` variable so plan-driven workflows
+    # (agent_step / plan_steps) can reference it without any file-loading DSL.
+    # An explicit caller-provided plan_md variable wins.
+    variables = dict(variables or {})
+    if "plan_md" not in variables:
+        plan_md = WorkflowEngine.get_workflow_plan(agent_id, workflow_name)
+        if plan_md:
+            variables["plan_md"] = plan_md
     execution = WorkflowExecution(
         src, variables, agent_id, model,
         workflow_name=workflow_name,
@@ -8016,6 +8174,16 @@ def _workflow_history_init() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wfh_workflow ON workflow_history(workflow_name, started_at DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wfh_user     ON workflow_history(user_id, started_at DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_wfh_status   ON workflow_history(status, started_at DESC)")
+        # v9.290.2: chat-style transcript + reliable output paths, captured
+        # UNTRUNCATED (the diagnostic steps_json truncates agent_step text +
+        # write_file paths to 120 chars, so it can't drive a real chat view or
+        # artifact seeding). Additive columns — SELECT * picks them up. Guard
+        # each ADD COLUMN (SQLite has no ADD COLUMN IF NOT EXISTS pre-3.35).
+        for _col, _decl in (("transcript_json", "TEXT"), ("output_paths_json", "TEXT")):
+            try:
+                conn.execute(f"ALTER TABLE workflow_history ADD COLUMN {_col} {_decl}")
+            except Exception:
+                pass  # already present
         # Zombie sweep: any row marked running/pending/waiting_approval at init
         # time has lost its in-memory WorkflowExecution (we just started up).
         # Mark them cancelled so the running set reflects reality. Idempotent.
@@ -8063,7 +8231,9 @@ def _workflow_history_insert(execution_id: str, workflow_name: str, workflow_fil
 
 def _workflow_history_finalize(execution_id: str, status: str, finished_at: str,
                                duration_ms: int, error: str | None,
-                               return_value: str, steps_json: str) -> None:
+                               return_value: str, steps_json: str,
+                               transcript_json: str = "[]",
+                               output_paths_json: str = "[]") -> None:
     """Update terminal-state row + roll up costs from cost_log keyed by 'wf-<execution_id>'."""
     _workflow_history_init()
     # Roll up costs from cost_log
@@ -8101,11 +8271,13 @@ def _workflow_history_finalize(execution_id: str, status: str, finished_at: str,
             UPDATE workflow_history
             SET status = ?, finished_at = ?, duration_ms = ?, error = ?,
                 return_value = ?, steps_json = ?,
+                transcript_json = ?, output_paths_json = ?,
                 tool_calls = ?, llm_calls = ?,
                 tokens_in = ?, tokens_out = ?, cost_usd = ?
             WHERE execution_id = ?
         """, (status, finished_at, duration_ms, error or "", return_value or "",
-              steps_json or "[]", tool_calls, llm_calls, tokens_in, tokens_out,
+              steps_json or "[]", transcript_json or "[]", output_paths_json or "[]",
+              tool_calls, llm_calls, tokens_in, tokens_out,
               cost_usd, execution_id))
         conn.commit()
     except Exception as e:
@@ -12432,10 +12604,22 @@ def resolve_moa_plan(analysis: dict | None, aggregator: str,
             "task_types": task_types, "complexity": complexity}
 
 
+def model_supports_mimes(model: str, mimes) -> bool:
+    """True when the model accepts EVERY MIME in `mimes` natively as a
+    multimodal content block (matched against its raw_formats from model
+    config). Empty/None `mimes` → True (no attachment constraint). Used to keep
+    the MoA delegate executor pick from handing an attachment-bearing turn to a
+    model that can't accept that input type (e.g. an image to text-only
+    deepseek), which the OpenAI wire would reject."""
+    fmts = get_model_raw_formats(model)
+    return all(_mime_matches(m, fmts) for m in (mimes or []) if m)
+
+
 def resolve_moa_executor(plan_text: str, exclude: set[str] | None = None,
                          *, allowed_models: set[str] | None = None,
                          fallback_task_type: str = "",
-                         fallback_complexity: str = "") -> tuple[str | None, dict | None]:
+                         fallback_complexity: str = "",
+                         require_mimes=None) -> tuple[str | None, dict | None]:
     """Delegate mode, stage 2: pick the EXECUTOR for a synthesized plan.
 
     Classifies the PLAN text (not the user prompt — the plan reveals the true
@@ -12451,6 +12635,13 @@ def resolve_moa_executor(plan_text: str, exclude: set[str] | None = None,
     Fail-safe: classification failure falls back to the original prompt's
     task_type/complexity (passed in from the moa plan); an empty pool returns
     (None, analysis) — the caller keeps the turn on the current model.
+
+    `require_mimes`: MIME types this turn sends as native multimodal content
+    blocks (e.g. an attached image) — restrict the pool to models whose
+    raw_formats accept ALL of them, so the executor switch never hands an
+    attachment to a model that can't take it (the deepseek-gets-an-image
+    failure). Disk-routed attachments are NOT in this set (the executor reads
+    them via read_document, needing no native MIME support).
     """
     exclude = exclude or set()
     analysis = None
@@ -12470,8 +12661,12 @@ def resolve_moa_executor(plan_text: str, exclude: set[str] | None = None,
     allow_local = bool(get_moa_config().get("allow_local_executor"))
     pool = [m for m in enabled
             if m not in exclude and (allow_local or not is_model_local(m))
-            and (not allowed_models or m in allowed_models)]
+            and (not allowed_models or m in allowed_models)
+            and model_supports_mimes(m, require_mimes)]
     if not pool:
+        # No eligible executor (e.g. an attachment-bearing turn with no model
+        # in the pool that accepts its MIME) → keep the turn on the current
+        # model, which already holds the multimodal blocks.
         return None, analysis
     floor = _complexity_floor(complexity)
     bench_task = task_types[0]
@@ -13411,6 +13606,7 @@ from engine.tools.misc_tools import (  # noqa: E402
 )
 from engine.tools.ask_tools import (  # noqa: E402
     _normalize_ask_questions,
+    tool_agent_step,
     tool_ask_llm,
     tool_ask_user,
     tool_ask_user_for_file,
@@ -13429,6 +13625,7 @@ TOOL_DISPATCH = {
     "get_glossary": tool_get_glossary,
     "ask_user_for_file": tool_ask_user_for_file,
     "ask_llm": tool_ask_llm,
+    "agent_step": tool_agent_step,
     "list_directory": tool_list_directory,
     "search_files": tool_search_files,
     "execute_command": tool_execute_command,

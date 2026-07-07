@@ -277,6 +277,101 @@ def _append_to_wire_user(messages, suffix):
     return wire
 
 
+def _sanitize_multimodal_for_model(messages, model):
+    """Degrade image blocks the FINAL model can't accept — graceful fallback.
+
+    Attachment routing (image_url vs disk) is decided at SEND time against the
+    session model. But the model that actually runs a turn can differ: a MoA
+    plan-executor, an explicit user override, a quota/GDPR-driven swap, or the
+    auto-router. If that model isn't multimodal for the attached MIMEs, the
+    provider rejects the image_url block with an API error (the bug this fixes).
+
+    So, right before the wire send, against the RESOLVED model: for every user
+    message carrying image blocks the model can't accept, replace those blocks
+    with a VISION-MODEL DESCRIPTION of the image (attachment_image_model), so a
+    text-only model still gets the real image content (read_document only yields
+    image metadata, never the visual content — see file_tools). Transient wire
+    copy only — session.messages / the DB keep the original image blocks, so a
+    later capable model still sees the real image.
+
+    No-op when the model supports all present image MIMEs (the capable path is
+    byte-identical — same wire, warm-prefix untouched)."""
+    import brain as _brain
+    if not messages:
+        return messages
+    # Collect the image MIMEs present anywhere in the wire.
+    present = []
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, list):
+            for b in c:
+                if isinstance(b, dict) and b.get("type") == "image_url":
+                    url = (b.get("image_url") or {}).get("url", "")
+                    if url.startswith("data:"):
+                        mime = url[5:].split(";", 1)[0].split(",", 1)[0]
+                        if mime:
+                            present.append(mime)
+    if not present:
+        return messages  # no images on the wire — nothing to degrade
+    if _brain.model_supports_mimes(model, present):
+        return messages  # model handles them natively — keep image_url path
+    # Model can't accept these images → describe each and swap in the text.
+    wire = list(messages)
+    for i, m in enumerate(wire):
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if not isinstance(c, list):
+            continue
+        has_img = any(isinstance(b, dict) and b.get("type") == "image_url" for b in c)
+        if not has_img:
+            continue
+        new_blocks = []
+        descriptions = []
+        img_n = 0
+        for b in c:
+            if isinstance(b, dict) and b.get("type") == "image_url":
+                url = (b.get("image_url") or {}).get("url", "")
+                if url.startswith("data:") and "base64," in url:
+                    header, b64 = url.split("base64,", 1)
+                    mime = header[5:].split(";", 1)[0] or "image/png"
+                    img_n += 1
+                    try:
+                        desc = _brain._describe_image_with_vision(b64, mime, f"Bild {img_n}")
+                    except Exception as _e:
+                        desc = f"(Bild {img_n}: Beschreibung fehlgeschlagen: {_e})"
+                    descriptions.append(desc)
+                # drop the image block (whether or not description succeeded)
+            else:
+                new_blocks.append(b)
+        if descriptions:
+            note = ("\n\n[Hinweis: Das aktive Modell kann Bilder nicht direkt "
+                    "sehen. Die angehängten Bilder wurden von einem Vision-Modell "
+                    "beschrieben:]\n\n" + "\n\n".join(descriptions))
+            # Append the descriptions to the message's text block (or add one).
+            text_block = next((b for b in new_blocks
+                               if isinstance(b, dict) and b.get("type") == "text"), None)
+            if text_block is not None:
+                text_block = dict(text_block)
+                text_block["text"] = (text_block.get("text") or "") + note
+                new_blocks = [text_block if (isinstance(b, dict) and b.get("type") == "text") else b
+                              for b in new_blocks]
+            else:
+                new_blocks.append({"type": "text", "text": note.lstrip("\n")})
+        # If the message collapsed to a single text block, flatten to a string
+        # (some providers prefer plain string content for text-only messages).
+        if len(new_blocks) == 1 and new_blocks[0].get("type") == "text":
+            new_content = new_blocks[0]["text"]
+        else:
+            new_content = new_blocks
+        msg = dict(m)
+        msg["content"] = new_content
+        wire[i] = msg
+    return wire
+
+
 _MOA_REF_SYSTEM = (
     "You are one of several AI models independently drafting a candidate answer "
     "to the user's latest request (the last USER entry in the conversation "
@@ -995,7 +1090,7 @@ def _persist_plan_artifact(sid, session, live, plan_text, *, planner="",
 
 def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
                           plan_text, planner_meta, exec_proposal,
-                          exec_analysis=None):
+                          exec_analysis=None, require_mimes=None):
     """Block the interactive delegate turn on the human plan review.
 
     Emits `moa_plan_review` {plan, planner, executor, executor_candidates,
@@ -1033,7 +1128,8 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
                   if (_allow_local or not engine.is_model_local(m))
                   and m != _planner_id
                   and _is_chat_model(m)
-                  and (not allowed or m in allowed)]
+                  and (not allowed or m in allowed)
+                  and engine.model_supports_mimes(m, require_mimes)]
     # Suitability for THIS plan's task shape (v9.286.2): the plan-classification
     # task_type/complexity from resolve_moa_executor if we have it, else the
     # prompt's gate_hit/complexity. "Suitable" = clears the capability floor +
@@ -1159,6 +1255,31 @@ def _run_plan_review_loop(moa_plan, drafts, wire_messages, sid, live, session,
             if _ex != executor:
                 meta["executor_overridden"] = True
             executor = _ex
+        elif _ex:
+            # Explicit override of a model OUTSIDE the candidate pool. The pool
+            # excludes models that can't natively accept the turn's images
+            # (require_mimes) — but the wire-level multimodal-degrade
+            # (_sanitize_multimodal_for_model) now describes those images via a
+            # vision model, so a text-only pick WORKS instead of being silently
+            # ignored. Honor it if it still passes the NON-MIME gates (enabled,
+            # chat-capable, ACL, local-policy) — mirror the candidate filter
+            # minus model_supports_mimes.
+            _ok_override = False
+            try:
+                _ecaps = engine.get_model_info(_ex).get("capabilities") or []
+                _ok_override = (
+                    _ex in engine.get_enabled_models()
+                    and "chat" in _ecaps
+                    and _ex != _planner_id
+                    and (_allow_local or not engine.is_model_local(_ex))
+                    and (not allowed or _ex in allowed))
+            except Exception:
+                _ok_override = False
+            if _ok_override:
+                if _ex != executor:
+                    meta["executor_overridden"] = True
+                meta["executor_mime_degraded"] = True
+                executor = _ex
         action = (decision.get("action") or "").strip().lower()
         _msg = (decision.get("message") or "").strip()
         if action == "clarify" and _msg:
@@ -3074,6 +3195,22 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
         except Exception as e:
             print(f"  [WARN] Message rollback DB cleanup: {e}", flush=True)
 
+    # MIMEs this turn sends as native multimodal content blocks (an attached
+    # image lands as an image_url data URI). The MoA delegate executor pick
+    # must stay on a model whose config accepts these MIMEs, else the switch
+    # hands the attachment to a model that can't take it (e.g. an image to
+    # text-only deepseek) and the wire build fails. Disk-routed attachments are
+    # NOT here — the executor reads those via read_document, needing no native
+    # MIME support.
+    _turn_wire_mimes = []
+    for _b in (content_blocks or []):
+        if isinstance(_b, dict) and _b.get("type") == "image_url":
+            _url = (_b.get("image_url") or {}).get("url", "")
+            if _url.startswith("data:"):
+                _m = _url[5:].split(";", 1)[0].split(",", 1)[0]
+                if _m:
+                    _turn_wire_mimes.append(_m)
+
     def worker():
         with engine.request_context():
             # Set thread-local agent context (thread-safe, no global mutation)
@@ -3551,8 +3688,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             session.last_active = time.time()
                             if not session.title:
                                 from server import _derive_session_title
-                                _t = user_content if isinstance(user_content, str) else str(user_content)
-                                session.title = _derive_session_title(_t)
+                                # Pass content THROUGH (str OR multimodal list);
+                                # the deriver pulls text parts from a multimodal
+                                # message instead of titling on the list repr.
+                                session.title = _derive_session_title(user_content)
                         # Locate every real-PII span in the persisted user
                         # text so the chat UI can highlight them with the
                         # same `<mark class="gdpr-restored">` overlay it
@@ -3990,7 +4129,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                         allowed_models=(set(_allowed_ids)
                                                         if _allowed_ids else None),
                                         fallback_task_type=_moa_plan_now.get("gate_hit", ""),
-                                        fallback_complexity=_moa_plan_now.get("complexity") or "")
+                                        fallback_complexity=_moa_plan_now.get("complexity") or "",
+                                        require_mimes=_turn_wire_mimes)
                                     if _exec_analysis and _exec_analysis.get("source") == "llm":
                                         _dmeta["plan_task_types"] = (
                                             _exec_analysis.get("task_types") or [])
@@ -4012,7 +4152,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                             _moa_plan_now, _drafts,
                                             _wire_messages, sid, live, session,
                                             _plan_text, _pl_meta, _exec_model,
-                                            exec_analysis=_exec_analysis))
+                                            exec_analysis=_exec_analysis,
+                                            require_mimes=_turn_wire_mimes))
                                     _dmeta.update(_rmeta)
                                 elif (_plan_text
                                       and _pl_meta.get("verdict") == "insufficient"):
@@ -4193,6 +4334,14 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     if _cav_eff and _cav_eff in engine.CAVEMAN_CHAT_PROMPTS:
                         _wire_messages = _append_to_wire_user(
                             _wire_messages, engine.CAVEMAN_CHAT_PROMPTS[_cav_eff])
+                    # UNIVERSAL multimodal-degrade choke point: `session.model`
+                    # is now FINAL (after any MoA-executor / override / quota /
+                    # GDPR / auto-route swap). If it can't accept the attached
+                    # images, replace the image blocks with a vision-model
+                    # description so the turn runs instead of hitting a provider
+                    # API error. No-op when the model is multimodal-capable.
+                    _wire_messages = _sanitize_multimodal_for_model(
+                        _wire_messages, session.model)
                     if deep_research:
                         # Deep Research turn (composer 🔬): run the bounded research
                         # loop INSTEAD of the LLM chat turn. It writes the report as

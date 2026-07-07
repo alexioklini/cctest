@@ -576,6 +576,25 @@ write/exec tool is deliberately excluded.
   `/v1/chat/answer`)
 - `ask_user_for_file(prompt)` — same, file upload
 - `ask_llm(prompt, model?)` — sub-LLM call (workflow building block)
+- `agent_step(instruction, plan?, files?, model?, max_rounds?, expected_output?)`
+  — v9.290.0, group `workflows`: runs ONE bounded agentic turn as a workflow
+  step ("Der Plan ist das Programm"). The .flow script stays the deterministic
+  spine; judgment-heavy plan steps run agentically via `background_call` with
+  the dedicated purpose `workflow_step` (own tool-matrix column
+  "Workflow-Schritt": files/exec/documents/web/KG-query, deliberately WITHOUT
+  the workflows group, delegation and ask_user — recursion/blocking guard).
+  Shared workspace = the run's `wf-<exec_id>` artifact folder (relative
+  writes land there, same folder as .flow-level write_file — later steps
+  and the verify step see earlier steps' files). Image inputs in `files=`
+  are sent as native image blocks when the model's raw_formats accept the
+  MIME (`model_supports_mimes`), so visual plan steps work. Model:
+  arg → workflow MODEL header → background default; max_rounds default 16,
+  cap 24 (whole-plan steps should set 20); returns
+  `{text, model, rounds, files}`. In-flight steps are cancelled with the
+  workflow (turn-id registry on the WorkflowExecution). The plan markdown
+  lives in the `<name>.plan.md` sidecar and reaches the script as the
+  pre-seeded `plan_md` variable; the DSL builtin `plan_steps(md)` splits it
+  deterministically into `[{index, title, body}]`.
 
 ## Translation
 
@@ -655,7 +674,7 @@ code_exec     python_exec
 audio         transcribe_audio generate_audio_overview
 translation   translate_text translate_document detect_language
               list_glossaries get_glossary
-workflows     ask_user_for_file ask_llm
+workflows     ask_user_for_file ask_llm agent_step
 workers       get_artifact_detail worker_status worker_abort worker_pause
               worker_resume worker_send worker_ask_user
 image_gen     generate_image

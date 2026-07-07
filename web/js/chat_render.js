@@ -80,6 +80,10 @@ function renderMessages() {
   // during streaming; completed turns above it are skipped entirely.
   const blocks = []; // { key, html, hash }
   if (lcmDividerHtml) blocks.push({ key: 'lcm-divider', html: lcmDividerHtml, hash: lcmDividerHtml });
+  // (Workflow runs render their transcript as REAL message rows injected into
+  // chat.messages by workflows.js:_wfSyncTranscriptMessages — so they flow
+  // through the normal turn grouping above and look identical to a chat. No
+  // special block here anymore.)
   for (const t of turns) {
     // Collapsed state is applied post-render (_applyChatCollapseStates) so it
     // stays OUT of the block hash — otherwise toggling would change the HTML,

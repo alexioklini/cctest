@@ -240,7 +240,7 @@
         },
         "research": {
           "measured": {
-            "tps": 67.0,
+            "tps": 67,
             "n": 3,
             "ts": "2026-07-03T16:25:19Z",
             "capability": 80,
@@ -1988,7 +1988,7 @@
         },
         "reporting": {
           "measured": {
-            "tps": 41.0,
+            "tps": 41,
             "n": 3,
             "ts": "2026-07-03T15:42:46Z",
             "capability": 91,
@@ -2021,7 +2021,7 @@
         },
         "agentic": {
           "measured": {
-            "tps": 58.0,
+            "tps": 58,
             "n": 3,
             "ts": "2026-07-03T15:45:13Z",
             "capability": 92,
@@ -2428,7 +2428,7 @@
         "coding": {
           "measured": {
             "capability": 100,
-            "tps": 20.0,
+            "tps": 20,
             "n": 4,
             "ts": "2026-07-03T17:52:50Z",
             "source": "internal"
@@ -2450,7 +2450,7 @@
             "ts": "2026-07-03T17:55:42Z",
             "capability": 68,
             "source": "artificialanalysis",
-            "raw": 22.0,
+            "raw": 22,
             "official_name": "Gemma 4 12B (Reasoning)"
           }
         },
@@ -2461,7 +2461,7 @@
             "ts": "2026-07-03T17:57:31Z",
             "capability": 68,
             "source": "artificialanalysis",
-            "raw": 22.0,
+            "raw": 22,
             "official_name": "Gemma 4 12B (Reasoning)"
           }
         },
@@ -2472,7 +2472,7 @@
             "ts": "2026-07-03T17:57:38Z",
             "capability": 68,
             "source": "artificialanalysis",
-            "raw": 22.0,
+            "raw": 22,
             "official_name": "Gemma 4 12B (Reasoning)"
           }
         },
@@ -2483,7 +2483,7 @@
             "ts": "2026-07-03T17:57:44Z",
             "capability": 68,
             "source": "artificialanalysis",
-            "raw": 22.0,
+            "raw": 22,
             "official_name": "Gemma 4 12B (Reasoning)"
           }
         },
@@ -2494,7 +2494,7 @@
             "ts": "2026-07-03T17:59:04Z",
             "capability": 68,
             "source": "artificialanalysis",
-            "raw": 22.0,
+            "raw": 22,
             "official_name": "Gemma 4 12B (Reasoning)"
           }
         },
@@ -2505,18 +2505,18 @@
             "ts": "2026-07-03T17:59:22Z",
             "capability": 68,
             "source": "artificialanalysis",
-            "raw": 22.0,
+            "raw": 22,
             "official_name": "Gemma 4 12B (Reasoning)"
           }
         },
         "fast": {
           "measured": {
-            "tps": 5.0,
+            "tps": 5,
             "n": 4,
             "ts": "2026-07-03T17:59:25Z",
             "capability": 68,
             "source": "artificialanalysis",
-            "raw": 22.0,
+            "raw": 22,
             "official_name": "Gemma 4 12B (Reasoning)"
           }
         }
@@ -2692,9 +2692,12 @@
       "icon": "🤖",
       "priority": 50,
       "capabilities": [
-        "chat"
+        "chat",
+        "image"
       ],
-      "raw_formats": [],
+      "raw_formats": [
+        "image/*"
+      ],
       "thinking_format": "reasoning_field",
       "provider": "Kilo",
       "profile": "balanced",
@@ -2714,7 +2717,7 @@
             "ts": "2026-07-03T16:00:17Z",
             "capability": 80,
             "source": "artificialanalysis",
-            "raw": 56.0,
+            "raw": 56,
             "official_name": "Kimi K2.6"
           }
         },
@@ -2823,7 +2826,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "zai-coding/glm-4.7": {
       "enabled": false,
@@ -2838,7 +2843,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "zai-coding/glm-5.1": {
       "enabled": false,
@@ -2853,7 +2860,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "zai-coding/glm-5v-turbo": {
       "enabled": false,
@@ -2868,7 +2877,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "zai-coding/glm-4.5-air": {
       "enabled": false,
@@ -2883,7 +2894,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "zai-coding/glm-5-turbo": {
       "enabled": false,
@@ -2898,12 +2911,61 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "kimi-coding/kimi-for-coding": {
       "enabled": false,
       "shortname": "kimi-for-coding",
       "display_name": "kimi-for-coding",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
+    },
+    "tencent/hy3:free": {
+      "enabled": false,
+      "shortname": "hy3:free",
+      "display_name": "hy3:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "tencent/hy3": {
+      "enabled": false,
+      "shortname": "hy3",
+      "display_name": "hy3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nex-agi/nex-n2-mini": {
+      "enabled": false,
+      "shortname": "nex-n2-mini",
+      "display_name": "nex-n2-mini",
       "icon": "🤖",
       "priority": 10,
       "capabilities": [
@@ -3851,7 +3913,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "exa_search": {
@@ -3873,7 +3936,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "python_exec": {
@@ -3892,7 +3956,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "mempalace_query": {
@@ -3912,7 +3977,8 @@
         "memory_summary": "active",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "write_file": {
@@ -3932,7 +3998,8 @@
         "memory_summary": "inactive",
         "research_minimal": "active",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "web_fetch": {
@@ -3952,7 +4019,8 @@
         "memory_summary": "inactive",
         "research_minimal": "active",
         "helpdesk": "active",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "read_file": {
@@ -3971,7 +4039,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "edit_file": {
@@ -3990,7 +4059,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "transcribe_audio": {
@@ -4009,7 +4079,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "translate_text": {
@@ -4028,7 +4099,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "translate_document": {
@@ -4047,7 +4119,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "detect_language": {
@@ -4066,7 +4139,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "list_glossaries": {
@@ -4085,7 +4159,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "get_glossary": {
@@ -4104,7 +4179,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "ask_user_for_file": {
@@ -4123,7 +4199,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "ask_llm": {
@@ -4142,7 +4219,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "list_directory": {
@@ -4161,7 +4239,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "search_files": {
@@ -4180,7 +4259,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "mempalace_kg_query": {
@@ -4201,7 +4281,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "mempalace_kg_search": {
@@ -4222,7 +4303,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "mempalace_kg_neighbors": {
@@ -4241,7 +4323,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "save_chat_to_memory": {
@@ -4261,7 +4344,8 @@
         "memory_summary": "active",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "memory_store": {
@@ -4352,7 +4436,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "gmail_read": {
@@ -4371,7 +4456,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "gmail_search": {
@@ -4390,7 +4476,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "gmail_send": {
@@ -4409,7 +4496,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "gmail_reply": {
@@ -4428,7 +4516,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "delegate_task": {
@@ -4447,7 +4536,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "task_status": {
@@ -4466,7 +4556,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "task_cancel": {
@@ -4485,7 +4576,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "use_skill": {
@@ -4504,7 +4596,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "list_nodes": {
@@ -4523,7 +4616,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "context_search": {
@@ -4542,7 +4636,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "context_detail": {
@@ -4561,7 +4656,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "context_recall": {
@@ -4580,7 +4676,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "schedule_list": {
@@ -4599,7 +4696,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "schedule_history": {
@@ -4618,7 +4716,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "read_document": {
@@ -4637,7 +4736,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "write_document": {
@@ -4656,7 +4756,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "edit_document": {
@@ -4675,7 +4776,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "mcp_connect": {
@@ -4694,7 +4796,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "mcp_disconnect": {
@@ -4713,7 +4816,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "mcp_servers": {
@@ -4732,7 +4836,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "code_graph_build": {
@@ -4827,7 +4932,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "github_command": {
@@ -4846,7 +4952,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "tool_search": {
@@ -4865,7 +4972,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "get_artifact_detail": {
@@ -4884,7 +4992,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "worker_status": {
@@ -4903,7 +5012,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "worker_abort": {
@@ -4922,7 +5032,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "worker_pause": {
@@ -4941,7 +5052,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "worker_resume": {
@@ -4960,7 +5072,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "worker_send": {
@@ -4979,7 +5092,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "worker_ask_user": {
@@ -4998,7 +5112,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "ask_user": {
@@ -5017,7 +5132,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "generate_image": {
@@ -5036,7 +5152,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "searxng_search": {
@@ -5056,7 +5173,8 @@
         "memory_summary": "inactive",
         "research_minimal": "active",
         "helpdesk": "active",
-        "instruction_gen": "active"
+        "instruction_gen": "active",
+        "workflow_step": "active"
       }
     },
     "helpdesk_session_info": {
@@ -5075,7 +5193,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "helpdesk_user_context": {
@@ -5094,7 +5213,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "helpdesk_user_activity": {
@@ -5113,7 +5233,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "read_chunk_window": {
@@ -5144,7 +5265,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "generate_audio_overview": {
@@ -5163,7 +5285,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "retrieve": {
@@ -5195,7 +5318,8 @@
         "memory_summary": "active",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "wiki_read": {
@@ -5215,7 +5339,8 @@
         "memory_summary": "active",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "wiki_delete": {
@@ -5234,7 +5359,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "wiki_structure": {
@@ -5253,7 +5379,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "render_diagram": {
@@ -5272,7 +5399,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "code_search": {
@@ -5291,7 +5419,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "code_trace": {
@@ -5310,7 +5439,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "code_query": {
@@ -5329,7 +5459,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "code_snippet": {
@@ -5348,7 +5479,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "active",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     },
     "xlsx_inspect": {
@@ -5367,7 +5499,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "xlsx_query": {
@@ -5386,7 +5519,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "xlsx_create": {
@@ -5405,7 +5539,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "xlsx_edit": {
@@ -5424,7 +5559,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "xlsx_diff": {
@@ -5443,7 +5579,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "science_search": {
@@ -5462,7 +5599,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "dev_search": {
@@ -5481,7 +5619,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "image_search": {
@@ -5500,7 +5639,8 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
       }
     },
     "news_search": {
@@ -5519,12 +5659,33 @@
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
-        "instruction_gen": "inactive"
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
+      }
+    },
+    "agent_step": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
       }
     }
   },
   "research_mode_disciplines": {
-    "refusal": "**REFUSAL DISCIPLINE — never assert unproven SPECIFICS**:\nDecide per claim which lane it is in:\n(a) SOURCE-BOUND — anything about the user's documents, projects, policies, internal rules, compliance/audit facts, contracts, or live/current data (prices, versions, news, availability): state it ONLY when it is backed by evidence you actually retrieved this turn (a source you read, a result you got back). Do NOT fill such gaps with training-data knowledge, plausible guesses, or assumptions — there an unsupported claim is a fabrication hazard. If, after a genuine retrieval attempt, the information is not available, say so plainly — name what is missing and, where useful, how the user could provide or locate it. A clear 'this could not be found' beats an invented answer.\nHARD GUARD for lane (a): when the question asks what OUR / the user's own documents, Richtlinien, policies or contracts SAY and retrieval finds nothing specific, the CORE answer is ALWAYS 'nicht gefunden / in den Quellen nicht spezifiziert'. 'Not found' requires a THOROUGH attempt first — several searches with different terms/synonyms across whichever sources are available this turn (documents, memory, web); ONE empty search is not 'not found', and this rule is NEVER a licence to skip or shorten the search. ANSWER SHAPE once that thorough attempt HAS come up empty: the not-found statement is the FIRST sentence of the reply — never buried mid-answer or blended into surrounding synthesis. If only tangential fragments exist, quote them AFTER that lead sentence and state explicitly that the asked specifics are not specified — never present them as if they answered the question. General knowledge NEVER substitutes for the documents and is NEVER attributed to them ('unsere Richtlinie verweist auf …' without a retrieved passage is a fabrication). You may add general context, but ONLY clearly separated BELOW the not-found statement and labeled as general knowledge, never blended into it.\n(b) GENERAL KNOWLEDGE — applies only when the question is NOT about the user's own documents/policies/data: established technical/textbook concepts, standards, well-known methods, and order-of-magnitude estimates built from assumptions you state yourself: answer these normally from your own knowledge, WITHOUT [Quelle:]-brackets, and mark it ONCE (at the top or bottom): 'Hinweis: beruht auf allgemeinem Fachwissen, nicht auf abgerufenen Quellen.'\nNEVER refuse a task merely because retrieval returned nothing when lane (b) can answer it. An empty search means: answer the general parts from lane (b) and say 'nicht gefunden' for the lane-(a) specifics — it never means refusing the whole task, and never means asking the user to supply sources for textbook knowledge.",
+    "refusal": "**REFUSAL DISCIPLINE — never assert unproven SPECIFICS**:\nDecide per claim which lane it is in:\n(a) SOURCE-BOUND — anything about the user's documents, projects, policies, internal rules, compliance/audit facts, contracts, or live/current data (prices, versions, news, availability): state it ONLY when it is backed by evidence you actually retrieved this turn (a source you read, a result you got back). Do NOT fill such gaps with training-data knowledge, plausible guesses, or assumptions — there an unsupported claim is a fabrication hazard. If, after a genuine retrieval attempt, the information is not available, say so plainly — name what is missing and, where useful, how the user could provide or locate it. A clear 'this could not be found' beats an invented answer.\nHARD GUARD for lane (a): when the question asks what OUR / the user's own documents, Richtlinien, policies or contracts SAY and retrieval finds nothing specific, the CORE answer is ALWAYS 'nicht gefunden / in den Quellen nicht spezifiziert'. 'Not found' requires a THOROUGH attempt first — several searches with different terms/synonyms across whichever sources are available this turn (documents, memory, web); ONE empty search is not 'not found', and this rule is NEVER a licence to skip or shorten the search. ANSWER SHAPE once that thorough attempt HAS come up empty: the not-found statement is the FIRST sentence of the reply — never buried mid-answer or blended into surrounding synthesis. If only tangential fragments exist, quote them AFTER that lead sentence and state explicitly that the asked specifics are not specified — never present them as if they answered the question. General knowledge NEVER substitutes for the documents and is NEVER attributed to them ('unsere Richtlinie verweist auf …' without a retrieved passage is a fabrication). You may add general context, but ONLY clearly separated BELOW the not-found statement and labeled as general knowledge, never blended into it.\n(b) NOT SOURCE-BOUND — the question is NOT about the user's own documents/policies/data: general facts, standards, current/verifiable information, figures, dates, 'usual' durations or limits, well-known methods. TOOLS FIRST: if one or more tools available THIS turn could get or confirm the answer, use them before answering — do NOT answer from memory and slap on a disclaimer when a tool would give a verifiable, current answer. A verifiable fact you could have looked up but answered from training data instead is a hallucination hazard, not a shortcut. Only when NO available tool can help — a timeless textbook concept, or no suitable tool is available this turn — answer from your own knowledge, WITHOUT [Quelle:]-brackets, and mark it ONCE (at the top or bottom): 'Hinweis: beruht auf allgemeinem Fachwissen, nicht auf abgerufenen Quellen.' That disclaimer is a LAST RESORT after the available tools were genuinely unable to help or came up empty — never a licence to skip a tool you could have used.\nNEVER refuse a task merely because retrieval returned nothing when lane (b) can answer it. An empty search means: answer the general parts from your own knowledge and say 'nicht gefunden' for the lane-(a) specifics — it never means refusing the whole task, and never means asking the user to supply sources for textbook knowledge.",
     "precision": "**PRECISION DISCIPLINE — no plausible-sounding filler** (applies to lane-(a) claims drawn from retrieved sources):\nWhen the retrieved source does not give a concrete value (interval, frequency, threshold, count, deadline, length, duration), write `nicht spezifiziert` — never substitute a plausible default like 'regelmäßig', 'häufig', 'sofort', 'kürzer', 'mindestens X Zeichen', 'alle 12 Monate', 'mindestens jährlich'. If you use any qualifying adverb or comparative ('regelmäßig', 'häufiger', 'kürzer', 'sofort', 'zeitnah', 'angemessen'), the very next characters must be a wörtliches Zitat (`> \"...\"`) from the retrieved text proving the source actually says that. No quote → drop the qualifier. Typical phrasing remembered from training data is NOT a source.",
     "citation": "**CITATION DISCIPLINE — per-claim, not per-block; NEVER fabricate**:\n[Quelle: …]-brackets are EXCLUSIVELY for content you actually retrieved THIS turn (or a file this conversation genuinely read). A bracket naming a file you never read, a 'verbatim' quote reconstructed from memory, an invented statistic, or a generic authority ('Branchenstandard', 'Best Practices', a plausible RFC/spec sentence you did not fetch) is a FABRICATION — strictly worse than an uncited sentence and worse than no answer. If you retrieved nothing this turn, write NO brackets at all (lane (b) of the refusal discipline applies). Never cite drafts, private notes, or this conversation itself as a source.\nEVERY factual sentence and EVERY bullet point that came from a retrieved source must carry its OWN reference right after the claim, in the form [Quelle: <kurzer Quellenname> — \"<wörtliches Zitat 10-25 Wörter>\"]. One citation at the end of a 5-bullet list is INSUFFICIENT — the reader cannot tell which bullet came from which source, and uncited bullets are where paraphrase drift and fabrication slip in. Treat each bullet as an independent claim that must stand on its own with its own quote. A bullet with only a citation and no claim, or a claim with no citation, is not correct. This applies to PROSE too: a summary/FAZIT sentence that packs several facts (\"Bilanzsumme +5,8%, Barreserve +43%, CET1 28,13%\") needs a citation for EACH fact, not one at the end of the paragraph — split it or append a bracket per figure ([Quelle: … — \"+5,8%-quote\"] [Quelle: … — \"+43%-quote\"]). Every number you state must be traceable to a verbatim quote.\nTABLES are NOT exempt — a table is a dense block of claims, and one citation under the whole table is INSUFFICIENT for the same reason a single citation under a bullet list is. When you present retrieved data as a markdown table, add a final \"Quelle\" column and put the per-row reference ([Quelle: <name> — \"<wörtliches Zitat>\"]) in EVERY row whose figures came from a source. If several rows share one verbatim quote (e.g. a whole balance-sheet table copied from one passage), cite that quote in the first row and write \"s.o.\" (siehe oben) in the following rows' Quelle cells so it is explicit they share the source — never leave a data row's Quelle cell empty. Every relevant column's figures must be traceable: if the 2025 and 2024 columns come from different passages, the row's Quelle cell carries both brackets. A derived/computed column (e.g. a Δ you calculated) needs no quote — mark its origin once in a note under the table (\"Δ = eigene Berechnung\").\nIf you cannot find a verbatim quote in the retrieved source that supports a specific claim — DELETE that claim. Do not write claims you cannot cite. A shorter, fully-cited answer is always preferable to a longer answer with uncited statements.\nThe verbatim quote (10-25 words, copied EXACTLY from the retrieved text) is mandatory — it lets the user find and verify the statement in the original. Without a quote the citation is unverifiable.\nSource naming: use a short, recognisable source name — a document's filename (without any path or extracted-companion suffix) or, for a web source, its title or domain. Add a locator only when it is genuinely present in the retrieved text (e.g. `Page N`, `Slide N`, `Sheet \"Name\"`, or a section number the source itself prints). NEVER invent paragraph or section numbers — a locator you did not see in the text is a fabrication. If no clean locator exists, the verbatim quote alone is sufficient.\nMultiple sources for one claim → repeat the bracket: [Quelle: A — \"...\"] [Quelle: B — \"...\"]."
   },

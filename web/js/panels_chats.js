@@ -213,6 +213,21 @@ function updateStatusBar() {
     if (chat._liveTurnCached) totalCached += chat._liveTurnCached;
   }
 
+  // Workflow-bound chat: the run's own token/cost totals (rolled up in
+  // workflow_history) belong in the statusline — the run consumed those
+  // tokens even though the bound session has no real chat turns yet. Add
+  // them so Ein/Aus/Kosten reflect the actual run; real follow-up turns
+  // then accumulate on top. Guarded so it only applies while this chat is
+  // the tracked workflow run (wfBanner.data present + matching).
+  if (typeof _wfRunActive === 'function' && _wfRunActive()
+      && wfBanner && wfBanner.data) {
+    totalIn += Number(wfBanner.data.tokens_in || 0);
+    totalOut += Number(wfBanner.data.tokens_out || 0);
+    if (wfBanner.data.cost_usd != null && !chat._sessionCost) {
+      chat._sessionCost = Number(wfBanner.data.cost_usd) || 0;
+    }
+  }
+
   document.getElementById('status-tokens-in').textContent = totalIn ? totalIn.toLocaleString() : '0';
   document.getElementById('status-tokens-out').textContent = totalOut ? totalOut.toLocaleString() : '0';
   document.getElementById('status-speed').textContent = lastSpeed ? `${lastSpeed} tok/s` : '-';

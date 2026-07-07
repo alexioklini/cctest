@@ -594,6 +594,20 @@ already anonymises (see 05-internals).
 - `GET /v1/agents/<id>/workflows` / `POST /v1/agents/<id>/workflows/<wid>/run`
 - `POST /v1/workflows/executions/<id>/approve` / `/cancel` / `/upload-file`
 - `POST /v1/workflows/history/<id>/promote-session/<sid>` / `/session`
+- `POST /v1/workflows/generate` — KI-Workflow-Generierung (v9.290.0): body
+  `{source: {type: chat|plan|nl, session_id?|text?}, agent_id?, instructions?,
+  attachments?: [{name, text}] (≤10)}` → `{gen_id}`. Erzeugt einen
+  `.flow`-Entwurf + `plan.md` aus einem Chat (bevorzugt den freigegebenen
+  MoA-Plan `ausfuehrungsplan.md` + pinnt den Executor als MODEL-Header), einem
+  Plan-Markdown oder einer NL-Beschreibung. Draft-only — nichts wird
+  automatisch gespeichert.
+- `GET /v1/workflows/generate/<gen_id>` — Poll: `{status: generating|ready|
+  ready_with_warnings|error|cancelled, phase, steps[], …}`; bei ready zusätzlich
+  `flow_source`, `plan_md`, `notes`, `warnings[]`, `suggested_name`. RBAC:
+  owner-or-admin. `POST .../<gen_id>/cancel` bricht ab.
+- `POST /v1/agents/<id>/workflows` akzeptiert seit v9.290.0 optional `plan_md`
+  (Plan-Sidecar `<name>.plan.md`); der Einzel-GET
+  `/v1/agents/<id>/workflows/<name>` liefert `plan_md` mit.
 - `GET /v1/workers` / `/v1/workers/recent`
 - `GET /v1/nodes` / `POST /v1/nodes` / `/v1/nodes/poll` / `/result` / `/execute`
 

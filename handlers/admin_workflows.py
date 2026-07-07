@@ -70,7 +70,9 @@ class AdminWorkflowHandlers:
             if src is None:
                 self._send_json({"error": "Workflow not found"}, 404)
                 return
-            self._send_json({"agent": agent_id, "name": name, "source": src})
+            plan_md = engine.WorkflowEngine.get_workflow_plan(agent_id, name)
+            self._send_json({"agent": agent_id, "name": name, "source": src,
+                             "plan_md": plan_md})
             return
         workflows = engine.WorkflowEngine.list_workflows(agent_id)
         # Filter to workflows the caller can see (generic sharing model).
@@ -109,6 +111,11 @@ class AdminWorkflowHandlers:
             return
         try:
             fpath = engine.WorkflowEngine.save_workflow(agent_id, safe, source)
+            # Optional plan sidecar (<name>.plan.md) — only touched when the
+            # field is present; empty string removes the sidecar.
+            if "plan_md" in body:
+                engine.WorkflowEngine.save_workflow_plan(
+                    agent_id, safe, body.get("plan_md") or "")
             self._send_json({"status": "saved", "name": safe, "path": fpath})
         except Exception as e:
             self._send_json({"error": str(e)}, 400)
@@ -126,6 +133,103 @@ class AdminWorkflowHandlers:
             self._send_json({"status": "deleted", "name": wf_name})
         else:
             self._send_json({"error": "Workflow not found"}, 404)
+
+    # ── AI workflow generation (engine/workflow_gen.py) ─────────────────────
+
+    def _handle_workflow_generate(self):
+        """POST /v1/workflows/generate — start LLM generation of a workflow
+        draft (.flow + plan.md) from a chat, a plan document, or a
+        natural-language description. Body:
+        {source: {type: 'chat'|'plan'|'nl', session_id? | text?},
+         agent_id?, instructions?, attachments?: [{name, text}]}
+        → {gen_id}. Poll GET /v1/workflows/generate/<gen_id>."""
+        body = self._read_json()
+        source = body.get("source") or {}
+        kind = source.get("type") or ""
+        if kind not in ("chat", "plan", "nl"):
+            self._send_json({"error": "source.type must be chat|plan|nl"}, 400)
+            return
+        agent_id = body.get("agent_id") or "main"
+        source_ref = ""
+        source_text = ""
+        if kind == "chat":
+            sid = source.get("session_id") or ""
+            info = self._session_access_check(sid)
+            if info is None:
+                return  # access check already sent the error response
+            source_ref = sid
+        else:
+            source_text = str(source.get("text") or "")
+            if not source_text.strip():
+                self._send_json({"error": "source.text is required"}, 400)
+                return
+        attachments = body.get("attachments") or []
+        if not isinstance(attachments, list) or len(attachments) > 10:
+            self._send_json({"error": "attachments must be a list (max 10)"}, 400)
+            return
+        au = getattr(self, "_auth_user", None) or {}
+        from engine import workflow_gen
+        gen_id = workflow_gen.start_generation(
+            agent_id=agent_id, source_kind=kind, source_ref=source_ref,
+            source_text=source_text,
+            instructions=str(body.get("instructions") or ""),
+            attachments=attachments, user_id=au.get("id") or "")
+        self._send_json({"gen_id": gen_id, "status": "generating"})
+
+    def _workflow_gen_row_checked(self, path):
+        """Shared: parse gen_id from path, load row, enforce owner-or-admin."""
+        parts = path.split("/")
+        # /v1/workflows/generate/<gen_id>[/cancel]
+        gen_id = parts[4] if len(parts) > 4 else ""
+        from server_lib.db import ChatDB
+        row = ChatDB.get_workflow_gen(gen_id)
+        if not row:
+            self._send_json({"error": "generation not found"}, 404)
+            return None
+        user = getattr(self, "_auth_user", None) or {}
+        if user.get("role") != "admin" and \
+                (row.get("created_by") or "") != (user.get("id") or ""):
+            self._send_json({"error": "forbidden"}, 403)
+            return None
+        return row
+
+    def _handle_workflow_generate_get(self, path):
+        """GET /v1/workflows/generate/<gen_id> — poll status + result draft."""
+        row = self._workflow_gen_row_checked(path)
+        if row is None:
+            return
+        from engine import workflow_gen
+        out = {
+            "gen_id": row["id"],
+            "status": row.get("status") or "",
+            "phase": row.get("phase") or "",
+            "model": row.get("model") or "",
+            "error": row.get("error") or "",
+            "source_kind": row.get("source_kind") or "",
+            "steps": workflow_gen.get_steps(row["id"]),
+        }
+        if (row.get("status") or "") in ("ready", "ready_with_warnings"):
+            out["flow_source"] = row.get("flow_source") or ""
+            out["plan_md"] = row.get("plan_md") or ""
+            out["notes"] = row.get("notes") or ""
+            out["suggested_name"] = row.get("suggested_name") or ""
+            try:
+                out["warnings"] = json.loads(row.get("warnings") or "[]")
+            except (TypeError, ValueError):
+                out["warnings"] = []
+        self._send_json(out)
+
+    def _handle_workflow_generate_cancel(self, path):
+        """POST /v1/workflows/generate/<gen_id>/cancel — cancel a generation."""
+        row = self._workflow_gen_row_checked(path)
+        if row is None:
+            return
+        if (row.get("status") or "") not in ("generating",):
+            self._send_json({"error": "generation already finished"}, 400)
+            return
+        from engine import workflow_gen
+        workflow_gen.request_cancel(row["id"])
+        self._send_json({"status": "cancelling"})
 
     def _handle_workflow_run(self, path):
         """POST /v1/agents/{id}/workflows/{name}/run — start a workflow execution."""
@@ -354,7 +458,7 @@ class AdminWorkflowHandlers:
                 self._send_json({"error": "Forbidden"}, 403)
                 return
         # Decode JSON columns
-        for k in ("variables_json", "steps_json"):
+        for k in ("variables_json", "steps_json", "transcript_json", "output_paths_json"):
             v = row.get(k)
             if isinstance(v, str) and v:
                 try:
@@ -772,6 +876,17 @@ class AdminWorkflowHandlers:
                 parsed = rv
             if isinstance(parsed, str) and (parsed.startswith("/") or parsed.startswith("~/")):
                 claim(parsed, "output")
+        # v9.290.2: RELIABLE output paths — the interpreter records every
+        # write_file/edit_file/agent_step output path UNTRUNCATED in
+        # output_paths_json. The steps-regex above loses paths whose step
+        # detail was truncated at 120 chars (the empty-artifacts bug), so these
+        # are the authoritative source for outputs.
+        try:
+            for p in json.loads(row.get("output_paths_json") or "[]"):
+                if p:
+                    claim(str(p), "output")
+        except Exception:
+            pass
         return row, classified
 
     def _workflow_run_can_access(self, row):

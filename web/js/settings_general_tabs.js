@@ -2097,6 +2097,7 @@ async function _genTab_tools(C) {
         interactive: 'Chat', transform: 'Transform',
         memory_summary: 'Memory', research_minimal: 'Research', helpdesk: 'Brainy',
         instruction_gen: 'Projektanweisung',
+        workflow_step: 'Workflow-Schritt',
       };
       // Compact Excel-style cell <select>. Colour-coded by state so the grid
       // reads at a glance (green=active, grey=inactive, amber=deferred).

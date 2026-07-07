@@ -392,6 +392,30 @@ Daily what-changed report between two exports:
    comment, added green, removed red) is the run artifact; the summary is the
    run result (optional per E-Mail via gmail_send im selben Prompt).
 
+## "Mach aus diesem Chat einen Workflow" (KI-Workflow-Generator, v9.290.0)
+
+A good chat (e.g. a forensic passport check the Experten-Gremium planned and
+executed) becomes a reusable workflow that reproduces the method on new
+inputs:
+
+1. `POST /v1/workflows/generate` with
+   `{"source": {"type": "chat", "session_id": "<sid>"}}` — or point the user
+   at one of the UI entry points (composer workflow button,
+   `/workflow` in the terminal chat, "Workflow" on a plan-like md artifact,
+   Workflows → „Neu aus Beschreibung").
+2. Poll `GET /v1/workflows/generate/<gen_id>` until `ready` /
+   `ready_with_warnings`; the draft carries `flow_source`, `plan_md`,
+   `notes`, `warnings`, `suggested_name`. If the chat had an approved MoA
+   plan, `plan_md` IS that plan and the chat's executor model is pinned via
+   the `MODEL` header.
+3. Save via `POST /v1/agents/main/workflows`
+   `{name, source, plan_md}` (draft is never saved automatically).
+4. Run it: the workflow asks for its input file(s) (`ask_user_for_file`),
+   executes the plan agentically (`agent_step` under the `workflow_step`
+   toolset), writes the report artifact and audits it against the plan
+   (verify step). A colleague only uploads the next passport image and gets
+   a report of the original chat's quality.
+
 ---
 
 ## When the user describes a task in natural language

@@ -567,6 +567,8 @@ async function openArtifactPanel(artifactId, version) {
 async function loadArtifactVersion(version) {
   const artifactId = state.activeArtifactId;
   if (!artifactId) return;
+  // Hidden by default; renderArtifactContent re-shows it for plan-like md.
+  document.getElementById('artifact-workflow-btn')?.classList.add('hidden');
   state.activeArtifactVersion = version;
   const sel = document.getElementById('artifact-version-select');
   if (sel) sel.value = version;
@@ -616,6 +618,30 @@ async function loadArtifactVersion(version) {
     console.error('[artifact] Load failed for', artifactId, 'version', version, e);
     container.innerHTML = `<div class="artifact-empty">Inhalt konnte nicht geladen werden: ${e.message || e}</div>`;
   }
+}
+
+// "Workflow aus Plan erstellen" — Einstiegspunkt 3 des KI-Workflow-Generators:
+// ein plan-artiges md-Artifact wird zur Methodik (plan.md) eines generierten
+// Workflows. Heuristik = mehrere Schritt/Step/Phase- oder nummerierte
+// Überschriften (Client-Spiegel von engine/workflow._WF_PLAN_STEP_RE).
+const _ARTIFACT_PLAN_RE = /^#{2,4}\s*(?:(?:Schritt|Step|Phase)\s*\d+|\d+[.)])\b/im;
+let _artifactWorkflowPlan = null; // {text, title} des aktuell angezeigten Plans
+
+function _artifactUpdateWorkflowBtn(ext, content, name) {
+  const btn = document.getElementById('artifact-workflow-btn');
+  if (!btn) return;
+  const isPlan = (ext === 'md' || ext === 'markdown') &&
+    typeof content === 'string' && _ARTIFACT_PLAN_RE.test(content);
+  btn.classList.toggle('hidden', !isPlan);
+  _artifactWorkflowPlan = isPlan ? { text: content, title: name } : null;
+}
+
+function artifactCreateWorkflowFromPlan() {
+  if (!_artifactWorkflowPlan) return;
+  wfOpenGenerateModal('plan', {
+    text: _artifactWorkflowPlan.text,
+    title: _artifactWorkflowPlan.title,
+  });
 }
 
 // Extensions that route through renderArtifactDocument (binary docs the JSON
@@ -750,6 +776,10 @@ function renderArtifactContent(content, type, name, encoding) {
   container._rawType = type;
   container._rawName = name;
   container._rawEncoding = encoding;
+
+  // "Workflow aus Plan": nur auf md-Artifacts zeigen, die wie ein
+  // Ausführungsplan aussehen (Schritt/Step/Phase-Überschriften).
+  _artifactUpdateWorkflowBtn(ext, content, name);
 
   if (state.artifactSourceMode && type !== 'image') {
     // Source view — always raw text

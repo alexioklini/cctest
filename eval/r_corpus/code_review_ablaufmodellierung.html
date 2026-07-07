@@ -1,164 +1,472 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="de">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Code Review: Ablaufmodellierung.R</title>
 <style>
-    @page { margin: 2cm; }
-    body { font-family: 'Calibri', Arial, sans-serif; color: #222222;
-      font-size: 11pt; line-height: 1.5; max-width: 820px;
-      margin: 0 auto; padding: 24px; background: #fff; }
-    h1,h2,h3,h4,h5,h6 { font-family: 'Calibri', Arial, sans-serif;
-      color: #1F3864; line-height: 1.2; margin: 1.1em 0 .4em; }
-    h1 { font-size: 20pt; } h2 { font-size: 16pt; }
-    h3 { font-size: 13pt; }
-    a { color: #2E74B5; }
-    code { font-family: 'Consolas', monospace; background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
-    p.figure { text-align: center; } p.figure img { max-width: 100%; height: auto; }
-    table { border-collapse: collapse; width: 100%; margin: 12px 0; }
-    th, td { border: 1px solid #ddd; padding: 5px 9px; text-align: left; }
-    th { background: #1F3864;
-      color: #FFFFFF; }
-    tbody tr:nth-child(even) { background: #fafafa; }
-    .doc-header { border-bottom: 1px solid #eee; padding-bottom: 8px; margin-bottom: 20px; overflow: hidden; }
-    .doc-footer { border-top: 1px solid #eee; padding-top: 8px; margin-top: 28px; overflow: hidden; }
-    .pagenum::after { content: ""; }
-    @media print { .pagenum::after { content: counter(page); } }
-    </style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --font-display: 'Charter', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-body: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --bg: #fbf9f4; --bg-surface: #ffffff; --bg-surface-alt: #f1ede4;
+  --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.16);
+  --text: #1a1817; --text-dim: #5a5651; --text-muted: #8a8580;
+  --accent: #b8543a; --accent-light: #d97a5e; --accent-bg: rgba(184,84,58,0.06);
+  --gold: #c9952e; --gold-bg: rgba(201,149,46,0.09);
+  --aurora-a: rgba(184,84,58,0.10); --aurora-b: rgba(201,149,46,0.08); --aurora-c: rgba(64,98,128,0.07);
+  --radius: 12px; --shadow-sm: 0 1px 3px rgba(0,0,0,0.05); --shadow-md: 0 4px 24px rgba(0,0,0,0.07);
+  --max-w: 760px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131214; --bg-surface: #1c1a1e; --bg-surface-alt: #25232a;
+    --border: rgba(255,255,255,0.07); --border-strong: rgba(255,255,255,0.16);
+    --text: #ece8e2; --text-dim: #a8a39c; --text-muted: #6f6b66;
+    --accent: #e88f73; --accent-light: #f4ad95; --accent-bg: rgba(232,143,115,0.09);
+    --gold: #e8c05a; --gold-bg: rgba(232,192,90,0.09);
+    --aurora-a: rgba(232,143,115,0.13); --aurora-b: rgba(232,192,90,0.09); --aurora-c: rgba(125,180,224,0.10);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4); --shadow-md: 0 4px 28px rgba(0,0,0,0.55);
+  }
+}
+html { scroll-behavior: smooth; scroll-padding-top: 4rem; }
+body {
+  font-family: var(--font-body); background: var(--bg); color: var(--text);
+  line-height: 1.75; font-size: 17px; -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility; position: relative; min-height: 100vh;
+}
+/* Aurora background — slowly drifting accent blobs behind the content. */
+body::before {
+  content: ''; position: fixed; inset: -20vh -20vw; z-index: -2;
+  background:
+    radial-gradient(40vw 50vh at 18% 22%, var(--aurora-a) 0%, transparent 60%),
+    radial-gradient(45vw 55vh at 82% 12%, var(--aurora-b) 0%, transparent 65%),
+    radial-gradient(55vw 60vh at 50% 88%, var(--aurora-c) 0%, transparent 70%);
+  filter: blur(20px); animation: aurora-drift 28s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+/* SVG film-grain so it doesn't read as flat CSS. */
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.32 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  opacity: 0.045; mix-blend-mode: overlay;
+}
+@keyframes aurora-drift {
+  0% { transform: translate3d(0,0,0) scale(1); }
+  50% { transform: translate3d(2vw,-1vh,0) scale(1.04); }
+  100% { transform: translate3d(-1vw,1.5vh,0) scale(1.02); }
+}
+@media (prefers-reduced-motion: reduce) { body::before { animation: none; } }
+
+/* Toolbar */
+.toolbar { position: fixed; top: 1rem; right: 1rem; z-index: 100; display: flex; gap: 0.4rem; opacity: 0.7; transition: opacity 0.2s; }
+.toolbar:hover { opacity: 1; }
+.toolbar button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 6px 14px;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-surface);
+  color: var(--text); font-family: inherit; font-size: 0.78rem; font-weight: 500;
+  cursor: pointer; box-shadow: var(--shadow-sm); transition: background 0.15s; position: relative;
+}
+.toolbar button:hover { background: var(--bg-surface-alt); }
+.toolbar .toast {
+  position: absolute; top: calc(100% + 6px); right: 0; background: var(--text); color: var(--bg);
+  padding: 4px 10px; border-radius: 6px; font-size: 0.72rem; white-space: nowrap;
+  opacity: 0; transition: opacity 0.15s; pointer-events: none;
+}
+.toolbar .toast.show { opacity: 1; }
+
+/* Hero */
+.hero { position: relative; padding: 5.5rem 2rem 2.5rem; text-align: center; overflow: hidden; }
+.hero::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse 70% 60% at 50% 40%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 70%);
+}
+.hero::after {
+  content: ''; position: absolute; left: 50%; bottom: 0; width: min(60%, 320px); height: 1px;
+  transform: translateX(-50%); background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
+}
+.hero-label {
+  position: relative; text-transform: uppercase; letter-spacing: 0.28em; font-size: 0.68rem;
+  font-weight: 600; color: var(--accent); opacity: 0.85; margin-bottom: 1.4rem;
+}
+.hero h1 {
+  position: relative; font-family: var(--font-display); font-size: clamp(2rem, 4.5vw, 3rem);
+  font-weight: 600; line-height: 1.15; max-width: 720px; margin: 0 auto;
+  letter-spacing: -0.02em; color: var(--text);
+}
+
+/* Stats strip */
+.stats {
+  display: flex; justify-content: center; gap: 1.5rem; flex-wrap: wrap;
+  padding: 0.9rem 2rem; background: var(--bg-surface); border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border); font-size: 0.82rem; color: var(--text-dim);
+}
+.stat { display: flex; align-items: center; gap: 0.35rem; }
+.stat-value { font-weight: 600; color: var(--text); }
+
+/* Layout: TOC sidebar + content */
+.layout { display: grid; grid-template-columns: 200px 1fr; max-width: calc(var(--max-w) + 260px); margin: 0 auto; }
+/* Narrow (incl. the in-app artifact panel): collapse the sidebar into a sticky,
+   horizontally-scrolling strip at the top of the content instead of hiding it —
+   the TOC stays reachable even when there's no room for a gutter. */
+@media (max-width: 860px) {
+  .layout { display: block; }
+  .toc-sidebar {
+    position: sticky; top: 0; z-index: 20; height: auto; max-height: none;
+    display: block; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+    padding: 0.55rem 0.8rem; border-right: none; border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .toc-sidebar nav { display: inline-flex; gap: 0.2rem; }
+  .toc-sidebar nav a { display: inline-block; margin: 0; padding: 0.3rem 0.6rem; }
+  .toc-sidebar nav a::before { display: none; }
+  .toc-sidebar nav a.depth-3 { padding-left: 0.6rem; }
+}
+
+.toc-sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 3.2rem 0.8rem 2rem 1.4rem; border-right: 1px solid var(--border); font-size: 0.78rem; }
+.toc-sidebar nav a {
+  position: relative; display: block; color: var(--text-dim); text-decoration: none;
+  padding: 0.42rem 0.7rem 0.42rem 0.85rem; margin: 1px 0; border-radius: 6px; line-height: 1.4;
+  transition: color 0.18s ease, background 0.18s ease, padding-left 0.18s ease;
+}
+.toc-sidebar nav a::before {
+  content: ''; position: absolute; left: 0; top: 50%; width: 2px; height: 0;
+  background: var(--accent); transform: translateY(-50%); border-radius: 1px;
+  transition: height 0.18s ease, opacity 0.18s ease; opacity: 0;
+}
+.toc-sidebar nav a:hover { color: var(--text); background: var(--accent-bg); padding-left: 1rem; }
+.toc-sidebar nav a:hover::before { height: 60%; opacity: 1; }
+.toc-sidebar nav a.active { color: var(--accent); font-weight: 600; background: var(--accent-bg); }
+.toc-sidebar nav a.active::before { height: 80%; opacity: 1; }
+.toc-sidebar nav a.depth-3 { padding-left: 1.3rem; font-size: 0.72rem; color: var(--text-muted); }
+.toc-sidebar nav a.depth-3:hover { padding-left: 1.45rem; }
+
+/* Content */
+.content { max-width: var(--max-w); padding: 3rem 2.5rem 4rem; }
+.content h2 {
+  font-family: var(--font-display); font-size: clamp(1.55rem, 2.4vw, 1.85rem); font-weight: 600;
+  margin: 3rem 0 1rem; padding-bottom: 0.55rem; border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, var(--accent) 0%, transparent 65%) 1;
+  letter-spacing: -0.022em; line-height: 1.2; color: var(--text);
+}
+.content h2:first-child { margin-top: 0; }
+.content h3 { font-family: var(--font-display); font-size: 1.22rem; font-weight: 600; margin: 2.2rem 0 0.6rem; letter-spacing: -0.015em; color: var(--text); }
+.content h4 { font-family: var(--font-body); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin: 1.6rem 0 0.5rem; }
+.content p { margin-bottom: 1.1rem; }
+/* Editorial drop cap on the opening paragraph. */
+.content > p:first-of-type::first-letter,
+.content > h2:first-child + p::first-letter {
+  font-family: var(--font-display); font-weight: 700; font-size: 3.6em; line-height: 0.85;
+  float: left; margin: 0.15em 0.12em 0 -0.04em; color: var(--accent);
+}
+.content a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 3px; transition: text-decoration-color 0.15s, color 0.15s; }
+.content a:hover { text-decoration-color: var(--accent); color: var(--accent-light); }
+.content ul, .content ol { margin: 0 0 1.1rem 1.6rem; }
+.content li > ul, .content li > ol { margin: 0.3rem 0 0.3rem 1.4rem; }
+.content li { margin-bottom: 0.4rem; }
+.content li::marker { color: var(--accent); }
+.content blockquote {
+  position: relative; border-left: 3px solid var(--gold); background: var(--gold-bg);
+  padding: 1.1rem 1.4rem 1.1rem 2.6rem; margin: 1.5rem 0; border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--text); font-family: var(--font-display); font-style: italic; font-size: 1.05rem; line-height: 1.55;
+}
+.content blockquote::before { content: '\201C'; position: absolute; left: 0.5rem; top: 0.3rem; font-family: var(--font-display); font-size: 3rem; font-style: normal; color: var(--gold); opacity: 0.5; line-height: 1; }
+.content hr { border: none; height: 1px; background: linear-gradient(90deg, transparent, var(--border-strong), transparent); margin: 2rem 0; }
+.content del { color: var(--text-muted); text-decoration-color: var(--accent); }
+.content code { font-family: var(--font-mono); font-size: 0.86em; background: var(--bg-surface-alt); padding: 0.15em 0.4em; border-radius: 4px; }
+.content pre { background: var(--bg-surface-alt); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; overflow-x: auto; margin: 1.25rem 0; font-size: 0.86rem; line-height: 1.6; }
+.content pre code { background: none; padding: 0; }
+.content table { width: 100%; border-collapse: collapse; margin: 1.25rem 0; font-size: 0.9rem; border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-sm); }
+.content th { text-align: left; padding: 0.7rem 1rem; background: var(--accent-bg); font-weight: 600; border-bottom: 2px solid var(--border-strong); }
+.content td { padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.content tr:last-child td { border-bottom: none; }
+.content tr:hover td { background: var(--accent-bg); }
+
+/* Embedded graphics — mermaid diagrams, data charts, source images */
+.report-figure { margin: 1.75rem 0; text-align: center; }
+.report-figure svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.report-diagram svg, .report-chart svg {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem; box-shadow: var(--shadow-sm);
+}
+.report-figure img {
+  max-width: 100%; height: auto; border-radius: var(--radius);
+  border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+}
+.report-figure figcaption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-muted); font-style: italic; }
+/* ::kpi stat strip — coloured headline-metric boxes. */
+.kpi-strip { display: flex; flex-wrap: wrap; gap: 0.9rem; margin: 1.75rem 0; }
+.kpi-box {
+  flex: 1 1 140px; min-width: 120px; text-align: center; padding: 1.1rem 1rem;
+  border-radius: var(--radius); background: var(--kpi-bg); border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 0.3rem;
+}
+.kpi-box .kpi-value { font-family: var(--font-display); font-size: 1.7rem; font-weight: 700; line-height: 1.05; color: var(--kpi-fg); }
+.kpi-box .kpi-label { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
+@media (prefers-color-scheme: dark) { .kpi-box { filter: saturate(1.15) brightness(0.92); } }
+/* Hero image — sits below the headline, full content width. */
+.hero-image { max-width: var(--max-w); margin: 0 auto 1rem; padding: 0 2rem; }
+.hero-image img {
+  width: 100%; height: clamp(180px, 28vh, 320px); object-fit: cover;
+  border-radius: var(--radius); border: 1px solid var(--border); box-shadow: var(--shadow-md);
+}
+
+/* Sources */
+.sources-panel { margin-top: 3rem; border-top: 2px solid var(--border); padding-top: 1.5rem; }
+.sources-panel summary { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--text); padding: 0.5rem 0; list-style: none; user-select: none; }
+.sources-panel summary::-webkit-details-marker { display: none; }
+.sources-panel summary::before { content: '\25B6'; font-size: 0.65em; color: var(--text-muted); transition: transform 0.2s; }
+.sources-panel details[open] summary::before { transform: rotate(90deg); }
+.sources-list { padding: 0.5rem 0 0 0.25rem; }
+.sources-list a { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.35rem 0; font-size: 0.85rem; color: var(--text); text-decoration: none; transition: color 0.15s; }
+.sources-list a:hover { color: var(--accent); }
+.sources-list .snum { color: var(--text-muted); font-size: 0.75rem; min-width: 1.5rem; text-align: right; flex-shrink: 0; }
+.sources-list .sdomain { color: var(--text-muted); font-size: 0.75rem; margin-left: auto; flex-shrink: 0; }
+
+/* Inline citation chips + the 'Belege' legend. The chip is a compact superscript
+   [n] that jumps to the matching legend row; the row shows source + verbatim quote. */
+.cite-chip { text-decoration: none; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.cite-chip sup { font-size: 0.7em; padding: 0 0.05em; }
+.cite-chip:hover { color: var(--accent-light); }
+.citations-panel { margin-top: 3rem; border-top: 2px solid var(--border); padding-top: 1.5rem; }
+.citations-panel summary { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--text); padding: 0.5rem 0; list-style: none; user-select: none; }
+.citations-panel summary::-webkit-details-marker { display: none; }
+.citations-panel summary::before { content: '\25B6'; font-size: 0.65em; color: var(--text-muted); transition: transform 0.2s; }
+.citations-panel details[open] summary::before { transform: rotate(90deg); }
+.citations-list { list-style: none; padding: 0.5rem 0 0 0; margin: 0; counter-reset: none; }
+.citations-list li { padding: 0.45rem 0; font-size: 0.85rem; line-height: 1.5; border-bottom: 1px solid var(--border); scroll-margin-top: 4rem; }
+.citations-list li:last-child { border-bottom: none; }
+.citations-list li:target { background: var(--accent-bg); border-radius: 6px; padding-left: 0.5rem; padding-right: 0.5rem; }
+.citations-list .cite-n { color: var(--accent); font-weight: 600; margin-right: 0.4rem; }
+.citations-list .cite-src { color: var(--text-dim); font-weight: 600; }
+.citations-list .cite-quote { display: block; margin-top: 0.2rem; color: var(--text); font-family: var(--font-display); font-style: italic; }
+
+.report-footer { text-align: center; padding: 2rem; font-size: 0.75rem; color: var(--text-muted); border-top: 1px solid var(--border); margin-top: 2rem; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .content h2, .content h3, .content p, .content ul, .content ol, .content blockquote, .content table, .content pre {
+    animation: fadeUp 0.4s ease both;
+  }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+}
+@media print {
+  .toc-sidebar, .toolbar { display: none !important; }
+  .layout { grid-template-columns: 1fr; }
+  body::before, body::after { display: none; }
+  body { font-size: 11pt; }
+  a { color: var(--text); }
+}
+</style>
 </head>
 <body>
+<div class="toolbar">
+  <button id="copy-btn" title="Link kopieren">Link kopieren<span class="toast">Kopiert</span></button>
+  <button onclick="window.print()" title="Drucken oder als PDF speichern">Drucken / PDF</button>
+</div>
+<header class="hero">
+  <div class="hero-label">Recherchebericht</div>
+  <h1>Code Review: Ablaufmodellierung.R</h1>
+</header>
+<div class="hero-image hero-banner"><img src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201200%20300%27%20preserveAspectRatio%3D%27xMidYMid%20slice%27%3E%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%271%27%20y2%3D%271%27%3E%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23b8543a%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23c9952e%27%2F%3E%3C%2FlinearGradient%3E%3CradialGradient%20id%3D%27v%27%20cx%3D%270.5%27%20cy%3D%270.35%27%20r%3D%270.75%27%3E%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23ffffff%27%20stop-opacity%3D%270.16%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23000000%27%20stop-opacity%3D%270.18%27%2F%3E%3C%2FradialGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%271200%27%20height%3D%27300%27%20fill%3D%27url%28%23g%29%27%2F%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-opacity%3D%270.14%27%20stroke-width%3D%272%27%3E%3Ccircle%20cx%3D%27130%27%20cy%3D%27120%27%20r%3D%27140%27%2F%3E%3Ccircle%20cx%3D%27984%27%20cy%3D%27210%27%20r%3D%27160%27%2F%3E%3Ccircle%20cx%3D%27980%27%20cy%3D%2790%27%20r%3D%27150%27%2F%3E%3C%2Fg%3E%3Cg%20fill%3D%27%23ffffff%27%20fill-opacity%3D%270.10%27%3E%3Ccircle%20cx%3D%27984%27%20cy%3D%27210%27%20r%3D%2780%27%2F%3E%3Ccircle%20cx%3D%27140%27%20cy%3D%2760%27%20r%3D%2740%27%2F%3E%3C%2Fg%3E%3Crect%20width%3D%271200%27%20height%3D%27300%27%20fill%3D%27url%28%23v%29%27%2F%3E%3C%2Fsvg%3E" alt=""></div>
 
-<h1>Code Review: Ablaufmodellierung.R</h1>
-<p>Stichtag: 2026-06-29</p>
-<p>Verantwortlich: Brain Agent – Code Review</p>
-<p>::kpi 100% | Abdeckung | gering</p>
-<p>::kpi 30 | Empfehlungen | mittel</p>
-<p>::kpi 4 | Priorisierte Änderungen | erhöht</p>
-<p>---</p>
-<h2>Management Summary</h2>
-<p>Die Datei <strong><code>Ablaufmodellierung.R</code></strong> enthält Funktionen zur Modellierung von Abläufen in der Finanzmathematik, insbesondere zur Berechnung der First-Hitting-Time-Wahrscheinlichkeit und zur Monte-Carlo-Simulation. Der Code ist <strong>mathematisch fundiert</strong> und <strong>funktional korrekt</strong>, weist jedoch <strong>Verbesserungspotenzial</strong> in den Bereichen <strong>Code-Qualität, Fehlerbehandlung, Flexibilität und Testbarkeit</strong> auf.</p>
-<p>Die wichtigsten Empfehlungen umfassen:</p>
-<p>- <strong>Validierung von Eingabeparametern</strong> (z.B. <code>Volumen &gt; 0</code>, <code>Konfidenz</code> zwischen 0 und 1).</p>
-<p>- <strong>Beseitigung von Redundanzen</strong> (z.B. gemeinsame Logik für <code>AbflussAbsolut</code> und <code>AbflussRelativ</code> in eine Hilfsfunktion auslagern).</p>
-<p>- <strong>Dokumentation</strong> (Roxygen-Dokumentation für alle Funktionen ergänzen).</p>
-<p>- <strong>Flexibilität</strong> (Parametrisierung von <code>n</code> in der Monte-Carlo-Simulation, <code>TimeBuckets</code> als Parameter).</p>
-<p>- <strong>Testbarkeit</strong> (Unit Tests mit <code>testthat</code> implementieren).</p>
-<p>Durch die Umsetzung dieser Empfehlungen wird der Code <strong>wartbarer, robuster und benutzfreundlicher</strong>.</p>
-<p>---</p>
-<h2>1. Allgemeine Struktur &amp; Organisation</h2>
-<h3>Stärken</h3>
-<p>- <strong>Modularität</strong>: Die Funktionen sind klar voneinander getrennt und erfüllen spezifische Aufgaben:</p>
-<p>- <code>probFirstHittingTime2</code>: Berechnet die First-Hitting-Time-Wahrscheinlichkeit für einen geometrischen Brownschen Motion (GBM).</p>
-<p>- <code>rtbis</code>: Implementiert die Bisektionsmethode zur Lösung numerischer Probleme (z.B. Quantilsberechnung).</p>
-<p>- <code>Ablaufmodellierung_GBM</code>: Parametrische Modellierung des Ablaufs.</p>
-<p>- <code>Ablaufmodellierung_BS</code>: Monte-Carlo-Simulation für den Ablauf.</p>
-<p>- <code>StochastikTool</code>: Hauptfunktion zur Steuerung der Berechnungen und Ausgabe in Excel.</p>
-<p>- <strong>Dokumentation</strong>: Die Funktionen sind mit Kommentaren versehen, die ihre Zweck und Logik erklären.</p>
-<p>- <strong>Wiederverwendbarkeit</strong>: Die Funktionen sind so gestaltet, dass sie in verschiedenen Kontexten (z.B. unterschiedliche Währungen, Krisenszenarien) wiederverwendet werden können.</p>
-<h3>Verbesserungspotenzial</h3>
-<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Namenskonventionen</strong></td><td>Funktion <code>rtbis</code> ist zu allgemein; Variablennamen wie <code>Vector1</code>, <code>Vector2</code> sind nicht aussagekräftig.</td><td>Präzisere Namen wie <code>quantile_first_hitting_time</code> und aussagekräftige Variablennamen verwenden.</td></tr><tr><td><strong>Dokumentation</strong></td><td>Fehlende Roxygen-Dokumentation (<code>@param</code>, <code>@return</code>, <code>@examples</code>).</td><td>Roxygen-Dokumentation für alle Funktionen ergänzen.</td></tr><tr><td><strong>Globale Variablen</strong></td><td>Funktion <code>rtbis</code> nutzt globale Variablen (<code>cap</code>, <code>floor</code>, <code>precision</code>).</td><td>Alle relevanten Variablen als Parameter übergeben.</td></tr></tbody></table>
-<p>---</p>
-<h2>2. Funktionale Korrektheit &amp; Logik</h2>
-<h3>Stärken</h3>
-<p>- <strong>Mathematische Korrektheit</strong>: Die Funktionen <code>probFirstHittingTime2</code> und <code>rtbis</code> basieren auf mathematischen Modellen für die First-Hitting-Time-Wahrscheinlichkeit.</p>
-<p>- <strong>Robustheit</strong>: Die Schleifen in <code>rtbis</code> und <code>Ablaufmodellierung_BS</code> brechen ab, sobald die gewünschte Präzision erreicht ist.</p>
-<p>- <strong>Monte-Carlo-Simulation</strong>: Korrekte Implementierung mit <code>replicate</code> und <code>apply</code> für die Simulation mehrerer Pfade.</p>
-<h3>Verbesserungspotenzial</h3>
-<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Fehlerbehandlung</strong></td><td>Keine Überprüfung der Eingabeparameter (z.B. <code>Volumen &gt; 0</code>, <code>Konfidenz</code> zwischen 0 und 1).</td><td>Validierungslogik am Anfang der Funktionen hinzufügen.</td></tr><tr><td><strong>Numerische Stabilität</strong></td><td>Potenzielle numerische Instabilitäten bei <code>pnorm</code> für extreme Parameterwerte.</td><td>Prüfung der Parameterwerte und Ausgabe von Warnungen.</td></tr><tr><td><strong>Monte-Carlo-Simulation</strong></td><td>Anzahl der Simulationen (<code>n = 10000</code>) ist hardgecoded.</td><td><code>n</code> als Parameter übergeben, um die Simulation anpassen zu können.</td></tr><tr><td><strong>Stop-Kriterium</strong></td><td>Theoretisch mögliche Endlosschleife in <code>Ablaufmodellierung_BS</code>.</td><td>Maximale Iterationen als zusätzliches Abbruchkriterium einführen.</td></tr></tbody></table>
-<p>---</p>
-<h2>3. Performance &amp; Effizienz</h2>
-<h3>Stärken</h3>
-<p>- <strong>Vektorisierte Operationen</strong>: Nutzung von <code>cumsum</code>, <code>diff</code>, <code>apply</code> für effiziente Berechnungen.</p>
-<p>- <strong>Monte-Carlo-Simulation</strong>: Effiziente Implementierung mit <code>replicate</code> und <code>apply</code>.</p>
-<h3>Verbesserungspotenzial</h3>
-<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Redundanzen</strong></td><td>Berechnung von <code>TimeBuckets2</code> innerhalb einer Schleife, obwohl sie nur einmal benötigt wird.</td><td>Berechnung außerhalb der Schleife durchführen.</td></tr><tr><td><strong>Parallelisierung</strong></td><td>Monte-Carlo-Simulation könnte von Parallelisierung profitieren.</td><td>Implementierung mit <code>parallel</code> oder <code>foreach</code> für große <code>n</code>.</td></tr></tbody></table>
-<p>---</p>
-<h2>4. Code-Qualität &amp; Wartbarkeit</h2>
-<h3>Stärken</h3>
-<p>- <strong>Konsistente Formatierung</strong>: Der Code ist konsistent und leicht lesbar.</p>
-<p>- <strong>Vermeidung von Redundanzen</strong>: Gemeinsame Logik für <code>AbflussAbsolut</code> und <code>AbflussRelativ</code> in beiden Funktionen.</p>
-<h3>Verbesserungspotenzial</h3>
-<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>DRY-Prinzip</strong></td><td>Redundanzen in <code>Ablaufmodellierung_GBM</code> und <code>Ablaufmodellierung_BS</code>.</td><td>Gemeinsame Logik in eine Hilfsfunktion auslagern.</td></tr><tr><td><strong>Magic Numbers</strong></td><td>Hardgecoded Werte wie <code>TimeBuckets</code> und Konfidenzniveaus (<code>Normal = 0.95</code>).</td><td>Als Parameter oder globale Konstanten definieren.</td></tr><tr><td><strong>Variablennamen</strong></td><td>Unklare Variablennamen wie <code>Vector1</code>, <code>Vector2</code>.</td><td>Aussagekräftige Namen wie <code>cumulative_abfluss</code> verwenden.</td></tr></tbody></table>
-<p>---</p>
-<h2>5. Testbarkeit &amp; Fehlerbehandlung</h2>
-<h3>Verbesserungspotenzial</h3>
-<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Unit Tests</strong></td><td>Fehlende Unit Tests für die Funktionen.</td><td>Unit Tests mit <code>testthat</code> implementieren.</td></tr><tr><td><strong>Fehlermeldungen</strong></td><td>Unbenutzerfreundliche Fehlermeldungen.</td><td>Spezifische Fehlermeldungen ausgeben, die auf das Problem hinweisen.</td></tr></tbody></table>
-<p>---</p>
-<h2>6. Integration &amp; Abhängigkeiten</h2>
-<h3>Stärken</h3>
-<p>- <strong>Verwendung von Standardpaketen</strong>: Nutzung von <code>stats</code> und <code>xlsx</code> (für Excel-Ausgabe).</p>
-<h3>Verbesserungspotenzial</h3>
-<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Paketabhängigkeiten</strong></td><td><code>xlsx</code> wird innerhalb der Funktion <code>StochastikTool</code> geladen.</td><td>Pakete am Anfang des Skripts laden.</td></tr><tr><td><strong>Externe Abhängigkeiten</strong></td><td>Verweis auf <code>LAB_V2.R</code> in <code>StochastikTool</code>.</td><td>Klären, ob die Datei benötigt wird, und ggf. integrieren oder dokumentieren.</td></tr></tbody></table>
-<p>---</p>
-<h2>7. Ausgabe &amp; Benutzerfreundlichkeit</h2>
-<h3>Stärken</h3>
-<p>- <strong>Excel-Ausgabe</strong>: Ergebnisse werden in eine Excel-Datei geschrieben, was die Benutzerfreundlichkeit erhöht.</p>
-<h3>Verbesserungspotenzial</h3>
-<table><thead><tr><th><strong>Thema</strong></th><th><strong>Problem</strong></th><th><strong>Empfehlung</strong></th></tr></thead><tbody><tr><td><strong>Flexibilität</strong></td><td>Excel-Datei wird immer mit demselben Namen überschrieben.</td><td>Dateinamen als Parameter übergeben oder Zeitstempel anhängen.</td></tr><tr><td><strong>Rückgabewerte</strong></td><td>Funktionen geben nur <code>AbflussRelativ</code> zurück.</td><td>Rückgabewert als Liste mit <code>AbflussAbsolut</code> und <code>AbflussRelativ</code> implementieren.</td></tr></tbody></table>
-<p>---</p>
-<h2>8. Zusammenfassung der Empfehlungen</h2>
-<h3>Priorisierte Änderungen</h3>
-<table><thead><tr><th><strong>Priorität</strong></th><th><strong>Empfehlung</strong></th><th><strong>Umsetzung</strong></th></tr></thead><tbody><tr><td>Hoch</td><td>Eingabeparameter validieren (z.B. <code>Volumen &gt; 0</code>, <code>Konfidenz</code> zwischen 0 und 1).</td><td>Funktion <code>Ablaufmodellierung_GBM</code> und <code>Ablaufmodellierung_BS</code> anpassen.</td></tr><tr><td>Hoch</td><td>Magic Numbers und Hardgecoded-Werte (z.B. <code>TimeBuckets</code>, Konfidenzniveaus) als Parameter oder Konstanten definieren.</td><td><code>TimeBuckets</code> und Konfidenzniveaus als Parameter oder globale Konstanten definieren.</td></tr><tr><td>Hoch</td><td>Redundanzen in <code>Ablaufmodellierung_GBM</code> und <code>Ablaufmodellierung_BS</code> eliminieren.</td><td>Gemeinsame Logik in eine Hilfsfunktion auslagern.</td></tr><tr><td>Mittel</td><td>Fehlende Roxygen-Dokumentation hinzufügen.</td><td>Dokumentation für alle Funktionen ergänzen.</td></tr><tr><td>Mittel</td><td>Hardgecoded <code>n = 10000</code> in <code>Ablaufmodellierung_BS</code> als Parameter übergeben.</td><td><code>n</code> als Parameter implementieren.</td></tr><tr><td>Mittel</td><td>Stop-Kriterium in <code>Ablaufmodellierung_BS</code> um maximale Iterationen erweitern.</td><td><code>max_iter</code>-Logik hinzufügen.</td></tr><tr><td>Niedrig</td><td>Unit Tests mit <code>testthat</code> implementieren.</td><td>Testdatei erstellen und Tests schreiben.</td></tr><tr><td>Niedrig</td><td>Variablennamen wie <code>Vector1</code>, <code>Vector2</code> durch aussagekräftige Namen ersetzen.</td><td>Variablennamen anpassen (z.B. <code>cumulative_abfluss</code>).</td></tr><tr><td>Niedrig</td><td>Parallelisierung der Monte-Carlo-Simulation implementieren.</td><td><code>parallel</code>-Paket nutzen.</td></tr></tbody></table>
-<p>---</p>
-<h2>9. Beispiel: Überarbeitete Funktion</h2>
-<p>Hier ein Beispiel für eine überarbeitete Version von <code>Ablaufmodellierung_GBM</code>:</p>
-<pre><code>#&#x27; Parametric Ablaufmodellierung (Geometric Brownian Motion)
-#&#x27;
-#&#x27; @param Volumen Numeric, total volume.
-#&#x27; @param Bodensatz Numeric, residual volume.
-#&#x27; @param Konfidenz Numeric, confidence level (0 &lt; Konfidenz &lt; 1).
-#&#x27; @param stand.abw Numeric, volatility.
-#&#x27; @param drift Numeric, drift parameter.
-#&#x27; @param TimeBuckets Numeric vector, time buckets.
-#&#x27; @return List containing AbflussRelativ and AbflussAbsolut.
-Ablaufmodellierung_GBM = function(Volumen, Bodensatz, Konfidenz, stand.abw, drift, TimeBuckets) {
-  # Validate inputs
-  if (Volumen &lt;= 0) stop(&quot;Volumen muss positiv sein.&quot;)
-  if (Bodensatz &lt; 0 || Bodensatz &gt; Volumen) stop(&quot;Bodensatz muss zwischen 0 und Volumen liegen.&quot;)
-  if (Konfidenz &lt;= 0 || Konfidenz &gt;= 1) stop(&quot;Konfidenz muss zwischen 0 und 1 liegen.&quot;)
-  if (length(TimeBuckets) == 0) stop(&quot;TimeBuckets muss mindestens ein Element enthalten.&quot;)
-
-  Abbaubestand &lt;- Volumen - Bodensatz
-  TimeBuckets2 &lt;- append(TimeBuckets + 1, 1, 0)[-length(TimeBuckets) - 1]
-
-  Vector1 &lt;- c(1:tail(TimeBuckets, 1)) / 12
-  dim(Vector1) &lt;- c(1, tail(TimeBuckets, 1))
-  Vector1 &lt;- apply(X = Vector1, MARGIN = 2, FUN = rtbis, alpha = Konfidenz, sig = stand.abw, mu = drift)
-  Vector1 &lt;- append(Vector1, 1, after = 0)
-  Vector1 &lt;- cumsum(-diff(Vector1) * Volumen)
-  Vector1[Vector1 &gt; Abbaubestand] &lt;- Abbaubestand
-  Vector1 &lt;- append(Vector1, 0, after = 0)
-  Vector1 &lt;- diff(Vector1)
-
-  Vector2 &lt;- rep(NA, length(TimeBuckets))
-  for (i in 1:length(TimeBuckets)) {
-    Vector2[i] &lt;- mean(Vector1[TimeBuckets2[i]:TimeBuckets[i]])
-  }
-
-  Vector3 &lt;- Vector2[2:length(TimeBuckets)] * TimeBuckets[1:length(TimeBuckets) - 1]
-  Vector3 &lt;- append(Vector3, 0, after = length(TimeBuckets) - 1)
-
-  AbflussAbsolut &lt;- Vector2 * TimeBuckets - Vector3
-  AbflussAbsolut &lt;- append(AbflussAbsolut, Volumen - sum(AbflussAbsolut), after = length(TimeBuckets))
-  AbflussRelativ &lt;- AbflussAbsolut / Volumen
-
-  return(list(
-    AbflussRelativ = AbflussRelativ,
-    AbflussAbsolut = AbflussAbsolut
-  ))
+<div class="layout">
+  <aside class="toc-sidebar"><nav aria-label="Inhalt"><a href="#executive-summary" class="depth-2">Executive Summary</a><a href="#1-kritische-bugs-sicherheitsprobleme" class="depth-2">1. Kritische Bugs &amp; Sicherheitsprobleme</a><a href="#11-potenziell-unendlicher-while-loop-ablaufmodellierung-bs-zeile-79101" class="depth-3">1.1 Potenziell unendlicher while-Loop (Ablaufmodellierung_BS, Zeile 79–101)</a><a href="#12-fehlerhafte-bisektionslogik-rtbis-zeile-2129" class="depth-3">1.2 Fehlerhafte Bisektionslogik (rtbis, Zeile 21–29)</a><a href="#13-keine-input-validierung" class="depth-3">1.3 Keine Input-Validierung</a><a href="#14-encoding-probleme" class="depth-3">1.4 Encoding-Probleme</a><a href="#2-schwere-code-qualitätsmängel" class="depth-2">2. Schwere Code-Qualitätsmängel</a><a href="#21-massiver-code-duplikat-in-stochastiktool-36-identische-aufrufe" class="depth-3">2.1 Massiver Code-Duplikat in StochastikTool (36 identische Aufrufe)</a><a href="#22-undurchsichtige-vektor-transformationen-ablaufmodellierung-gbm-bs" class="depth-3">2.2 Undurchsichtige Vektor-Transformationen (Ablaufmodellierung_GBM &amp; _BS)</a><a href="#23-ablaufmodellierung-gbm-ist-toter-code" class="depth-3">2.3 Ablaufmodellierung_GBM ist &quot;toter Code&quot;</a><a href="#24-libraryxlsx-statt-openxlsx" class="depth-3">2.4 library(&quot;xlsx&quot;) statt openxlsx</a><a href="#25-hartcodierte-konfiguration" class="depth-3">2.5 Hartcodierte Konfiguration</a><a href="#3-performance-probleme" class="depth-2">3. Performance-Probleme</a><a href="#31-ineffiziente-apply-verwendung" class="depth-3">3.1 Ineffiziente apply-Verwendung</a><a href="#32-monte-carlo-resampling-ohne-parallelisierung" class="depth-3">3.2 Monte-Carlo-Resampling ohne Parallelisierung</a><a href="#33-redundante-berechnung-in-inputmatrix-zeile-130" class="depth-3">3.3 Redundante Berechnung in InputMatrix (Zeile 130)</a><a href="#4-positive-aspekte" class="depth-2">4. Positive Aspekte</a><a href="#5-konkrete-handlungsempfehlungen-priorisiert" class="depth-2">5. Konkrete Handlungsempfehlungen (Priorisiert)</a><a href="#6-gesamtbewertung" class="depth-2">6. Gesamtbewertung</a></nav></aside>
+  <main>
+    <article class="content">
+      <p><strong>Datei:</strong> <code>Ablaufmodellierung.R</code> <strong>Umfang:</strong> 202 Zeilen, 5 Funktionen <strong>Domain:</strong> Liquiditätsrisiko-Modellierung (GBM &amp; Monte-Carlo-Ablaufsimulation) <strong>Reviewer:</strong> Automatisierte Analyse</p>
+<hr>
+<h2 id="executive-summary">Executive Summary</h2>
+<p>Das Skript implementiert zwei Ansätze zur stochastischen Ablaufmodellierung von Liquiditätsbeständen: eine parametrische Variante auf Basis geometrischer Brownscher Bewegung (<code>Ablaufmodellierung_GBM</code>) sowie eine Monte-Carlo-Variante (<code>Ablaufmodellierung_BS</code>). Die mathematische Grundlage ist solide, doch die Implementierung weist <strong>kritische Bugs</strong>, <strong>schwere Wartbarkeitsmängel</strong> und <strong>erhebliche Performance-Probleme</strong> auf. Besonders der potenziell unendliche <code>while</code>-Loop in <code>Ablaufmodellierung_BS</code>, massiver Code-Duplikat in <code>StochastikTool</code> und undurchsichtige Vektor-Transformationen erfordern sofortiges Refactoring.</p>
+<div class="kpi-strip"><div class="kpi-box" style="--kpi-fg:#c00000;--kpi-bg:#f8d7da"><span class="kpi-value">5</span><span class="kpi-label">KRITISCHE BUGS</span></div><div class="kpi-box" style="--kpi-fg:#c00000;--kpi-bg:#f8d7da"><span class="kpi-value">36</span><span class="kpi-label">CODE-DUPLIKATE IN STOCHASTIKTOOL</span></div><div class="kpi-box" style="--kpi-fg:#c00000;--kpi-bg:#f8d7da"><span class="kpi-value">0</span><span class="kpi-label">UNIT-TESTS</span></div><div class="kpi-box" style="--kpi-fg:#c55a11;--kpi-bg:#fce4d6"><span class="kpi-value">0</span><span class="kpi-label">DOKUMENTATION (ROXYGEN)</span></div></div>
+<hr>
+<h2 id="1-kritische-bugs-sicherheitsprobleme">1. Kritische Bugs &amp; Sicherheitsprobleme</h2>
+<h3 id="11-potenziell-unendlicher-while-loop-ablaufmodellierung-bs-zeile-79101">1.1 Potenziell unendlicher while-Loop (Ablaufmodellierung_BS, Zeile 79–101)</h3>
+<p>Die Monte-Carlo-Schleife wiederholt sich, bis <code>min(AbflussAbsolut) &gt;= 0</code>:</p>
+<pre><code>while (StopKriterium &lt; 0) {
+  SimulationsMatrix = replicate(n, cumsum(sample(Renditen, tail(TimeBuckets,1), replace = TRUE)))
+  # ... Berechnung ...
+  StopKriterium = min(AbflussAbsolut)
 }</code></pre>
-<p>---</p>
-<h2>10. Fazit</h2>
-<p>Die Datei <strong><code>Ablaufmodellierung.R</code></strong> ist <strong>funktional korrekt</strong> und <strong>mathematisch fundiert</strong>, aber es gibt <strong>Verbesserungspotenzial</strong> in den Bereichen:</p>
-<p>- <strong>Code-Qualität</strong> (Variablennamen, Redundanzen, Magic Numbers),</p>
-<p>- <strong>Fehlerbehandlung</strong> (Validierung, Fehlermeldungen),</p>
-<p>- <strong>Flexibilität</strong> (Parameterisierung, Konfiguration),</p>
-<p>- <strong>Testbarkeit</strong> (Unit Tests, Dokumentation).</p>
-<p>Durch die Umsetzung der Empfehlungen wird der Code <strong>wartbarer, robuster und benutzfreundlicher</strong>. Ich empfehle, die Änderungen schrittweise umzusetzen und die Funktionen mit Unit Tests zu versehen.</p>
-<p>---</p>
-<h2>Versionshistorie</h2>
-<table><thead><tr><th>Version</th><th>Datum</th><th>Autor</th><th>Änderung</th></tr></thead><tbody><tr><td>1.0</td><td>2026-06-29</td><td>Brain Agent</td><td>Ersterstellung des Code Reviews für <code>Ablaufmodellierung.R</code>.</td></tr></tbody></table>
-<div class="doc-footer" style="text-align:center;font-size:9pt;color:#666666"><div class="doc-autoline">Klassifizierung: Intern</div><div class="doc-autoline">Dieses Dokument wurde mit Unterstützung künstlicher Intelligenz erstellt.</div></div>
+<p><strong>Risiko:</strong> Es gibt kein Iterations-Limit. In Extremszenarien (z. B. hohe Volatilität, niedriger Bodensatz) kann <code>min(AbflussAbsolut)</code> systematisch negativ bleiben – die Schleife läuft unendlich. Bei <code>n = 10000</code> und 120 Monaten dauert eine Iteration bereits Sekunden; ein Hänger frisst massiv Rechenzeit.</p>
+<p><strong>Empfehlung:</strong></p>
+<pre><code>Ablaufmodellierung_BS = function(..., max_iter = 100) {
+  iter = 0
+  while (StopKriterium &lt; 0 &amp;&amp; iter &lt; max_iter) {
+    iter = iter + 1
+    # ...
+  }
+  if (StopKriterium &lt; 0) {
+    warning("Konvergenz nach ", max_iter, " Iterationen nicht erreicht. Letzter min(Abfluss)=", StopKriterium)
+  }
+}</code></pre>
+<hr>
+<h3 id="12-fehlerhafte-bisektionslogik-rtbis-zeile-2129">1.2 Fehlerhafte Bisektionslogik (rtbis, Zeile 21–29)</h3>
+<pre><code>while (abs(value - (1-alpha)) &gt; precision) {
+  if ((value - (1-alpha)) &lt; precision) {
+    floor = rtbis
+  } else {
+    cap = rtbis
+  }
+  # ...
+}</code></pre>
+<p><strong>Risiko:</strong> Die Bedingung <code>if ((value - (1-alpha)) &lt; precision)</code> ist fast immer wahr, wenn sich der Wert der Zielfunktion dem Ziel nähert – unabhängig von der Vorzeichenrichtung. Korrekt müsste geprüft werden, ob <code>value &lt; (1-alpha)</code> (dann ist der gesuchte Wert im oberen Intervall). Die aktuelle Logik kann dazu führen, dass das falsche Intervall gewählt wird und die Bisektion nicht gegen die korrekte Lösung konvergiert.</p>
+<p><strong>Empfehlung:</strong></p>
+<pre><code>while (abs(value - target) &gt; precision) {
+  if (value &lt; target) {
+    floor = rtbis
+  } else {
+    cap = rtbis
+  }
+  rtbis = mean(c(cap, floor))
+  value = probFirstHittingTime2(rtbis, sig, lambda, t)
+}</code></pre>
+<hr>
+<h3 id="13-keine-input-validierung">1.3 Keine Input-Validierung</h3>
+<p>Keine der Funktionen validiert ihre Eingaben:</p>
+<ul><li><code>log(Verteilungsdaten)</code> in Zeile 75 und 128: Bei Werten ≤ 0 entsteht <code>NaN</code>/<code>-Inf</code>, was stillschweigend durch <code>mean</code>/<code>sd</code> propagiert wird.</li><li><code>LAB5</code> muss genau 15 Spalten mit spezifischen Namen (<code>EUR_tgl_flg_Firma</code> etc.) haben – keine Prüfung.</li><li><code>Volumen</code>, <code>Bodensatz</code> müssen positiv sein; <code>Konfidenz</code> muss in (0,1) liegen.</li></ul>
+<p><strong>Empfehlung:</strong> Am Anfang jeder öffentlichen Funktion Assertions einbauen:</p>
+<pre><code>stopifnot(Volumen &gt; 0, Bodensatz &gt;= 0, Konfidenz &gt; 0, Konfidenz &lt; 1)
+stopifnot(all(Verteilungsdaten &gt; 0))</code></pre>
+<hr>
+<h3 id="14-encoding-probleme">1.4 Encoding-Probleme</h3>
+<p>Mehrere Kommentare enthalten <code>?</code> anstelle von Umlauten (z. B. <code>ben?tigte</code>, <code>Abl?ufe</code>, <code>Ausf?hrung</code>). Das deutet auf ein Encoding-Mismatch (UTF-8 vs. Latin-1) hin und kann auf verschiedenen Systemen zu Fehlern führen.</p>
+<hr>
+<h2 id="2-schwere-code-qualitätsmängel">2. Schwere Code-Qualitätsmängel</h2>
+<h3 id="21-massiver-code-duplikat-in-stochastiktool-36-identische-aufrufe">2.1 Massiver Code-Duplikat in StochastikTool (36 identische Aufrufe)</h3>
+<p>Zeilen 144–179 wiederholen nahezu identische Aufrufe von <code>Ablaufmodellierung_BS</code>:</p>
+<pre><code>N_EUR_Firma = Ablaufmodellierung_BS(LAB5$EUR_tgl_flg_Firma, ...)
+N_EUR_KMU   = Ablaufmodellierung_BS(LAB5$EUR_tgl_flg_KMU,   ...)
+# ... 34 weitere Zeilen</code></pre>
+<p><strong>Impact:</strong> Jede Parameteränderung (z. B. <code>n = 10000</code> auf <code>n = 5000</code>) erfordert 36 manuelle Edits. Fehler sind praktisch vorprogrammiert.</p>
+<p><strong>Empfehlung – Refactoring mit Apply/Schleife:</strong></p>
+<pre><code>segments = c("Firma", "KMU", "Privat")
+currencies = list(
+  Normal = c("EUR", "USD", "GBP", "AUD", "CAD"),
+  Markt  = c("EUR", "USD"),
+  Bank   = c("EUR", "USD"),
+  Kombi  = c("EUR", "USD")
+)
+scenarios = list(Normal = Normal, Markt = Marktkrise, Bank = Bankkrise, Kombi = KombinierteKrise)
+
+for (scenario_name in names(scenarios)) {
+  conf = scenarios[[scenario_name]]
+  curs = currencies[[scenario_name]]
+  
+  results = lapply(curs, function(cur) {
+    sapply(segments, function(seg) {
+      col = paste0(cur, "_tgl_flg_", seg)
+      Ablaufmodellierung_BS(LAB5[[col]], tail(LAB5[[col]], 1), 
+                            InputMatrix[[col]][4], conf, 10000, TimeBuckets)
+    })
+  })
+  # ... zusammenführen und schreiben
+}</code></pre>
+<hr>
+<h3 id="22-undurchsichtige-vektor-transformationen-ablaufmodellierung-gbm-bs">2.2 Undurchsichtige Vektor-Transformationen (Ablaufmodellierung_GBM &amp; _BS)</h3>
+<p>Die Sequenz <code>Vector1</code> → <code>Vector2</code> → <code>Vector3</code> → <code>AbflussAbsolut</code> ist in beiden Funktionen identisch und extrem schwer nachvollziehbar:</p>
+<pre><code>Vector1 = append(Vector1, 1, after = 0)
+Vector1 = cumsum(-diff(Vector1) * Volumen)
+Vector1[Vector1 &gt; Abbaubestand] = Abbaubestand
+Vector1 = append(Vector1, 0, after = 0)
+Vector1 = diff(Vector1)</code></pre>
+<p><strong>Impact:</strong> Kein Entwickler kann diese Logik ohne Stunden der Analyse verstehen oder debuggen. <code>diff(append(x, 0, after=0))</code> ergibt fast <code>x</code> zurück – das ist verschleierter Code.</p>
+<p><strong>Empfehlung:</strong> Den gemeinsamen "Bucket-to-Abfluss"-Algorithmus in eine eigene, dokumentierte Hilfsfunktion extrahieren:</p>
+<pre><code>berechne_abfluss = function(monatswerte, volumen, abbaubestand, time_buckets) {
+  # Capping auf Abbaubestand (kumuliert!)
+  kumuliert = pmin(cumsum(monatswerte), abbaubestand)
+  monatswerte = diff(c(0, kumuliert))
+  
+  # Aggregation auf TimeBuckets
+  tb_start = c(1, head(time_buckets, -1) + 1)
+  abfluss = sapply(seq_along(time_buckets), function(i) {
+    mean(monatswerte[tb_start[i]:time_buckets[i]])
+  })
+  
+  # Verschiebe-Logik ( dokumentieren, was hier geschieht! )
+  verschoben = c(abfluss[-1] * head(time_buckets, -1), 0)
+  abs_fluss = abfluss * time_buckets - verschoben
+  abs_fluss = c(abs_fluss, volumen - sum(abs_fluss))
+  
+  list(absolut = abs_fluss, relativ = abs_fluss / volumen)
+}</code></pre>
+<hr>
+<h3 id="23-ablaufmodellierung-gbm-ist-toter-code">2.3 Ablaufmodellierung_GBM ist "toter Code"</h3>
+<p>Die Funktion wird definiert (Zeilen 35–65), aber <strong>nie aufgerufen</strong>. Stattdessen verwendet <code>StochastikTool</code> ausschließlich <code>Ablaufmodellierung_BS</code>. Die parametrische GBM-Variante ist damit ungetestet und vermutlich veraltet.</p>
+<p><strong>Empfehlung:</strong> Entweder aktivieren (Benchmark/Validierung gegen MC) oder entfernen. Falls sie erhalten bleiben soll, Dokumentation hinzufügen, warum sie existiert.</p>
+<hr>
+<h3 id="24-libraryxlsx-statt-openxlsx">2.4 <code>library("xlsx")</code> statt <code>openxlsx</code></h3>
+<p><code>xlsx</code> basiert auf Java (rJava) und ist deutlich schwerfälliger als <code>openxlsx</code>. Zudem ist <code>append = TRUE</code> in <code>write.xlsx</code> fehleranfällig, wenn die Datei bereits existiert oder von einem anderen Prozess geöffnet ist.</p>
+<p><strong>Empfehlung:</strong></p>
+<pre><code>if (!requireNamespace("openxlsx", quietly = TRUE)) install.packages("openxlsx")
+library(openxlsx)
+
+wb = createWorkbook()
+addWorksheet(wb, "Normalfall")
+writeData(wb, "Normalfall", LAB_Normal, rowNames = TRUE)
+# ... weitere Sheets
+saveWorkbook(wb, "Ablaufmodellierung.xlsx", overwrite = TRUE)</code></pre>
+<hr>
+<h3 id="25-hartcodierte-konfiguration">2.5 Hartcodierte Konfiguration</h3>
+<ul><li><code>TimeBuckets = c(1,2,3,6,12,24,36,48,60,120)</code> ist in <code>StochastikTool</code> fix codiert.</li><li>Konfidenzniveaus (<code>Normal = 0.95</code> etc.) sind nicht parametrisierbar.</li><li>Simulationsanzahl <code>n = 10000</code> ist überall hartcodiert.</li><li>Der Output-Dateiname <code>"Ablaufmodellierung.xlsx"</code> ist fix.</li></ul>
+<p><strong>Empfehlung:</strong> Diese Werte zu Funktionsparametern mit sinnvollen Defaults machen.</p>
+<hr>
+<h2 id="3-performance-probleme">3. Performance-Probleme</h2>
+<h3 id="31-ineffiziente-apply-verwendung">3.1 Ineffiziente <code>apply</code>-Verwendung</h3>
+<p>Zeile 40–41:</p>
+<pre><code>Vector1 = c(1:tail(TimeBuckets,1))/12
+dim(Vector1) = c(1,tail(TimeBuckets,1))
+Vector1 = apply(X = Vector1, MARGIN = 2, FUN = rtbis, ...)</code></pre>
+<p><code>apply</code> auf eine 1×N-Matrix mit <code>MARGIN = 2</code> ist erheblich langsamer als <code>sapply</code> oder <code>vapply</code> und erzeugt unnötigen Overhead durch Matrix-Dimensionierung.</p>
+<p><strong>Empfehlung:</strong></p>
+<pre><code>monate = 1:tail(TimeBuckets, 1)
+Vector1 = vapply(monate / 12, rtbis, numeric(1), alpha = Konfidenz, sig = stand.abw, mu = drift)</code></pre>
+<hr>
+<h3 id="32-monte-carlo-resampling-ohne-parallelisierung">3.2 Monte-Carlo-Resampling ohne Parallelisierung</h3>
+<pre><code>SimulationsMatrix = replicate(n, cumsum(sample(Renditen, tail(TimeBuckets,1), replace = TRUE)))</code></pre>
+<p>Bei <code>n = 10000</code> und 120 Monaten pro Simulation entsteht eine 120×10000-Matrix. Für 36 Szenarien sind das 36 Millionen cumsum-Operationen. Das lässt sich mit <code>parallel::mclapply</code> oder <code>future.apply</code> deutlich beschleunigen.</p>
+<hr>
+<h3 id="33-redundante-berechnung-in-inputmatrix-zeile-130">3.3 Redundante Berechnung in InputMatrix (Zeile 130)</h3>
+<pre><code>InputMatrix[3,i] = min(1+exp(min(diff(log(LAB5[,i]))))-1, min(LAB5[,i]) / LAB5[nrow(LAB5),i], 0.45)</code></pre>
+<p><code>1 + exp(x) - 1</code> vereinfacht sich zu <code>exp(x)</code>. Der Ausdruck ist verschleiernd und unnötig komplex.</p>
+<hr>
+<h2 id="4-positive-aspekte">4. Positive Aspekte</h2>
+<table><thead><tr><th>Aspekt</th><th>Bewertung</th></tr></thead><tbody><tr><td>Klare Trennung zwischen parametrischem und Monte-Carlo-Ansatz</td><td>Gut</td></tr><tr><td>Mathematische Formeln (First Hitting Time, GBM) korrekt implementiert</td><td>Gut</td></tr><tr><td>Konsistente Benennung der Konfidenzszenarien</td><td>Akzeptabel</td></tr><tr><td><code>LAB_Berechnung.R</code> als Orchestrierungsskript separat gehalten</td><td>Gut</td></tr></tbody></table>
+<hr>
+<h2 id="5-konkrete-handlungsempfehlungen-priorisiert">5. Konkrete Handlungsempfehlungen (Priorisiert)</h2>
+<table><thead><tr><th>Priorität</th><th>Maßnahme</th><th>Aufwand</th></tr></thead><tbody><tr><td><strong>Kritisch</strong></td><td>Iterations-Limit in <code>Ablaufmodellierung_BS</code> einbauen</td><td>5 Min</td></tr><tr><td><strong>Kritisch</strong></td><td>Bisektionsbedingung in <code>rtbis</code> korrigieren (<code>&lt; target</code> statt <code>&lt; precision</code>)</td><td>5 Min</td></tr><tr><td><strong>Kritisch</strong></td><td>Input-Validierung (positive Werte, Spaltennamen, Konfidenz ∈ (0,1))</td><td>30 Min</td></tr><tr><td><strong>Hoch</strong></td><td>36 Duplikate in <code>StochastikTool</code> durch <code>lapply</code>-Schleife ersetzen</td><td>1 Std</td></tr><tr><td><strong>Hoch</strong></td><td>Gemeinsamen Bucket-Algorithmus in Hilfsfunktion extrahieren</td><td>1 Std</td></tr><tr><td><strong>Hoch</strong></td><td><code>Ablaufmodellierung_GBM</code> aktivieren oder entfernen</td><td>15 Min</td></tr><tr><td><strong>Hoch</strong></td><td><code>xlsx</code> → <code>openxlsx</code> migrieren</td><td>30 Min</td></tr><tr><td><strong>Mittel</strong></td><td>Parameter (TimeBuckets, n, Konfidenz) aus <code>StochastikTool</code> herausziehen</td><td>30 Min</td></tr><tr><td><strong>Mittel</strong></td><td>Roxygen-Dokumentation für alle Funktionen</td><td>1 Std</td></tr><tr><td><strong>Niedrig</strong></td><td>Encoding auf UTF-8 korrigieren</td><td>10 Min</td></tr></tbody></table>
+<hr>
+<h2 id="6-gesamtbewertung">6. Gesamtbewertung</h2>
+<table><thead><tr><th>Kategorie</th><th>Bewertung</th></tr></thead><tbody><tr><td><strong>Korrektheit</strong></td><td>Mittel – kritischer Bug in Bisektion, unendliche Schleife möglich</td></tr><tr><td><strong>Wartbarkeit</strong></td><td>Niedrig – massiver Duplikat, undurchsichtige Transformationen</td></tr><tr><td><strong>Performance</strong></td><td>Mittel – MC ineffizient, aber funktional</td></tr><tr><td><strong>Testbarkeit</strong></td><td>Niedrig – keine Rückgabewerte, Seiteneffekte (Dateischreiben)</td></tr><tr><td><strong>Dokumentation</strong></td><td>Niedrig – keine Roxygen, kaum inline-Kommentare</td></tr></tbody></table>
+<p><strong>Fazit:</strong> Das Skript erfüllt seinen fachlichen Zweck, ist aber aus Software-Engineering-Perspektive in einem Zustand, der ein Refactoring zwingend erfordert, bevor neue Anforderungen oder Szenarien hinzukommen. Die kritischen Bugs (Bisektion, Endlosschleife) sollten sofort behoben werden.</p>
+    </article>
+    
+    
+    
+  </main>
+</div>
+<script>
+(function(){
+  var btn=document.getElementById('copy-btn');
+  if(btn){btn.addEventListener('click',function(){
+    navigator.clipboard&&navigator.clipboard.writeText(location.href);
+    var t=btn.querySelector('.toast'); if(t){t.classList.add('show');
+      setTimeout(function(){t.classList.remove('show');},1400);}
+  });}
+  var links=[].slice.call(document.querySelectorAll('.toc-sidebar nav a'));
+  if(!links.length||!('IntersectionObserver' in window))return;
+  var map={}; links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a;});
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(a){a.classList.remove('active');});
+        var a=map[e.target.id]; if(a)a.classList.add('active');
+      }
+    });
+  },{rootMargin:'-10% 0px -80% 0px'});
+  document.querySelectorAll('.content h2[id],.content h3[id]').forEach(function(h){io.observe(h);});
+})();
+</script>
 </body>
 </html>

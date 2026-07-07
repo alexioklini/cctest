@@ -486,9 +486,18 @@ class _WFParser:
             if t[0] == "COMMA":
                 self.pos += 1
                 continue
-            if t[0] != "IDENT":
+            # Argument names may collide with DSL keywords (the tokenizer
+            # uppercases case-insensitively: `model=` → KEYWORD MODEL, same for
+            # trigger/description/…). In kwarg-name position a KEYWORD followed
+            # by `=` is unambiguous — accept it as a plain name (lowercased),
+            # so tools with args like agent_step's `model` stay callable.
+            if t[0] == "KEYWORD" and self._peek(1)[0] == "ASSIGN":
+                self.pos += 1
+                name_tok = (t[0], t[1].lower(), t[2])
+            elif t[0] == "IDENT":
+                name_tok = self._eat("IDENT")
+            else:
                 raise WorkflowError(f"Expected argument name, got {t[1]!r}", t[2])
-            name_tok = self._eat("IDENT")
             self._eat("ASSIGN")
             val = self._parse_expression()
             kwargs.append((name_tok[1], val))
@@ -726,6 +735,49 @@ def _wf_parse(source: str) -> _WFProgram:
     return parser.parse()
 
 
+# Builtin function names the interpreter accepts (see _eval_builtin) — used by
+# the workflow generator's validation pass to reject unknown functions before
+# a run ever starts.
+_WF_BUILTINS = frozenset({
+    "len", "str", "int", "float", "bool", "now", "lower", "upper", "trim",
+    "contains", "split", "join", "replace", "plan_steps",
+})
+
+
+# ----------------------------- Plan splitting -----------------------------
+
+# Step headings a plan markdown may use: "### Schritt 3 — Titel", "## Step 2:",
+# "### 4. Titel". Deterministic code, no LLM — the `plan_steps()` DSL builtin
+# splits a plan.md into per-step sections for FOR EACH … agent_step loops.
+_WF_PLAN_STEP_RE = _wf_re.compile(
+    r"^#{2,4}\s*(?:(?:Schritt|Step|Phase)\s*\d+|\d+[.)])\b.*$",
+    _wf_re.IGNORECASE | _wf_re.MULTILINE)
+_WF_PLAN_ANY_HEADING_RE = _wf_re.compile(r"^#{2,4}\s+\S.*$", _wf_re.MULTILINE)
+
+
+def _plan_steps(md: str) -> list[dict]:
+    """Split a plan markdown into [{index, title, body}] on step headings.
+    Prefers explicit Schritt/Step/numbered headings; falls back to any ##/###
+    heading; a plan with no headings at all becomes one single step."""
+    text = (md or "").strip()
+    if not text:
+        return []
+    matches = list(_WF_PLAN_STEP_RE.finditer(text))
+    if len(matches) < 2:
+        matches = list(_WF_PLAN_ANY_HEADING_RE.finditer(text))
+    if not matches:
+        return [{"index": 1, "title": "", "body": text}]
+    steps: list[dict] = []
+    for i, m in enumerate(matches):
+        title = _wf_re.sub(r"^#+\s*", "", m.group(0)).strip()
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        body = text[start:end].strip()
+        steps.append({"index": i + 1, "title": title,
+                      "body": (title + "\n" + body).strip() if body else title})
+    return steps
+
+
 # ----------------------------- Interpreter -----------------------------
 
 
@@ -873,6 +925,8 @@ class _WorkflowInterpreter:
         raise WorkflowError(f"Unknown binop {op}", node.line)
 
     def _eval_builtin(self, node: _WFFnCall) -> object:
+        # Names must stay in sync with _WF_BUILTINS (used by the generator's
+        # deterministic validation pass).
         name = node.name
         args = [self._eval(a) for a in node.args]
         try:
@@ -905,6 +959,8 @@ class _WorkflowInterpreter:
                 return sep.join(str(x) for x in items)
             if name == "replace":
                 return str(args[0]).replace(args[1], args[2])
+            if name == "plan_steps":
+                return _plan_steps(str(args[0]) if args else "")
         except Exception as e:
             raise WorkflowError(f"{name}(): {e}", node.line)
         raise WorkflowError(f"Unknown function: {name}", node.line)
@@ -955,6 +1011,74 @@ class _WorkflowInterpreter:
             raise WorkflowError(f"Tool {tool} failed: {err}", node.line)
         self.env["last_error"] = None
         self._emit_step(node.line, "call_done", f"{tool} → {self._summary(parsed)}")
+        # Chat-view transcript + reliable output paths, captured UNTRUNCATED
+        # (steps above truncate to 120 chars — useless for a real chat view /
+        # artifact seeding). Only the meaningful nodes contribute a turn.
+        try:
+            self._capture_transcript(node.line, tool, kwargs, parsed)
+        except Exception:
+            pass  # capture is best-effort; never break a run over it
+        return parsed
+
+    def _capture_transcript(self, line: int, tool: str, kwargs: dict, parsed) -> object:
+        """Record chat turns + output paths from a tool call's FULL result.
+
+        The transcript reconstructs the run AS IF a user had driven it in chat:
+        each agent_step becomes a USER turn (the instruction — "the request")
+        followed by an ASSISTANT turn (the full LLM answer). ask_user_for_file
+        is a user turn (the upload). So the run reads as a real Q&A dialogue.
+
+        - ask_user_for_file → a user turn (prompt + uploaded file path)
+        - agent_step        → a user turn (instruction) + an assistant turn
+                              (full text + model + written files)
+        - write_file/edit_file → record the full output path (untruncated)
+        """
+        ex = self.execution
+        if tool == "ask_user_for_file":
+            prompt = str(kwargs.get("prompt", "") or "").strip()
+            files = []
+            if isinstance(parsed, dict) and parsed.get("path"):
+                files.append(parsed["path"])
+            ex.record_message("user", prompt or "Datei hochgeladen", files=files, line=line)
+        elif tool == "agent_step":
+            # User turn = the instruction the workflow gave the agent (this is
+            # "the request" a chat user would have typed). Uploaded input files
+            # ride along so they show as attachments on the request, like chat.
+            instruction = str(kwargs.get("instruction", "") or "").strip()
+            in_files = []
+            for f in (kwargs.get("files") or []):
+                fp = f.get("path") if isinstance(f, dict) else f
+                if fp:
+                    in_files.append(str(fp))
+            if instruction:
+                ex.record_message("user", instruction, files=in_files, line=line)
+            # Assistant turn = the agent's full answer.
+            text = ""
+            files = []
+            model = ""
+            if isinstance(parsed, dict):
+                text = str(parsed.get("text") or "")
+                model = str(parsed.get("model") or "")
+                for p in (parsed.get("files") or []):
+                    if p:
+                        files.append(p)
+                        ex.record_output_path(p)
+            ex.record_message("assistant", text, model=model, files=files, line=line)
+        elif tool in ("write_file", "edit_file"):
+            p = ""
+            if isinstance(parsed, dict):
+                p = str(parsed.get("path") or "")
+            if not p:
+                p = str(kwargs.get("path") or "")
+            if p:
+                ex.record_output_path(p)
+                # A workflow-level write_file (e.g. `write_file content=r.text`)
+                # produces the deliverable AFTER the agent_step, as its own DSL
+                # node — so attach it to the most recent assistant turn so it
+                # renders as an artifact-card ON that answer (like a chat where
+                # the assistant produced the file). Falls back to a fresh
+                # assistant turn if there's no prior one.
+                ex.attach_output_to_last_answer(p)
         return parsed
 
     def _get_field(self, obj, attr: str, line: int) -> object:
