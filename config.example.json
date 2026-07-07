@@ -5817,6 +5817,106 @@
         "instruction_gen": "inactive",
         "workflow_step": "inactive"
       }
+    },
+    "ocr_inspect": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "ocr_extract": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "ocr_region": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "ocr_fields": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "ocr_tables": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
     }
   },
   "research_mode_disciplines": {

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.293.0"
+VERSION = "9.293.4"
 VERSION_DATE = "2026-07-07"
 CHANGELOG = [
+    ("9.293.4", "2026-07-07", "fix(QR/Barcode-Dekodierung via OpenCV statt pyzbar — pyzbar SEGFAULTET auf Python 3.14): bei der Host-Installation der optionalen QR/Barcode-Erkennung (9.293.2) stellte sich heraus, dass `pyzbar` 0.1.9 auf diesem Setup (Homebrew-Python 3.14 / macOS) bei JEDEM decode()-Aufruf hart segfaultet (Exit 139) — sogar auf einem leeren Bild, VERIFIZIERT. Ein Segfault killt den GESAMTEN Server-Prozess und ist von Python aus NICHT per try/except fangbar (der 9.293.2-Guard hätte nicht geholfen). LÖSUNG: engine/image_features._decode_codes von pyzbar auf OpenCVs EIGENE Detektoren umgestellt (cv2.QRCodeDetector.detectAndDecodeMulti für QR-Codes + cv2.barcode.BarcodeDetector für lineare Barcodes EAN/UPC/Code128) — OpenCV ist bereits installiert (opencv-contrib, für die Gesichtszählung), braucht KEINE externe System-Lib (kein zbar) und crasht nicht. VERIFIZIERT: echter QR (via segno erzeugt, nur zum Test, danach deinstalliert) → 'QRCODE: https://beleg.example/2024-0815' exakt dekodiert; leeres Bild → [] ohne Crash. pyzbar wieder deinstalliert, die brew-Formel zbar entfernt (nicht mehr gebraucht). NEBENBEFUND (kein Bug, Test-Fixture-Anpassung): nach `brew install tesseract-lang` (deutsches Sprachpaket jetzt da) liest der deu+eng-Default die synthetische Test-Rechnung als '20240815' OHNE Bindestrich (der 9px-Testfont rendert den Bindestrich zu dünn; deu interpretiert ihn nicht als solchen) — die 3 betroffenen OCR-Test-Asserts prüfen jetzt die ZIFFERNFOLGE (hyphen-normalisiert) statt des exakten '2024-0815'-Formats; das OCR selbst ist korrekt, nur das Fixture-Rendering ist fontabhängig. HOST-STATUS nach dieser Sitzung: tesseract-lang (deu + 160 weitere Sprachen) installiert → deutscher Fließtext-OCR aktiv; QR/Barcode via OpenCV ohne Zusatz-Lib. Tests: test_image_features +2 (OpenCV-QR crash-safe auf leerem Bild + echter QR-Decode wenn ein Generator da ist, sonst skip). py_compile OK, 19 Tests grün (1 skip). Server-Restart nötig. Kein neuer kuratierter Eintrag (die user-sichtbare Wirkung deckt 9.293.2 ab; dies ist die robuste Engine dahinter)."),
+    ("9.293.3", "2026-07-07", "fix(Bild-Anhang an Text-Modell wurde GAR NICHT beschrieben — Disk-Routing umging den Degrade): Nachbesserung zu 9.293.2, aufgedeckt durch einen echten End-to-End-Test (Beleg-PNG an mistral-small-latest → Modell antwortete 'keine OCR von Bildinhalten möglich, nicht gefunden'). ROOT CAUSE (per Live-Turn reproduziert, nicht vermutet): der in 9.293.2 verbesserte Degrade-Choke-Point _sanitize_multimodal_for_model verarbeitet NUR image_url-Wire-Blöcke — aber handlers/chat.py Zeile 6590 legt einen image_url-Block NUR an, wenn das aktive Session-Modell das MIME nativ akzeptiert (_mime_matches(mime, raw_formats)). Bei einem TEXT-Modell matcht das nicht → das Bild wird auf Disk geroutet (/tmp/brain-attachments/<sid>/) und NUR als '[User attached files saved to disk]'-Pfad genannt; es entsteht nie ein image_url-Block, also lief mein 9.293.2-Degrade für disk-geroutete Bilder NIE. read_document auf ein Bild liefert nur Metadaten → das Modell war effektiv blind. FIX (User-Entscheidung: 'Disk-Notice mit OCR+Merkmalen anreichern' statt für Text-Modelle künstlich image_url-Blöcke zu erzeugen): im disk_files-Block (chat.py ~6716), wenn KEINE inline-Bilder existieren (die deckt der Wire-Degrade schon ab), wird für jede disk-geroutete BILDDATEI (.png/.jpg/.jpeg/.tif/.bmp/.webp/.gif, base64) brain._describe_image_deterministic aufgerufen (lokales OCR + Bildmerkmale + QR/Barcodes, KEIN LLM) und das Ergebnis an die 'saved to disk'-Notice angehängt ('[Bild-Anhänge — automatisch, ohne KI erkannt (Text via OCR + deterministische Merkmale):]' + Beschreibung je Bild). Das Bild bleibt zusätzlich auf Disk fürs Tool-Processing (magick/python_exec). So bekommt ein Text-Modell den echten Belegtext, ohne dass ein image_url-Block oder ein Vision-LLM nötig ist. Kein image_url für Text-Modelle erzwungen (bewusst — hätte die Wire-Form/Cache-Prefix für alle Text-Turns mit Bild geändert). Scope-Fix: _brain lokal im Block importiert (die Funktion ist NICHT _sanitize_multimodal_for_model, wo _brain schon lokal existiert). py_compile OK. Server-Restart nötig. Skill 05-internals + SKILL.md im selben Commit. KURATIERTER Eintrag von 9.293.2 deckt es ab (dieselbe user-sichtbare Wirkung — jetzt auch auf dem Disk-Pfad wirksam)."),
+    ("9.293.2", "2026-07-07", "feat(Bild-Anhang an Text-Modelle: deterministische Beschreibung ZUERST, Vision-LLM nur als Fallback): der automatische Bild-Degrade-Choke-Point (_describe_image_with_vision, gerufen aus handlers/chat.py _sanitize_multimodal_for_model, wenn ein Bild an ein nicht-vision-fähiges Modell geht) rief bisher IMMER ein Vision-LLM, um das Bild frei zu beschreiben. ANLASS (User-Frage): 'wird das OCR auch für die Bildbeschreibung genutzt, wenn kein vision-fähiges LLM die Anhänge kriegt?' — bisher NEIN (zwei getrennte Pfade). NEU (User-Entscheidung: 'deterministisch, LLM nur als Fallback'): _describe_image_deterministic läuft VOR jedem Modell-Aufruf und kombiniert (1) LOKALES OCR der Bildbytes (_ocr_image_bytes → dieselbe tesseract-Primitive _page_tsv/_words_to_text wie das OCR-Toolset, kein LLM) + (2) MODELLFREIE Bildmerkmale (engine/image_features.py NEU, via OpenCV+Pillow, beide schon installiert): Maße, EXIF (Kamera/Aufnahmedatum/GPS), dominante Farben (k-means, deterministische PP-Center-Init), Helligkeit, Foto-vs-Grafik-Heuristik (Kantendichte+Farbvielfalt), Gesichts-ZÄHLUNG (OpenCV Haar-Cascade) + (3) QR/Barcode-Dekodierung (pyzbar, optional/guarded — exakter Code-Inhalt wie OCR). Liefert etwas SUBSTANZIELLES (OCR-Text ≥20 Zeichen ODER dekodierte Codes ODER sicherer Merkmalsbefund) → das Vision-LLM wird KOMPLETT übersprungen (gratis, lokal, keine Cloud). Nur wenn der deterministische Durchgang DÜNN ist (textloses Szenen-Foto), fällt es auf das Vision-LLM zurück (attachment_image_model bzw. günstigstes image-fähiges Modell) — und selbst dann werden die deterministischen Fakten VORANGESTELLT (additiv, nie verworfen). Kein image-Modell konfiguriert + dünnes Signal → gibt trotzdem die gesammelten Fakten zurück statt der alten nutzlosen Platzhaltermeldung. BUG GEFANGEN (End-to-End-Test, nicht nur py_compile): _describe_image_deterministic nutzte base64.b64decode, aber `base64` ist im brain-Namespace NICHT modul-global (überall sonst lokal `import base64 as _b64`) → NameError vom try/except verschluckt → still leerer OCR-Text; lokalen `import base64` ergänzt. image_features.describe_image_features fail-safe (unlesbare Bytes → has_signal=False, kein Raise); GPS-IFD via getexif().get_ifd(0x8825). KOSTEN: das OCR im Degrade loggt 1 Seite (tesseract/local/$0) wie das Toolset. ABGRENZUNG: rein deterministisch, KEIN lokales-Vision-Modell-für-Beschreibung-bevorzugen (bewusst vom User abgewählt); die local_vision/mistral_ocr-PDF-Fallback-Kette bleibt unberührt. Tests: tests/test_image_features.py NEU (6 Fälle — modellfreie Fakten, unlesbare Bytes ohne Raise, Text-Bild=strong→Vision übersprungen, textloses Flachbild=thin→Fallback würde feuern, kaputtes base64=leer; OCR-abhängige Fälle skippen ohne tesseract). py_compile OK. Server-Restart nötig (Choke-Point-Logik). HINWEIS: QR/Barcode braucht `brew install zbar && pip install pyzbar` auf dem Host (ohne bleibt der Rest voll funktionsfähig, Codes werden nur nicht dekodiert). Skill 05-internals + SKILL.md im selben Commit. KURATIERTER Eintrag (user-sichtbar: Belege/Scans an Text-Modelle werden jetzt exakt statt vage übergeben)."),
+    ("9.293.1", "2026-07-07", "feat(OCR-Toolset: deterministische lokale Texterkennung aus Scans/Fotos/PDFs): NEUE Tool-Gruppe `ocr` mit 5 Tools (engine/tools/ocr_tools.py NEU), analog zum deterministischen xlsx-Toolset — das Modell liefert nur INTENT (Sprache, Modus, Region-BBox, Feld-Regex), der SERVER erkennt den Text LOKAL via tesseract (5.x über pytesseract), OHNE LLM, OHNE Cloud. ANLASS/LÜCKE: hängte ein Nutzer bisher ein loses Bild (Beleg/Scan/Foto) an, bekam das Modell entweder das native Bild zum 'Ansehen' (multimodal) oder eine freitextliche Vision-BESCHREIBUNG — NIE einen textgetreuen, deterministischen Extrakt; das Modell las Beträge/Nummern selbst aus Pixeln ab und vertippte sich. OCR gab es nur INNERHALB der PDF-Extraktionskette (doc_convert `_pdf_ocr_or_empty` → `local_vision`/`mistral_ocr`, beide LLM/Cloud, nur bei fast-leerem PDF getriggert), nie als eigenständiges Tool und nie für lose Bilddateien (SUPPORTED_EXTS/_EXTRACTORS kennen kein .png). TOOLS: (1) ocr_inspect(path,lang?,pages?) — Profil OHNE Voll-OCR: Seitenzahl, Pixelmaße, Orientierung/Schrift (tesseract OSD), grobe Wortzahl/Konfidenz; 'call FIRST' wie xlsx_inspect. (2) ocr_extract(path,mode?,lang?,pages?,out?) — Volltext in Lesereihenfolge; mode text|layout|markdown; Vorschau gekappt bei 6000 Zeichen, out='name.txt' schreibt den VOLLEN Extrakt als Artefakt; liefert mean_confidence. (3) ocr_region(path,bbox=[x,y,w,h],unit?,page?,lang?) — OCR nur eines Ausschnitts ('nur der Stempel', 'nur die Fußzeile'); unit px (default) oder pct. (4) ocr_fields(path,fields=[{name,pattern}],lang?,pages?) — STRUKTURIERTE Extraktion: OCR + per-Feld-REGEX (eine Capture-Group = Wert) → validiertes JSON {name:value|null} + unmatched-Liste; für Rechnungen/Belege/Formulare; kaputte Regex wird gemeldet, nie geworfen. (5) ocr_tables(path,out?,lang?,pages?) — geometrisches Spalten/Zeilen-Clustering der OCR-Wortpositionen → CSV; out='name.csv' speichert die volle Tabelle, die ein Folge-xlsx_inspect/xlsx_query liest (OCR→Spreadsheet-Pipeline). EINE gemeinsame Primitive `_page_tsv` (tesseract image_to_data pro Seite → Wort/Geometrie/Konfidenz-Tabelle) speist Volltext, Layout, Tabellen, Regionen und Felder; PDFs werden pro Seite bei 300 dpi via PyMuPDF (fitz) rasterisiert; Default lang='deu+eng'. WIRING (4-Site-Regel): TOOL_DEFINITIONS (engine/tool_schemas.py, Descriptions mit read_document-Abgrenzung 'digitale PDFs → read_document, OCR nur für Scans/Fotos' + Beispielen), NEUE Gruppe TOOL_GROUPS['ocr'], TOOL_DISPATCH direkte Fn-Refs, Impl im neuen Modul; dazu TOOL_ICONS('D')/TOOL_VERBS-Badges. GDPR: alle Rückgaben durch _gdpr_anon_tool_text, Ausgabepfade durch _enforce_artifact_path (+ _after_file_write). KOSTEN: Seitenzahl über den vorhandenen doc_convert._log_ocr_cost/quotas.log_ocr geloggt (model='tesseract', provider='local', cost_usd=0 — lokal/gratis, aber die Seitenzahl ist ein Audit-Signal wie beim Cloud-OCR). ABGRENZUNG (bewusst NICHT vermischt): die OCR-TOOLS rufen nie ein LLM; die bestehende local_vision/mistral_ocr-PDF-Fallback-Kette bleibt unberührt. FAIL-LOUD: fehlt der tesseract-Binary/das Sprachpaket, liefert JEDES Tool einen klaren Installationshinweis (brew install tesseract tesseract-lang) statt still 'kein Text'. Tests: tests/test_ocr_tools.py NEU (11 Fälle — inspect-Profil, extract robuste Tokens + Artefakt-Save, region-Crop-Begrenzung, fields deterministische Regex + unmatched + kaputte-Regex-Meldung, tables CSV-Grid, unsupported/missing-Fehler; skippt sauber ohne tesseract). PDF-Pfad separat live verifiziert (2-seitiges PDF bei 300 dpi, Konfidenz 93-94%, Seitenauswahl pages='2', markdown-Modus mit ## Page-Headern). py_compile OK, 4-Site-Konsistenz geprüft (schema/dispatch/group/direct_ref alle True). Schema-Änderung ⟶ Warmup-KV-Prefix re-primt einmalig (legitim). Skill 02-tools + Tool-Gruppen-Map + SKILL.md 1.158.0 im selben Commit. Server-Restart nötig. HINWEIS: deutsches Sprachpaket (deu) muss per `brew install tesseract-lang` auf dem Host vorhanden sein — ohne es funktioniert nur eng. KURATIERTER Eintrag (user-sichtbar: Text/Tabellen/Felder aus Scans & Fotos zuverlässig auslesen)."),
     ("9.293.0", "2026-07-07", "feat(Provider-Wire-API-Flag + Anthropic-Adapter für Kimi): NEUER Provider-Schalter `wire_api` (`openai` default | `anthropic`), GUI-einstellbar im Provider-Editor UND im Hinzufügen-Formular (settings_general_tabs.js Dropdown + settings_general.js saveProviderEdit/saveNewProvider). ANLASS (User-Report Chat a3615aea): im Experten-Gremium (MoA) lieferte kimi-k2.6 KEINEN Plan — die Referenz-Antwort war leer ('No response was returned' → Referenz als fehlgeschlagen gewertet, handlers/chat.py:583). ROOT CAUSE (belegt, nicht vermutet): der MoA-Referenz-Call deckelt jeden Proposer auf reference_max_tokens=500; kimi-for-coding mappt am Direkt-Endpunkt auf K2.7 Code = THINKING-ONLY, und der offizielle Coding-Endpunkt (api.kimi.com/coding/v1/chat/completions, OpenAI-Shape) LEHNT reasoning_effort:'none' mit 400 ab (nur minimal|low|medium|high) — d.h. Kimi denkt IMMER, und bei 500 Tokens frisst das Reasoning das ganze Budget → 0 Zeichen sichtbarer Content (400/500/600 Tokens → content=0; erst ab 800 kommt Text). Über Kilo lief es, WEIL Kilos OpenRouter-Schicht reasoning_effort:'none' akzeptiert und upstream echtes Thinking-Aus erzwingt (reasoning=0 bei 500 Tokens); der Direkt-Endpunkt kann das nicht. WEITERE BELEGE (Nutzer-Skepsis 'gleiches Modell?' zurecht — führte zur echten Ursache): Kilo + Direkt bedienen DASSELBE Basismodell (beide resp.model=kimi-for-coding, ctx 262144), aber NICHT dieselbe Endpunkt-Config — Direkt erlaubt nur temperature:1 (lehnt 0 ab), OpenAI-Shape mit Tools wirft nicht-deterministisch 400 'Invalid request Error' (der Endpunkt selbst drosselt aggressiv — genau das 'Rate-Problem', das der Nutzer AUCH über Kilo sah). Der Coding-Key ist exklusiv an api.kimi.com/coding gebunden (401 an api.moonshot.ai/.cn, 404 an api.kimi.com/v1) → kein Ausweichen auf einen offiziellen Nicht-Coding-Endpunkt möglich. LÖSUNG (die EINZIGE, die Thinking-aus + Tools gleichzeitig stabil liefert): der Coding-Host ist AUCH Anthropic-kompatibel (api.kimi.com/coding/v1/messages) — dort akzeptiert er thinking:{type:'disabled'} + Tools zusammen (live verifiziert: 5/5 reasoning=0 bei 500 Tokens, korrekte tool_calls, streaming via message_start/content_block_delta/message_delta). IMPLEMENTIERUNG (engine/llm_loop.py): build_anthropic_payload (system top-level, thinking:{type:disabled|enabled+budget}, Tools→{name,description,input_schema}, forced_tool→tool_choice), _openai_messages_to_anthropic (assistant tool_calls→tool_use-Blöcke, role:'tool'→user tool_result — Anthropic trägt Tool-Ergebnisse im USER-Turn), _drain_anthropic_stream/_inner (füllt DASSELBE _RoundResult wie der OpenAI-Drain — tool_calls per index, usage in OpenAI-Shape-Keys prompt/cached/completion → run_loop bleibt wire-agnostisch downstream; _anth_cache_read in __slots__). run_loop verzweigt auf _anthropic_wire (Endpunkt /messages + anthropic-version-Header + Anthropic-Payload/Drain), wire_api wird self-resolved aus resolve_provider_for_model(model) wenn nicht explizit übergeben → KEINE Änderung an den run_loop-Aufrufern nötig. resolve_provider_for_model (engine/model_select.py) liefert wire_api mit (Default 'openai'). handlers/providers.py: _handle_list_providers exponiert wire_api, Save-Handler reicht es via shallow-merge durch. config.json: kimi-coding bekommt wire_api:'anthropic' (+ Kommentar), das provisorische reasoning_no_none-Flag an kimi-k2.6 ENTFERNT (Anthropic-Wire regelt Thinking-aus nativ; das generische brain-Flag bleibt ungenutzt bestehen). EINSCHRÄNKUNG (belegt, in Config dokumentiert): thinking:{type:disabled} + tools geht am Anthropic-Endpunkt, am OpenAI-Endpunkt NICHT — deshalb der Wire-Switch statt eines Payload-Flags. VERIFIZIERT PRE-DEPLOY: Adapter-Unit-Tests grün (Payload/Message/Tool-Übersetzung + Stream-Drain gegen die ECHTE Kimi-SSE, inkl. usage-Split + cache_read), py_compile OK, js_gate GRÜN (net-globals 1879 unverändert, Smoke 5/5). glm-5.2 unberührt (bleibt zai-coding/OpenAI-Wire). Server-Restart nötig. Skill 05-internals + SKILL.md im selben Commit. KURATIERTER Eintrag (admin)."),
     ("9.292.0", "2026-07-07", "change(Provider): glm-5.2 und kimi-k2.6 laufen NICHT MEHR über Kilo, sondern DIREKT gegen ihre eigenen Coding-Plan-Endpunkte (User-Report: 'glm gibt 429, kimi ging'). ROOT CAUSE nachgewiesen: Kilos BYOK-Schicht drosselte den GLM-Weg — 8 schnelle Anfragen via kilo.ai/api/openrouter (zai-coding/glm-5.2) ergaben 4× HTTP 429 mit Body '[BYOK] Your API key has hit its rate limit' (error_type byok_error, is_byok:true), WÄHREND dieselbe GLM-Coding-Plan-Key DIREKT gegen api.z.ai 8/8 → 200 lieferte (GLM selbst limitiert nichts, das Dashboard 'alles ok' stimmte); kimi ging weiter, weil dessen Kilo-Weg credit-basiert (kilo-credit) statt BYOK ist. FIX (config.json): (1) ZWEI neue Direkt-Provider — 'zai-coding' (base_url api.z.ai/api/coding/paas/v4, GLM-Coding-Plan-Key) und 'kimi-coding' (base_url api.kimi.com/coding/v1, sk-kimi-Coding-Plan-Key). (2) glm-5.2 → provider zai-coding, base_model_id 'glm-5.2' (der plane Plan-Modell-Name, NICHT die Kilo-scoped zai-coding/*-Form). (3) kimi-k2.6 → provider kimi-coding, base_model_id 'kimi-for-coding' (Direkt-Endpunkt liefert lt. /models 'K2.7 Code', 262k ctx, reasoning+image-in, supports_thinking_type:'only' = reine Thinking-Maschine); shortname+display_name auf 'kimi-k2.7' umbenannt (Modell-KEY kimi-k2.6 bleibt stabil → keine chats.db/Kosten-Migration). deepseek-v4-pro/-flash + gemma-4-*-cloud BLEIBEN auf Kilo (kilo-credit, kein BYOK-Problem). CODE-FIX (brain._apply_inference_to_payload): der 9.277.1-Weg drückt bei Thinking-AUS für reasoning_field-Hybride explizit reasoning_effort:'none' — der DIREKTE Kimi-Coding-Endpunkt LEHNT 'none' mit 400 ab (akzeptiert nur minimal|low|medium|high, weil thinking-only). NEU per-Modell-Flag models.<id>.reasoning_no_none (auf kimi-k2.6 gesetzt): bei gesetztem Flag wird reasoning_effort im Aus-Fall WEGGELASSEN statt 'none' gesendet — das Modell denkt weiter (kann nicht abgeschaltet werden), Weglassen ergibt die schlankste erlaubte Reasoning-Menge (~135 Zeichen vs. 295 bei minimal) und wirft nie 400; per-Modell statt Provider-Name-Raten. WICHTIGE DIAGNOSE-FALLE dokumentiert: byte-IDENTISCHE Tool-Requests gegen den Kimi-Coding-Endpunkt liefern sporadisch '400 Invalid request Error' (Replay-/Idempotenz-Guard) — variiert man den Nachrichtentext, gehen 6/6 mit tool_calls durch; Tools funktionieren also einwandfrei (dieselbe Falle wie beim curl-Cache-Test, [[project_cliproxyapi_removed_direct_providers]]). VERIFIZIERT live nach Restart durch Brain (echte, variierte Payloads): glm-5.2 UND kimi-k2.6 je mit tools:true + thinking:off → error=False, cache_read 1344 bzw. 1024 (Direkt-Prompt-Caching auf BEIDEN Bahnen aktiv), Antwort korrekt, kein reasoning_effort:none-400. py_compile OK. Server-Restart nötig. KURATIERTER Eintrag (admin)."),
     ("9.291.4", "2026-07-07", "fix(Workflow-Lauf: hochgeladene Eingabedatei erscheint im Anhänge-Reiter): Nutzer meldete an Lauf-Session 01817597 (Run 739e97d0ca), dass das hochgeladene Ausweisbild NICHT im Anhänge-Reiter (rechtes Panel) gelistet ist. ROOT CAUSE (rein Frontend): der Eingabe-Upload wird von _wfSyncTranscriptMessages (web/js/workflows.js) als `_files` (mit Unterstrich) an den synthetischen USER-Turn gehängt — der Chat-RENDERER zeichnet das als 📎 im Nachrichtenfluss, aber collectChatAttachments (web/js/panels_artifacts.js), das den Anhänge-Reiter füllt, liest NUR `files`/`images`/content-blocks (OHNE Unterstrich) → der Upload erreichte den Reiter nie. (Der Referenzen-Reiter zeigt ihn zwar als Text-Karte via references-Seeding, aber der Nutzer erwartet ihn — wie bei einem normalen Chat-Upload — unter Anhängen.) FIX: collectChatAttachments liest jetzt zusätzlich `msg._files` auf synthetischen USER-Turns (_wfSynthetic; bereits auf user/human-Turns gescoped → das sind Eingaben, keine erzeugten Outputs) und baut eine pfadbasierte Datei-Karte (gleiche Form wie disk-saved files). ZWEITER TEIL (Download/Vorschau): Workflow-Uploads liegen unter /tmp/brain-workflow-uploads/<exec>/, was der allgemeine /v1/files/download-Validator ABLEHNT — die Vorschau/der Download muss über den lauf-gescopten Endpunkt GET /v1/workflows/history/<exec>/file (gated auf 'Lauf hat den Pfad berührt') gehen. Neuer Helfer _attachDownloadUrl(a) liefert die gescopte URL, wenn a.wfExecId gesetzt ist (von collectChatAttachments aus chat.workflow_run_id/wfBanner.execId), sonst die allgemeine; alle 4 Download-Stellen im Anhänge-Code (Body-Fetch, Bild-Vorschau, PDF-Vorschau, Download-Button) nutzen ihn. Der gescopte Endpunkt akzeptiert den Upload-Pfad, weil er in _workflow_run_paths (classified, role=input) enthalten ist. E2E (Playwright, echter Browser): Lauf-Session geöffnet → collectChatAttachments enthält ausweis_real.jpg (isImage, wfExecId=739e97d0ca), _attachDownloadUrl → /v1/workflows/history/…/file, Endpunkt liefert HTTP 200 image/jpeg. Endpunkt separat verifiziert (5089 Bytes, valides JPEG 400x250). js_gate GRÜN (net-globals 1878→1879 = neuer Helfer _attachDownloadUrl, Baseline mitgezogen). KEIN Server-Restart nötig (rein Frontend). KURATIERTER Eintrag angepasst (user-sichtbar)."),
@@ -1271,6 +1275,7 @@ TOOL_GROUPS = {
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
     "documents": {"read_document", "write_document", "edit_document", "render_diagram",
                   "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff"},
+    "ocr": {"ocr_inspect", "ocr_extract", "ocr_region", "ocr_fields", "ocr_tables"},
     "delegation": {"delegate_task", "task_status", "task_cancel"},
     "background": {"run_background_task"},
     "code_graph": {"code_search", "code_trace", "code_query", "code_snippet"},
@@ -2970,8 +2975,86 @@ _WHISPER_PROVIDER = "local-mlx-whisper"
 # engine/tools/translate_tools.py (refactor E4); re-exported below near
 # TOOL_DISPATCH.
 
+def _ocr_image_bytes(image_bytes: bytes) -> str:
+    """Deterministic local OCR of raw image bytes (no LLM). Returns recognised
+    text or '' — reuses the OCR toolset's tesseract primitive. Best-effort:
+    any failure (engine missing, unreadable) yields ''."""
+    try:
+        import io as _io
+        from PIL import Image as _Image
+        from engine.tools import ocr_tools as _ocr
+        pyt, err = _ocr._require_tesseract()
+        if err:
+            return ""
+        img = _Image.open(_io.BytesIO(image_bytes))
+        img.load()
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        words = _ocr._page_tsv(pyt, img, _ocr._DEFAULT_LANG)
+        text = _ocr._words_to_text(words)
+        # log the page for the cost audit (local → $0, page count is the signal)
+        try:
+            _ocr._log_pages(1)
+        except Exception:
+            pass
+        return text.strip()
+    except Exception:
+        return ""
+
+
+def _describe_image_deterministic(image_data_b64: str, filename: str) -> tuple[str, bool]:
+    """Model-free image description: local OCR text + deterministic features
+    (dimensions/EXIF/colours/faces) + decoded QR/barcodes. Returns
+    (text, strong_signal) where strong_signal is True when we recovered
+    something substantive (real OCR text, decoded codes, or a confident
+    feature read) so the caller can SKIP the vision-LLM fallback."""
+    import base64
+    try:
+        image_bytes = base64.b64decode(image_data_b64)
+    except Exception:
+        return "", False
+
+    ocr_text = _ocr_image_bytes(image_bytes)
+
+    feat_text = ""
+    feat_signal = False
+    codes = []
+    try:
+        from engine.image_features import (describe_image_features,
+                                           features_to_text)
+        feat = describe_image_features(image_bytes, filename)
+        feat_text = features_to_text(feat, filename)
+        codes = feat.get("codes") or []
+        feat_signal = bool(feat.get("has_signal"))
+    except Exception:
+        pass
+
+    parts = []
+    if ocr_text:
+        parts.append(f"**{filename} — erkannter Text (OCR):**\n{ocr_text}")
+    if feat_text:
+        parts.append(f"**{filename} — Bildmerkmale:** {feat_text}")
+    combined = "\n\n".join(parts)
+
+    # "Strong" = we have real OCR text (≥20 chars), decoded codes, or the
+    # feature pass classified the image with confidence (faces/photo/graphic).
+    strong = bool((ocr_text and len(ocr_text) >= 20) or codes or feat_signal)
+    return combined, strong
+
+
 def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: str) -> str:
-    """Use a vision-capable model to describe an image attachment."""
+    """Describe an image attachment for a non-vision model — DETERMINISTIC
+    FIRST (local OCR + image features + QR/barcodes, no LLM), falling back to a
+    vision LLM only when the deterministic pass recovered nothing substantive
+    (e.g. a textless photo of a scene). The vision fallback still prefers a
+    LOCAL image model via the cheapest-candidate selection below."""
+    # 1) Deterministic pass — free, local, no model.
+    det_text, strong = _describe_image_deterministic(image_data_b64, filename)
+    if strong:
+        return det_text
+
+    # 2) Fallback: vision LLM (deterministic signal was thin). Prepend whatever
+    #    deterministic facts we DID gather so the model output is additive.
     vision_model = get_request_context().attachment_image_model or ''
     if not vision_model:
         # Fall back to the cheapest enabled image-capable model.
@@ -2982,7 +3065,17 @@ def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: 
         candidates.sort(key=lambda t: (t[1].get("cost_input", 1e9), -(t[1].get("priority") or 0)))
         if candidates:
             vision_model = candidates[0][0]
+    def _with_facts(body: str) -> str:
+        """Prepend the deterministic facts (if any) so vision output is
+        additive, never a replacement for what we measured locally."""
+        return f"{det_text}\n\n{body}" if det_text else body
+
     if not vision_model:
+        # No vision model — return whatever the deterministic pass found (even
+        # if thin) rather than a useless placeholder; only truly-empty falls
+        # back to the hint.
+        if det_text:
+            return det_text
         return f"(Image: {filename} — no image-capable model configured. Flag a model with the 'image' capability in the Models tab or set attachments.image_model.)"
 
     # Build multimodal message with image
@@ -3008,10 +3101,10 @@ def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: 
         )
         result = _res.get("reply") or ""
         if result:
-            return f"**Image: {filename}**\n\n{result}"
-        return f"(Image: {filename} — vision model returned no description)"
+            return _with_facts(f"**Image: {filename}**\n\n{result}")
+        return _with_facts(f"(Image: {filename} — vision model returned no description)")
     except Exception as e:
-        return f"(Image: {filename} — vision error: {e})"
+        return _with_facts(f"(Image: {filename} — vision error: {e})")
 
 
 
@@ -13175,6 +13268,8 @@ TOOL_ICONS = {
     "read_document": "D", "write_document": "D", "edit_document": "D",
     "xlsx_inspect": "D", "xlsx_query": "D", "xlsx_create": "D", "xlsx_edit": "D",
     "xlsx_diff": "D",
+    "ocr_inspect": "D", "ocr_extract": "D", "ocr_region": "D", "ocr_fields": "D",
+    "ocr_tables": "D",
     "code_search": "G", "code_trace": "G", "code_query": "G", "code_snippet": "G",
     "git_command": "g", "github_command": "g",
 }
@@ -13195,6 +13290,9 @@ TOOL_VERBS = {
     "xlsx_inspect": "Inspecting Spreadsheet", "xlsx_query": "Querying Spreadsheet",
     "xlsx_create": "Creating Spreadsheet", "xlsx_edit": "Editing Spreadsheet",
     "xlsx_diff": "Comparing Spreadsheets",
+    "ocr_inspect": "Profiling Scan", "ocr_extract": "Reading Scan (OCR)",
+    "ocr_region": "Reading Region (OCR)", "ocr_fields": "Extracting Fields (OCR)",
+    "ocr_tables": "Extracting Table (OCR)",
     "code_search": "Searching Code", "code_trace": "Tracing Calls", "code_query": "Querying Code", "code_snippet": "Reading Code",
     "git_command": "Git", "github_command": "GitHub",
 }
@@ -13693,6 +13791,13 @@ from engine.tools.xlsx_tools import (  # noqa: E402
     tool_xlsx_edit,
     tool_xlsx_diff,
 )
+from engine.tools.ocr_tools import (  # noqa: E402
+    tool_ocr_inspect,
+    tool_ocr_extract,
+    tool_ocr_region,
+    tool_ocr_fields,
+    tool_ocr_tables,
+)
 # MemPalace integration glue moved to engine/mempalace_glue.py (refactor C3).
 # Imported HERE (before TOOL_DISPATCH) so the `tool_mempalace_query` /
 # `tool_save_chat_to_memory` bare names bind in brain's namespace before the
@@ -13860,6 +13965,11 @@ TOOL_DISPATCH = {
     "xlsx_create": tool_xlsx_create,
     "xlsx_edit": tool_xlsx_edit,
     "xlsx_diff": tool_xlsx_diff,
+    "ocr_inspect": tool_ocr_inspect,
+    "ocr_extract": tool_ocr_extract,
+    "ocr_region": tool_ocr_region,
+    "ocr_fields": tool_ocr_fields,
+    "ocr_tables": tool_ocr_tables,
     "mcp_connect": tool_mcp_connect,
     "mcp_disconnect": tool_mcp_disconnect,
     "mcp_servers": tool_mcp_servers,

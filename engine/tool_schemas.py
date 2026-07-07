@@ -1220,6 +1220,138 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "ocr_inspect",
+        "description": (
+            "Profile a scanned image or PDF WITHOUT running full OCR: page "
+            "count, pixel dimensions, detected orientation/rotation and script "
+            "(via tesseract OSD), and a rough word-count/confidence probe. "
+            "ALWAYS call this FIRST for a scan/photo task to decide the language "
+            "and whether OCR is worthwhile (a native digital PDF has selectable "
+            "text — use read_document instead; OCR is for SCANS/PHOTOS where "
+            "read_document returns little). Runs LOCALLY (tesseract), no LLM, no "
+            "cloud, deterministic. Then use ocr_extract / ocr_fields / "
+            "ocr_tables / ocr_region."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the image (.png/.jpg/.tif/.bmp/.webp) or .pdf"},
+                "lang": {"type": "string", "description": "Tesseract language(s), e.g. 'deu+eng' (default) or 'eng'"},
+                "pages": {"type": "string", "description": "For PDFs: pages to probe, e.g. '1' or '1-3' (default: page 1)"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "ocr_extract",
+        "description": (
+            "Read the text out of a scanned image or PDF DETERMINISTICALLY — "
+            "local tesseract OCR, NO LLM, NO cloud. Use this instead of relying "
+            "on the model to 'look at' an attached scan/photo and re-type "
+            "numbers (it misreads amounts). Returns reading-order text plus a "
+            "mean_confidence score. mode='text' (plain), 'layout' (keeps "
+            "paragraph/block breaks) or 'markdown' (layout + per-page headers). "
+            "For a long document pass out='text.txt' to save the FULL extract as "
+            "an artifact (the chat preview is capped). For digital PDFs with "
+            "real selectable text, use read_document — OCR is for scans/photos. "
+            "For structured values (invoice no., total) prefer ocr_fields; for "
+            "gridded tables prefer ocr_tables."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the image or .pdf to OCR"},
+                "mode": {"type": "string", "description": "'text' | 'layout' | 'markdown' (default 'text')"},
+                "lang": {"type": "string", "description": "Tesseract language(s), e.g. 'deu+eng' (default)"},
+                "pages": {"type": "string", "description": "For PDFs: '1-3,5' (default: all pages, capped at 50)"},
+                "out": {"type": "string", "description": "Optional relative .txt filename — saves the FULL text to your artifact folder"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "ocr_region",
+        "description": (
+            "OCR only a RECTANGULAR REGION of a page — for 'just the stamp "
+            "top-right', 'only the total at the bottom', 'the handwritten note "
+            "in the corner'. bbox=[x, y, width, height] in pixels (unit='px', "
+            "default) or as percent of the page (unit='pct'). Deterministic "
+            "local tesseract, no LLM. Use ocr_inspect first to learn the page "
+            "pixel size. Cheaper and more precise than OCR-ing the whole page "
+            "when you only need one area."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the image or .pdf"},
+                "bbox": {"type": "array", "items": {"type": "number"}, "description": "[x, y, width, height] — top-left origin"},
+                "unit": {"type": "string", "description": "'px' (default) or 'pct' (percent of page dimensions)"},
+                "page": {"type": "integer", "description": "For PDFs: 1-based page number (default 1)"},
+                "lang": {"type": "string", "description": "Tesseract language(s), default 'deu+eng'"},
+            },
+            "required": ["path", "bbox"],
+        },
+    },
+    {
+        "name": "ocr_fields",
+        "description": (
+            "Extract STRUCTURED FIELDS from a scan/PDF deterministically: the "
+            "server OCRs the document, then applies YOUR per-field REGEX to the "
+            "recognised text — no LLM guessing, repeatable. Ideal for invoices, "
+            "receipts, forms: give fields=[{name, pattern}] where pattern is a "
+            "Python regex with ONE capture group for the value. Returns "
+            "validated JSON {name: value|null} and lists which fields did not "
+            "match. Example: fields=[{\"name\":\"rechnungsnr\",\"pattern\":"
+            "\"Rechnung\\\\s*Nr\\\\.?\\\\s*([\\\\w-]+)\"}, {\"name\":\"betrag\","
+            "\"pattern\":\"(\\\\d[\\\\d.,]*)\\\\s*EUR\"}]. Matching is "
+            "case-insensitive and multi-line."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the image or .pdf"},
+                "fields": {
+                    "type": "array",
+                    "description": "[{name, pattern}] — pattern is a regex; use one capture group for the value",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "pattern": {"type": "string"},
+                        },
+                        "required": ["name", "pattern"],
+                    },
+                },
+                "lang": {"type": "string", "description": "Tesseract language(s), default 'deu+eng'"},
+                "pages": {"type": "string", "description": "For PDFs: '1-3' (default: all pages)"},
+            },
+            "required": ["path", "fields"],
+        },
+    },
+    {
+        "name": "ocr_tables",
+        "description": (
+            "Extract a TABLE from a scanned image or PDF deterministically: OCR "
+            "word positions are clustered into columns (by x-position) and rows "
+            "(by text line) and emitted as CSV — no LLM. Pass out='name.csv' to "
+            "save the full table as an artifact you can then open with "
+            "xlsx_inspect / xlsx_query (OCR → spreadsheet pipeline). Best for "
+            "gridded tables, statements, price lists; for free-flowing text use "
+            "ocr_extract instead. Column detection is geometric, so very skewed "
+            "scans may split columns — check the preview."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the image or .pdf"},
+                "out": {"type": "string", "description": "Optional relative .csv filename — saves the full table to your artifact folder"},
+                "lang": {"type": "string", "description": "Tesseract language(s), default 'deu+eng'"},
+                "pages": {"type": "string", "description": "For PDFs: '1-3' (default: all pages)"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "delegate_task",
         "description": (
             "Delegate a task to another agent. Runs in a background thread with its own context. "

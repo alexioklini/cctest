@@ -361,10 +361,31 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   swap, or the auto-router — the UNIVERSAL wire-degrade
   `_sanitize_multimodal_for_model(messages, session.model)` runs right before
   `run_turn` (the single choke point, after all model swaps) and replaces each
-  unsupported `image_url` block with a VISION-MODEL description
-  (`_describe_image_with_vision` via `attachment_image_model`) so the text-only
-  model still gets the real image content (`read_document` on an image yields
-  only metadata, never the visual content). Transient wire copy — the original
+  unsupported `image_url` block with a description from
+  `_describe_image_with_vision`. **That description is DETERMINISTIC-FIRST
+  (v9.293.2), no LLM by default**: `_describe_image_deterministic` runs local
+  OCR (`_ocr_image_bytes`, tesseract — the OCR toolset's primitive) + model-free
+  image features (`engine/image_features.py`: dimensions, EXIF camera/date/GPS,
+  dominant colours, brightness, photo-vs-graphic heuristic, Haar-cascade face
+  COUNT) + decoded QR/barcodes (OpenCV `QRCodeDetector`/`barcode` — NOT pyzbar,
+  which segfaults on Python 3.14). If that recovers something
+  substantive (real OCR text ≥20 chars, decoded codes, or a confident feature
+  read) the vision LLM is SKIPPED entirely — free, local, no cloud. Only when
+  the deterministic pass is thin (a textless photo of a scene) does it fall back
+  to the vision LLM (`attachment_image_model`, cheapest image-capable model
+  else), and even then the deterministic facts are PREPENDED so the output is
+  additive. So the text-only model still gets the real image content
+  (`read_document` on an image yields only metadata, never the visual content).
+  **Disk-routed images (v9.293.3)**: a text-only model never gets an `image_url`
+  block at all — the attachment routing (`handlers/chat.py` ~6590) only inlines
+  an image when the session model's `raw_formats` accept the MIME, else the
+  image goes to disk under `/tmp/brain-attachments/<sid>/`. So the wire degrade
+  above never fires for it. Instead, the disk-notice builder runs the SAME
+  deterministic pass (`_describe_image_deterministic`) on each disk-routed image
+  and appends the OCR text + features to the "saved to disk" notice, so a
+  text-only model still gets the real content (no `image_url` is forced for
+  text models — that would change the wire/cache-prefix for every text turn
+  carrying an image). Transient wire copy — the original
   `image_url` blocks stay in `session.messages`/DB, so a later capable model
   still sees the real image. No-op (byte-identical wire) when the model handles
   the MIMEs natively. The worker switches the session

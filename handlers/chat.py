@@ -6697,6 +6697,33 @@ class ChatHandlerMixin:
             has_docs = any(os.path.splitext(p)[1].lower() in (".pdf", ".docx", ".xlsx", ".pptx", ".csv", ".tsv")
                            for p in saved_paths)
             has_inline_images = bool(content_blocks)
+
+            # Disk-routed IMAGES never became image_url blocks (the model isn't
+            # vision-capable), so the wire-level multimodal-degrade never sees
+            # them. Enrich the notice with a DETERMINISTIC description (local
+            # OCR + image features + QR/barcodes, no LLM) so a text-only model
+            # still gets the real content — the counterpart to the image_url
+            # degrade for the disk path (v9.293.3). read_document on an image
+            # yields only metadata, so without this the model is blind.
+            _IMG_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp",
+                         ".webp", ".gif")
+            image_descs = []
+            if not has_inline_images:  # inline images are already described by the wire degrade
+                import brain as _brain
+                for f in disk_files:
+                    fname = f.get("name", "file")
+                    if os.path.splitext(fname)[1].lower() not in _IMG_EXTS:
+                        continue
+                    if f.get("encoding") != "base64":
+                        continue
+                    try:
+                        det, _strong = _brain._describe_image_deterministic(
+                            f.get("content", ""), fname)
+                        if det:
+                            image_descs.append(det)
+                    except Exception:
+                        pass
+
             if has_docs:
                 notice = (f"\n\n[User attached files saved to disk. "
                           f"IMPORTANT: Use the read_document tool (NOT read_file) to read these — "
@@ -6709,6 +6736,14 @@ class ChatHandlerMixin:
                           f"or call `execute_command` without a `cwd` (it defaults there):]\n{paths_list}")
             else:
                 notice = f"\n\n[User attached files saved to disk:]\n{paths_list}"
+
+            # Append deterministic image descriptions (OCR + features) for any
+            # disk-routed image, so a text-only model gets the real content
+            # instead of just a path it can only read metadata from.
+            if image_descs:
+                notice += ("\n\n[Bild-Anhänge — automatisch, ohne KI erkannt "
+                           "(Text via OCR + deterministische Merkmale):]\n\n"
+                           + "\n\n".join(image_descs))
             message = message + notice
             if isinstance(user_content, str):
                 user_content = user_content + notice

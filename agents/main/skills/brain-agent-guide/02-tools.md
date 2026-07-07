@@ -318,6 +318,40 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
   csv/tsv "Ansicht" mode renders the same grid; artifacts fullview previews
   xlsx instead of the download-only card. Endpoint `GET /v1/files/xlsx-grid`.
 
+## OCR — deterministic local scan toolset (group `ocr`, v9.293.1)
+
+Read text out of SCANNED IMAGES / PHOTOS / scanned PDFs **deterministically** —
+local `tesseract` (5.x via pytesseract), **NO LLM, no cloud**. This is the
+counterpart to the xlsx toolset for pixels: instead of the model "looking at" an
+attached scan and re-typing numbers (it misreads amounts), the server OCRs and
+hands back text-faithful output + per-word confidence. Distinct from the PDF
+extraction fallback's `local_vision`/`mistral_ocr` (those DO use an LLM/cloud) —
+the OCR TOOLS never call a model. Handles images (`.png/.jpg/.tif/.bmp/.webp/
+.gif`) and `.pdf` (pages rasterised at 300 dpi via PyMuPDF). Default `lang=
+'deu+eng'`. **For digital PDFs with real selectable text use `read_document`;
+OCR is for scans/photos.**
+
+- `ocr_inspect(path, lang?, pages?)` — profile WITHOUT full OCR: page count,
+  pixel size, orientation/script (tesseract OSD), rough word-count/confidence.
+  Call FIRST to pick the language and confirm OCR is worthwhile.
+- `ocr_extract(path, mode?, lang?, pages?, out?)` — full text; `mode='text'|
+  'layout'|'markdown'`; preview capped, `out='text.txt'` saves the full extract
+  as an artifact. Returns `mean_confidence`.
+- `ocr_region(path, bbox=[x,y,w,h], unit?, page?, lang?)` — OCR only a rectangle
+  ('just the stamp', 'only the footer'); `unit='px'` (default) or `'pct'`.
+- `ocr_fields(path, fields=[{name,pattern}], lang?, pages?)` — STRUCTURED
+  extraction: OCR then apply your per-field REGEX (one capture group = the
+  value). Returns validated JSON `{name: value|null}` + `unmatched`. For
+  invoices/receipts/forms. Bad regex is reported, never raised.
+- `ocr_tables(path, out?, lang?, pages?)` — geometric column/row clustering of
+  OCR words → CSV; `out='table.csv'` saves the full table, which a follow-up
+  `xlsx_inspect`/`xlsx_query` can then read (OCR→spreadsheet pipeline).
+
+Page counts are logged to the cost ledger (`purpose='ocr'`, $0 — local engine —
+but the page count is an audit signal, same as the cloud OCR path). Needs the
+`tesseract` binary + language data on the host (`brew install tesseract
+tesseract-lang`); every tool fails LOUD with the install hint if it's missing.
+
 ## Memory (MemPalace, direct — not MCP)
 
 - `mempalace_query(query, wing?, room?, limit?)` — semantic search.
@@ -654,7 +688,8 @@ write/exec tool is deliberately excluded.
 core          read_file write_file edit_file list_directory search_files
               execute_command tool_search ask_user
 documents     read_document write_document edit_document render_diagram
-              xlsx_inspect xlsx_query xlsx_create xlsx_edit
+              xlsx_inspect xlsx_query xlsx_create xlsx_edit xlsx_diff
+ocr           ocr_inspect ocr_extract ocr_region ocr_fields ocr_tables
 memory        mempalace_query save_chat_to_memory
               mempalace_kg_query mempalace_kg_search mempalace_kg_neighbors
 wiki          wiki_write wiki_read wiki_delete wiki_structure

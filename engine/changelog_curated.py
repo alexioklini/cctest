@@ -29,6 +29,43 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.293.2",
+        "date": "2026-07-07",
+        "title": "Bilder an Text-Modelle: exakt statt vage",
+        "body": "Wenn Sie ein Bild an ein Modell anhängen, das Bilder nicht "
+                "direkt „sehen“ kann, wird der Bildinhalt jetzt zuerst exakt und "
+                "ohne KI-Aufruf aufbereitet: enthaltener Text wird per "
+                "Texterkennung ausgelesen, QR- und Barcodes werden dekodiert, "
+                "und sachliche Bildmerkmale (Größe, Aufnahmedatum, Ort, "
+                "Farben, Anzahl erkannter Gesichter) werden ergänzt. So erhält "
+                "das Modell bei Belegen, Rechnungen oder Screenshots verlässliche "
+                "Fakten statt einer ungefähren Beschreibung — schneller, "
+                "kostenlos und ohne Cloud. Nur wenn ein Bild keinerlei Text "
+                "enthält (etwa ein reines Foto), wird zusätzlich wie bisher eine "
+                "Bildbeschreibung erzeugt.",
+        "audience": "user",
+        "versions": ["9.293.2"],
+    },
+    {
+        "version": "9.293.1",
+        "date": "2026-07-07",
+        "title": "Text aus Scans und Fotos zuverlässig auslesen",
+        "body": "Brain-Agent kann Text jetzt direkt und verlässlich aus "
+                "gescannten Bildern, Fotos und eingescannten PDFs herauslesen — "
+                "etwa Rechnungen, Belege, Formulare oder Screenshots. Bisher "
+                "„betrachtete“ das Modell ein angehängtes Bild nur und tippte "
+                "Zahlen von Hand ab, was zu Lesefehlern führen konnte. Die neue "
+                "Texterkennung arbeitet stattdessen exakt und wiederholbar: Sie "
+                "können den kompletten Text extrahieren, gezielt einzelne Felder "
+                "(z. B. Rechnungsnummer und Betrag) herausziehen, Tabellen als "
+                "Datei gewinnen (die sich anschließend wie eine Excel-Tabelle "
+                "weiterverarbeiten lässt) oder nur einen bestimmten Ausschnitt "
+                "einer Seite lesen. Die Erkennung läuft vollständig lokal auf dem "
+                "Server, ohne Cloud-Dienst.",
+        "audience": "user",
+        "versions": ["9.293.1"],
+    },
+    {
         "version": "9.293.0",
         "date": "2026-07-07",
         "title": "Kimi im Experten-Gremium wieder zuverlässig",
