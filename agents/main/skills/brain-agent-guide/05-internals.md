@@ -108,21 +108,61 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
   when the field is absent, so "off by omission" silently ignored the
   composer toggle. mistral_blocks stays off-by-omission (default-off
   upstream); oMLX models use the explicit `enable_thinking` kwarg instead.
+  EXCEPTION (9.292.0): a model may set `reasoning_no_none: true` in config —
+  then thinking-off OMITS `reasoning_effort` instead of sending `"none"`.
+  (Generic per-model escape for OpenAI-wire providers that reject `"none"`;
+  currently UNUSED — Kimi, the original reason, now uses the Anthropic wire
+  instead, see below.) On the **Anthropic wire** thinking is controlled by the
+  payload's `thinking:{type}` field (`disabled` off / `enabled`+`budget_tokens`
+  on), built by `build_anthropic_payload` — `reasoning_effort` never applies.
 
 ## Provider routing
 
 `resolve_provider_for_model(model)` is the **single source of truth** for
-`{api_key, base_url, provider_name}`. Used by chat, delegate, scheduler,
-warmup, background. Providers are plain OpenAI-compatible entries in
+`{api_key, base_url, provider_name, wire_api}`. Used by chat, delegate,
+scheduler, warmup, background. Providers are OpenAI-compatible entries in
 `config.json → providers`.
 
+**Wire-API flag (9.293.0):** each provider carries `wire_api` (`openai`
+default | `anthropic`), editable in the GUI (Provider tab → editor + add-form
+dropdown "Wire-API"). `openai` → `{base_url}/chat/completions` (OpenAI shape).
+`anthropic` → `{base_url}/messages` (Messages API: `system` top-level, tools as
+`{name,input_schema}`, `thinking:{type:disabled|enabled}`, `anthropic-version`
+header). `engine/llm_loop.py` has both wires: `build_anthropic_payload` +
+`_drain_anthropic_stream` fill the SAME `_RoundResult` as the OpenAI path, so
+`run_loop` is wire-agnostic downstream (it self-resolves `wire_api` from the
+provider). Set to `anthropic` ONLY for **kimi-coding**: the Kimi coding host's
+OpenAI endpoint rejects `reasoning_effort:"none"` (400) and is unstable with
+tools, while its Anthropic endpoint supports thinking-off + tools together
+(the fix for empty Kimi MoA references, chat a3615aea). Every other provider
+stays `openai`.
+
 Since 9.278.0 all cloud models hit their upstreams DIRECTLY (the CLIProxyAPI
-proxy on :8317 was removed): `Kilo` (kilo.ai/api/openrouter) serves
-glm-5.2 / kimi-k2.6 / deepseek-v4-pro / deepseek-v4-flash / gemma-cloud with
-the upstream id in `base_model_id` (e.g. `z-ai/glm-5.2`), and `mistral-direct`
-(api.mistral.ai) serves all Mistral models. Upstream prompt caching works on
-both (verified: multi-turn sessions report `cached_tokens`; synthetic
-identical-prompt probes do NOT trigger it).
+proxy on :8317 was removed). Provider layout after 9.292.0:
+- `zai-coding` (api.z.ai/api/coding/paas/v4) — serves **glm-5.2**
+  (`base_model_id: glm-5.2`, the plain plan id — NOT the Kilo-scoped
+  `zai-coding/glm-5.2` form).
+- `kimi-coding` (api.kimi.com/coding/v1) — serves **kimi-k2.6**
+  (`base_model_id: kimi-for-coding`; upstream model is "K2.7 Code", so the
+  display name is `kimi-k2.7` while the internal key stays `kimi-k2.6`).
+- `Kilo` (kilo.ai/api/openrouter) — serves the REMAINING cloud models:
+  deepseek-v4-pro / deepseek-v4-flash / gemma-4-*-cloud (upstream id in
+  `base_model_id`, e.g. `deepseek/deepseek-v4-pro:discounted`).
+- `mistral-direct` (api.mistral.ai) — serves all Mistral models.
+
+**Why glm+kimi left Kilo (9.292.0):** Kilo's BYOK layer rate-limited the GLM
+path — rapid requests returned HTTP 429 `[BYOK] … hit its rate limit`
+(`error_type: byok_error`) while the SAME key hit api.z.ai directly with zero
+throttling (GLM itself wasn't limiting). Kimi's Kilo path was credit-based
+(not BYOK) so it wasn't throttled, but it was moved too for consistency + to
+get the direct coding plan (K2.7). Deepseek/gemma stay on Kilo (credit-based,
+no BYOK issue).
+
+Upstream prompt caching works on all lanes (verified: multi-turn sessions
+report `cached_tokens` — glm-5.2 and kimi both showed cache_read on the
+direct path; synthetic identical-prompt probes do NOT trigger it, and on the
+direct Kimi coding endpoint byte-identical tool requests also spuriously
+400 via a replay guard — vary the payload).
 
 Provider-scoped ids exist when multiple providers serve the same model
 (`provider/model_id` with `base_model_id`).

@@ -342,6 +342,11 @@ def resolve_provider_for_model(model: str) -> dict:
                     "api_key": picked if picked is not None else "",
                     "base_url": prov.get("base_url", ""),
                     "provider_name": provider_name,
+                    # Wire protocol for this provider: "openai" (default) or
+                    # "anthropic" (Messages API — e.g. Kimi coding plan, where
+                    # only /v1/messages supports thinking-off + tools). Read by
+                    # the loop callers → llm_loop.run_loop(wire_api=…).
+                    "wire_api": (prov.get("wire_api") or "openai").lower(),
                 }
         except Exception:
             pass

@@ -522,7 +522,8 @@ async function saveProviderEdit(name, pid) {
   const base_url = document.getElementById(`${pid}-url`).value;
   const default_model = document.getElementById(`${pid}-model`).value;
   const is_local = !!document.getElementById(`${pid}-is-local`)?.checked;
-  const provider = { base_url, default_model, is_local };
+  const wire_api = document.getElementById(`${pid}-wire-api`)?.value || 'openai';
+  const provider = { base_url, default_model, is_local, wire_api };
   try {
     await API.post('/v1/providers', { action: 'add', name, provider });
     showToast('Provider aktualisiert');
@@ -780,6 +781,7 @@ async function saveNewProvider() {
     base_url: document.getElementById('prov-url')?.value || '',
     default_model: document.getElementById('prov-model')?.value || '',
     is_local: !!document.getElementById('prov-is-local')?.checked,
+    wire_api: document.getElementById('prov-wire-api')?.value || 'openai',
     api_keys: rawKey ? [{ name: 'default', key: rawKey, usage: 'preferred' }] : [],
   };
   try {

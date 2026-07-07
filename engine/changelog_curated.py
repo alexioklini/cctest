@@ -29,6 +29,62 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.293.0",
+        "date": "2026-07-07",
+        "title": "Kimi im Experten-Gremium wieder zuverlässig",
+        "body": "Im Experten-Gremium (Mixture-of-Agents) steuert Kimi jetzt "
+                "wieder verlässlich einen vollständigen Beitrag bei. Zuvor "
+                "konnte Kimis Beitrag leer bleiben und fiel dann aus der "
+                "Abstimmung heraus. Ursache war, dass Kimi über die "
+                "Direktanbindung stets ausführlich „mitdenkt“ und das knappe "
+                "Antwortbudget dadurch vollständig aufgebraucht wurde. Für "
+                "Provider lässt sich nun das Anbindungsprotokoll einstellen "
+                "(Provider-Verwaltung → „Wire-API“); für Kimi ist es so gesetzt, "
+                "dass sich das Mitdenken sauber abschalten lässt und Werkzeug-"
+                "aufrufe zugleich funktionieren — schneller und günstiger, ohne "
+                "leere Beiträge.",
+        "audience": "admin",
+        "versions": ["9.293.0"],
+    },
+    {
+        "version": "9.292.0",
+        "date": "2026-07-07",
+        "title": "GLM und Kimi: schneller und zuverlässiger angebunden",
+        "body": "Die Modelle GLM und Kimi werden jetzt direkt bei ihren "
+                "jeweiligen Anbietern angesprochen statt über einen "
+                "zwischengeschalteten Dienst. Zuvor konnte GLM sporadisch mit "
+                "einer Auslastungsmeldung („Rate Limit\") abbrechen, obwohl das "
+                "GLM-Konto selbst gar nicht ausgelastet war — die Drosselung "
+                "entstand erst auf dem Zwischenweg. Mit der Direktanbindung "
+                "entfällt dieser Engpass; beide Modelle antworten zuverlässiger "
+                "und profitieren vom anbietereigenen Zwischenspeicher (günstiger "
+                "und schneller bei fortlaufenden Unterhaltungen). Kimi läuft "
+                "dabei nun auf der aktuellen Version „K2.7 Code\" und wird in "
+                "der Modellauswahl entsprechend angezeigt.",
+        "audience": "admin",
+        "versions": ["9.292.0"],
+    },
+    {
+        "version": "9.291.3",
+        "date": "2026-07-07",
+        "title": "Workflow-Läufe: alle Dateien sichtbar, klarer bei Abbruch",
+        "body": "Beim Öffnen eines Workflow-Laufs erscheinen jetzt zuverlässig "
+                "ALLE Dateien, die der Lauf erzeugt hat, im Dateien-Reiter — "
+                "auch solche, die ein Schritt selbst per Skript geschrieben hat "
+                "(etwa Zwischenbilder oder Mess-Protokolle einer Analyse), und "
+                "Bilder werden als Bild angezeigt statt als Rohdaten. Zuvor "
+                "konnten einzelne im Bericht genannte Dateien fehlen. Die "
+                "hochgeladenen Eingabedateien erscheinen jetzt — wie bei einem "
+                "normalen Chat — im Anhänge-Reiter und lassen sich dort ansehen "
+                "und herunterladen. Bricht ein Lauf vorzeitig ab — etwa weil "
+                "ein Anbieter ein Nutzungslimit meldet —, weist ein deutlicher "
+                "Hinweis oben im Verlauf darauf hin und stellt klar, dass die "
+                "bis dahin erzeugten Teilergebnisse und Dateien gültig und "
+                "nutzbar sind.",
+        "audience": "user",
+        "versions": ["9.291.3", "9.291.4"],
+    },
+    {
         "version": "9.291.0",
         "date": "2026-07-07",
         "title": "Bild-Anhänge funktionieren mit jedem Modell",

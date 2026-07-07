@@ -1,5 +1,18 @@
 // panels_artifacts.js — attachments fullview, artifacts, memory/knowledge graph. Split from panels.js (Tier F Phase 3). Global <script>, no modules.
 
+// Auth'd download URL for an attachment's disk path. Workflow-run inputs live
+// under /tmp/brain-workflow-uploads/<exec>/, which the general
+// /v1/files/download validator rejects — those must use the run-scoped endpoint
+// (gated on the run having touched the path). `a.wfExecId` is set by
+// collectChatAttachments for workflow-run synthetic-turn files.
+function _attachDownloadUrl(a) {
+  if (a && a.wfExecId) {
+    return `${BASE_URL}/v1/workflows/history/${encodeURIComponent(a.wfExecId)}/file`
+      + `?path=${encodeURIComponent(a.path)}`;
+  }
+  return `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+}
+
 function collectChatAttachments() {
   const chat = state.activeChat;
   if (!chat) return [];
@@ -24,6 +37,31 @@ function collectChatAttachments() {
           attachments.push({ url: `data:${f.type};base64,${f.data}`, name: f.name || 'Image', type: f.type || '', isImage: true, msgIndex: i, data: f.data });
         } else {
           attachments.push({ name: f.name || 'File', type: f.type || '', isImage: false, msgIndex: i, data: f.data });
+        }
+      }
+    }
+    // Workflow-run synthetic user turns (v9.291.4): the uploaded input file is
+    // attached to the user turn as `_files` [{path, ...}] by
+    // _wfSyncTranscriptMessages — NOT `files`/`images`, so the branches above
+    // miss it and the upload never reaches the Anhänge tab (it only showed as a
+    // 📎 in the message flow). We're already scoped to user/human turns, so
+    // these are inputs, not generated outputs. Build a path-based file card,
+    // matching the disk-saved-file shape below.
+    if (Array.isArray(msg._files) && msg._wfSynthetic) {
+      // Upload paths live under /tmp/brain-workflow-uploads/<exec>/, which the
+      // general /v1/files/download validator REJECTS — the preview must go
+      // through the run-scoped endpoint (GET /v1/workflows/history/<exec>/file).
+      // Tag the card with the exec id so the image branch picks the right URL.
+      const wfExecId = chat.workflow_run_id || (typeof wfBanner === 'object' && wfBanner.execId) || '';
+      for (const f of msg._files) {
+        const fpath = f?.path || '';
+        if (!fpath) continue;
+        const fname = String(fpath).split('/').pop();
+        const ext = (fname.split('.').pop() || '').toLowerCase();
+        const isImg = ['png','jpg','jpeg','gif','webp','svg','bmp','ico'].includes(ext);
+        if (!attachments.some(a => a.name === fname && a.msgIndex === i)) {
+          attachments.push({ name: fname, type: '', isImage: isImg, msgIndex: i,
+                             path: fpath, wfExecId });
         }
       }
     }
@@ -216,7 +254,7 @@ async function _fetchAttachmentBody(a) {
   }
   if (a.path) {
     try {
-      const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+      const url = _attachDownloadUrl(a);
       const resp = await fetch(url, { headers: API._headers() });
       if (!resp.ok) {
         const res = { ok: false, error: `HTTP ${resp.status}` };
@@ -304,11 +342,11 @@ async function _renderAttachmentFullview() {
     return;
   }
   if (a.isImage && a.path) {
-    // Disk-saved image, no inline bytes — load via /v1/files/download as a
-    // blob URL.
+    // Disk-saved image, no inline bytes — load as a blob URL. Workflow-run
+    // inputs use the run-scoped endpoint (see _attachDownloadUrl).
     renderShell(`<div style="color:var(--text-400);font-size:12px">Wird geladen …</div>`);
     try {
-      const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+      const url = _attachDownloadUrl(a);
       const resp = await fetch(url, { headers: API._headers() });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const blob = await resp.blob();
@@ -332,7 +370,7 @@ async function _renderAttachmentFullview() {
         const blob = await r.blob();
         objUrl = URL.createObjectURL(blob);
       } else {
-        const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+        const url = _attachDownloadUrl(a);
         const resp = await fetch(url, { headers: API._headers() });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const blob = await resp.blob();
@@ -481,7 +519,7 @@ async function downloadAttachment() {
   // Disk path → server download
   if (a.path) {
     try {
-      const url = `${BASE_URL}/v1/files/download?path=${encodeURIComponent(a.path)}`;
+      const url = _attachDownloadUrl(a);
       const resp = await fetch(url, { headers: API._headers() });
       if (!resp.ok) {
         const err = await resp.text().catch(() => '');

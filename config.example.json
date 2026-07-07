@@ -69,7 +69,22 @@
         }
       ],
       "is_local": false,
-      "_comment": "Kilo aggregator (openrouter dialect) DIRECT — was fronted by CLIProxyAPI until 9.278.0. Serves glm/kimi/deepseek/gemma-cloud; base_model_id carries the upstream id (z-ai/*, moonshotai/*, deepseek/*:discounted)."
+      "_comment": "Kilo aggregator (openrouter dialect) DIRECT — was fronted by CLIProxyAPI until 9.278.0. Serves deepseek/gemma-cloud; base_model_id carries the upstream id (deepseek/*:discounted, google/gemma-4-*). glm+kimi moved to their own direct coding-plan providers in 9.292.0 (Kilo's BYOK layer rate-limited GLM with 429s while the GLM plan itself was fine)."
+    },
+    "zai-coding": {
+      "base_url": "https://api.z.ai/api/coding/paas/v4",
+      "type": "openai",
+      "api_key": "YOUR_API_KEY",
+      "is_local": false,
+      "_comment": "GLM Coding Plan DIRECT (z.ai) — moved off Kilo in 9.292.0; model id is the plain plan id (glm-5.2), not the Kilo-scoped zai-coding/* form."
+    },
+    "kimi-coding": {
+      "base_url": "https://api.kimi.com/coding/v1",
+      "type": "openai",
+      "wire_api": "anthropic",
+      "api_key": "YOUR_API_KEY",
+      "is_local": false,
+      "_comment": "Kimi Coding Plan DIRECT (kimi.com) — moved off Kilo in 9.292.0. Model kimi-for-coding (K2.7 Code, thinking-ONLY, 262k ctx). wire_api:anthropic (9.293.0): the OpenAI endpoint (/chat/completions) rejects reasoning_effort:none (400) and is unstable with tools; the Anthropic endpoint (/v1/messages) supports thinking:{type:disabled} + tools together — verified vs Kilo. Brain speaks the Anthropic wire for this provider via llm_loop's adapter."
     }
   },
   "ocr": {
@@ -2571,7 +2586,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "Kilo",
+      "provider": "zai-coding",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2682,13 +2697,13 @@
           }
         }
       },
-      "base_model_id": "zai-coding/glm-5.2",
+      "base_model_id": "glm-5.2",
       "coding_plan": "glm-lite"
     },
     "kimi-k2.6": {
       "enabled": true,
-      "shortname": "kimi-k2.6",
-      "display_name": "kimi-k2.6",
+      "shortname": "kimi-k2.7",
+      "display_name": "kimi-k2.7",
       "icon": "🤖",
       "priority": 50,
       "capabilities": [
@@ -2699,7 +2714,7 @@
         "image/*"
       ],
       "thinking_format": "reasoning_field",
-      "provider": "Kilo",
+      "provider": "kimi-coding",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2810,7 +2825,7 @@
           }
         }
       },
-      "base_model_id": "kimi-coding/kimi-for-coding",
+      "base_model_id": "kimi-for-coding",
       "coding_plan": "kimi-moderato"
     },
     "zai-coding/glm-5.2": {
@@ -2974,6 +2989,126 @@
       "raw_formats": [],
       "thinking_format": "none",
       "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "glm-4.5": {
+      "enabled": false,
+      "shortname": "glm-4.5",
+      "display_name": "glm-4.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "zai-coding",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "glm-4.5-air": {
+      "enabled": false,
+      "shortname": "glm-4.5-air",
+      "display_name": "glm-4.5-air",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "zai-coding",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "glm-4.6": {
+      "enabled": false,
+      "shortname": "glm-4.6",
+      "display_name": "glm-4.6",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "zai-coding",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "glm-4.7": {
+      "enabled": false,
+      "shortname": "glm-4.7",
+      "display_name": "glm-4.7",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "zai-coding",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "glm-5": {
+      "enabled": false,
+      "shortname": "glm-5",
+      "display_name": "glm-5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "zai-coding",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "glm-5-turbo": {
+      "enabled": false,
+      "shortname": "glm-5-turbo",
+      "display_name": "glm-5-turbo",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "zai-coding",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "glm-5.1": {
+      "enabled": false,
+      "shortname": "glm-5.1",
+      "display_name": "glm-5.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "zai-coding",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "kimi-for-coding": {
+      "enabled": false,
+      "shortname": "kimi-for-coding",
+      "display_name": "kimi-for-coding",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "kimi-coding",
       "profile": "balanced",
       "_caps_canonical": true
     }
@@ -5813,8 +5948,7 @@
         "kimi-k2.6",
         "deepseek-v4-flash",
         "mistral-small-latest",
-        "deepseek-v4-pro",
-        "gemma-4-12B-it-qat-4bit"
+        "deepseek-v4-pro"
       ],
       "analysis": [
         "glm-5.2",
@@ -5822,8 +5956,7 @@
         "kimi-k2.6",
         "deepseek-v4-flash",
         "mistral-small-latest",
-        "deepseek-v4-pro",
-        "gemma-4-12B-it-qat-4bit"
+        "deepseek-v4-pro"
       ],
       "reporting": [
         "glm-5.2",
@@ -5868,7 +6001,7 @@
       "fast": "glm-5.2"
     },
     "executor_verify_max_rounds": 2,
-    "allow_local_executor": true,
+    "allow_local_executor": false,
     "delegate_requires_web": true
   },
   "benchmark_official": {

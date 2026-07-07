@@ -765,9 +765,19 @@ class AdminWorkflowHandlers:
                 if realpath in existing_paths:
                     continue
                 ext = name.rsplit(".", 1)[-1].lower() if "." in name else "file"
+                # v9.291.3: store the SAME artifact `type` a normal chat write
+                # uses (brain._ARTIFACT_TYPE_MAP: jpg/png→'image', md→'markdown',
+                # …), NOT the raw extension. The content endpoint gates binary
+                # handling on type in ('image','document','audio') and the viewer
+                # switches on type==='image' — with the raw ext ('jpg') an image
+                # was served as decoded UTF-8 and rendered as a raw binary stream
+                # (the "workflow run shows only the binary stream" bug). Falls
+                # back to 'code' exactly like the normal path.
+                from brain import _ARTIFACT_TYPE_MAP
+                artifact_type = _ARTIFACT_TYPE_MAP.get(ext, "code")
                 art_id = uuid.uuid4().hex[:12]
                 ChatDB.create_artifact(art_id, session_id, agent_id, name,
-                                       realpath, ext, role="output")
+                                       realpath, artifact_type, role="output")
                 # Optional content snapshot — gives the viewer something to
                 # render without a separate disk-read endpoint, AND survives
                 # the underlying file getting deleted from /tmp.
@@ -918,6 +928,35 @@ class AdminWorkflowHandlers:
             for p in json.loads(row.get("output_paths_json") or "[]"):
                 if p:
                     claim(str(p), "output")
+        except Exception:
+            pass
+        # v9.291.3: SCAN the run's artifact folder — the authoritative source of
+        # run OUTPUTS. agent_step's executor writes files with arbitrary tools
+        # (python_exec/code_exec/render_diagram/…) into the run's shared artifact
+        # folder; those writes never reach steps_json or output_paths_json (only
+        # a curated write-tool whitelist is tracked), so regex/path parsing above
+        # misses them entirely (the "output mentions ela_result.jpg but it's not
+        # in artifacts" bug). Every file physically present in that folder IS an
+        # output of this run. Derive the folder from a known output path's dir
+        # (reliable even if the run is reopened on a later date — the folder name
+        # bakes in the run's own date). Files already claimed as INPUT (uploads)
+        # keep that role via the order-guard in claim().
+        try:
+            # Folder name is "<date>_wf-<exec_id>" (see _get_artifact_session_folder
+            # with session_id="wf-<exec_id>"), so match the wf-<exec_id> SUFFIX,
+            # not the whole basename.
+            run_suffix = f"wf-{exec_id}"
+            scan_dirs = set()
+            for real, role in list(classified.items()):
+                if role == "output":
+                    d = os.path.dirname(real)
+                    if os.path.basename(d).endswith(run_suffix) and os.path.isdir(d):
+                        scan_dirs.add(d)
+            for d in scan_dirs:
+                for name in os.listdir(d):
+                    fp = os.path.join(d, name)
+                    if os.path.isfile(fp):
+                        claim(fp, "output")
         except Exception:
             pass
         return row, classified

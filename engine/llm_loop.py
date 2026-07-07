@@ -321,7 +321,7 @@ def build_openai_payload(
 
 class _RoundResult:
     __slots__ = ("text", "reasoning", "tool_calls", "usage", "finish_reason",
-                 "raw_bytes", "got_done", "error_payload")
+                 "raw_bytes", "got_done", "error_payload", "_anth_cache_read")
 
     def __init__(self):
         self.text = ""
@@ -330,6 +330,7 @@ class _RoundResult:
         self.usage: dict = {}
         self.finish_reason = ""
         self.raw_bytes = 0
+        self._anth_cache_read = 0  # Anthropic-wire: cache_read_input_tokens
         # True iff the stream terminated properly ([DONE] marker seen). False
         # means the upstream socket ended mid-generation — the round result is
         # a TRUNCATED partial, not a finished answer (the "user must type
@@ -446,6 +447,248 @@ def _drain_openai_stream_inner(resp, emit_delta, round_no: int,
     # the caller treats the round as truncated.
 
 
+# ---------- Anthropic wire adapter (wire_api="anthropic") ----------
+#
+# Some providers expose a Messages-API endpoint (`/v1/messages`) that behaves
+# DIFFERENTLY from their OpenAI-compat `/chat/completions` for the same upstream
+# model. Concretely: the Kimi coding plan (kimi-for-coding = K2.7 Code, a
+# thinking-ONLY model) can be told to skip thinking via `thinking:{type:"disabled"}`
+# on the Anthropic endpoint — combined with tools — whereas its OpenAI endpoint
+# rejects `reasoning_effort:"none"` (400) and is unstable with tools. This
+# adapter speaks the Anthropic wire for those providers, filling the SAME
+# `_RoundResult` so everything downstream in run_loop is unchanged. Selected per
+# provider via the `wire_api` config flag (default "openai").
+
+
+def build_anthropic_payload(
+    *,
+    model: str,
+    system_prompt: str,
+    messages: list[dict],
+    tools: list[dict],
+    max_tokens: int,
+    sampling: dict,
+    thinking_level: str | None,
+    forced_tool: dict | None,
+) -> dict:
+    """Assemble the Anthropic /v1/messages payload for one round, from the same
+    inputs build_openai_payload takes. `messages` is the OpenAI-shape loop list
+    (role/content + tool exchanges); we translate to Anthropic message blocks.
+    """
+    anth_messages = _openai_messages_to_anthropic(messages)
+
+    payload: dict[str, Any] = {
+        "model": engine.get_api_model_id(model),
+        "max_tokens": int(max_tokens),
+        "messages": anth_messages,
+        "stream": True,
+    }
+    if system_prompt:
+        payload["system"] = system_prompt
+
+    # Thinking OFF unless the UI asked for a level. Anthropic-shape switch is
+    # thinking:{type} — "disabled" is what the Kimi coding endpoint accepts to
+    # actually suppress reasoning (reasoning_effort:"none" is rejected there).
+    if thinking_level and thinking_level not in ("off", "none"):
+        # budget_tokens must be < max_tokens; give reasoning a generous share.
+        _budget = max(1024, int(max_tokens) // 2)
+        payload["thinking"] = {"type": "enabled", "budget_tokens": _budget}
+    else:
+        payload["thinking"] = {"type": "disabled"}
+
+    if tools:
+        payload["tools"] = _openai_tools_to_anthropic(tools)
+    if forced_tool:
+        payload["tools"] = _openai_tools_to_anthropic([{
+            "type": "function", "function": forced_tool}])
+        payload["tool_choice"] = {"type": "tool", "name": forced_tool["name"]}
+
+    # Sampling: Anthropic accepts temperature/top_p/top_k at top level.
+    for key in ("temperature", "top_p", "top_k"):
+        if key in sampling and sampling[key] is not None:
+            payload[key] = sampling[key]
+    if sampling.get("stop_sequences"):
+        payload["stop_sequences"] = sampling["stop_sequences"]
+
+    return payload
+
+
+def _openai_tools_to_anthropic(tools: list[dict]) -> list[dict]:
+    """OpenAI {type:function, function:{name,description,parameters}} →
+    Anthropic {name, description, input_schema}."""
+    out = []
+    for t in tools or []:
+        fn = t.get("function") if isinstance(t, dict) and "function" in t else t
+        if not isinstance(fn, dict) or not fn.get("name"):
+            continue
+        out.append({
+            "name": fn["name"],
+            "description": fn.get("description", "") or "",
+            "input_schema": fn.get("parameters")
+            or {"type": "object", "properties": {}},
+        })
+    return out
+
+
+def _openai_messages_to_anthropic(messages: list[dict]) -> list[dict]:
+    """Translate the OpenAI-shape loop messages (which include assistant
+    tool_calls and role:"tool" results) into Anthropic message blocks.
+
+    - assistant text + tool_calls → one assistant message with text +
+      tool_use blocks
+    - role:"tool" → user message with a tool_result block (Anthropic carries
+      tool results in the USER turn)
+    - system messages are handled by the top-level `system` field, not here
+    """
+    out: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        content = m.get("content")
+        if role == "system":
+            continue  # top-level system field
+        if role == "tool":
+            out.append({"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": m.get("tool_call_id") or m.get("tool_use_id") or "",
+                "content": content if isinstance(content, str) else _block_text(content),
+            }]})
+            continue
+        if role == "assistant":
+            blocks: list[dict] = []
+            if isinstance(content, str) and content:
+                blocks.append({"type": "text", "text": content})
+            elif isinstance(content, list):
+                _t = _block_text(content)
+                if _t:
+                    blocks.append({"type": "text", "text": _t})
+            for tc in m.get("tool_calls") or []:
+                fn = tc.get("function") or {}
+                args = fn.get("arguments")
+                if isinstance(args, str):
+                    parsed = _parse_tool_input_json(args)
+                    args = parsed if parsed is not None else {}
+                blocks.append({
+                    "type": "tool_use",
+                    "id": tc.get("id") or "",
+                    "name": fn.get("name") or "",
+                    "input": args or {},
+                })
+            if not blocks:
+                blocks = [{"type": "text", "text": ""}]
+            out.append({"role": "assistant", "content": blocks})
+            continue
+        # user (or anything else) → plain content
+        if isinstance(content, str):
+            out.append({"role": "user", "content": content})
+        elif isinstance(content, list):
+            out.append({"role": "user", "content": content})
+        else:
+            out.append({"role": "user", "content": str(content or "")})
+    return out
+
+
+def _drain_anthropic_stream(resp, emit_delta: Callable[[str, str], None],
+                            round_no: int) -> _RoundResult:
+    """Drain one Anthropic /v1/messages SSE response into the SAME _RoundResult
+    shape the OpenAI drain produces, so run_loop is wire-agnostic downstream.
+
+    Anthropic event vocabulary: message_start / content_block_start (text |
+    thinking | tool_use) / content_block_delta (text_delta | thinking_delta |
+    input_json_delta) / content_block_stop / message_delta (stop_reason +
+    output usage) / message_stop. NB: this endpoint emits `event:<type>` with NO
+    space after the colon; we key off the `type` field in the data line anyway.
+    """
+    rr = _RoundResult()
+    try:
+        _drain_anthropic_stream_inner(resp, emit_delta, round_no, rr)
+    except RuntimeError:
+        raise
+    except Exception:
+        pass
+    return rr
+
+
+def _drain_anthropic_stream_inner(resp, emit_delta, round_no: int,
+                                  rr: _RoundResult) -> None:
+    buf = b""
+    # index → tool slot, mirroring the OpenAI drain's rr.tool_calls (by index).
+    block_kind: dict[int, str] = {}
+    in_tokens = 0
+    for raw in resp:
+        rr.raw_bytes += len(raw)
+        if rr.raw_bytes > _MAX_STREAM_BYTES:
+            raise RuntimeError(
+                f"stream exceeded {_MAX_STREAM_BYTES} bytes in round {round_no}")
+        buf += raw
+        while b"\n" in buf:
+            line, buf = buf.split(b"\n", 1)
+            s = line.decode("utf-8", "replace").strip()
+            if not s or s.startswith(":") or s.startswith("event:"):
+                continue
+            if not s.startswith("data:"):
+                continue
+            payload = s[5:].strip()
+            try:
+                ev = json.loads(payload)
+            except Exception:
+                continue
+            etype = ev.get("type")
+            if etype == "error" or (ev.get("error") and not etype):
+                rr.error_payload = ev.get("error") or ev
+                return
+            if etype == "message_start":
+                u = (ev.get("message") or {}).get("usage") or {}
+                in_tokens = int(u.get("input_tokens", 0) or 0)
+                # cache read reported on the input side.
+                rr._anth_cache_read = int(  # type: ignore[attr-defined]
+                    u.get("cache_read_input_tokens", 0) or 0)
+            elif etype == "content_block_start":
+                idx = ev.get("index", 0)
+                cb = ev.get("content_block") or {}
+                kind = cb.get("type")
+                block_kind[idx] = kind
+                if kind == "tool_use":
+                    slot = rr.tool_calls.setdefault(
+                        idx, {"id": "", "name": "", "args": ""})
+                    slot["id"] = cb.get("id") or slot["id"]
+                    slot["name"] = cb.get("name") or slot["name"]
+            elif etype == "content_block_delta":
+                idx = ev.get("index", 0)
+                delta = ev.get("delta") or {}
+                dtype = delta.get("type")
+                if dtype == "text_delta":
+                    t = delta.get("text") or ""
+                    if t:
+                        rr.text += t
+                        emit_delta("text", t)
+                elif dtype == "thinking_delta":
+                    t = delta.get("thinking") or ""
+                    if t:
+                        rr.reasoning += t
+                        emit_delta("thinking", t)
+                elif dtype == "input_json_delta":
+                    slot = rr.tool_calls.setdefault(
+                        idx, {"id": "", "name": "", "args": ""})
+                    slot["args"] += delta.get("partial_json") or ""
+            elif etype == "message_delta":
+                d = ev.get("delta") or {}
+                if d.get("stop_reason"):
+                    rr.finish_reason = d["stop_reason"]
+                u = ev.get("usage") or {}
+                out_tokens = int(u.get("output_tokens", 0) or 0)
+                # Assemble an OpenAI-shape usage dict so run_loop's existing
+                # split (prompt/cached/completion) works unchanged.
+                cached = getattr(rr, "_anth_cache_read", 0) or 0
+                rr.usage = {
+                    "prompt_tokens": in_tokens + cached,
+                    "prompt_tokens_details": {"cached_tokens": cached},
+                    "completion_tokens": out_tokens,
+                }
+            elif etype == "message_stop":
+                rr.got_done = True
+                return
+
+
 # ---------- Tool dispatch (direct, in-process) ----------
 
 def _looks_like_error(s: str) -> bool:
@@ -516,6 +759,7 @@ def run_loop(
     base_url: str,
     emit: Callable[[str, dict], None],
     is_cancelled: Callable[[], bool],
+    wire_api: str | None = None,
     tool_use_id_setter: Callable[[str], None] | None = None,
     pause_gate: Callable[[], None] | None = None,
     drain_injections: Callable[[], list[str]] | None = None,
@@ -556,8 +800,24 @@ def run_loop(
     extraction in sidecar_proxy.background_call/helpdesk_call keeps working.
     """
     loop_messages = _to_openai_messages(messages)
-    endpoint = base_url.rstrip("/") + "/chat/completions"
-    headers = engine.make_headers(api_key)
+    # Wire protocol: honour an explicit override, else resolve from the model's
+    # provider (single source of truth). Default "openai" for every provider
+    # except those flagged wire_api:"anthropic" (e.g. Kimi coding plan, whose
+    # /v1/messages endpoint is the only one that supports thinking-off + tools).
+    if wire_api is None:
+        try:
+            wire_api = (engine.resolve_provider_for_model(model)
+                        or {}).get("wire_api", "openai")
+        except Exception:
+            wire_api = "openai"
+    _anthropic_wire = (wire_api or "openai").lower() == "anthropic"
+    if _anthropic_wire:
+        endpoint = base_url.rstrip("/") + "/messages"
+        headers = dict(engine.make_headers(api_key))
+        headers["anthropic-version"] = "2023-06-01"
+    else:
+        endpoint = base_url.rstrip("/") + "/chat/completions"
+        headers = engine.make_headers(api_key)
 
     usage_total = {"input_tokens": 0, "output_tokens": 0,
                    "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0}
@@ -652,12 +912,18 @@ def run_loop(
 
         _report_progress(round=round_no, phase="round_start", active_tool=None)
 
-        payload = build_openai_payload(
-            model=model, system_prompt=system_prompt, messages=loop_messages,
-            tools=tools, max_tokens=max_tokens, sampling=sampling,
-            thinking_level=thinking_level,
-            disable_parallel_tool_use=disable_parallel_tool_use,
-            prompt_cache_key=prompt_cache_key, forced_tool=forced_tool)
+        if _anthropic_wire:
+            payload = build_anthropic_payload(
+                model=model, system_prompt=system_prompt, messages=loop_messages,
+                tools=tools, max_tokens=max_tokens, sampling=sampling,
+                thinking_level=thinking_level, forced_tool=forced_tool)
+        else:
+            payload = build_openai_payload(
+                model=model, system_prompt=system_prompt, messages=loop_messages,
+                tools=tools, max_tokens=max_tokens, sampling=sampling,
+                thinking_level=thinking_level,
+                disable_parallel_tool_use=disable_parallel_tool_use,
+                prompt_cache_key=prompt_cache_key, forced_tool=forced_tool)
 
         # --- live-delta emit closures (mirror the translated sidecar events) ---
         _thinking_started = {"v": False}
@@ -716,7 +982,10 @@ def run_loop(
             _wt = threading.Thread(target=_watch, daemon=True,
                                    name=f"llm-loop-cancel-{round_no}")
             _wt.start()
-            rr = _drain_openai_stream(resp, _emit_delta, round_no)
+            if _anthropic_wire:
+                rr = _drain_anthropic_stream(resp, _emit_delta, round_no)
+            else:
+                rr = _drain_openai_stream(resp, _emit_delta, round_no)
         except Exception as e:
             _stop_watch.set()
             if is_cancelled():

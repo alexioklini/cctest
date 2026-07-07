@@ -3974,11 +3974,18 @@ def main():
     # in the DB forever and showed up in the project chat list as
     # "Untitled". Pre-creation was removed in 8.18.2; this cleans up the
     # historical orphans. Idempotent — safe to keep running on every start.
+    # NB: workflow-run sessions (workflow_run_id set, status 'workflow_run')
+    # legitimately carry ZERO real message rows — their content is the run's
+    # synthetic client-side transcript, backed by workflow_history + on-disk
+    # artifacts. Excluding them here keeps a restart from silently deleting the
+    # user's bound run chats (they'd otherwise re-mint on next open, but the
+    # sidebar entry + seeded artifacts would vanish on every restart).
     try:
         with _db_conn() as conn:
             cutoff = time.time() - 300  # 5 minutes
             cur = conn.execute(
-                "DELETE FROM sessions WHERE last_active < ? AND id IN ("
+                "DELETE FROM sessions WHERE last_active < ? "
+                "AND COALESCE(workflow_run_id, '') = '' AND id IN ("
                 "  SELECT s.id FROM sessions s WHERE NOT EXISTS ("
                 "    SELECT 1 FROM messages m WHERE m.session_id = s.id"
                 "  )"

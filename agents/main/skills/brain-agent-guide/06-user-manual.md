@@ -1253,8 +1253,19 @@ Seitenleiste** (öffnen über den Seitenleisten-Knopf oben rechts):
 - **Quellcode** — der `.flow`-Quelltext des Workflows.
 - **Protokoll** — das Schritt-für-Schritt-Ausführungsprotokoll (jeder
   Werkzeug-Aufruf mit Ein- und Ausgabe, Fehler, Rückgabewert).
-- **Dateien** (der normale Artefakt-Reiter) — die vom Lauf erzeugten
-  Ausgabedateien, ansehen und herunterladen wie in jedem Chat.
+- **Dateien** (der normale Artefakt-Reiter) — **alle** vom Lauf erzeugten
+  Ausgabedateien, ansehen und herunterladen wie in jedem Chat. Das umfasst
+  auch Dateien, die ein Schritt selbst per Skript geschrieben hat (z. B.
+  Zwischenbilder oder Mess-Protokolle) — der gesamte Arbeitsordner des Laufs
+  wird erfasst, nicht nur die direkt vom `.flow` geschriebenen Dateien
+  (9.291.3). Die hochgeladenen **Eingabedateien** erscheinen — wie bei einem
+  normalen Chat — im **Anhänge**-Reiter (ansehen/herunterladen; Bilder mit
+  Vorschau) und zusätzlich als **Referenz** im Referenzen-Reiter (9.291.4).
+
+Bricht ein Lauf **vorzeitig** ab (z. B. weil ein Anbieter ein Nutzungslimit /
+Rate-Limit meldet), steht oben im Verlauf ein deutlicher Hinweis, und die bis
+dahin erzeugten Teilergebnisse und Dateien bleiben gültig und nutzbar
+(9.291.3).
 
 ---
 

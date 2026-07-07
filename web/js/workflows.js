@@ -1960,6 +1960,21 @@ function _wfSyncTranscriptMessages() {
       ? transcript.map((m, i) => (m && m._wf_live ? i : -1)).filter(i => i >= 0).pop()
       : -1;
     const paused = !!data.paused;
+    // v9.291.3: a run that FAILED/was CANCELLED mid-way but still produced a
+    // transcript (partial work + artifacts) is confusing — the steps below look
+    // complete, yet the run is marked failed. Prepend a concise note so the user
+    // knows WHY it stopped (e.g. a transient 429 rate-limit on the final step)
+    // and that the partial results/artifacts below are still usable.
+    if (!isLive && (status === 'failed' || status === 'cancelled') && transcript.length) {
+      const err = (data.error || '').trim();
+      const rate = /\b429\b|rate limit|too many requests/i.test(err);
+      const head = status === 'cancelled' ? 'Lauf abgebrochen' : 'Lauf vorzeitig beendet';
+      const hint = rate
+        ? 'Ein Schritt lief auf ein **Rate-Limit des Anbieters (HTTP 429)** — die bis dahin erzeugten Ergebnisse und Dateien unten sind gültig und im Dateien-Reiter verfügbar.'
+        : 'Die bis dahin erzeugten Ergebnisse und Dateien unten sind verfügbar (Dateien-Reiter).';
+      synth.push({ role: 'assistant', _wfSynthetic: true,
+        content: `> ⚠️ **${head}.** ${hint}` + (err ? `\n>\n> \`${err.replace(/`/g, "'").slice(0, 400)}\`` : '') });
+    }
     for (let ti = 0; ti < transcript.length; ti++) {
       const m = transcript[ti];
       // A step turn carrying _wf_events expands into REAL chat rows (thinking /

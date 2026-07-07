@@ -152,6 +152,7 @@ class ProvidersHandlerMixin:
                 "default_model": p.get("default_model", ""),
                 "use_sdk": p.get("use_sdk", True),
                 "is_local": bool(p.get("is_local", False)),
+                "wire_api": (p.get("wire_api") or "openai").lower(),
                 "models": all_models,
                 "model_count": len(all_models),
                 "enabled_count": len(enabled_models),

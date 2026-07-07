@@ -657,6 +657,7 @@ async function _genTab_providers(C) {
             <div style="${G('8px')}">
               <div><label class="form-label">Basis-URL</label><input class="form-input" id="${pid}-url" value="${esc(p.base_url||'')}"></div>
               <div><label class="form-label">Standardmodell</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
+              <div><label class="form-label">Wire-API${helpIcon('Protokoll für die Requests an diesen Provider. „OpenAI" (Standard) = /chat/completions. „Anthropic" = /v1/messages (Messages-API) — nötig z. B. für den Kimi-Coding-Plan, dessen OpenAI-Endpunkt Thinking-Aus mit Tools ablehnt, während der Anthropic-Endpunkt beides kann.')}</label><select class="form-input" id="${pid}-wire-api"><option value="openai"${(p.wire_api||'openai')!=='anthropic'?' selected':''}>OpenAI (/chat/completions)</option><option value="anthropic"${(p.wire_api||'openai')==='anthropic'?' selected':''}>Anthropic (/v1/messages)</option></select></div>
               <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="${pid}-is-local"${p.is_local?' checked':''}> Lokaler Provider${helpIcon('Markiert diesen Provider als „läuft auf diesem Gerät". Lokale Modelle umgehen den harten PII-/DSGVO-Block und die Kostenkontingente (es entstehen keine Cloud-Kosten und die Daten verlassen das Gerät nicht).')}</label></div>
               <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Einstellungen speichern</button></div>
             </div>
@@ -670,6 +671,7 @@ async function _genTab_providers(C) {
           <div><label class="form-label">Basis-URL</label><input class="form-input" id="prov-url" placeholder="http://localhost:8081/v1"></div>
           <div><label class="form-label">API-Schlüssel</label><input class="form-input" id="prov-key" placeholder="sk-..." type="password"></div>
           <div><label class="form-label">Standardmodell</label><input class="form-input" id="prov-model" placeholder="Modellname (optional)"></div>
+          <div><label class="form-label">Wire-API${helpIcon('Protokoll für die Requests an diesen Provider. „OpenAI" (Standard) = /chat/completions. „Anthropic" = /v1/messages (Messages-API).')}</label><select class="form-input" id="prov-wire-api"><option value="openai" selected>OpenAI (/chat/completions)</option><option value="anthropic">Anthropic (/v1/messages)</option></select></div>
           <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="prov-is-local"> Lokaler Provider${helpIcon('Markiert diesen Provider als „läuft auf diesem Gerät". Lokale Modelle umgehen den harten PII-/DSGVO-Block und die Kostenkontingente (es entstehen keine Cloud-Kosten und die Daten verlassen das Gerät nicht).')}</label></div>
           <div style="display:flex;gap:8px">
             <button class="btn-secondary" onclick="testNewProvider()">Verbindung testen</button>

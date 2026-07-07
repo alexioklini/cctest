@@ -21,6 +21,7 @@
     "_ArtPreviewCache": "writable",
     "_ATTACH_REVIEW_BADGE": "writable",
     "_ATTACH_TEXT_EXTS": "writable",
+    "_attachDownloadUrl": "writable",
     "_attachIdent": "writable",
     "_attachmentBodyCache": "writable",
     "_attachmentSourceMode": "writable",
