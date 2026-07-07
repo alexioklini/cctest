@@ -173,7 +173,9 @@ class AdminWorkflowHandlers:
             agent_id=agent_id, source_kind=kind, source_ref=source_ref,
             source_text=source_text,
             instructions=str(body.get("instructions") or ""),
-            attachments=attachments, user_id=au.get("id") or "")
+            attachments=attachments, user_id=au.get("id") or "",
+            skill_ref=str(body.get("skill_ref") or ""),
+            extract_skill=bool(body.get("extract_skill")))
         self._send_json({"gen_id": gen_id, "status": "generating"})
 
     def _workflow_gen_row_checked(self, path):

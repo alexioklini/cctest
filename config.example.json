@@ -3111,6 +3111,36 @@
       "provider": "kimi-coding",
       "profile": "balanced",
       "_caps_canonical": true
+    },
+    "aion-labs/aion-3.0-mini": {
+      "enabled": false,
+      "shortname": "aion-3.0-mini",
+      "display_name": "aion-3.0-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "aion-labs/aion-3.0": {
+      "enabled": false,
+      "shortname": "aion-3.0",
+      "display_name": "aion-3.0",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

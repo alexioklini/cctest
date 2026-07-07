@@ -1872,10 +1872,20 @@ def _embed_and_store_skill(uid: str, slug: str, text: str) -> bool:
         return False
 
 
-def _search_skills_semantic(uid: str, task: str, limit: int = 8) -> list[dict]:
-    """Vector-search the user's skill drawers by task. Returns
-    [{slug, text, score}] ranked by similarity, or [] on any failure."""
-    if not (uid and (task or "").strip()):
+def _search_skills_semantic(task: str, visible: dict, limit: int = 8) -> list[dict]:
+    """Vector-search skill drawers ACROSS every wing that holds a skill VISIBLE
+    to the caller — their own `user__<uid>` wing AND the owner wings of skills
+    shared with them (team/global). `visible` is {owner_uid: set(slugs)} (built
+    by find_skills from list_user_skills, which is already ACL-filtered), so a
+    hit only survives if its (owner, slug) is in that map — no cross-tenant leak
+    even though we query foreign wings. Returns [{slug, text, score}] ranked by
+    similarity, or [] on any failure.
+
+    Cross-wing correctness: a shared skill's drawer lives in the OWNER's
+    `user__<owner>` wing (that's where it was embedded on save). We derive the
+    exact owner wings from `visible` and query them with `wing $in`, then keep
+    only hits whose source_file `skill/<owner>/<slug>` matches a visible pair."""
+    if not (task or "").strip() or not visible:
         return []
     pp = _skills_palace_path()
     if not pp:
@@ -1885,9 +1895,16 @@ def _search_skills_semantic(uid: str, task: str, limit: int = 8) -> list[dict]:
         col = get_collection(pp, create=False)
         if col is None:
             return []
+        wings = [_skill_wing(o) for o in visible.keys() if o]
+        if not wings:
+            return []
+        wing_clause = ({"wing": wings[0]} if len(wings) == 1
+                       else {"wing": {"$in": wings}})
+        # Over-fetch: a foreign wing may return non-skill drawers we then drop,
+        # so ask for more than `limit` and trim after the visibility filter.
         res = col.query(
-            query_texts=[task], n_results=max(1, limit),
-            where={"$and": [{"wing": _skill_wing(uid)}, {"room": "skills"}]},
+            query_texts=[task], n_results=max(limit * 3, 12),
+            where={"$and": [wing_clause, {"room": "skills"}]},
             include=["documents", "metadatas", "distances"])
         docs = (res.get("documents") or [[]])[0]
         metas = (res.get("metadatas") or [[]])[0]
@@ -1895,12 +1912,16 @@ def _search_skills_semantic(uid: str, task: str, limit: int = 8) -> list[dict]:
         out = []
         for doc, meta, dist in zip(docs, metas, dists):
             sf = (meta or {}).get("source_file", "") or ""
-            slug = sf.split("/")[-1] if sf.startswith(f"skill/{uid}/") else ""
-            if not slug:
+            # source_file = "skill/<owner>/<slug>"
+            parts = sf.split("/")
+            if len(parts) < 3 or parts[0] != "skill":
                 continue
+            owner, slug = parts[1], parts[-1]
+            if slug not in (visible.get(owner) or set()):
+                continue  # not visible to this caller → drop (leak guard)
             out.append({"slug": slug, "text": doc or "",
                         "score": round(max(0.0, 1.0 - float(dist or 0.0)), 3)})
-        return out
+        return out[:limit]
     except Exception:
         return []
 

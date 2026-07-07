@@ -1671,6 +1671,8 @@ class BrainAgentHandler(
             self._handle_agents_activity()
         elif path.startswith("/v1/workflows/generate/"):
             self._handle_workflow_generate_get(path)
+        elif path == "/v1/skills/match":
+            self._handle_skill_match()
         elif path.startswith("/v1/skills/generate/"):
             self._handle_skill_generate_get(path)
         elif path == "/v1/workflows/executions":

@@ -568,8 +568,16 @@ Nutzer darf generieren (nicht admin-gated).
   → `{status:"saved", slug}`. Owner = Aufrufer; Team-Sichtbarkeit erfordert
   Team-Mitgliedschaft. Schreibt `agents/<agent>/user_skills/<slug>/SKILL.md`
   + `skill.meta.json`.
+- `GET /v1/skills/match?task=<text>&agent_id=` — die dem Aufrufer SICHTBAREN
+  Skills, die zu `task` passen (find_skills-Ranking: semantisch + Keyword),
+  `{matches:[{slug,name,description,score,matched_via}]}`. Nutzt das
+  Workflow-Generieren-Modal, um einen Skill zum Referenzieren anzubieten.
 - Sharing: `GET/POST /v1/share?item_type=skill&item_id=<slug>&agent_id=` nutzt
   denselben generischen Block wie Chats/Workflows.
+- `POST /v1/workflows/generate` akzeptiert zusätzlich (v9.294.2) `skill_ref`
+  (vorhandenen Skill via `agent_step skill="…"` referenzieren, kein Inline-Plan)
+  und `extract_skill` (Methode zuerst als NEUEN Skill auslagern, dann
+  referenzieren).
 
 ## MCP
 

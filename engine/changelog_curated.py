@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.294.2",
+        "date": "2026-07-07",
+        "title": "Workflows nutzen Ihre Skills",
+        "body": "Workflows und Skills arbeiten jetzt zusammen. Beim Erzeugen "
+                "eines Workflows aus einem Chat oder Plan können Sie die "
+                "Vorgehensweise als Skill auslagern (neu anlegen) oder einen "
+                "bereits vorhandenen, passenden Skill auswählen — der Workflow "
+                "verweist dann darauf, statt die Methode zu kopieren. Der "
+                "Vorteil: Die Anleitung lebt an einer Stelle; verbessern Sie "
+                "den Skill, profitieren alle Workflows, die ihn nutzen, sofort. "
+                "Passende vorhandene Skills werden dabei automatisch "
+                "vorgeschlagen — auch bei anders formulierter oder "
+                "fremdsprachiger Aufgabenbeschreibung.",
+        "audience": "user",
+        "versions": ["9.294.1", "9.294.2"],
+    },
+    {
         "version": "9.294.0",
         "date": "2026-07-07",
         "title": "Aus einem Chat einen Skill erstellen",

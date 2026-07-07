@@ -102,7 +102,9 @@ TOOL_DEFINITIONS = [
             "instruction (plus optional plan context and input files) and works it off "
             "with tools (read/write files, web, python) inside the workflow's shared "
             "workspace. Use from .flow scripts for judgment-heavy plan steps; the .flow "
-            "script stays the deterministic spine. "
+            "script stays the deterministic spine. Pass skill=\"<slug>\" to run a SAVED "
+            "skill as the method — the skill's instructions become the plan, so the "
+            "workflow references a reusable procedure instead of inlining it. "
             "Returns: {text, model, rounds, files}."
         ),
         "input_schema": {
@@ -110,6 +112,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "instruction": {"type": "string", "description": "What this step must do (a plan section or the whole plan)"},
                 "plan": {"type": "string", "description": "Optional full plan markdown injected as context"},
+                "skill": {"type": "string", "description": "Optional slug of a saved skill to run as this step's method (loaded as the plan; resolves the workflow owner's visible skills)"},
                 "files": {"type": "array", "items": {"type": "string"}, "description": "Input file paths (uploads, outputs of earlier steps)"},
                 "model": {"type": "string", "description": "Model id (defaults to the workflow MODEL header)"},
                 "max_rounds": {"type": "integer", "description": "Agentic round cap (default 16, max 24)"},

@@ -1219,6 +1219,14 @@ Beschreibung. Vier Einstiegspunkte, alle münden im selben Ablauf:
    in eigenen Worten beschreiben, optional Markdown-/Textdateien als
    Kontext anhängen.
 
+**Methode als Skill (v9.294.2):** Im Generieren-Dialog können Sie wählen, ob
+die Vorgehensweise als **Skill** ausgelagert wird statt als Inline-Plan: „Neuen
+Skill auslagern“ erzeugt zuerst einen Skill und lässt den Workflow ihn per
+`agent_step skill="…"` referenzieren; „Vorhandenen Skill referenzieren“ bietet
+passende bereits gespeicherte Skills zur Auswahl (semantisch gefunden). So lebt
+die Methode an EINER Stelle (im Skill) und mehrere Workflows können sie nutzen —
+ändert sich die Methode, genügt eine Skill-Bearbeitung.
+
 Jeder Entwurf öffnet sich **zur Prüfung im Editor** (nichts wird ungefragt
 gespeichert; nur der Terminal-Weg speichert fehlerfreie Entwürfe direkt).
 Der Editor hat dafür zwei Reiter: **Flow** (das Skript) und **Plan** (die

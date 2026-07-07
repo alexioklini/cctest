@@ -41,6 +41,7 @@ config.json.bak-*
 agents/*/artifacts/
 agents/*/chats-indexed/
 agents/*/user_profiles/
+agents/*/user_skills/
 agents/*/scheduled_attachments/
 agents/*/projects/
 agents/.trash/

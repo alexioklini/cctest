@@ -1360,6 +1360,24 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <button class="wf-btn wf-btn-ghost" onclick="document.getElementById('wf-gen-file-input').click()">Datei anhängen…</button>
           <input type="file" id="wf-gen-file-input" accept=".md,.markdown,.txt" multiple class="hidden" onchange="wfGenAddFiles(this)" />
         </div>
+        <!-- Skill integration (v9.294.2): reference an existing skill OR extract
+             a new one, so the workflow's method lives once in a skill. -->
+        <div style="border-top:1px solid var(--border-100);padding-top:10px">
+          <span class="wf-editor-field-label">Methode als Skill (optional)</span>
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:6px">
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+              <input type="radio" name="wf-skill-mode" value="none" checked onchange="wfOnSkillModeChange()"> Kein Skill — Methode inline im Workflow
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+              <input type="radio" name="wf-skill-mode" value="extract" onchange="wfOnSkillModeChange()"> Methode als NEUEN Skill auslagern und referenzieren
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:13px">
+              <input type="radio" name="wf-skill-mode" value="reference" onchange="wfOnSkillModeChange()"> Vorhandenen Skill referenzieren:
+            </label>
+            <select id="wf-skill-ref-sel" class="wf-editor-field-input" style="display:none;margin-left:24px"></select>
+            <div id="wf-skill-match-hint" style="margin-left:24px;font-size:12px;color:var(--text-tertiary,#888)"></div>
+          </div>
+        </div>
         <div style="display:flex;gap:8px;justify-content:flex-end">
           <button class="wf-btn wf-btn-primary" id="wf-gen-start-btn" onclick="wfStartGenerate()">Erzeugen</button>
         </div>

@@ -630,10 +630,50 @@ function wfOpenGenerateModal(kind, payload) {
   }
   instr.value = '';
   wfGenRenderFiles();
+  wfResetSkillMode();
   document.getElementById('wf-gen-form').classList.remove('hidden');
   document.getElementById('wf-gen-progress').classList.add('hidden');
   document.getElementById('wf-generate-modal').classList.remove('hidden');
   setTimeout(() => instr.focus(), 50);
+  // Offer existing skills to reference — match against the source's title/text.
+  wfLoadSkillMatches();
+}
+
+function wfResetSkillMode() {
+  const r = document.querySelector('input[name="wf-skill-mode"][value="none"]');
+  if (r) r.checked = true;
+  const sel = document.getElementById('wf-skill-ref-sel');
+  if (sel) { sel.innerHTML = ''; sel.style.display = 'none'; }
+  const hint = document.getElementById('wf-skill-match-hint');
+  if (hint) hint.textContent = '';
+}
+
+function wfOnSkillModeChange() {
+  const mode = (document.querySelector('input[name="wf-skill-mode"]:checked') || {}).value || 'none';
+  const sel = document.getElementById('wf-skill-ref-sel');
+  if (sel) sel.style.display = (mode === 'reference') ? 'block' : 'none';
+}
+
+async function wfLoadSkillMatches() {
+  // Query text = the source title (chat/plan) or the description field.
+  const src = wfGen.source || {};
+  const task = (src.title || src.text || document.getElementById('wf-gen-instructions').value || '').trim();
+  const sel = document.getElementById('wf-skill-ref-sel');
+  const hint = document.getElementById('wf-skill-match-hint');
+  if (!task || !sel) return;
+  try {
+    const r = await API.get(`/v1/skills/match?agent_id=${encodeURIComponent(WF_AGENT)}&task=${encodeURIComponent(task)}`);
+    const matches = (r.matches || []).filter(m => m.slug);
+    if (!matches.length) {
+      sel.innerHTML = '<option value="">(keine passenden Skills)</option>';
+      if (hint) hint.textContent = 'Es wurden keine passenden vorhandenen Skills gefunden.';
+      return;
+    }
+    sel.innerHTML = matches.map(m =>
+      `<option value="${escapeHtml(m.slug)}">${escapeHtml(m.name || m.slug)}${m.matched_via === 'semantic' ? ' ·◎' : ''}</option>`
+    ).join('');
+    if (hint) hint.textContent = `${matches.length} passende(r) Skill(s) gefunden — zum Referenzieren „Vorhandenen Skill" wählen.`;
+  } catch (e) { /* match is best-effort */ }
 }
 
 function wfCloseGenerateModal() {
@@ -675,6 +715,15 @@ async function wfStartGenerate() {
   const instr = (document.getElementById('wf-gen-instructions').value || '').trim();
   const src = wfGen.source || { type: 'nl' };
   const body = { agent_id: WF_AGENT, instructions: instr, attachments: wfGen.files };
+  // Skill integration: extract a new skill, or reference an existing one.
+  const skillMode = (document.querySelector('input[name="wf-skill-mode"]:checked') || {}).value || 'none';
+  if (skillMode === 'extract') {
+    body.extract_skill = true;
+  } else if (skillMode === 'reference') {
+    const ref = (document.getElementById('wf-skill-ref-sel') || {}).value || '';
+    if (!ref) { showToast('Bitte einen Skill zum Referenzieren wählen', true); return; }
+    body.skill_ref = ref;
+  }
   if (src.type === 'chat') {
     body.source = { type: 'chat', session_id: src.session_id };
   } else if (src.type === 'plan') {

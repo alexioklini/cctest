@@ -115,6 +115,34 @@ class AdminSkillsGenHandlers:
         skill_gen.request_cancel(row["id"])
         self._send_json({"status": "cancelling"})
 
+    def _handle_skill_match(self):
+        """GET /v1/skills/match?task=<text>&agent_id=<id> — return the caller's
+        VISIBLE skills matching a task (own + shared), ranked. Used by the
+        workflow-generate modal to offer an existing skill to reference. Reuses
+        the find_skills ranking (semantic + keyword) via the tool dispatch, run
+        in the caller's request context."""
+        from urllib.parse import urlparse, parse_qs
+        q = parse_qs(urlparse(self.path).query)
+        task = (q.get("task", [""])[0] or "").strip()
+        agent_id = (q.get("agent_id", [""])[0] or "main").strip() or "main"
+        if not task:
+            self._send_json({"matches": []})
+            return
+        au = getattr(self, "_auth_user", None) or {}
+        import json as _json
+        from engine.context import request_context, get_request_context
+        import brain as _brain
+        matches = []
+        try:
+            with request_context():
+                get_request_context().current_user_id = au.get("id") or ""
+                get_request_context().current_agent = _brain.AgentConfig(agent_id)
+                raw = _brain.TOOL_DISPATCH["find_skills"]({"task": task})
+                matches = (_json.loads(raw).get("matches") or [])
+        except Exception:
+            matches = []
+        self._send_json({"matches": matches})
+
     def _handle_skill_save(self):
         """POST /v1/skills/save — persist a reviewed skill draft as a per-user
         skill (SKILL.md + skill.meta.json). Owner = caller. Body:

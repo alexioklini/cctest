@@ -167,19 +167,26 @@ def tool_find_skills(args: dict) -> str:
                                             "persönlichen Skills — normal weitermachen."})
     by_slug = {s.get("slug", ""): s for s in skills}
 
-    # (1) Semantic recall over the user's OWN skills (their private wing) — this
-    # catches cross-language / paraphrased tasks ("check a passport" ↔
-    # "Ausweisprüfung") that keyword overlap misses. Best-effort: empty on any
-    # store failure, and shared (team/global) skills live in the OWNER's wing so
-    # they aren't covered here — the keyword pass below covers the full set.
+    # (1) Semantic recall over EVERY skill visible to the user (own + shared) —
+    # this catches cross-language / paraphrased tasks ("check a passport" ↔
+    # "Ausweisprüfung") that keyword overlap misses. A shared skill's drawer
+    # lives in its OWNER's wing, so we pass the visible {owner: {slugs}} map and
+    # _search_skills_semantic queries across those wings, keeping only visible
+    # (owner, slug) pairs. Best-effort: empty on any store failure.
     sem_score: dict[str, float] = {}
-    uid = (user or {}).get("id") or ""
-    if uid:
+    if user:
+        visible: dict[str, set] = {}
+        for s in skills:
+            ow = s.get("owner_user_id") or ""
+            sl = s.get("slug") or ""
+            if ow and sl:
+                visible.setdefault(ow, set()).add(sl)
         try:
-            for hit in _brain._search_skills_semantic(uid, task, limit=8):
+            for hit in _brain._search_skills_semantic(task, visible, limit=8):
                 sl = hit.get("slug", "")
                 if sl in by_slug:
-                    sem_score[sl] = hit.get("score", 0.0)
+                    # A slug is agent-global unique, so slug alone keys the score.
+                    sem_score[sl] = max(sem_score.get(sl, 0.0), hit.get("score", 0.0))
         except Exception:
             pass
 

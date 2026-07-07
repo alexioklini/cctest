@@ -159,6 +159,37 @@ def tool_agent_step(args: dict) -> str:
     if not instruction:
         return _err("agent_step: 'instruction' is required")
     plan = (args.get("plan") or "").strip()
+    # skill="slug": load a saved SKILL.md as the method for this step. Resolves
+    # the workflow OWNER's visible skills (built-in first, then their per-user +
+    # shared skills, ACL-gated via ctx.current_user_id — WorkflowExecution sets
+    # it to the run's user_id). The skill body becomes the plan (or is prepended
+    # to an explicit plan=), so the executor follows the skill's procedure. This
+    # is how a workflow "uses a skill": the method lives ONCE in the skill and
+    # any workflow references it, instead of duplicating a plan.md per workflow.
+    skill_slug = (args.get("skill") or "").strip()
+    if skill_slug:
+        _ctx0 = get_request_context()
+        _agent = _ctx0.current_agent or _brain._current_agent
+        _skill_body = None
+        if _agent:
+            _skill_body = _agent.load_skill(skill_slug)
+            if _skill_body is None:
+                _uid = _ctx0.current_user_id or ""
+                _u = None
+                if _uid:
+                    try:
+                        from server_lib.auth import AuthDB as _AuthDB
+                        _u = _AuthDB.get_user(_uid)
+                    except Exception:
+                        _u = None
+                _skill_body = _agent.load_user_skill_body(skill_slug, _u)
+        if _skill_body is None:
+            return _err(f"agent_step: skill '{skill_slug}' not found or not "
+                        f"accessible to this workflow's owner")
+        # Skill body is the method. If an explicit plan= was also given, the
+        # skill leads and the plan follows as extra context.
+        plan = (_skill_body + ("\n\n## Zusätzlicher Plan-Kontext\n" + plan
+                               if plan else "")).strip()
     expected_output = (args.get("expected_output") or "").strip()
     files = args.get("files") or []
     if isinstance(files, str):

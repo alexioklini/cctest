@@ -589,13 +589,16 @@ state (indexed / stale / not-indexed). Querying an unbuilt index returns a
   no match, just proceed). Then `use_skill(skill="<slug>")` loads the winner.
   This is the discovery half of "personal skills as tools": the tool DEFINITION
   is static (cache-safe), the per-user matches ride in the tool RESULT.
-  Matching (v9.294.1) merges two signals: **semantic** (vector search over the
-  user's OWN skills, embedded in their `user__<uid>` wing via MemPalace/MLX — so
-  a paraphrased or cross-language task like "check a passport" finds a German
+  Matching merges two signals: **semantic** (MemPalace/MLX vector search — so a
+  paraphrased or cross-language task like "check a passport" finds a German
   "Ausweisprüfung" skill; `matched_via:"semantic"`, score = similarity 0–1) and
-  **keyword** overlap over the full visible set incl. team/global-shared skills
-  (`matched_via:"keyword"`). Falls back to keyword-only if the vector store is
-  unavailable.
+  **keyword** overlap (`matched_via:"keyword"`). Both cover the full visible set
+  (own + team/global-shared): the semantic pass (v9.294.2) queries across the
+  owner wings of every visible skill — a shared skill's drawer lives in its
+  OWNER's `user__<owner>` wing — and drops any hit whose (owner, slug) isn't in
+  the caller's visible set (no leak). Falls back to keyword-only if the vector
+  store is unavailable. `GET /v1/skills/match?task=` exposes this ranking to the
+  UI (used by the workflow-generate modal to offer a skill to reference).
 
 ## Discovery
 
@@ -648,6 +651,13 @@ write/exec tool is deliberately excluded.
   lives in the `<name>.plan.md` sidecar and reaches the script as the
   pre-seeded `plan_md` variable; the DSL builtin `plan_steps(md)` splits it
   deterministically into `[{index, title, body}]`.
+  **`skill="<slug>"` (v9.294.2)**: instead of an inline plan, a step can run a
+  SAVED skill as its method — the skill's body becomes the plan (an explicit
+  `plan=` is appended as extra context). Resolves the workflow OWNER's visible
+  skills (built-in, then per-user + shared, ACL-gated via the run's user_id).
+  So a workflow references a reusable procedure once instead of duplicating a
+  plan.md — e.g. the Ausweisprüfung workflow uses
+  `agent_step skill="ausweispruefung-echtheit-faelschungsmerkmale"`.
 
 ## Translation
 

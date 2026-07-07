@@ -251,6 +251,37 @@ def _extract_moa_context(sid: str, msgs: list) -> dict:
     return out
 
 
+def _extract_and_save_skill(*, agent_id: str, source_kind: str, source_ref: str,
+                            source_text: str, instructions: str,
+                            user_id: str) -> str:
+    """Generate a skill from the same source (blocking), save it as the caller
+    (private), and return its slug. Reuses the skill generator + poll loop.
+    Raises on failure so the caller can fall back to an inline plan."""
+    import time as _time
+    from engine import skill_gen
+    sgid = skill_gen.start_generation(
+        agent_id=agent_id, source_kind=source_kind, source_ref=source_ref,
+        source_text=source_text, instructions=instructions, user_id=user_id)
+    # Poll the skill_gen row to a terminal state (bounded — the skill call is a
+    # single forced-tool round, so this resolves in well under the cap).
+    row = None
+    for _ in range(120):  # ~2 min ceiling
+        row = ChatDB.get_skill_gen(sgid)
+        st = (row or {}).get("status") or ""
+        if st in ("ready", "ready_with_warnings", "error", "cancelled"):
+            break
+        _time.sleep(1)
+    if not row or (row.get("status") or "") not in ("ready", "ready_with_warnings"):
+        raise RuntimeError((row or {}).get("error") or "Skill-Generierung fehlgeschlagen")
+    res = _brain.AgentConfig.save_user_skill(
+        agent_id, slug=row.get("slug") or "", display_name=row.get("display_name") or "",
+        description=row.get("description") or "", body_md=row.get("body_md") or "",
+        owner_user_id=user_id, source_kind=source_kind, source_ref=source_ref)
+    if res.get("error"):
+        raise RuntimeError(res["error"])
+    return res.get("slug") or ""
+
+
 def _chat_source_material(sid: str) -> tuple[str, dict]:
     """Build the source-material block for a chat session + the MoA context."""
     info = ChatDB.get_session_info(sid)
@@ -358,7 +389,8 @@ def _unique_workflow_name(agent_id: str, base: str) -> str:
 
 def _run_generation(*, gen_id: str, agent_id: str, source_kind: str,
                     source_ref: str, source_text: str, instructions: str,
-                    attachments: list, user_id: str):
+                    attachments: list, user_id: str,
+                    skill_ref: str = "", extract_skill: bool = False):
     def _cancelled():
         return ChatDB.workflow_gen_cancelled(gen_id)
 
@@ -372,6 +404,24 @@ def _run_generation(*, gen_id: str, agent_id: str, source_kind: str,
             return
         ChatDB.update_workflow_gen(gen_id, phase="gathering", model=model)
         _push_step(gen_id, "phase", f"Sammelt Quellmaterial (Modell: {model})")
+
+        # Extract-a-skill-first: run the skill generator on the SAME source,
+        # save it as the caller, then reference it in the workflow. The method
+        # then lives once (in the skill) and the .flow just points at it.
+        if extract_skill and not skill_ref:
+            _push_step(gen_id, "phase", "Lagert die Methode als Skill aus …")
+            try:
+                skill_ref = _extract_and_save_skill(
+                    agent_id=agent_id, source_kind=source_kind,
+                    source_ref=source_ref, source_text=source_text,
+                    instructions=instructions, user_id=user_id)
+                if skill_ref:
+                    _push_step(gen_id, "info", f"Skill „{skill_ref}“ gespeichert.")
+            except Exception as e:
+                _push_step(gen_id, "info",
+                           f"Skill-Auslagerung fehlgeschlagen ({e}) — Workflow "
+                           f"nutzt stattdessen einen Inline-Plan.")
+                skill_ref = ""
 
         moa = {"plan_md": "", "executor": "", "planner": ""}
         if source_kind == "chat":
@@ -402,6 +452,22 @@ def _run_generation(*, gen_id: str, agent_id: str, source_kind: str,
                          .replace("<<TOOL_PALETTE>>", _tool_palette_text())
                          .replace("<<VERIFY_MODEL_HINT>>", verify_hint)
                          .replace("<<MODEL_PIN_HINT>>", model_pin))
+        # When the workflow should reference a SKILL, the method does NOT go into
+        # plan_md — it lives in the skill. Direct the model to call
+        # `agent_step skill="<slug>"` for the judgment step and to leave plan_md
+        # empty. Appended so the base template stays untouched.
+        if skill_ref:
+            system_prompt += (
+                "\n\n## WICHTIG — Skill statt Inline-Plan\n"
+                f"Die Methodik dieses Workflows liegt bereits im gespeicherten "
+                f"Skill `{skill_ref}`. Baue den agentischen Schritt daher als "
+                f"`SET r = CALL agent_step skill=\"{skill_ref}\" "
+                f"instruction=\"Führe den Skill am Eingabebild/an den Eingaben "
+                f"vollständig aus\" files=[…] max_rounds=20 expected_output=\"…\"`. "
+                f"Lasse `plan_md` LEER (kein Inline-Plan — der Skill IST die "
+                f"Methode). Der Verify-Schritt darf denselben Skill referenzieren. "
+                f"Setze im `submit_workflow`-Aufruf `plan_md` auf einen leeren "
+                f"String.")
 
         user_parts = []
         if instructions.strip():
@@ -509,10 +575,17 @@ def request_cancel(gen_id: str) -> bool:
 
 def start_generation(*, agent_id: str, source_kind: str, source_ref: str = "",
                      source_text: str = "", instructions: str = "",
-                     attachments: list | None = None, user_id: str = "") -> str:
+                     attachments: list | None = None, user_id: str = "",
+                     skill_ref: str = "", extract_skill: bool = False) -> str:
     """Insert a generating row + spawn the worker. Returns the gen_id.
     source_kind: 'chat' (source_ref = session_id) | 'plan' | 'nl'
-    (source_text = plan markdown / description)."""
+    (source_text = plan markdown / description).
+
+    Skill integration:
+    - skill_ref: slug of an EXISTING skill the workflow should reference via
+      `agent_step skill="<slug>"` (no plan.md — the method lives in the skill).
+    - extract_skill: generate a NEW skill from the same source first, save it as
+      the caller, then reference it (implies the same skill= wiring)."""
     gen_id = uuid.uuid4().hex
     ChatDB.create_workflow_gen(gen_id, agent_id, source_kind,
                                source_ref or "", user_id or "")
@@ -523,6 +596,7 @@ def start_generation(*, agent_id: str, source_kind: str, source_ref: str = "",
             "source_kind": source_kind, "source_ref": source_ref or "",
             "source_text": source_text or "", "instructions": instructions or "",
             "attachments": attachments or [], "user_id": user_id or "",
+            "skill_ref": skill_ref or "", "extract_skill": bool(extract_skill),
         },
         daemon=True, name=f"wf_gen_{gen_id[:8]}").start()
     return gen_id
