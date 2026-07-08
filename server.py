@@ -3692,6 +3692,11 @@ def main():
     server_config["workflow_gen_model"] = file_config.get("workflow_gen_model", "") or ""
     server_config["skill_gen_model"] = file_config.get("skill_gen_model", "") or ""
     server_config["wiki_gate_model"] = file_config.get("wiki_gate_model", "") or ""
+    # goal_judge_model was missing from this boot copy since 9.256.0 — the
+    # same trap as instruction_gen_model: the slot persisted to config.json
+    # but _server_config() never saw it, so the goal judge silently used the
+    # background default.
+    server_config["goal_judge_model"] = file_config.get("goal_judge_model", "") or ""
     server_config["auto_route"] = file_config.get("auto_route", {}) or {}
     server_config["moa"] = file_config.get("moa", {}) or {}
     server_config["gdpr_scanner"] = file_config.get("gdpr_scanner", {}) or {}

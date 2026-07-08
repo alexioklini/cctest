@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.294.3",
+        "date": "2026-07-08",
+        "title": "Service-Modelle greifen sofort",
+        "body": "Änderungen an den Service-Modellen (Einstellungen → Allgemein "
+                "→ Service-Modelle) wirken jetzt sofort — ein Server-Neustart "
+                "ist nicht mehr nötig. Bisher lief z. B. der Skill- oder "
+                "Workflow-Generator nach einer Umstellung stillschweigend "
+                "weiter auf dem alten Modell. Zusätzlich behoben: Das für den "
+                "Goal-Modus eingestellte Prüf-Modell wurde bisher gar nicht "
+                "verwendet; jetzt greift es wie konfiguriert. Ausnahme bleibt "
+                "das Telegram-Modell, das weiterhin einen Neustart erfordert.",
+        "audience": "admin",
+        "versions": ["9.294.3"],
+    },
+    {
         "version": "9.294.2",
         "date": "2026-07-07",
         "title": "Workflows nutzen Ihre Skills",

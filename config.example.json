@@ -6247,5 +6247,7 @@
       "anchor": "2026-07-04",
       "calibrated_at": "2026-07-04"
     }
-  ]
+  ],
+  "workflow_gen_model": "mistral-medium-3.5",
+  "skill_gen_model": "mistral-medium-3.5"
 }

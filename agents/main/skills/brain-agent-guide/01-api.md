@@ -731,7 +731,10 @@ Once a feedback row exists, user and admin exchange short one-line messages
   object — exts validated against formats with an own extractor; bad pdf_engine 400).
   **Fail-loud**: an unknown model id or OCR provider is rejected 400 — never
   coerced to a default. Powers Settings → Allgemein → **Service-Modelle** (incl.
-  the Dokumentkonvertierungs-Matrix in the read_document/OCR area).
+  the Dokumentkonvertierungs-Matrix in the read_document/OCR area). Saves take
+  effect **immediately** (9.294.3: the handler mirrors the slots into the live
+  server config — no restart needed); only the Telegram model still requires a
+  restart of the Telegram service.
 - `GET /v1/doc-styles` — admin: list document style presets (name +
   description) + a YAML `template` + a structured `defaults` object (the
   built-in style shape, used to pre-fill a new preset in the form editor);

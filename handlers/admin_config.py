@@ -528,6 +528,9 @@ class AdminConfigHandlers:
                         provider_name = pname
                         break
             server_config["default_model"] = model
+            # Keep the boot-time background-fallback mirror in step — it
+            # feeds _background_model_default() + the delegate/ask fallbacks.
+            engine._delegate_fallback_model = model
             if provider_name:
                 server_config["api_key"] = providers[provider_name].get("api_key", "")
                 server_config["base_url"] = providers[provider_name].get("base_url", "")

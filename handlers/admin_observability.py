@@ -1020,6 +1020,23 @@ class AdminObservabilityHandlers:
         ("telegram_model", "Telegram-Frontend", "config-nested", None),
     ]
 
+    # Top-level config.json slots the save handler must ALSO mirror into the
+    # LIVE server_config: they are read via _server_config() at runtime, and
+    # the boot copy in server.py main() runs only once — without the mirror a
+    # slot change silently kept the old model until restart (the
+    # instruction_gen_model trap). Not listed: kg_extraction_model (nested
+    # under mempalace.kg, read fresh via the busted cache), telegram_model
+    # (baked at telegram service start — still needs a restart), and the
+    # tools-file slots (get_tool_config reads tools_config.json per call).
+    _CONFIG_LIVE_MIRROR_KEYS = (
+        "default_model", "chat_summary_model", "classifier_model",
+        "next_prompt_model", "wiki_model", "user_profile_model",
+        "wiki_gate_model", "studio_model", "instruction_gen_model",
+        "workflow_gen_model", "skill_gen_model", "audio_overview_model",
+        "code_graph_model", "deep_research_model", "goal_judge_model",
+        "background_task_model",
+    )
+
     def _service_models_read(self):
         """Read every slot's current value + the OCR block from disk config."""
         import brain as _brain
@@ -1310,11 +1327,24 @@ class AdminObservabilityHandlers:
 
             with open(config_path, "w") as f:
                 json.dump(cfg, f, indent=2)
-            # Bust the mempalace cache (KG slot). The top-level slots
-            # (default/summary/fan-out) + OCR are read from server_config /
-            # config.json on demand and fully refresh on restart — same as the
-            # existing server-config + KG-config save endpoints.
+            # Bust the mempalace cache (KG slot). OCR + the conversion matrix
+            # are read fresh from config.json per call — no mirror needed.
             engine._mempalace_config_cache = None
+            # Live-refresh the top-level slots into the RUNNING server_config
+            # so every _server_config() reader sees the new value WITHOUT a
+            # restart (see _CONFIG_LIVE_MIRROR_KEYS).
+            live = _brain._server_config()
+            if isinstance(live, dict) and live:
+                for _k in self._CONFIG_LIVE_MIRROR_KEYS:
+                    if _k in body:
+                        live[_k] = cfg.get(_k, "") or ""
+                # _delegate_fallback_model is seeded from default_model at
+                # boot and feeds _background_model_default() + the delegate/
+                # ask fallbacks — keep it in step on a runtime change (only
+                # for a non-empty value; unsetting the slot must not strand
+                # every background call without a fallback).
+                if (cfg.get("default_model") or "").strip() and "default_model" in body:
+                    _brain._delegate_fallback_model = cfg["default_model"]
             if tool_updates:
                 _brain.save_tool_config(tool_updates)
 
