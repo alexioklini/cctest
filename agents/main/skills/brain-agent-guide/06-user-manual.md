@@ -1249,6 +1249,12 @@ freigegebenem Ausführungsplan (Experten-Gremium) — eine Anleitung mit Auslös
 Voraussetzungen, nummerierten Schritten, Fallstricken und einem Beispiel. Es
 ist **keine Abschrift** des Gesprächs, sondern die herausgelöste Methode.
 
+Während der Erzeugung zeigt das Fenster eine **Fortschrittsanzeige** (9.294.4):
+ein Balken plus eine Checkliste der vier Stufen — Quellmaterial sammeln, Skill
+verfassen, Entwurf validieren, Fertigstellen — mit Häkchen für erledigte und
+einem Spinner für die laufende Stufe; darunter das verwendete Modell und
+etwaige Hinweise.
+
 Der Entwurf öffnet sich **zur Prüfung**: Kurzname, Titel, Beschreibung und der
 Skill-Inhalt sind editierbar. Vor dem Speichern legen Sie die **Sichtbarkeit**
 fest — **privat** (nur Sie), **Team** oder **alle** —, genau wie beim Teilen

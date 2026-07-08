@@ -72,12 +72,13 @@ CURATED_CHANGELOG: list[dict] = [
                 "Anleitung (Auslöser, Voraussetzungen, Schritte, Fallstricke, "
                 "Beispiel), die der Agent bei ähnlichen Aufgaben künftig "
                 "eigenständig heranzieht. Der Entwurf wird Ihnen zunächst zur "
-                "Prüfung vorgelegt; Sie passen ihn bei Bedarf an und legen fest, "
+                "Prüfung vorgelegt — während der Erzeugung sehen Sie den "
+                "Fortschritt als Checkliste mit Balken —; Sie passen ihn bei Bedarf an und legen fest, "
                 "ob der Skill privat bleibt oder mit Ihrem Team bzw. allen "
                 "geteilt wird — genau wie bei einem Chat. So wächst mit jeder "
                 "guten Arbeit eine persönliche, teilbare Wissensbasis.",
         "audience": "user",
-        "versions": ["9.294.0"],
+        "versions": ["9.294.0", "9.294.4"],
     },
     {
         "version": "9.293.2",

@@ -10,6 +10,15 @@ const SKILL_GEN_AGENT = 'main';  // single-agent MVP, matches WF_AGENT.
 
 const skillGen = { genId: null, timer: null, source: null, draft: null };
 
+// Fixed generation stages (mirror engine/skill_gen.py's phase steps) + the
+// bar percentage shown while that stage is ACTIVE.
+const SKILL_GEN_STAGES = [
+  { label: 'Quellmaterial sammeln', pct: 10 },
+  { label: 'Skill verfassen',       pct: 45 },
+  { label: 'Entwurf validieren',    pct: 80 },
+  { label: 'Fertigstellen',         pct: 95 },
+];
+
 function skillGenerateFromChat(sessionId, title) {
   const chat = (typeof state !== 'undefined' && state.activeChat) ? state.activeChat : null;
   const sid = sessionId || (chat && chat.sessionId) || '';
@@ -63,11 +72,55 @@ async function skillStartGenerate() {
     skillGen.genId = res.gen_id;
     document.getElementById('skill-gen-form').classList.add('hidden');
     document.getElementById('skill-gen-progress').classList.remove('hidden');
-    document.getElementById('skill-gen-steps').innerHTML = '<div>Gestartet …</div>';
+    skillRenderProgress({ status: 'generating', steps: [] });
     skillGen.timer = setInterval(skillPollGenerate, 1500);
   } catch (e) {
     document.getElementById('skill-gen-steps').innerHTML = '';
     if (typeof showToast === 'function') showToast('Start fehlgeschlagen: ' + e.message, true);
+  }
+}
+
+function skillRenderProgress(d) {
+  const bar = document.getElementById('skill-gen-bar');
+  const list = document.getElementById('skill-gen-checklist');
+  const detail = document.getElementById('skill-gen-steps');
+  if (!bar || !list) return;
+  const steps = d.steps || [];
+  const phases = steps.filter(s => s.kind === 'phase').map(s => s.text || '');
+  const last = phases.length ? phases[phases.length - 1] : '';
+  const ready = d.status === 'ready' || d.status === 'ready_with_warnings';
+  const failed = d.status === 'error' || d.status === 'cancelled';
+  // Stage from the newest phase step. The prefixes are OUR step texts
+  // (engine/skill_gen.py _push_step) — keep both sides in sync.
+  let idx = 1;
+  if (ready || /^Fertig/.test(last)) idx = 4;
+  else if (/^Validiert/.test(last)) idx = 3;
+  else if (/^(Verfasst|Korrigiert)/.test(last)) idx = 2;
+  const ICONS = {
+    done: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+    active: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--accent, #3b82f6)" stroke-width="2.5" stroke-linecap="round"><path d="M12 2 a10 10 0 0 1 10 10"/></svg>',
+    pending: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4"><circle cx="12" cy="12" r="9"/></svg>',
+    failed: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="6" y1="18" x2="18" y2="6"/></svg>',
+  };
+  list.innerHTML = SKILL_GEN_STAGES.map((st, i) => {
+    const n = i + 1;
+    let state = 'pending';
+    if (ready || n < idx) state = 'done';
+    else if (n === idx) state = failed ? 'failed' : 'active';
+    return `<div class="sg-check-row sg-${state}">` +
+           `<span class="sg-check-icon">${ICONS[state]}</span>` +
+           `<span>${st.label}</span></div>`;
+  }).join('');
+  bar.style.width = (ready ? 100 : SKILL_GEN_STAGES[idx - 1].pct) + '%';
+  bar.classList.toggle('sg-failed', failed);
+  bar.classList.toggle('sg-active', !failed && !ready);
+  if (detail) {
+    // Detail log: model line + non-phase steps (info/error) — the phases
+    // themselves are represented by the checklist above.
+    const rows = steps.filter(s => s.kind !== 'phase').map(s =>
+      `<div style="${s.kind === 'error' ? 'color:var(--error,#ef4444)' : ''}">${escapeHtml(s.text)}</div>`);
+    if (d.model) rows.unshift(`<div>Modell: ${escapeHtml(d.model)}</div>`);
+    detail.innerHTML = rows.join('');
   }
 }
 
@@ -76,20 +129,15 @@ async function skillPollGenerate() {
   let d;
   try { d = await API.get(`/v1/skills/generate/${skillGen.genId}`); }
   catch (e) { return; }
-  const stepsEl = document.getElementById('skill-gen-steps');
-  if (stepsEl) {
-    const rows = (d.steps || []).map(s =>
-      `<div style="${s.kind === 'error' ? 'color:var(--error,#ef4444)' : ''}">${escapeHtml(s.text)}</div>`);
-    if (d.status === 'generating' && d.phase) rows.push(`<div>… (${escapeHtml(d.phase)})</div>`);
-    stepsEl.innerHTML = rows.join('') || '<div>…</div>';
-  }
+  skillRenderProgress(d);
   if (d.status === 'generating') return;
   clearInterval(skillGen.timer); skillGen.timer = null;
   skillGen.genId = null;
   if (d.status === 'ready' || d.status === 'ready_with_warnings') {
     skillShowReview(d);
   } else if (d.status === 'error') {
-    if (stepsEl) stepsEl.innerHTML += `<div style="color:var(--error,#ef4444)">Fehler: ${escapeHtml(d.error || 'unbekannt')}</div>`;
+    const detail = document.getElementById('skill-gen-steps');
+    if (detail) detail.innerHTML += `<div style="color:var(--error,#ef4444)">Fehler: ${escapeHtml(d.error || 'unbekannt')}</div>`;
   }
 }
 

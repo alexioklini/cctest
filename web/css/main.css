@@ -7436,6 +7436,37 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   user-select: none;
 }
 
+/* ─── Skill-Generator: Fortschritts-Checkliste + Balken (skills_gen.js) ─── */
+.sg-progress-track {
+  height: 6px; border-radius: 999px; background: var(--bg-200);
+  overflow: hidden; margin-bottom: 12px;
+}
+.sg-progress-bar {
+  height: 100%; width: 0%;
+  background: var(--accent, #3b82f6);
+  transition: width .4s ease;
+}
+.sg-progress-bar.sg-active { animation: sb-stream-pulse 1.6s ease-in-out infinite; }
+.sg-progress-bar.sg-failed { background: #dc2626; animation: none; }
+.sg-checklist { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.sg-check-row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--text-300);
+}
+.sg-check-row.sg-done   { color: var(--text-200); }
+.sg-check-row.sg-active { color: var(--text-100); font-weight: 500; }
+.sg-check-row.sg-failed { color: #dc2626; }
+.sg-check-icon { width: 16px; height: 16px; flex: 0 0 16px; display: inline-flex; }
+.sg-check-row.sg-active .sg-check-icon svg {
+  animation: spin 1s linear infinite;
+  transform-origin: 50% 50%;
+}
+.sg-detail {
+  font-family: var(--font-mono); font-size: 11px;
+  color: var(--text-400, #6b7280);
+  display: flex; flex-direction: column; gap: 3px; margin-top: 4px;
+}
+
 /* ─── Workflow editor: inline autocomplete ─── */
 .wf-ac-popover {
   position: absolute;

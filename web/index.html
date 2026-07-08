@@ -1417,9 +1417,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           <button class="wf-btn wf-btn-primary" id="skill-gen-start-btn" onclick="skillStartGenerate()">Erzeugen</button>
         </div>
       </div>
-      <!-- Phase 2: progress -->
+      <!-- Phase 2: progress (checklist + bar rendered by skillRenderProgress) -->
       <div id="skill-gen-progress" class="hidden" style="padding:14px 16px;overflow-y:auto">
-        <div id="skill-gen-steps" style="font-family:var(--font-mono);font-size:12px;display:flex;flex-direction:column;gap:4px"></div>
+        <div class="sg-progress-track"><div id="skill-gen-bar" class="sg-progress-bar"></div></div>
+        <div id="skill-gen-checklist" class="sg-checklist"></div>
+        <div id="skill-gen-steps" class="sg-detail"></div>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
           <button class="wf-btn wf-btn-ghost" id="skill-gen-cancel-btn" onclick="skillCancelGenerate()">Abbrechen</button>
         </div>
