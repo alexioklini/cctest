@@ -126,8 +126,8 @@ TOOL_DEFINITIONS = [
         "name": "transcribe_audio",
         "description": (
             "Transcribe an audio file (.wav/.mp3/.m4a/.flac/.ogg) to text. "
-            "Routes to any model in the models config flagged with the 'audio' capability — "
-            "cloud Voxtral, local Whisper, or anything else added with that flag. Falls back to "
+            "Routes to any model in the models config flagged with the 'audio_transcription' capability — "
+            "cloud Voxtral-mini, local Whisper, or anything else added with that flag. Falls back to "
             "the configured local fallback when GDPR block_unscannable_on_cloud is on or the cloud call errors. "
             "Optionally translate the transcript by passing translate_to (ISO 639-1). "
             "Returns: {transcript, language, duration_s, model, file, [translation, target_lang], [fallback_used]}."

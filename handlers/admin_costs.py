@@ -51,6 +51,7 @@ _USE_CASE_LABELS = {
     "audio_overview": "Audio Overview (Podcast)",
     "read_aloud": "Vorlesen (TTS)",
     "ocr": "OCR",
+    "transcribe": "Transkription (STT)",
     "translate_text": "Übersetzung",
     "translate_text_rewrite": "Übersetzung",
     "translate_document": "Übersetzung",
@@ -226,9 +227,9 @@ class AdminCostsHandlers:
             if not engine.model_is_flat_plan(model):
                 return None          # not flat → list price == real cost
             from engine.quotas import _get_cost_rate, _unit_list_cost
-            # Synthetic unit-billed rows (OCR pages / TTS chars in tokens_in)
-            # reconstruct from their per-unit rates, not token rates.
-            _ul = _unit_list_cost(purpose or "", t_in)
+            # Synthetic unit-billed rows (OCR pages / TTS chars / STT audio-seconds
+            # in tokens_in) reconstruct from their per-MODEL unit rates, not tokens.
+            _ul = _unit_list_cost(purpose or "", t_in, model)
             if _ul is not None:
                 return _ul
             r = _get_cost_rate(model)

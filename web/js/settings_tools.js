@@ -314,10 +314,11 @@ function renderToolIntegrationFields(name, cfg) {
         ${lbl('Max. Dateigröße (KB)')}
         <input id="tool-cg-maxsize" type="number" min="50" max="5000" value="${cfg.max_file_size_kb||500}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">`;
     case 'transcribe_audio': {
-      // Capability-filtered dropdown: only models tagged `audio` are
-      // selectable. Saved-but-missing/uncapable values surface as
-      // `(legacy/missing)` so the admin can see what's there.
-      const audioEntries = enabledModelsWithCapability('audio');
+      // Capability-filtered dropdown: only models tagged `audio_transcription`
+      // (verbatim STT) are selectable — NOT plain `audio` (audio-in chat /
+      // understanding), which can't drive /audio/transcriptions and 400s at the
+      // wire. Saved-but-missing/uncapable values surface as `(veraltet/fehlend)`.
+      const audioEntries = enabledModelsWithCapability('audio_transcription');
       const audioIds = new Set(audioEntries.map(([mid]) => mid));
       const audioSelectHtml = (id, sel) => {
         let opts = '';
@@ -325,7 +326,7 @@ function renderToolIntegrationFields(name, cfg) {
         opts += audioEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
         return `<select id="${id}" class="form-select" style="font-size:11px;width:100%">${opts}</select>`;
       };
-      return `${lbl('Standardmodell' + helpIcon('Nur Modelle mit der Fähigkeit „audio“ werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt — unscharfes Namensmatching wurde entfernt.'))}
+      return `${lbl('Standardmodell' + helpIcon('Nur Modelle mit der Fähigkeit „Transkription“ (audio_transcription — wörtliche Sprache-zu-Text) werden aufgelistet, z. B. whisper-*, voxtral-mini-*. Modelle mit reinem „Audio“-Verständnis (Audio-Chat, z. B. voxtral-small, gemma-4) erscheinen hier bewusst NICHT — sie können nicht transkribieren. Das Tool verwendet die konfigurierte ID exakt.'))}
         ${audioSelectHtml('tool-ta-default-model', cfg.default_model || '')}
         ${lbl('Fallback-Modell')}
         ${audioSelectHtml('tool-ta-fallback-model', cfg.fallback_model || '')}`;

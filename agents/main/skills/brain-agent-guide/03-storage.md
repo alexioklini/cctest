@@ -217,6 +217,22 @@ per-model `cost_input`/`cost_output`/`cost_cache_read` (USD per 1M tokens);
 `cost_cache_read` ALSO marks a model as "cache-priced" — `brain.model_is_cache_priced`
 reads that explicit field to freeze Auto routing to turn 1 (see 05-internals).
 
+The UNIT-billed services (OCR / TTS / STT) are priced **per model, not per token** —
+three separate per-model USD rates read via `quotas._unit_rate(model, field)`:
+`cost_per_page_usd` (OCR page — on the OCR model, e.g. mistral-ocr-latest),
+`cost_per_1k_chars_usd` (TTS — on the voxtral-*-tts model), `cost_per_minute_usd`
+(STT audio minute — on the whisper-* / voxtral-mini-* transcription model; local
+whisper = 0). These synthetic rows stash units in `tokens_in` (pages / chars /
+audio-seconds) and carry a pre-computed `cost_usd`; `quotas._unit_list_cost(purpose,
+units, model)` reconstructs the list price for flat-plan rows (`purpose` ∈
+`ocr`/`read_aloud`/`audio_overview`/`transcribe`). STT is logged via
+`CostTracker.log_transcribe` at three sites (agent `transcribe_audio`, translation-tab
+audio/video, live transcription — the last bills one row per session in its
+worker-loop `finally`, not per chunk). The old GLOBAL knobs
+`ocr.cost_per_page_usd` + `text_to_speech.cost_per_1k_chars_usd` were removed —
+rates live only on the model. Models-tab shows the matching field per capability
+(`audio_transcription` → STT $/min, `tts` → TTS $/1k chars, OCR model → $/page).
+
 ### auth.db → users
 ```
 id TEXT PK, username TEXT UNIQUE, password_hash TEXT,

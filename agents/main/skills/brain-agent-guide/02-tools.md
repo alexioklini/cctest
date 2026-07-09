@@ -665,7 +665,11 @@ write/exec tool is deliberately excluded.
 - `translate_document(path, target, …)`
 - `detect_language(text)`
 - `list_glossaries()` / `get_glossary(slug)`
-- `transcribe_audio(path)` — Whisper/Voxtral
+- `transcribe_audio(path)` — Whisper/Voxtral. Routes only to models flagged with the
+  `audio_transcription` capability (verbatim speech-to-text): local Whisper + cloud
+  Voxtral-mini. Models with only the plain `audio` capability (audio-in *chat* /
+  understanding — voxtral-small, gemma-4, glm) are **excluded** — they can't drive the
+  `/audio/transcriptions` endpoint and would 400 at the wire.
 - `generate_audio_overview(topic?, audience?, length?)` — NotebookLM-style **audio
   overview / podcast**. Generates a two-host (Oliver & Jane) English conversation
   voiced via TTS into a `.mp3` (+ a `.md` dialogue script) in the session artifact

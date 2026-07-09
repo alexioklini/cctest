@@ -379,6 +379,15 @@ async function saveModelsConfig() {
       // auto 0.1× of cost_input for billing, and NOT cache-priced (no freeze).
       const ccr = readNum(row, 'mdl-cost-cache-read');
       if (ccr !== undefined) mc[mid].cost_cache_read = ccr; else delete mc[mid].cost_cache_read;
+      // Per-model UNIT rates for the char/page/minute-billed services (OCR/TTS/
+      // STT). Only the field matching the model's capability is rendered, so an
+      // absent input just means "not applicable to this model" → delete the key.
+      const cpm = readNum(row, 'mdl-cost-per-minute');
+      if (cpm !== undefined) mc[mid].cost_per_minute_usd = cpm; else delete mc[mid].cost_per_minute_usd;
+      const cpk = readNum(row, 'mdl-cost-per-1k-chars');
+      if (cpk !== undefined) mc[mid].cost_per_1k_chars_usd = cpk; else delete mc[mid].cost_per_1k_chars_usd;
+      const cpp = readNum(row, 'mdl-cost-per-page');
+      if (cpp !== undefined) mc[mid].cost_per_page_usd = cpp; else delete mc[mid].cost_per_page_usd;
       // Abrechnungskonto: '' = keins, '__flat__' = generische Flatrate
       // (flat_plan:true), sonst Plan-Id (coding_plan). Flat-Pläne buchen $0;
       // Credit-Konten bleiben echte Token-Abrechnung (Typ steht am Plan).
@@ -442,9 +451,9 @@ async function saveModelsConfig() {
       } else {
         mc[mid].raw_formats = [];
       }
-      // Capabilities — canonical {chat, image, audio, tts, video} checkboxes.
-      // Order is preserved to keep the saved config diff-stable.
-      const _capOrder = ['chat','image','audio','tts','video'];
+      // Capabilities — canonical {chat, image, audio, audio_transcription, tts,
+      // video} checkboxes. Order is preserved to keep the saved config diff-stable.
+      const _capOrder = ['chat','image','audio','audio_transcription','tts','video'];
       const _checkedCaps = new Set(
         Array.from(row.querySelectorAll('.mdl-cap-cb'))
           .filter(cb => cb.checked).map(cb => cb.dataset.cap)

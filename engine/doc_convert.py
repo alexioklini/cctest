@@ -317,8 +317,8 @@ def _ocr_config() -> dict:
         "model": ocr.get("model", ""),
         "max_pages_per_cycle": int(ocr.get("max_pages_per_cycle", 1000)),
         "trigger_chars_per_page": int(ocr.get("trigger_chars_per_page", _OCR_TRIGGER_CHARS_PER_PAGE)),
-        # USD per page for billing — Mistral OCR is $1 per 1000 pages today.
-        "cost_per_page_usd": float(ocr.get("cost_per_page_usd", 0.001)),
+        # NB: OCR page billing moved to a PER-MODEL rate (models.<id>.cost_per_page_usd,
+        # read via quotas._unit_rate) — the old global ocr.cost_per_page_usd is gone.
         # Local-vision fallback: render PDF page → image → vision LLM with
         # OCR prompt. Used when engine='local_vision' or when
         # engine='auto' + GDPR/PII gate forces local.
@@ -420,11 +420,14 @@ def _extract_with_mistral_ocr(path: str) -> tuple[str, str | None, int]:
     # Cost row to costs.db. Fail-soft: OCR shouldn't error out because
     # billing logging is unavailable.
     try:
+        # Per-MODEL page rate (cost_per_page_usd on the model entry) — the OCR
+        # price lives on the model now, not a global ocr.* knob.
+        from engine.quotas import _unit_rate
         _log_ocr_cost(
             model=cfg["model"],
             provider=cfg["provider"],
             pages=pages_processed,
-            cost_usd=pages_processed * cfg["cost_per_page_usd"],
+            cost_usd=pages_processed * _unit_rate(cfg["model"], "cost_per_page_usd"),
         )
     except Exception as e:
         print(f"[doc-convert] OCR cost-log failed: "

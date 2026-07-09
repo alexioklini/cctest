@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.295.3"
+VERSION = "9.297.0"
 VERSION_DATE = "2026-07-09"
 CHANGELOG = [
+    ("9.297.0", "2026-07-09", "feat(Unit-Kosten für OCR/TTS/STT PRO MODELL + STT-Abrechnung geschlossen): die nach Einheit (nicht Token) abgerechneten Dienste werden jetzt PRO MODELL bepreist statt über globale Dienst-Knöpfe. ANLASS (User): OCR/TTS/Transcribe rechnen nicht nach Token — die Raten gehören ans Modell. VORHER: OCR-Rate global (ocr.cost_per_page_usd), TTS global (text_to_speech.cost_per_1k_chars_usd), STT gar nicht abgerechnet (tool_transcribe_audio loggte KEINE Kostenzeile — Lücke). NEU: (1) drei per-Modell-Felder in der Modell-DB: cost_per_page_usd (OCR/Seite), cost_per_1k_chars_usd (TTS/1k Zeichen), cost_per_minute_usd (STT/Audio-Minute — neue Einheit). (2) EIN Rate-Choke-Point quotas._unit_rate(model, field) liest die Rate vom Modell-Eintrag; _unit_list_cost(purpose, units, model) bekommt model + neuen purpose 'transcribe' (Audio-Sekunden/60 × cost_per_minute_usd). (3) STT-Abrechnung geschlossen: neue CostTracker.log_transcribe (Audio-Sekunden in tokens_in, mirror log_ocr/log_tts) + _log_transcribe_cost-Helfer, verdrahtet an ALLEN drei STT-Pfaden — Agent-Tool (tool_transcribe_audio, fallback-aware model_id), Übersetzungs-Tab Audio/Video (server_lib/translate/media.py) und LIVE-Transkription (server_lib/translate/live.py: pro-Chunk-Sekunden akkumuliert, EINE Kostenzeile beim Session-Ende in _worker_loop-finally statt Flut pro Chunk). (4) OCR (doc_convert._log_ocr_cost-Aufruf) + TTS (audio_overview._log_tts_cost) lesen die Rate jetzt per-Modell statt global; die globalen Knöpfe ocr.cost_per_page_usd + text_to_speech.cost_per_1k_chars_usd ENTFERNT. (5) GUI Models-Tab: capability-bedingte Kostenfelder — audio_transcription→'Kosten STT ($/Min)', tts→'Kosten TTS ($/1k Zeichen)', OCR-Modell→'Kosten OCR ($/Seite)'; Speicherung in settings_general.js (delete bei nicht-anwendbar). MODELLE BEFÜLLT (config.json): mistral-ocr-latest=$0.001/Seite, voxtral-mini-tts-*=$0.00015/1k Zeichen, voxtral-mini-* (STT)=$0.003/min, whisper-* (lokal)=$0 (editierbar). NEBENFIX: TTS-Default stand fälschlich auf voxtral-small-latest (Audio-Chat, KEIN TTS) → korrigiert auf voxtral-mini-tts-latest. VERIFIZIERT (Cost-Math gegen echte config): 17-min-Russisch-Audio auf voxtral-mini = $0.0505 Listenpreis (flat_plan → real $0), whisper = $0; 4 Seiten OCR = $0.004; gemma-4 (kein Transkriber) hat keine STT-Rate. Flatrate-Logik (real $0 / Listenpreis via _unit_list_cost) unverändert für alle drei. py_compile OK; js_gate GRÜN (net-globals unverändert, smoke passed). Skill 03-storage + SKILL.md im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (admin-sichtbar: per-Modell-Kostenfelder für OCR/TTS/Transkription)."),
+    ("9.296.0", "2026-07-09", "feat(neue Fähigkeit `audio_transcription` — trennt „Audio verstehen“ von „Audio transkribieren“): ANLASS (User-Fund): gemma-4-12B war im transcribe_audio-Dropdown wählbar (Fähigkeit `audio`), brach aber zur Laufzeit mit HTTP 400 „Model is not a speech-to-text model“ ab — der oMLX-Server lehnt am /audio/transcriptions-Endpunkt alles ab, was kein echtes STT-Modell ist. URSACHE: die eine `audio`-Fähigkeit vermischte ZWEI verschiedene Betriebsarten, die selbst Mistrals API strikt trennt (live gegen api.mistral.ai/v1/models verifiziert): `audio:true` = Audio-VERSTÄNDNIS (Audio-in-Chat, das Modell hört zu und antwortet frei — voxtral-small, gemma-4, glm) vs. `audio_transcription:true` = wörtliche Sprache-zu-Text über den dedizierten Endpunkt (whisper, voxtral-mini). Ein Modell kann das eine, das andere, beides oder keines. FIX: NEUE kanonische Fähigkeit `audio_transcription` (CAPABILITY_VALUES → chat/image/audio/audio_transcription/tts/video). (1) _infer_canonical_capabilities leitet sie ab: whisper-* + voxtral-mini* (inkl. realtime/transcribe, wie gewünscht zusammengefasst) → audio_transcription; voxtral-small* → audio (Audio-Chat, KEIN Transkriber); audio-fähige LLMs (gemma-4/glm) behalten chat+audio, bekommen aber NICHT audio_transcription. (2) _transcription_resolve (engine/tools/translate_tools.py) filtert jetzt auf `audio_transcription` statt `audio` — nicht-transkribierende Modelle werden VOR dem Wire mit klarer deutscher Meldung abgelehnt statt am Endpunkt zu 400en. (3) GUI: neue Checkbox „Transkription“ im Models-Tab (settings_general_tabs.js + _capOrder in settings_general.js), transcribe_audio-Dropdown (settings_tools.js) listet nur noch audio_transcription-Modelle. (4) Seeds: KNOWN_MODELS voxtral/whisper + _ensure_audio_models (Whisper-Erstseed + Voxtral-Backfill) auf die richtige Fähigkeit umgestellt. MIGRATION: config.json einmalig per Heuristik neu abgeleitet (16 Modelle: 10 → audio_transcription, voxtral-small bleibt audio, voxtral-*-tts → nur tts; glm-5.2 image-Fähigkeit nach Force-Migration wiederhergestellt — sie hatte leere raw_formats). VERIFIZIERT: live-Server nach Neustart listet 10 STT-Modelle im Dropdown, gemma-4/voxtral-small/glm draußen; Resolver-Gate akzeptiert whisper/voxtral-mini, lehnt gemma/voxtral-small/glm ab. NEBENBEFUND: gemma-4 KANN prinzipiell Audio-Chat (input_audio-Block an /chat/completions, live getestet), ist aber KEIN Transkriber — für STT bleibt whisper-large-v3 (auf sauberem Audio wortgenau) bzw. voxtral-mini (bei Telefon-/Rauschaudio robuster, Whisper halluziniert dort Wiederhol-Schleifen — an russischem 17-min-Telefonmitschnitt belegt). py_compile OK; js_gate GRÜN (net-globals unverändert 1895, smoke passed). Skill 02-tools + SKILL.md im selben Commit. Server-Restart nötig (erfolgt). KURATIERTER Eintrag (admin-sichtbar: neue Fähigkeits-Checkbox + saubereres STT-Dropdown)."),
     ("9.295.3", "2026-07-09", "fix(Sitzungs-Inspektor: Token-Aufschlüsselung ein·gesamt / ein·unique / ein·gecached / aus): gemeldet (Chat ea024875) — die Inspektor-Kachel 'Token ein: 123.247' neben '⚡ Gecached: 550.528' las sich widersprüchlich (gecached ≫ ein), weil 'Token ein' NUR den full-price-Anteil (tokens_in) zeigte und der gecachte Prompt-Anteil (cache_read_tokens) als separate, größere Zahl daneben stand — der Nutzer las 550k fälschlich als Prompt-Größe. URSACHE ist keine Fehlrechnung (beide Werte stimmen: der Prompt teilt sich pro Tool-Runde in neu-verarbeitet + Cache-Treffer, und derselbe wachsende Prefix wird über die Runden mehrfach neu gelesen+gezählt → cache_read summiert sich über 15 Runden auf 550k, während nur 123k je full-price verarbeitet wurden), sondern eine ANZEIGE-Semantik-Lücke. FIX (rein Frontend, web/js/chat_send.js openInspectModal): die Summenleiste zeigt jetzt eine eigene 'Tokens'-Zeile mit vier Kacheln — Ein·gesamt (= tokens_in + cache_read_tokens, der volle über alle Tool-Runden verarbeitete Prompt), Ein·unique (tokens_in, voller Tarif), ⚡ Ein·gecached (cache_read_tokens, ~0,1×-Tarif, % des Prompts), Aus (tokens_out); die Kosten-/Meta-Kacheln (Anfragen · Dauer · API-Kosten · Verrechnete Kosten · Cache-Ersparnis) bleiben unverändert in einer zweiten Zeile. Genau EINE Ausgabe-Kachel, weil Ausgabe-Tokens beim Prompt-Caching NIE gecached werden (Caching betrifft nur den Eingabe-Prefix) — 'Aus gesamt'/'Aus gecached' wären dauerhaft redundant/0 gewesen (bewusste Design-Entscheidung, im Kommentar dokumentiert für den Fall künftiger Reasoning-/Cache-Write-Meldungen). Jede Kachel trägt einen Tooltip, der die 'gesamt ≫ Konversationslänge'-Falle erklärt. KEINE Server-Änderung (data.totals lieferte tokens_in/tokens_out/cache_read_tokens/cache_hit_pct bereits). VERIFIZIERT live gegen die echte /v1/sessions/<id>/inspect-Antwort für ea0248752975: Ein·gesamt=673.775 (=123.247+550.528), Ein·unique=123.247, Ein·gecached=550.528 (81,7%), Aus=19.083 — deckt sich exakt mit den Metadaten. js_gate GRÜN (eslint clean, net-globals unverändert 1895 = kein neues Global, smoke 4/5 + 1 flaky-retry passed). Nur Web-Assets — kein Server-Restart nötig (UI-Reload genügt). Kein neuer kuratierter Eintrag (interner Anzeige-Fix im Admin-/Debug-Inspektor)."),
     ("9.295.2", "2026-07-09", "fix(Spickzettel-Feldvermischung — einfacher `think` zeigte sequential-Felder): gemeldet (Chat e136af72): das rechte Tool-Panel zeigte beim EINFACHEN Spickzettel (`think`, nur Feld `thought`) die Felder nextThoughtNeeded/thoughtNumber/totalThoughts. URSACHE: gemma-12B blutete die sequential_thinking-Felder in einen `think`-Aufruf, WEIL beide Scratchpad-Werkzeuge gleichzeitig in-prompt waren (bekannte gemma-Tool-Feld-Schwäche); das Werkzeug ignoriert die Extra-Felder, aber der Client rendert die gesendeten args. ZWEI Fixes: (1) URSACHE — bei FIXEM scratchpad_mode (simple/sequential; per-Modell-Config → KV-prefix-stabil, anders als per-Turn) wird das jeweils ANDERE Scratchpad-Werkzeug hart via exclude_tools rausgenommen (union mit Websuche-Lockout), sodass das Modell die Felder gar nicht mischen kann — live verifiziert: simple-Modus → gemma ruft `think` (nicht sequential_thinking) auf. NICHT bei `auto` (Tool-Set würde pro Turn variieren → Prefix-Churn) oder `off`. (2) ANZEIGE — der in-process-Loop (engine/llm_loop.py) verwirft vor dem tool_call-Event fremde Felder eines `think`-Aufrufs (behält nur `thought`), sodass Chat-View + persistierte Metadaten sauber sind — deckt auch den auto-Fall ab, wo beide Werkzeuge sichtbar bleiben; NUR für das bewusst minimale `think` (sequential_thinking's eigene nummerierte Felder bleiben unangetastet). Live verifiziert: think-args-keys=['thought'], FREMD=[]. HINWEIS (dokumentiert): bei einem Warmup-Modell mit FIXEM Modus divergiert der Warmup-Prefix (ohne scratchpad-exclude gebaut) einmalig vom Turn-Prefix → transparenter Cache-Miss, keine Korrektheitsverletzung; aktuell kein Modell mit fix+warmup betroffen (gemma=auto). py_compile OK (chat/llm_loop/misc_tools). Server-Restart nötig. Kein neuer kuratierter Eintrag (interner Anzeige-/Verhaltens-Fix)."),
     ("9.295.1", "2026-07-09", "feat(Spickzettel-Entscheidung im Klassifikations-Modal): das Promptklassifikations- & Tool-Auswahl-Modal (chat_render.openClassificationModal) zeigt jetzt eine NEUE Sektion 'Spickzettel (Werkzeug-Denken)' — Modus (Aus/Einfach/Erweitert/Automatisch), bei 'auto' zusätzlich die Klassifikation, die die Wahl trieb (task_types-Chips + Komplexität), und die getroffene Entscheidung (kein/einfach/erweitert). Ground-Truth vom Server: handlers/chat.py stasht die Entscheidung als engine.get_request_context()._scratchpad_meta {mode, choice, [task_types, complexity]} an der Stelle, wo scratchpad_choice resolved wird, und hängt sie als auto_route['scratchpad'] an die persistierten Turn-Metadaten (neben tool_gating/tool_resolution/discipline — via load_messages an den Client, wire-gestrippt). Nur bei nicht-off-Modus gezeigt (choice='off' bei auto ist informativ — 'Klassifikator hat sich dagegen entschieden'). VERIFIZIERT live: Data-Breach-Frage (research/high) → auto wählt 'simple', Metadaten {mode:auto, choice:simple, task_types:[research], complexity:high} erreichen den Modal-Feed. Reine Transparenz, kein Verhaltens-Change. py_compile OK; js_gate grün (net-globals unverändert — nur bestehende Helfer chips/esc genutzt, smoke 4/5 passed). Server-Restart nötig (chat.py). Kein neuer kuratierter Eintrag (der 9.295.0-Eintrag deckt das Feature ab; dies ist die Inspector-Transparenz dahinter)."),
@@ -11315,30 +11317,44 @@ KNOWN_MODELS = {
     "pixtral": {"icon": "\U0001f32c\ufe0f", "priority": 45, "max_context": 131072, "max_output": 16384, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}, "raw_formats": ["image/*"]},
     "minimax": {"icon": "\U0001f4ab", "priority": 55, "max_context": 131072, "max_output": 32768, "capabilities": ["coding", "analysis"], "inference": {"temperature": 0.7}, "raw_formats": []},
     "devstral": {"icon": "\U0001f32c\ufe0f", "priority": 50, "max_context": 256000, "max_output": 65536, "capabilities": ["coding", "analysis", "agentic"], "inference": {"temperature": 0.7}, "raw_formats": []},
-    "voxtral": {"icon": "\U0001f3a4", "priority": 45, "max_context": 32768, "max_output": 4096, "capabilities": ["audio"], "inference": {}, "raw_formats": []},
-    "whisper": {"icon": "\U0001f3a4", "priority": 30, "max_context": 0, "max_output": 0, "capabilities": ["audio", "local"], "inference": {}, "raw_formats": []},
+    "voxtral": {"icon": "\U0001f3a4", "priority": 45, "max_context": 32768, "max_output": 4096, "capabilities": ["audio_transcription"], "inference": {}, "raw_formats": []},
+    "whisper": {"icon": "\U0001f3a4", "priority": 30, "max_context": 0, "max_output": 0, "capabilities": ["audio_transcription", "local"], "inference": {}, "raw_formats": []},
 }
 
-CAPABILITY_VALUES = ["chat", "image", "audio", "tts", "video"]
+CAPABILITY_VALUES = ["chat", "image", "audio", "audio_transcription", "tts", "video"]
 CANONICAL_CAPABILITIES = tuple(CAPABILITY_VALUES)
 
 
 def _infer_canonical_capabilities(model_id: str, cfg: dict) -> list[str]:
     """Infer the canonical capability set for a model entry.
 
-    The five canonical buckets are routing flags (not marketing tags):
+    The canonical buckets are routing flags (not marketing tags):
       - chat:  selectable in any general model dropdown
       - image: vision input — listable for read_document image fallback
-      - audio: speech-to-text — listable for transcribe_audio
+      - audio: speech UNDERSTANDING (audio-in chat) — audio reaches the model as
+               a /chat/completions content block; the model reasons over it
+               (summarise, Q&A, translate). NOT verbatim transcription.
+      - audio_transcription: speech-to-TEXT — the model transcribes verbatim via
+               the dedicated /audio/transcriptions endpoint; the ONLY flag the
+               transcribe_audio dropdown lists (realtime STT folded in here too).
       - tts:   text-to-speech — listable for the speaker / translate TTS dropdown
       - video: video input — reserved for video-in models
+
+    'audio' and 'audio_transcription' are INDEPENDENT — a model may have either,
+    both, or neither. whisper / voxtral-mini transcribe (audio_transcription);
+    voxtral-small understands audio in chat (audio); an audio-in LLM like gemma-4
+    / glm keeps 'audio' + 'chat' but is NOT a transcriber. This mirrors Mistral's
+    own capability split (audio vs audio_transcription vs audio_transcription_realtime).
 
     Heuristics, in order:
       - raw_formats containing 'image/*' → image
       - raw_formats containing 'video/*' → video
-      - id/shortname/base contains 'tts' → tts (and not chat)
-      - id/shortname/base contains 'whisper' or 'voxtral' (without 'tts') → audio (and not chat)
-      - legacy 'audio' capability (pre-canonical) → audio (and not chat)
+      - id/shortname/base contains 'tts' → tts (and not chat) — TTS is not a transcriber
+      - 'whisper' → audio_transcription (pure STT, and not chat)
+      - 'voxtral-small' → audio (audio-in chat, NOT a transcriber, and not chat)
+      - other 'voxtral' (mini / mini-realtime / mini-transcribe) → audio_transcription
+      - legacy 'audio' capability alongside 'chat' (audio-in LLM) → audio (keep chat)
+      - bare legacy 'audio' with no chat (pre-canonical STT model) → audio_transcription
       - everything else → chat
     """
     sn = (cfg.get("shortname") or "").lower()
@@ -11351,8 +11367,21 @@ def _infer_canonical_capabilities(model_id: str, cfg: dict) -> list[str]:
     caps: list[str] = []
     if "tts" in blob:
         caps.append("tts")
-    elif "whisper" in blob or "voxtral" in blob or "audio" in legacy:
+    elif "whisper" in blob:
+        caps.append("audio_transcription")
+    elif "voxtral-small" in blob:
         caps.append("audio")
+    elif "voxtral" in blob:
+        # mini / mini-realtime / mini-transcribe-realtime — all verbatim STT
+        # (realtime transcription folded into audio_transcription).
+        caps.append("audio_transcription")
+    elif "chat" in legacy and "audio" in legacy:
+        # audio-in LLM (gemma-4, glm): understands audio, is not a transcriber.
+        caps.append("chat")
+        caps.append("audio")
+    elif "audio" in legacy:
+        # bare legacy 'audio' with no chat → a pre-canonical STT model.
+        caps.append("audio_transcription")
     else:
         caps.append("chat")
     if any(p.startswith("image") for p in raw):
@@ -11617,8 +11646,9 @@ _WHISPER_SIZES = ("tiny", "base", "small", "medium", "large-v3")
 
 def _ensure_audio_models() -> None:
     """Idempotent migration: ensure
-      - the 5 mlx-whisper sizes exist as model entries (provider=local-mlx-whisper, capability=audio)
-      - any voxtral entry already in _models_config carries the 'audio' capability
+      - the 5 mlx-whisper sizes exist as model entries (provider=local-mlx-whisper, capability=audio_transcription)
+      - any voxtral entry already in _models_config carries the right audio flag
+        (audio_transcription for mini/realtime STT, audio for voxtral-small chat)
     Runs on every init_models_config so existing installs gain the entries
     without manual config edits.
     """
@@ -11641,7 +11671,7 @@ def _ensure_audio_models() -> None:
             "display_name": f"Whisper {size}",
             "icon": "\U0001f3a4",
             "priority": 30,
-            "capabilities": ["audio"],
+            "capabilities": ["audio_transcription"],
             "raw_formats": [],
             "thinking_format": "none",
             "provider": _WHISPER_PROVIDER,
@@ -11651,11 +11681,14 @@ def _ensure_audio_models() -> None:
             "_audio_backfilled": True,
             "_caps_canonical": True,
         }
-    # One-shot backfill of 'audio' capability on existing voxtral entries
-    # served by the mistral-direct provider (the real Mistral API; the old
+    # One-shot backfill of the audio flag on existing voxtral entries served by
+    # the mistral-direct provider (the real Mistral API; the old
     # 'mistral-experimental' provider was removed and its refs were dangling —
     # 2026-06 cleanup). The marker per entry means the user can remove the
-    # capability later without it coming back on the next startup.
+    # capability later without it coming back on the next startup. The flag is
+    # derived per-model: voxtral-mini* (incl. realtime) transcribe verbatim →
+    # audio_transcription; voxtral-small* only understands audio in chat → audio;
+    # voxtral-*-tts is left untouched (already tts via canonicalisation).
     for mid, cfg in _models_config.items():
         if cfg.get("_audio_backfilled"):
             continue
@@ -11663,12 +11696,18 @@ def _ensure_audio_models() -> None:
             continue
         sn = (cfg.get("shortname") or mid).lower()
         base = (cfg.get("base_model_id") or "").lower()
-        if "voxtral" in sn or "voxtral" in base or "voxtral" in mid.lower():
-            caps = list(cfg.get("capabilities") or [])
-            if "audio" not in caps:
-                caps.append("audio")
-                cfg["capabilities"] = caps
+        blob = " ".join((mid.lower(), sn, base))
+        if "voxtral" not in blob:
+            continue
+        if "tts" in blob:
             cfg["_audio_backfilled"] = True
+            continue
+        want = "audio" if "voxtral-small" in blob else "audio_transcription"
+        caps = list(cfg.get("capabilities") or [])
+        if want not in caps:
+            caps.append(want)
+            cfg["capabilities"] = caps
+        cfg["_audio_backfilled"] = True
 
 
 def resolve_model(model_spec: str, purpose: str | None = None) -> str:

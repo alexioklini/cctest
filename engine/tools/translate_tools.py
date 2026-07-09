@@ -272,33 +272,39 @@ def _transcription_resolve(model_arg: str | None) -> tuple[str, dict]:
     requested = (model_arg or "").strip()
     if not requested:
         requested = (cfg.get("default_model") or "").strip()
+    # Transcription needs the audio_transcription capability (verbatim STT), NOT
+    # the plain 'audio' capability (audio-in chat / understanding). A model like
+    # voxtral-small or gemma-4 has 'audio' but cannot drive /audio/transcriptions
+    # — selecting it here used to 400 at the wire ("is not a speech-to-text model").
     if not requested:
-        audio_ids = sorted([
+        stt_ids = sorted([
             mid for mid, c in _models_config.items()
-            if "audio" in (c.get("capabilities") or [])
+            if "audio_transcription" in (c.get("capabilities") or [])
         ])
         raise ValueError(
             "no transcription model configured. Set transcribe_audio.default_model "
-            f"in the Tools tab. Configured (capability=audio): {', '.join(audio_ids) or '(none)'}"
+            f"in the Tools tab. Configured (capability=audio_transcription): {', '.join(stt_ids) or '(none)'}"
         )
     # The configured id is used verbatim. No legacy normalisation, no
     # fuzzy match — what the admin sets in the Tools tab is what the tool
     # uses. If it doesn't match _models_config exactly, we raise below.
     entry = _models_config.get(requested)
     if not entry:
-        audio_ids = sorted([
+        stt_ids = sorted([
             mid for mid, c in _models_config.items()
-            if "audio" in (c.get("capabilities") or [])
+            if "audio_transcription" in (c.get("capabilities") or [])
         ])
         raise ValueError(
             f"unknown transcription model '{requested}'. "
-            f"Configured (capability=audio): {', '.join(audio_ids) or '(none)'}"
+            f"Configured (capability=audio_transcription): {', '.join(stt_ids) or '(none)'}"
         )
 
-    if "audio" not in (entry.get("capabilities") or []):
+    if "audio_transcription" not in (entry.get("capabilities") or []):
         raise ValueError(
-            f"model '{requested}' is not flagged with the 'audio' capability. "
-            "Add 'audio' to its capabilities in the Models tab."
+            f"model '{requested}' is not flagged with the 'audio_transcription' capability "
+            "(it may only 'understand' audio in chat, not transcribe it verbatim). "
+            "Add 'audio_transcription' to its capabilities in the Models tab, or pick a "
+            "speech-to-text model (whisper-*, voxtral-mini-*)."
         )
 
     provider = (entry.get("provider") or "").strip()
@@ -308,6 +314,34 @@ def _transcription_resolve(model_arg: str | None) -> tuple[str, dict]:
 
 
 # ─── transcribe_audio tool ───────────────────────────────────────────────────
+
+def _log_transcribe_cost(*, model: str, provider: str, audio_seconds: float) -> None:
+    """Forward an STT transcription to brain's live CostTracker as a per-minute
+    unit row (mirrors doc_convert._log_ocr_cost). Rate is per-model
+    (cost_per_minute_usd); local whisper = 0 → cost 0. Best-effort — never raises."""
+    try:
+        from brain import _cost_tracker, _current_agent
+        from engine.quotas import _unit_rate
+    except ImportError:
+        return
+    if _cost_tracker is None or audio_seconds <= 0:
+        return
+    agent_id, session_id, user_id = "main", "", ""
+    _ctx = get_request_context()
+    if _ctx is not None:
+        agent = _ctx.current_agent or _current_agent
+        if agent is not None:
+            agent_id = getattr(agent, "agent_id", "main")
+        session_id = _ctx.current_session_id or ""
+        user_id = _ctx.current_user_id or ""
+    cost = round(audio_seconds / 60.0 * _unit_rate(model, "cost_per_minute_usd"), 6)
+    try:
+        _cost_tracker.log_transcribe(agent=agent_id, session_id=session_id, model=model,
+                                     provider=provider, audio_seconds=audio_seconds,
+                                     cost_usd=cost, user_id=user_id)
+    except Exception as e:
+        print(f"[transcribe_audio] cost-log failed: {type(e).__name__}: {e}", flush=True)
+
 
 def tool_transcribe_audio(args: dict) -> str:
     import brain as _brain
@@ -398,6 +432,12 @@ def tool_transcribe_audio(args: dict) -> str:
     }
     if fallback_used_reason:
         out["fallback_used"] = fallback_used_reason
+
+    # Cost: STT is billed per AUDIO MINUTE on the model (cost_per_minute_usd).
+    # model_id is the one that ACTUALLY ran (fallback-aware). Local whisper has a
+    # 0 rate → cost 0. Best-effort — a billing hiccup never fails the transcript.
+    _log_transcribe_cost(model=model_id, provider=(route.get("provider") or ""),
+                         audio_seconds=float(result.get("duration_s") or 0.0))
 
     # Optional chained translation step.
     translate_to = (args.get("translate_to") or "").strip().lower()

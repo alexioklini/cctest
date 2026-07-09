@@ -293,6 +293,15 @@ def transcribe_and_translate(
     duration_s = result.get("duration_s") or 0.0
     segments = result.get("segments") or []
 
+    # STT cost (per audio minute, per-model rate) — same choke point the agent
+    # tool uses. Best-effort; local whisper = 0.
+    try:
+        from engine.tools.translate_tools import _log_transcribe_cost
+        _log_transcribe_cost(model=model_id, provider=(route.get("provider") or ""),
+                             audio_seconds=float(duration_s))
+    except Exception:
+        pass
+
     translated: list[dict] = []
     if target_lang and segments:
         # Skip translation when source and target match — preserves transcript

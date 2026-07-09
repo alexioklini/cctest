@@ -29,6 +29,41 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.297.0",
+        "date": "2026-07-09",
+        "title": "Kosten für OCR, TTS und Transkription pro Modell",
+        "body": "Die nach Einheit abgerechneten Dienste (Texterkennung nach "
+                "Seiten, Sprachausgabe nach Zeichen, Transkription nach "
+                "Audio-Minuten) haben jetzt eigene Kostenfelder direkt am Modell "
+                "(Einstellungen → Allgemein → Modelle) statt einer globalen "
+                "Pauschale. So können Sie pro Modell den korrekten Preis "
+                "hinterlegen — etwa $0,003/Minute für die Cloud-Transkription, "
+                "während die lokale Transkription (Whisper) mit $0 zu Buche "
+                "schlägt. Neu wird die Transkription überhaupt in der "
+                "Kostenübersicht erfasst (bisher fehlte sie ganz); jede "
+                "Transkription erscheint nun korrekt in der "
+                "Kostenaufschlüsselung.",
+        "audience": "admin",
+        "versions": ["9.297.0"],
+    },
+    {
+        "version": "9.296.0",
+        "date": "2026-07-09",
+        "title": "Transkriptions-Modelle klar getrennt",
+        "body": "Bei den Modell-Fähigkeiten (Einstellungen → Allgemein → "
+                "Modelle) gibt es jetzt eine eigene Fähigkeit „Transkription“, "
+                "getrennt von „Audio“. Hintergrund: Manche Modelle können "
+                "gesprochenes Audio zwar verstehen und darauf antworten, aber "
+                "nicht wortgetreu abschreiben — nur echte Transkriptions-Modelle "
+                "(Whisper, Voxtral-mini) leisten das zuverlässig. Das Auswahlfeld "
+                "für die Audio-Transkription (Einstellungen → Werkzeuge → "
+                "transcribe_audio) zeigt deshalb ab sofort nur noch Modelle, die "
+                "tatsächlich transkribieren können. So lässt sich kein Modell mehr "
+                "auswählen, das anschließend bei der Transkription scheitert.",
+        "audience": "admin",
+        "versions": ["9.296.0"],
+    },
+    {
         "version": "9.295.0",
         "date": "2026-07-09",
         "title": "Spickzettel — bessere Antworten schwächerer Modelle",

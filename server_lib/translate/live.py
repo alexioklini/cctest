@@ -216,6 +216,13 @@ class LiveSession:
         # timeline monotonic even if chunks are slightly trimmed.
         self._time_offset_s: float = 0.0
 
+        # Total transcribed audio seconds across all chunks — summed here and
+        # billed ONCE in stop() (one cost row per live session, not per chunk,
+        # which would flood cost_log). STT is per-audio-minute, per-model.
+        self._billed_audio_s: float = 0.0
+        self._resolved_model_id: str = ""
+        self._resolved_provider: str = ""
+
         self._chunks: "queue.Queue[Optional[_Chunk]]" = queue.Queue()
         self._segments: list[_Segment] = []
         self._segments_lock = threading.Lock()
@@ -336,6 +343,19 @@ class LiveSession:
             self._broadcast("error", {"error": self.error})
         finally:
             self.closed = True
+            # Bill the whole live session's audio time as ONE STT cost row
+            # (per-model per-minute rate; local whisper = 0). Best-effort.
+            if self._billed_audio_s > 0 and self._resolved_model_id:
+                try:
+                    from engine.tools.translate_tools import _log_transcribe_cost
+                    from engine.context import request_context
+                    with request_context(current_session_id=self.id,
+                                          current_user_id=self.user_id or ""):
+                        _log_transcribe_cost(model=self._resolved_model_id,
+                                             provider=self._resolved_provider,
+                                             audio_seconds=self._billed_audio_s)
+                except Exception:
+                    pass
             self._broadcast("closed", {"reason": "stopped"})
             # Wake any blocked subscriber queues with a sentinel-like event.
             with self._sub_lock:
@@ -388,6 +408,13 @@ class LiveSession:
             # Don't kill the session on a single chunk failure — just skip.
             self._broadcast("error", {"error": f"chunk {chunk.seq}: {e}"[:240]})
             return
+
+        # Accumulate billable audio time (per-model per-minute STT rate is
+        # applied once in stop()). Capture the resolved model/provider so stop()
+        # bills against the model that actually ran.
+        self._billed_audio_s += float(result.get("duration_s") or 0.0)
+        self._resolved_model_id = model_id
+        self._resolved_provider = route.get("provider") or ""
 
         segments = result.get("segments") or []
         if not segments:

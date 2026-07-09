@@ -219,20 +219,36 @@ def _compute_cost(model: str, tokens_in: int, tokens_out: int,
             + cache_read_tokens * rate["cache_read"]) / 1_000_000
 
 
-def _unit_list_cost(purpose: str, units: int) -> float | None:
+def _unit_rate(model: str, field: str) -> float:
+    """Per-model unit rate from the model registry. The unit-billed services
+    (OCR / TTS / STT) are priced PER MODEL — never globally — so the rate lives
+    on the model entry: cost_per_page_usd (OCR), cost_per_1k_chars_usd (TTS),
+    cost_per_minute_usd (STT). Unset / 0 → 0.0 (local models like whisper /
+    tesseract are legitimately free). Returns USD per the field's native unit."""
+    try:
+        import brain as _brain
+        cfg = _brain._models_config.get(model, {}) or {}
+        return float(cfg.get(field) or 0.0)
+    except Exception:
+        return 0.0
+
+
+def _unit_list_cost(purpose: str, units: int, model: str = "") -> float | None:
     """API list price for SYNTHETIC unit-billed cost rows of flat-plan models —
-    OCR rows carry pages in tokens_in (rate ocr.cost_per_page_usd), TTS rows
-    carry chars in tokens_in (rate text_to_speech.cost_per_1k_chars_usd). The
-    token-based flat-plan reconstruction yields 0 for these rows, so the read-
-    time aggregators call this first. None = not a unit-billed purpose."""
+    OCR rows carry pages in tokens_in (rate cost_per_page_usd), TTS rows carry
+    chars in tokens_in (rate cost_per_1k_chars_usd), STT rows carry AUDIO SECONDS
+    in tokens_in (rate cost_per_minute_usd, seconds/60). All rates are PER MODEL
+    (read off the model registry, not a global service knob). The token-based
+    flat-plan reconstruction yields 0 for these rows, so the read-time aggregators
+    call this first. None = not a unit-billed purpose."""
     try:
         if purpose == "ocr":
-            from engine.doc_convert import _ocr_config
-            return units * float(_ocr_config().get("cost_per_page_usd") or 0.0)
+            return units * _unit_rate(model, "cost_per_page_usd")
         if purpose in ("read_aloud", "audio_overview"):
-            import brain as _brain
-            cfg = _brain.get_tool_config().get("text_to_speech", {}) or {}
-            return units / 1000.0 * float(cfg.get("cost_per_1k_chars_usd", 0) or 0.0)
+            return units / 1000.0 * _unit_rate(model, "cost_per_1k_chars_usd")
+        if purpose == "transcribe":
+            # units = audio seconds → minutes × per-minute rate.
+            return units / 60.0 * _unit_rate(model, "cost_per_minute_usd")
     except Exception:
         return None
     return None
@@ -357,6 +373,29 @@ class CostTracker:
                 conn.commit()
         except (sqlite3.Error, OSError) as e:
             logging.warning(f"TTS cost tracking error: {e}")
+
+    def log_transcribe(self, agent: str, session_id: str, model: str, provider: str,
+                       audio_seconds: float, cost_usd: float, user_id: str = "",
+                       key_name: str = "", purpose: str = "transcribe"):
+        """Log a speech-to-text transcription as a synthetic cost row. STT is
+        billed per AUDIO MINUTE (cloud Voxtral) — the audio duration in SECONDS
+        is stashed in tokens_in (rounded to int; output stays 0), and cost_usd is
+        pre-computed by the caller from audio_seconds/60 × cost_per_minute_usd.
+        Local Whisper has a 0 per-minute rate → cost 0. Mirrors log_ocr / log_tts
+        (incl. the flat-plan $0 rule; list price reconstructed via _unit_list_cost
+        with purpose='transcribe')."""
+        import brain as _brain
+        if _brain.model_is_flat_plan(model):
+            cost_usd = 0.0
+        try:
+            with _cost_conn() as conn:
+                conn.execute("""
+                    INSERT INTO cost_log (agent, session_id, user_id, model, provider, key_name, tokens_in, tokens_out, cost_usd, tool_round, purpose)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (agent, session_id or "", user_id or "", model, provider, key_name or "", int(round(audio_seconds)), 0, float(cost_usd), 0, purpose or "transcribe"))
+                conn.commit()
+        except (sqlite3.Error, OSError) as e:
+            logging.warning(f"transcribe cost tracking error: {e}")
 
     def token_sums(self, models: list[str], since_iso: str) -> dict:
         """Sum fresh/out/cached tokens, calls and REAL cost for a model set
@@ -605,7 +644,7 @@ class CostTracker:
                     out["tokens_out"] += r["tokens_out"]
                     out["cost"] += r["cost"]
                     if _brain.model_is_flat_plan(r["model"]):
-                        _ul = _unit_list_cost(r["purpose"] or "", r["tokens_in"])
+                        _ul = _unit_list_cost(r["purpose"] or "", r["tokens_in"], r["model"])
                         if _ul is not None:
                             out["cost_list"] += _ul
                         else:

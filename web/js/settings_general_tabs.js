@@ -344,6 +344,22 @@ async function _genTab_models(C) {
               ${mdlInput('mdl-cost-input','Kosten ein ($/M)',cfg.cost_input,{step:'0.01',min:0,ph:'0'})}
               ${mdlInput('mdl-cost-output','Kosten aus ($/M)',cfg.cost_output,{step:'0.01',min:0,ph:'0'})}
               ${mdlInput('mdl-cost-cache-read','Kosten cached ($/M)',cfg.cost_cache_read,{step:'0.001',min:0,ph:'auto (0,1× ein)'})}
+              ${(()=>{
+                // Unit-billed services (OCR/TTS/STT) are priced PER MODEL, not by
+                // token. Show only the field matching the model's capability.
+                // Lokale Modelle (whisper/tesseract) = 0, aber editierbar.
+                const caps = new Set(cfg.capabilities||[]);
+                let out = '';
+                if (caps.has('audio_transcription'))
+                  out += mdlInput('mdl-cost-per-minute','Kosten STT ($/Min)',cfg.cost_per_minute_usd,{step:'0.001',min:0,ph:'0 (lokal)'});
+                if (caps.has('tts'))
+                  out += mdlInput('mdl-cost-per-1k-chars','Kosten TTS ($/1k Zeichen)',cfg.cost_per_1k_chars_usd,{step:'0.0001',min:0,ph:'0'});
+                // OCR: kein eigenes Capability-Flag — am OCR-Provider-Modell erkennbar
+                // (mistral-ocr o. tesseract). Zeige das Feld, wenn die ID auf OCR deutet.
+                if (/ocr|tesseract/i.test(mid))
+                  out += mdlInput('mdl-cost-per-page','Kosten OCR ($/Seite)',cfg.cost_per_page_usd,{step:'0.0001',min:0,ph:'0'});
+                return out;
+              })()}
               <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Abrechnungskonto dieses Modells. Ein Flat-Plan (Abo: Z.ai/Kimi Coding Plan, Mistral Vibe) verbucht jeden Aufruf mit 0 $ realen Kosten — die Kostenfelder links behalten den API-Listenpreis für die „ohne Flatrate"-Schätzung. Ein Credit-Konto (API-Guthaben, z. B. Kilo) rechnet weiter real nach Token gegen das hinterlegte Kontingent. Pläne verwalten: Plan-Nutzung-Popover in der Statusleiste.">Coding-Plan / Konto</label>
                 <select class="mdl-coding-plan" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
                   <option value="">— keiner —</option>
@@ -401,7 +417,8 @@ async function _genTab_models(C) {
                     const opts = [
                       ['chat',  'Chat',  'Im Chat-Eingabefeld und jedem allgemeinen Modell-Dropdown auswählbar.'],
                       ['image', 'Bild',  'Vision-Eingabe — von read_document für Bildanhänge verwendet.'],
-                      ['audio', 'Audio', 'Sprache-zu-Text — unter transcribe_audio aufgeführt.'],
+                      ['audio', 'Audio', 'Audio-Verständnis (Audio-in-Chat) — das Modell hört zu und antwortet frei (zusammenfassen, Fragen, übersetzen). KEIN wörtliches Transkribieren.'],
+                      ['audio_transcription', 'Transkription', 'Sprache-zu-Text (wörtlich) — unter transcribe_audio aufgeführt. Nur echte STT-Modelle (whisper-*, voxtral-mini-*). Getrennt von „Audio".'],
                       ['tts',   'TTS',   'Text-zu-Sprache — unter text_to_speech aufgeführt.'],
                       ['video', 'Video', 'Video-Eingabe — für videofähige Modelle reserviert.'],
                     ];

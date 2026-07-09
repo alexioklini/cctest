@@ -289,15 +289,17 @@ def _stitch(lines: list[tuple[str, str]], voice_a: str, voice_b: str,
 def _log_tts_cost(chars: int, *, session_id: str, user_id: str, agent_id: str,
                   purpose: str = "read_aloud") -> float:
     """Log a synthetic cost row for the TTS render (char-billed, not token-billed)
-    and return the computed USD cost. Rate from text_to_speech.cost_per_1k_chars_usd
-    (0 = don't meter). `purpose` is the cost-ledger use-case bucket (audio_overview
-    for Studio podcasts, read_aloud for chat). Best-effort — never raises."""
+    and return the computed USD cost. Rate is PER MODEL — models.<id>.cost_per_1k_chars_usd
+    on the configured TTS model (0 = don't meter, e.g. a local voice). `purpose` is
+    the cost-ledger use-case bucket (audio_overview for Studio podcasts, read_aloud
+    for chat). Best-effort — never raises."""
     if chars <= 0:
         return 0.0
     try:
+        from engine.quotas import _unit_rate
         cfg = _brain.get_tool_config().get("text_to_speech", {}) or {}
-        rate = float(cfg.get("cost_per_1k_chars_usd", 0) or 0)
         model_id = (cfg.get("default_model") or "").strip()
+        rate = _unit_rate(model_id, "cost_per_1k_chars_usd")
         cost = round((chars / 1000.0) * rate, 6)
         tracker = getattr(_brain, "_cost_tracker", None)
         if tracker is not None and (rate > 0 or model_id):
