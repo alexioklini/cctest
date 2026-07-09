@@ -170,6 +170,8 @@ function toolDescribe(name, args) {
     context_search: () => `Kontext durchsuchen: „${a.query || '...'}"`,
     context_detail: () => `Kontext-Detail laden`,
     context_recall: () => `Kontext abrufen`,
+    think: () => `Spickzettel${a.thought ? ': „' + String(a.thought).substring(0, 60) + '"' : ''}`,
+    sequential_thinking: () => `Erweiterter Spickzettel${a.thoughtNumber && a.totalThoughts ? ' (' + a.thoughtNumber + '/' + a.totalThoughts + ')' : ''}${a.thought ? ': „' + String(a.thought).substring(0, 50) + '"' : ''}`,
     read_document: () => `Dokument lesen: ${a.path || a.file_path || ''}`,
     write_document: () => `Dokument schreiben: ${a.path || a.file_path || ''}`,
     edit_document: () => `Dokument bearbeiten: ${a.path || a.file_path || ''}`,

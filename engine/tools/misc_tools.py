@@ -243,6 +243,100 @@ def tool_list_nodes(args: dict) -> str:
         return _err(f"Failed to list nodes: {e}")
 
 
+# ─── think ─────────────────────────────────────────────────────────────────
+
+def tool_think(args: dict) -> str:
+    """No-op scratchpad (Anthropic "think" tool).
+
+    Obtains no information and changes nothing — the `thought` is simply
+    appended to the wire history (as this tool_call/tool_result pair), so the
+    model can re-read it on later rounds. The persistence IS the value: unlike
+    a model's native reasoning field (generated per round, then discarded), a
+    thought recorded here survives across tool rounds. See the think-tool
+    handover for why this helps weak-tool-follow-through local models on long,
+    policy-heavy tool chains.
+    """
+    thought = (args.get("thought") or "").strip()
+    if not thought:
+        return _err("`thought` is required and must be non-empty.")
+    return _ok({"logged": True})
+
+
+# ─── sequential_thinking ─────────────────────────────────────────────────────
+
+def _coerce_bool(v) -> bool:
+    """Zod-style boolean coercion — the upstream MCP server needs it because
+    even capable models emit the string "false"/"true" for boolean fields."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s == "true":
+            return True
+        if s == "false":
+            return False
+    return bool(v)
+
+
+def _coerce_int(v, default=None):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def tool_sequential_thinking(args: dict) -> str:
+    """Full Anthropic-style sequential-thinking scratchpad (upstream MCP parity).
+
+    Like `think` but with the upstream server's bookkeeping: numbered thoughts,
+    a running total, an explicit "more thoughts needed?" flag, and revision /
+    branch tracking. Obtains no information and changes nothing — the value is
+    the persisted, structured chain in the wire history.
+
+    Differs from the upstream MCP server in ONE deliberate way: upstream keeps
+    thoughtHistory / branches as PROCESS-GLOBAL state (one shared log for every
+    caller) — a bug in a multi-user server. Here the state lives per-request in
+    RequestContext._dynamic (keyed under `_seqthink_state`), so two sessions
+    never share a thought log. Returns the same status JSON shape upstream does.
+    """
+    thought = (args.get("thought") or "").strip()
+    if not thought:
+        return _err("`thought` is required and must be non-empty.")
+
+    thought_number = _coerce_int(args.get("thoughtNumber", args.get("thought_number")), 1) or 1
+    total_thoughts = _coerce_int(args.get("totalThoughts", args.get("total_thoughts")), 1) or 1
+    next_needed = _coerce_bool(args.get("nextThoughtNeeded", args.get("next_thought_needed")))
+    is_revision = _coerce_bool(args.get("isRevision", args.get("is_revision")))
+    branch_from = _coerce_int(args.get("branchFromThought", args.get("branch_from_thought")), None)
+    branch_id = args.get("branchId", args.get("branch_id")) or None
+
+    # Adjust total up if the model overshot its own estimate (upstream behavior).
+    if thought_number > total_thoughts:
+        total_thoughts = thought_number
+
+    # Per-request state (NOT process-global — the upstream multi-user footgun).
+    ctx = get_request_context()
+    state = ctx._dynamic.get("_seqthink_state")
+    if state is None:
+        state = {"history": [], "branches": {}}
+        ctx._dynamic["_seqthink_state"] = state
+    state["history"].append({
+        "thought": thought, "thoughtNumber": thought_number,
+        "totalThoughts": total_thoughts, "isRevision": is_revision,
+        "branchId": branch_id,
+    })
+    if branch_from is not None and branch_id:
+        state["branches"].setdefault(branch_id, []).append(thought_number)
+
+    return _ok({
+        "thoughtNumber": thought_number,
+        "totalThoughts": total_thoughts,
+        "nextThoughtNeeded": next_needed,
+        "branches": list(state["branches"].keys()),
+        "thoughtHistoryLength": len(state["history"]),
+    })
+
+
 # ─── MCP client tools ─────────────────────────────────────────────────────────
 
 def tool_mcp_connect(args: dict) -> str:

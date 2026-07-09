@@ -2184,27 +2184,6 @@
       "base_model_id": "deepseek/deepseek-v4-flash:discounted",
       "coding_plan": "kilo-credit"
     },
-    "voxtral-mini-2507": {
-      "enabled": true,
-      "shortname": "voxtral-mini-2507",
-      "display_name": "voxtral-mini-2507",
-      "icon": "🎤",
-      "priority": 45,
-      "capabilities": [
-        "audio"
-      ],
-      "thinking_format": "none",
-      "max_context": 32768,
-      "max_output": 4096,
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "_audio_backfilled": true,
-      "is_local": false,
-      "warmup": false,
-      "coding_plan": "mistral-vibe"
-    },
     "mistral-code-latest": {
       "enabled": false,
       "shortname": "mistral-code-latest",
@@ -2535,7 +2514,8 @@
             "official_name": "Gemma 4 12B (Reasoning)"
           }
         }
-      }
+      },
+      "scratchpad_mode": "auto"
     },
     "labs-leanstral-1-5-1": {
       "enabled": false,
@@ -2960,7 +2940,8 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "tencent/hy3": {
       "enabled": false,
@@ -2975,7 +2956,8 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "nex-agi/nex-n2-mini": {
       "enabled": false,
@@ -2990,7 +2972,8 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "glm-4.5": {
       "enabled": false,
@@ -3005,7 +2988,8 @@
       "thinking_format": "none",
       "provider": "zai-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "glm-4.5-air": {
       "enabled": false,
@@ -3020,7 +3004,8 @@
       "thinking_format": "none",
       "provider": "zai-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "glm-4.6": {
       "enabled": false,
@@ -3035,7 +3020,8 @@
       "thinking_format": "none",
       "provider": "zai-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "glm-4.7": {
       "enabled": false,
@@ -3050,7 +3036,8 @@
       "thinking_format": "none",
       "provider": "zai-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "glm-5": {
       "enabled": false,
@@ -3065,7 +3052,8 @@
       "thinking_format": "none",
       "provider": "zai-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "glm-5-turbo": {
       "enabled": false,
@@ -3080,7 +3068,8 @@
       "thinking_format": "none",
       "provider": "zai-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "glm-5.1": {
       "enabled": false,
@@ -3095,7 +3084,8 @@
       "thinking_format": "none",
       "provider": "zai-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "kimi-for-coding": {
       "enabled": false,
@@ -3110,7 +3100,8 @@
       "thinking_format": "none",
       "provider": "kimi-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "aion-labs/aion-3.0-mini": {
       "enabled": false,
@@ -3125,7 +3116,8 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     },
     "aion-labs/aion-3.0": {
       "enabled": false,
@@ -3140,7 +3132,8 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     }
   },
   "nodes": {},
@@ -5949,6 +5942,46 @@
       }
     },
     "find_skills": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "think": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "sequential_thinking": {
       "description": "",
       "when_to_use": "",
       "warnings": "",

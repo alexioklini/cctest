@@ -29,6 +29,26 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.295.0",
+        "date": "2026-07-09",
+        "title": "Spickzettel — bessere Antworten schwächerer Modelle",
+        "body": "Schwächere lokale Modelle antworten bei komplexen Fragen "
+                "manchmal vorschnell. Neu können Sie pro Modell einen "
+                "„Spickzettel“ aktivieren (Einstellungen → Allgemein → Modelle): "
+                "Das Modell hält dann vor der Antwort kurz inne, notiert seinen "
+                "Gedankengang und prüft ihn gegen die gefundenen Informationen. "
+                "In Tests hob das die Qualität bei mehrschrittigen "
+                "Richtlinien-Fragen deutlich. Vier Stufen stehen zur Wahl: Aus, "
+                "Einfach, Erweitert (ausführlicher, aber langsamer) und "
+                "Automatisch — bei „Automatisch“ entscheidet das System pro "
+                "Anfrage selbst, ob und wie viel Nachdenken sinnvoll ist. "
+                "Empfohlen für lokale Modelle; bei Cloud-Modellen sparsam "
+                "einsetzen, da jeder zusätzliche Denkschritt Zeit und Kosten "
+                "verursacht.",
+        "audience": "admin",
+        "versions": ["9.295.0"],
+    },
+    {
         "version": "9.294.3",
         "date": "2026-07-08",
         "title": "Service-Modelle greifen sofort",

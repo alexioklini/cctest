@@ -711,6 +711,46 @@ write/exec tool is deliberately excluded.
 
 - `list_nodes()` — peer nodes available
 
+## Thinking (scratchpad / "Spickzettel")
+
+- `think(thought="…")` — no-op scratchpad (shown in chat as "Spickzettel").
+  Obtains no information and changes nothing; the thought is appended to the
+  turn's tool history so the model can re-read it on later rounds. Unlike a
+  model's native reasoning field (generated per round, then discarded), a `think`
+  note persists across tool rounds — use it after a tool result to check the
+  result against the relevant policy/constraint before acting. Always in-prompt
+  on interactive turns (structural floor, like `tool_search`/`ask_user`), so it
+  survives classifier tool-gating.
+- `sequential_thinking(thought, thoughtNumber, totalThoughts, nextThoughtNeeded, …)`
+  — the FULL upstream-MCP scratchpad (shown as "Erweiterter Spickzettel"). Same
+  no-op nature as `think` but with structured bookkeeping: numbered thoughts, a
+  running total, an explicit nextThoughtNeeded flag, and revision/branch tracking
+  (isRevision/revisesThought/branchFromThought/branchId/needsMoreThoughts). State
+  (thought history + branches) is per-request in RequestContext._dynamic — NOT
+  process-global like the upstream server (that would leak across sessions).
+  Returns a status JSON {thoughtNumber, totalThoughts, nextThoughtNeeded,
+  branches, thoughtHistoryLength}. Also in the structural floor. Its wire
+  description is kept VERBATIM from the upstream MCP server (incl. the 11-point
+  "You should:" list) on purpose: that procedural guidance is what makes a model
+  call the tool MULTIPLE times (numbered thoughts) instead of once — an
+  abbreviated description made gemma-12B call it 1× (no decomposition), the full
+  one makes it call 3×. Don't trim it despite prompt-bloat instincts.
+- Per-model `scratchpad_mode` (config + Models-tab dropdown "Spickzettel"):
+  `off` | `simple` | `sequential` | `auto`. On simple/sequential, every turn
+  appends a wire-only request (FORCE_THINK_PROMPT / FORCE_SEQUENTIAL_THINKING_PROMPT,
+  on the last user message — KV-stable, same mechanism as caveman) telling the
+  model to call `think` / `sequential_thinking` before answering. On `auto`,
+  `resolve_scratchpad_choice(analysis)` decides per turn from the classifier's
+  task_types + complexity: synthesis/reasoning at medium/high → simple; very hard
+  multi-facet reasoning (high + ≥2 reasoning types) → sequential; lookups / low
+  complexity / fast / reporting-only → off. DISTINCT from the model's thinking
+  level (native reasoning); both can be on at once. Grounded in a 3-arm gemma-12B
+  eval: a scratchpad lifts multi-doc synthesis a lot, hurts refusal-type lookups,
+  and the sequential variant is steadier but never better in the mean at ~2.8×
+  time — so `auto` is conservative. Recommended `auto` for weak local models,
+  `off` for cloud (token cost). Legacy `force_think`/`force_sequential_thinking`
+  booleans map to `simple`/`sequential` and are dropped on next save.
+
 ## Tool group → name map (groups in `agent.json → tool_groups`)
 
 ```
@@ -734,6 +774,7 @@ scheduler     schedule_list schedule_history
 mcp           mcp_connect mcp_disconnect mcp_servers
 skills        use_skill
 nodes         list_nodes
+thinking      think sequential_thinking
 code_exec     python_exec
 audio         transcribe_audio generate_audio_overview
 translation   translate_text translate_document detect_language

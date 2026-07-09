@@ -1531,6 +1531,105 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "think",
+        "description": (
+            "Use the tool to think about something. It will not obtain new "
+            "information or change anything, but just append the thought to the log. "
+            "Use it after a tool result to reason about what you found before acting: "
+            "check the result against the relevant policy or constraint, note which "
+            "rule applies, and decide the next step. Especially valuable in "
+            "policy-heavy, multi-step tasks where a wrong action has consequences."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "thought": {"type": "string", "description": "A thought to think about."},
+            },
+            "required": ["thought"],
+        },
+    },
+    {
+        # VERBATIM from the upstream MCP server (modelcontextprotocol/servers,
+        # src/sequentialthinking/index.ts) so the eval measures the ORIGINAL
+        # mechanism, not an abbreviation. The 11-point "You should:" list is what
+        # actually drives multi-call decomposition — dropping it (as an earlier
+        # draft did) made the model call the tool once instead of stepping through
+        # numbered thoughts. Kept in full despite prompt-bloat concerns because the
+        # whole point of this tool is the procedural guidance.
+        "name": "sequential_thinking",
+        "description": (
+            "A detailed tool for dynamic and reflective problem-solving through thoughts.\n"
+            "This tool helps analyze problems through a flexible thinking process that can adapt and evolve.\n"
+            "Each thought can build on, question, or revise previous insights as understanding deepens.\n"
+            "\n"
+            "When to use this tool:\n"
+            "- Breaking down complex problems into steps\n"
+            "- Planning and design with room for revision\n"
+            "- Analysis that might need course correction\n"
+            "- Problems where the full scope might not be clear initially\n"
+            "- Problems that require a multi-step solution\n"
+            "- Tasks that need to maintain context over multiple steps\n"
+            "- Situations where irrelevant information needs to be filtered out\n"
+            "\n"
+            "Key features:\n"
+            "- You can adjust total_thoughts up or down as you progress\n"
+            "- You can question or revise previous thoughts\n"
+            "- You can add more thoughts even after reaching what seemed like the end\n"
+            "- You can express uncertainty and explore alternative approaches\n"
+            "- Not every thought needs to build linearly - you can branch or backtrack\n"
+            "- Generates a solution hypothesis\n"
+            "- Verifies the hypothesis based on the Chain of Thought steps\n"
+            "- Repeats the process until satisfied\n"
+            "- Provides a correct answer\n"
+            "\n"
+            "Parameters explained:\n"
+            "- thought: Your current thinking step, which can include:\n"
+            "  * Regular analytical steps\n"
+            "  * Revisions of previous thoughts\n"
+            "  * Questions about previous decisions\n"
+            "  * Realizations about needing more analysis\n"
+            "  * Changes in approach\n"
+            "  * Hypothesis generation\n"
+            "  * Hypothesis verification\n"
+            "- nextThoughtNeeded: True if you need more thinking, even if at what seemed like the end\n"
+            "- thoughtNumber: Current number in sequence (can go beyond initial total if needed)\n"
+            "- totalThoughts: Current estimate of thoughts needed (can be adjusted up/down)\n"
+            "- isRevision: A boolean indicating if this thought revises previous thinking\n"
+            "- revisesThought: If is_revision is true, which thought number is being reconsidered\n"
+            "- branchFromThought: If branching, which thought number is the branching point\n"
+            "- branchId: Identifier for the current branch (if any)\n"
+            "- needsMoreThoughts: If reaching end but realizing more thoughts needed\n"
+            "\n"
+            "You should:\n"
+            "1. Start with an initial estimate of needed thoughts, but be ready to adjust\n"
+            "2. Feel free to question or revise previous thoughts\n"
+            "3. Don't hesitate to add more thoughts if needed, even at the \"end\"\n"
+            "4. Express uncertainty when present\n"
+            "5. Mark thoughts that revise previous thinking or branch into new paths\n"
+            "6. Ignore information that is irrelevant to the current step\n"
+            "7. Generate a solution hypothesis when appropriate\n"
+            "8. Verify the hypothesis based on the Chain of Thought steps\n"
+            "9. Repeat the process until satisfied with the solution\n"
+            "10. Provide a single, ideally correct answer as the final output\n"
+            "11. Only set nextThoughtNeeded to false when truly done and a satisfactory answer is reached"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "thought": {"type": "string", "description": "Your current thinking step"},
+                "nextThoughtNeeded": {"type": "boolean", "description": "Whether another thought step is needed"},
+                "thoughtNumber": {"type": "integer", "description": "Current thought number", "minimum": 1},
+                "totalThoughts": {"type": "integer", "description": "Estimated total thoughts needed", "minimum": 1},
+                "isRevision": {"type": "boolean", "description": "Whether this revises previous thinking"},
+                "revisesThought": {"type": "integer", "description": "Which thought is being reconsidered", "minimum": 1},
+                "branchFromThought": {"type": "integer", "description": "Branching point thought number", "minimum": 1},
+                "branchId": {"type": "string", "description": "Branch identifier"},
+                "needsMoreThoughts": {"type": "boolean", "description": "If more thoughts are needed"},
+            },
+            "required": ["thought", "nextThoughtNeeded", "thoughtNumber", "totalThoughts"],
+        },
+    },
+    {
         "name": "schedule_history",
         "description": "Get execution history for scheduled tasks. Shows status, results, and timestamps.",
         "input_schema": {

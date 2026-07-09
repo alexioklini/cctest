@@ -366,6 +366,16 @@ async function _genTab_models(C) {
                 <select class="mdl-thinking-level" data-mid="${esc(mid)}" data-current="${esc((inf||{}).thinking_level||'')}" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
                 </select>
               </div>
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Spickzettel = ein WERKZEUG, mit dem das Modell einen Gedanken als Notiz ablegt und prüft, bevor es antwortet. Die Notiz bleibt über mehrere Werkzeug-Runden erhalten (im Gegensatz zum modell-eigenen Reasoning, das pro Runde verworfen wird). WICHTIG: Das ist NICHT die „Denkstufe“/„Thinking-Format“ oben (das native Reasoning des Modells) — hier geht es um künstliches Denken über ein Werkzeug; beides ist kombinierbar. · Aus = nie. · Einfach = bei jeder Anfrage das schlichte Werkzeug „Spickzettel“ (ein Gedanke). · Erweitert = bei jeder Anfrage das strukturierte „Erweiterter Spickzettel“ (nummerierte Denkschritte, langsamer). · Automatisch = ein Klassifikator entscheidet pro Anfrage, ob überhaupt ein Spickzettel nötig ist und ob einfach oder erweitert (empfohlen für schwächere lokale Modelle; bei Cloud eher „Aus“ wegen Token-Kosten).">Spickzettel (Werkzeug-Denken)</label>
+                <select class="mdl-scratchpad-mode" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
+                  ${(() => {
+                    // Back-compat: derive the mode from legacy booleans if scratchpad_mode is unset.
+                    let mode = cfg.scratchpad_mode || (cfg.force_sequential_thinking ? 'sequential' : (cfg.force_think ? 'simple' : 'off'));
+                    return [['off','Aus'],['simple','Einfach (immer)'],['sequential','Erweitert (immer)'],['auto','Automatisch (Klassifikator)']]
+                      .map(([v,l]) => `<option value="${v}"${mode===v?' selected':''}>${l}</option>`).join('');
+                  })()}
+                </select>
+              </div>
               <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Wenn dieses Modell im Chat eine Hintergrundaufgabe per Fan-out aufteilt, laufen die Leaf-Tasks auf dem hier gewählten (i.d.R. günstigeren) Modell. Die Orchestrierung bleibt auf diesem Chat-Modell. Leer = Leaf-Tasks bleiben auf diesem Modell. Auto = die Absicht jedes Leaf-Tasks wird klassifiziert und das passende Modell gewählt (wie ✨ Auto im Verfasser). Die Denkstufe wird beim Wechsel automatisch passend gesetzt.">Fan-out-Modell</label>
                 <select class="mdl-bgtask-model" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
                   <option value="">— keins (auf diesem Modell) —</option>

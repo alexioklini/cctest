@@ -75,6 +75,11 @@ class RequestContext:
     # --- caveman ---
     caveman_system: int = 0
     caveman_chat: int = 0
+    # --- scratchpad ("Spickzettel") forcing (per-model) ---
+    # Resolved choice for THIS turn: "off" | "simple" | "sequential".
+    # (The per-model mode is off|simple|sequential|auto; "auto" is resolved to one
+    #  of the three per turn by resolve_scratchpad_choice.)
+    scratchpad_choice: str = "off"
     # --- attachments ---
     attachment_image_model: str = ""
     attachments: object = None

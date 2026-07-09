@@ -415,6 +415,15 @@ async function saveModelsConfig() {
       // persist explicit true only, drop the key when off.
       const autoLcm = row.querySelector('.mdl-auto-lcm')?.checked;
       if (autoLcm === true) mc[mid].auto_lcm = true; else delete mc[mid].auto_lcm;
+      // scratchpad_mode — per-model: off | simple | sequential | auto. Replaces
+      // the legacy force_think / force_sequential_thinking booleans (which are
+      // dropped on save). "off" is the default; persist only a non-off value.
+      const spMode = row.querySelector('.mdl-scratchpad-mode')?.value || 'off';
+      if (spMode && spMode !== 'off') mc[mid].scratchpad_mode = spMode;
+      else delete mc[mid].scratchpad_mode;
+      // Drop legacy keys so they can't shadow the new field.
+      delete mc[mid].force_think;
+      delete mc[mid].force_sequential_thinking;
       // Warmup. Persist explicit false so the speed profile's warmup=true
       // overlay can't silently re-enable warmup the user just turned off.
       const warm = row.querySelector('.mdl-warmup')?.checked;

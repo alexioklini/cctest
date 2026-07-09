@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.294.4"
-VERSION_DATE = "2026-07-08"
+VERSION = "9.295.0"
+VERSION_DATE = "2026-07-09"
 CHANGELOG = [
+    ("9.295.0", "2026-07-09", "feat(Spickzettel — Werkzeug-Denken für schwache lokale Modelle, mit Auto-Wahl per Klassifikator): NEU zwei No-op-Denk-Werkzeuge + ein per-Modell-Modus, der ein Modell dazu bringt, VOR der Antwort einen Gedanken als Notiz abzulegen (die über Tool-Runden erhalten bleibt — im Gegensatz zum modell-eigenen Reasoning, das pro Runde verworfen wird). ANLASS: gemma-12B (unser einziges lokales Chat-Modell) hält bei Policy-Synthese-Fragen nicht inne, sondern antwortet direkt aus dem Prompt — ein Denk-Halt hebt die Qualität messbar. WERKZEUGE (je 4-Site-registriert, Impl in engine/tools/misc_tools.py, No-op → Gedanke reist nur als tool_call/tool_result-Paar in der Wire-History): (1) `think` (Chat-Anzeige 'Spickzettel') = das minimale Anthropic-think-Tool, EIN Feld `thought`; (2) `sequential_thinking` (Chat-Anzeige 'Erweiterter Spickzettel') = der VOLLSTÄNDIGE Original-MCP-Mechanismus (modelcontextprotocol/servers), 4 Pflichtfelder (thought/thoughtNumber/totalThoughts/nextThoughtNeeded) + 5 optionale (Revision/Branch), Buchführung (Gedanken-Historie + Branches) — aber PRO-REQUEST in RequestContext._dynamic statt prozess-global wie im Original (das würde in Brains Multi-User-Betrieb zwischen Sessions leaken); gibt das Original-Status-JSON zurück. Beschreibung WORTGETREU vom Original inkl. der 11-Punkt-'You should:'-Liste — DIESE Prosa löst das Zerlegen aus: mit einer gekürzten Beschreibung rief gemma das Tool 1× (keine Zerlegung), mit der vollen 2-3× (nummerierte Schritte, live verifiziert). Beide Werkzeuge in `_TOOL_GATING_NEVER_STRIP_TOOLS` (Struktur-Floor wie tool_search/ask_user) — sonst deferrt der Klassifikator die neue thinking-Gruppe raus und das Modell sieht das Werkzeug nie. STEUERUNG: per-Modell `scratchpad_mode` ∈ off|simple|sequential|auto (Models-Tab Dropdown 'Spickzettel', ersetzt zwei kurzlebige Boolean-Flags force_think/force_sequential_thinking → mappen auf simple/sequential, werden beim Speichern gedroppt). Bei simple/sequential wird pro Turn eine WIRE-ONLY-Aufforderung an die letzte User-Nachricht angehängt (FORCE_THINK_PROMPT / FORCE_SEQUENTIAL_THINKING_PROMPT — KV-stabil, dasselbe Muster wie Caveman: System-Prompt + Tools byte-identisch, geht NICHT in compute_prefix_id ein → Warm-Pool-Prefix unberührt). Bei `auto` entscheidet brain.resolve_scratchpad_choice(analysis) pro Anfrage aus der Klassifikator-Ausgabe (task_types + complexity): Synthese/Reasoning (research/analysis/coding/math) bei medium/high → simple; sehr hart (high + ≥2 Reasoning-Typen) → sequential; Lookups/low/fast/nur-reporting → off. DISTINCT von der Denkstufe/Thinking-Format des Modells (natives Reasoning) — beides kombinierbar. BELEGT durch einen 3-Arm-Eval (gemma-12B, 5 Reps × 3 Policy-Fragen, Mistral-Judge, Opus-Gold): kein Spickzettel 0.524 · einfach 0.689 (+0.165) · erweitert 0.647 (+0.123) — ein Spickzettel hilft klar (v.a. Multi-Doc-Synthese 0.24→0.90), der erweiterte ist NICHT besser im Mittel, nur gleichmäßiger (stdev 0.25 vs 0.34) bei ~2.8× Zeit; bei Refusal-artigen Fragen (F1) schadet der einfache leicht. KOSTEN: lokal nur Zeit (2-2.8×), Cloud zusätzlich Token (~2× mit Prompt-Cache, der Output-Aufschlag bleibt voll bepreist) → default `auto` für gemma, `off` für Cloud (opt-in). VERIFIZIERT live: gemma ruft mit Aufforderung 14/15 den Spickzettel (ohne 0/15); Auto trennt korrekt (Synthese medium → Spickzettel, Passwort-Lookup low → keiner); resolve_scratchpad_choice 9/9 Unit-Fälle. py_compile OK (brain/context/misc_tools/tool_schemas/chat); js_gate GRÜN (net-globals unverändert, smoke 5/5). Skill 02-tools + SKILL.md im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar: neuer 'Spickzettel'-Regler pro Modell)."),
     ("9.294.4", "2026-07-08", "feat(Skill-Generator-Modal: Stufen-Checkliste + Fortschrittsbalken): das Fortschritts-Panel des Skill-erzeugen-Modals (web/js/skills_gen.js) zeigte bisher nur die rohen Step-Texte als Zeilenliste. NEU: feste 4-Stufen-Checkliste (Quellmaterial sammeln → Skill verfassen → Entwurf validieren → Fertigstellen) mit Zustands-Icons (grüner Haken=erledigt, rotierender Bogen=aktiv [CSS spin], grauer Kreis=ausstehend, rotes X=Fehler/Abbruch — inline SVG, keine Emoji per [[feedback_svg_not_emoji_buttons]]) + Fortschrittsbalken darüber (sg-progress-track/-bar in main.css, Stufen-Prozente 10/45/80/95, ready=100%, aktiv pulsiert via vorhandenem sb-stream-pulse-Keyframe, Fehler=rot). NEUE Fn skillRenderProgress(d) + Konstante SKILL_GEN_STAGES: Stufe wird aus dem NEUESTEN phase-Step abgeleitet (Text-Präfixe 'Sammelt/Verfasst|Korrigiert/Validiert/Fertig' — das sind UNSERE _push_step-Texte aus engine/skill_gen.py, Kopplung im Kommentar beidseitig dokumentiert; Retry 'Korrigiert…' fällt bewusst auf Stufe 2 zurück). Detail-Log darunter bleibt (jetzt .sg-detail, dimmed): Modellzeile (row.model — zeigt live das Service-Modell) + nur noch info/error-Steps (Phasen stellt die Checkliste dar). index.html: #skill-gen-bar + #skill-gen-checklist über #skill-gen-steps. KEINE Server-Änderung (GET /v1/skills/generate/<id> lieferte steps/phase/model schon). VERIFIZIERT per Playwright gegen den Live-Server (Screenshot: Stufe 1 ✓ grün, Stufe 2 Spinner, Balken 45%, 'Modell: mistral-medium-3.5'; Review nach Abschluss erreicht, 0 Konsolenfehler). js_gate GRÜN (eslint clean, net-globals 1893→1895 = SKILL_GEN_STAGES+skillRenderProgress, Baseline mitgezogen, smoke 5/5). Nur Web-Assets — kein Server-Restart nötig. Skill 06-user-manual + SKILL.md im selben Commit. Kuratiert: an den 9.294.0-Eintrag angehängt."),
     ("9.294.3", "2026-07-08", "fix(Service-Modelle greifen sofort — ohne Server-Neustart): der Speichern-Handler des Service-Modelle-Panels (POST /v1/services/models, handlers/admin_observability.py) schrieb die Slots nur nach config.json; die Laufzeit-Leser (engine/skill_gen._resolve_model, workflow_gen, instruction_gen, goal_judge, deep_research, audio_overview, output_gen/Studio, wiki_store/wiki_gen, next_prompt, classifier, chat_summary, user_profile-Daemon) lesen aber alle über _server_config() die LIVE server_config, in die die Werte nur EINMAL beim Boot kopiert werden (server.py main()) — eine Slot-Änderung behielt also still das alte Modell bis zum Neustart (User-Fund: skill_gen_model auf mistral-medium-3.5 gestellt, glm-5.2 wurde weiter verwendet). FIX am Choke-Point: (1) NEUE Klassenkonstante _CONFIG_LIVE_MIRROR_KEYS (16 Top-Level-Slots) + Live-Mirror im Save-Handler — nach dem json.dump werden die im Body enthaltenen Slots in-place in die laufende server_config gespiegelt (dasselbe Dict-Objekt, das _inject_server_globals in alle Handler-Module reicht → JEDER Leser sieht den neuen Wert ab dem nächsten Call). (2) default_model-Änderungen (beide Save-Pfade: Service-Modelle-Panel + handlers/admin_config.py Server-Settings) aktualisieren jetzt auch brain._delegate_fallback_model (den Boot-Spiegel, der _background_model_default() + Delegation/ask_llm/context-Fallbacks speist) — nur bei nicht-leerem Wert, Unsetzen strandet keine Background-Calls. (3) BOOT-COPY-LÜCKE geschlossen: goal_judge_model fehlte seit 9.256.0 komplett in der server.py-Boot-Copy (dieselbe Falle wie instruction_gen_model in 9.189.0) — der Goal-Judge-Slot war damit AUCH NACH RESTART tot und lief immer auf dem Background-Default; Zeile ergänzt. BEREITS DYNAMISCH (geprüft, kein Fix nötig): OCR-Block (doc_convert._ocr_config liest config.json pro Call), tts/transcribe/translation (get_tool_config liest tools_config.json pro Call), kg_extraction_model (mempalace-Config-Cache wird beim Save gebustet). BEKANNTE AUSNAHME: telegram_model wird beim Start des Telegram-Service gebacken (server.py:2953) → braucht weiterhin einen Neustart (im Mirror-Kommentar dokumentiert). NEBENBEFUNDE (nicht angefasst): code_graph_model ist seit dem CodeGraph-Cutover 9.214.0 (engine/code_graph.py gelöscht) ein LESERLOSER Slot — Panel/Boot-Copy/Mirror führen ihn weiter, aber nichts konsumiert ihn; das Top-Level background_task_model hat ebenfalls keinen Laufzeit-Leser (der Fan-out liest das PER-MODELL-Feld models.<id>.background_task_model). VERIFIZIERT live (echte API, nach Restart): skill_gen_model per POST /v1/services/models auf mistral-small-latest umgestellt und OHNE Neustart eine Skill-Generierung gestartet → skill_gen-Row model=mistral-small-latest; zurückgestellt auf mistral-medium-3.5 → nächster Lauf model=mistral-medium-3.5. py_compile OK (brain, server, admin_observability, admin_config). Server-Restart EINMALIG nötig (für den neuen Mirror-Code selbst). Skill 01-api im selben Commit. KURATIERTER Eintrag (admin-sichtbar)."),
     ("9.294.2", "2026-07-07", "feat(Skills ⇄ Workflows: agent_step skill=, Cross-Wing-Suche, Workflow-Gen referenziert/extrahiert Skills): vier zusammenhängende Erweiterungen zum Skill-System. (1) CROSS-WING SEMANTISCHE SUCHE: _search_skills_semantic(task, visible, limit) nimmt jetzt eine {owner:{slugs}}-Sichtbarkeitskarte (aus list_user_skills, ACL-gefiltert) und sucht über ALLE Wings, die einen sichtbaren Skill halten — den eigenen user__<uid>-Wing UND die Owner-Wings geteilter (team/global) Skills; Treffer überleben nur, wenn (owner,slug) in der Karte ist (kein Cross-Tenant-Leak trotz Fremd-Wing-Query). find_skills baut die Karte und übergibt sie. VERIFIZIERT: ein ANDERER Nutzer findet per englischer Paraphrase einen GLOBALEN deutschen Skill, der im Owner-Wing liegt (0.73 via semantic) — die Lücke aus 9.294.1 (nur eigene Skills) ist geschlossen. (2) agent_step skill=\"<slug>\": neues Kwarg am agent_step-Tool (+ Schema) lädt einen gespeicherten Skill als Methode des Schritts — resolved die visible Skills des Workflow-OWNERS (load_skill → load_user_skill_body, ACL via ctx.current_user_id, das WorkflowExecution auf user_id setzt); der Skill-Body wird zum Plan (explizites plan= wird angehängt). So referenziert ein Workflow eine wiederverwendbare Prozedur statt sie als plan.md zu duplizieren. (3) AUSWEISPRÜFUNG-WORKFLOW umgeschrieben: nutzt agent_step skill=\"ausweispruefung-echtheit-faelschungsmerkmale\" (Haupt- + Verify-Schritt) statt plan=plan_md; die tote .plan.md-Sidecar entfernt; validate_flow grün. (4) WORKFLOW-GENERIERUNG mit Skill: start_generation/_run_generation nehmen skill_ref (vorhandenen Skill referenzieren) + extract_skill (Methode als NEUEN Skill auslagern → _extract_and_save_skill generiert+speichert den Skill blockierend, dann referenziert der Flow ihn); bei gesetztem skill_ref wird dem Generator-System-Prompt eine Direktive angehängt (agent_step skill= bauen, plan_md leer lassen). NEUER Endpoint GET /v1/skills/match?task=&agent_id= liefert die passenden sichtbaren Skills (find_skills-Ranking im Request-Context des Callers) für die Modal-Auswahl. POST /v1/workflows/generate nimmt skill_ref + extract_skill. UI (web/js/workflows.js + index.html): Generate-Modal bekommt einen Skill-Block — Radios Kein Skill / Neuen Skill auslagern / Vorhandenen referenzieren (Dropdown, per /v1/skills/match beim Öffnen befüllt, semantische Treffer mit ◎ markiert). LIVE E2E (echte API): /v1/skills/match findet den Skill; skill_ref-Gen erzeugt Flow mit agent_step skill= + leerem plan_md; extract-Gen legt einen neuen Skill an (Steps 'Lagert Methode als Skill aus' → 'gespeichert') und referenziert ihn. py_compile OK; js_gate grün (net-globals 1890→1893, Baseline mitgezogen, smoke 4 passed). Skill 02-tools/05-internals/06 + SKILL.md im selben Commit. Server-Restart nötig. Kein neuer kuratierter Eintrag (der 9.294.0-Eintrag deckt Skills ab; dies ist die Skill⇄Workflow-Verzahnung dahinter — für Admins/Poweruser)."),
@@ -1217,6 +1218,43 @@ CAVEMAN_CHAT_PROMPTS = {
 # descriptions — it is OUTPUT-style only (CAVEMAN_CHAT_PROMPTS, appended) plus an
 # input-side compression of the REFINED query text during refinement.
 
+# FORCE-THINK — a per-model "force_think" flag appends this request (wire-only, on
+# the last user message, same mechanism as caveman) so the model reliably uses the
+# `think` tool. It is DISTINCT from the model's own thinking level (reasoning_field
+# etc.): thinking-level = the model's native reasoning (discarded per round); this
+# = an instruction to call the `think` TOOL (a scratchpad that PERSISTS across tool
+# rounds). Both can be on at once. Empirically weak local models (gemma-12B) never
+# call `think` on a bare question but do so reliably when the request is present
+# (3/3 vs 0/6 in testing) — this makes that instruction always-on for the model.
+# Deliberate ordering: search/read FIRST, then think (the order gemma chose itself
+# when it worked, and the order Anthropic's think-tool guidance recommends).
+FORCE_THINK_PROMPT = (
+    "\n\nWICHTIG — SPICKZETTEL NUTZEN: Bevor du deine endgültige Antwort gibst, "
+    "rufe das Werkzeug `think` (deinen Spickzettel) auf und prüfe darin dein "
+    "Vorgehen: Suche zuerst die nötigen Informationen (z. B. mit mempalace_query / "
+    "read_document), rufe DANN `think` auf, um das Gefundene gegen die relevante "
+    "Richtlinie/Vorgabe zu prüfen und den nächsten Schritt zu entscheiden, und "
+    "antworte erst danach.\n"
+)
+
+# FORCE-SEQUENTIAL-THINKING — sibling of force_think for the full upstream-MCP
+# scratchpad. Same wire-only mechanism; asks the model to use the structured
+# `sequential_thinking` tool (numbered thoughts + nextThoughtNeeded) instead of
+# the one-field `think`. A model has at most one of the two forced at a time
+# (force_sequential_thinking wins if both are set) — they target different tools.
+FORCE_SEQUENTIAL_THINKING_PROMPT = (
+    "\n\nWICHTIG — ERWEITERTEN SPICKZETTEL NUTZEN: Zerlege die Aufgabe in MEHRERE "
+    "nummerierte Denkschritte mit dem Werkzeug `sequential_thinking`. Suche zuerst "
+    "die nötigen Informationen (z. B. mit mempalace_query / read_document), und "
+    "rufe `sequential_thinking` dann MEHRFACH auf — einen Aufruf pro Teilschritt "
+    "(thought = dein Gedanke, thoughtNumber = laufende Nummer ab 1, totalThoughts "
+    "= geschätzte Gesamtzahl, nextThoughtNeeded = true solange weitere Schritte "
+    "folgen). Prüfe darin das Gefundene gegen die relevante Richtlinie/Vorgabe, "
+    "revidiere frühere Gedanken bei Bedarf, und setze nextThoughtNeeded erst auf "
+    "false, wenn du alle Teilschritte durchdacht hast und eine belastbare Antwort "
+    "vorliegt. Antworte erst danach.\n"
+)
+
 
 def _caveman_compress_text(text: str, level: int) -> str:
     """Rule-based text compression by caveman level (0-3). Used ONLY to compress
@@ -1291,6 +1329,7 @@ TOOL_GROUPS = {
     "helpdesk": {"helpdesk_session_info", "helpdesk_user_context",
                  "helpdesk_user_activity"},
     "nodes": {"list_nodes"},
+    "thinking": {"think", "sequential_thinking"},
     "code_exec": {"python_exec"},
     "audio": {"transcribe_audio", "generate_audio_overview"},
     "translation": {"translate_text", "translate_document", "detect_language",
@@ -12074,7 +12113,16 @@ def classify_task_purpose_llm(message: str) -> str | None:
 # everything else (incl. the file/shell cluster) is classifier-gated like any group —
 # still tool_search-discoverable if a turn unexpectedly needs it, so nothing dead-ends.
 _TOOL_GATING_NEVER_STRIP: set[str] = set()  # no whole-group floor anymore
-_TOOL_GATING_NEVER_STRIP_TOOLS = {"tool_search", "ask_user"}
+# Tool NAMES that stay in-prompt on every classifier-gated turn, regardless of
+# which groups the classifier marked as needed. `tool_search`/`ask_user` are
+# structural (reach deferred tools + clarify). `think` is here because a "think
+# about it first" tool is NEVER classified as needed for a task — it returns no
+# information the classifier can attribute to a task type — so it would always be
+# deferred, and a weak local model never proactively tool_search's for a thinking
+# tool. Floored so it is always available as a scratchpad on policy-heavy,
+# multi-step turns. KV-stable: warmup applies the same floor, so the prefix stays
+# byte-identical. See the think-tool handover.
+_TOOL_GATING_NEVER_STRIP_TOOLS = {"tool_search", "ask_user", "think", "sequential_thinking"}
 
 
 def model_maintains_warm_prefix(model: str) -> bool:
@@ -12419,6 +12467,50 @@ def resolve_task_purpose(message: str) -> str | None:
     string (the legacy single-value contract — fan-out, etc.)."""
     res = resolve_task_analysis(message)
     return res.get("purpose") if res else None
+
+
+# Scratchpad ("Spickzettel") auto-choice. Per-model `scratchpad_mode`:
+#   "off"        — never
+#   "simple"     — always the `think` tool
+#   "sequential" — always the `sequential_thinking` tool
+#   "auto"       — this function decides per turn from the classifier analysis
+# Grounded in the 3-arm gemma-12B eval (5 reps x 3 questions):
+#   - Multi-doc synthesis (research/analysis, medium/high complexity): the
+#     scratchpad helped a LOT (0.24 -> 0.90 on a data-breach synthesis). -> simple
+#   - Simple lookups / low complexity / "fast": no lift, just latency. -> off
+#   - The SEQUENTIAL (full) variant was never better in the mean, only steadier,
+#     at ~2.8x the time — so auto only reaches for it on genuinely hard,
+#     multi-facet reasoning tasks, and even then conservatively.
+# Refusal-type questions (where "there is no such policy" is correct) were HURT
+# by the simple scratchpad, but the classifier emits no refusal signal, so auto
+# can't target them directly; keeping `research`-only + low complexity on "off"
+# avoids the worst of that class.
+_SCRATCHPAD_SYNTHESIS_TYPES = frozenset({"research", "analysis", "coding", "math"})
+
+def resolve_scratchpad_choice(analysis: dict | None) -> str:
+    """Return 'off' | 'simple' | 'sequential' for scratchpad_mode='auto'.
+
+    `analysis` is the classifier output (resolve_task_analysis). Fail-safe: with
+    no rich signal (keyword mode / classifier down) returns 'off' — never force a
+    scratchpad we can't justify.
+    """
+    if not analysis:
+        return "off"
+    task_types = set(analysis.get("task_types") or [])
+    complexity = (analysis.get("complexity") or "").lower()
+    if not task_types:
+        return "off"  # keyword mode: no complexity/type signal -> don't force
+    # Pure "fast" or explicitly low complexity -> a lookup; a scratchpad only adds latency.
+    if complexity == "low" or task_types == {"fast"}:
+        return "off"
+    synth = task_types & _SCRATCHPAD_SYNTHESIS_TYPES
+    if not synth:
+        return "off"  # reporting/creative/orchestration alone -> no clear benefit
+    # High complexity AND at least two distinct reasoning-type facets -> the hard,
+    # multi-step case where the structured decomposition may earn its cost.
+    if complexity == "high" and len(synth) >= 2:
+        return "sequential"
+    return "simple"
 
 
 # Map a classified task purpose to a routing tier. The tier is resolved
@@ -13462,6 +13554,8 @@ TOOL_ICONS = {
     "task_status": "?", "task_cancel": "x",
     "context_search": "c", "context_detail": "c", "context_recall": "c",
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
+    "think": "*",
+    "sequential_thinking": "*",
     "read_document": "D", "write_document": "D", "edit_document": "D",
     "xlsx_inspect": "D", "xlsx_query": "D", "xlsx_create": "D", "xlsx_edit": "D",
     "xlsx_diff": "D",
@@ -13483,6 +13577,8 @@ TOOL_VERBS = {
     "task_status": "Task Status", "task_cancel": "Cancelling",
     "context_search": "Searching Context", "context_detail": "Context Detail", "context_recall": "Recalling",
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
+    "think": "Spickzettel",
+    "sequential_thinking": "Erweiterter Spickzettel",
     "read_document": "Reading Document", "write_document": "Writing Document", "edit_document": "Editing Document",
     "xlsx_inspect": "Inspecting Spreadsheet", "xlsx_query": "Querying Spreadsheet",
     "xlsx_create": "Creating Spreadsheet", "xlsx_edit": "Editing Spreadsheet",
@@ -14078,6 +14174,8 @@ from engine.tools.misc_tools import (  # noqa: E402
     tool_use_skill,
     tool_find_skills,
     tool_list_nodes,
+    tool_think,
+    tool_sequential_thinking,
     tool_mcp_connect,
     tool_mcp_disconnect,
     tool_mcp_servers,
@@ -14154,6 +14252,8 @@ TOOL_DISPATCH = {
     "helpdesk_user_context": tool_helpdesk_user_context,
     "helpdesk_user_activity": tool_helpdesk_user_activity,
     "list_nodes": tool_list_nodes,
+    "think": tool_think,
+    "sequential_thinking": tool_sequential_thinking,
     "context_search": tool_context_search,
     "context_detail": tool_context_detail,
     "context_recall": tool_context_recall,

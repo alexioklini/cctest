@@ -3335,6 +3335,31 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             engine.get_request_context().caveman_chat = session.caveman_mode
             model_cfg = engine.resolve_model_settings(session.model) if engine._models_config else {}
             engine.get_request_context().caveman_system = int(model_cfg.get("caveman_system", 0) or 0)
+            # Scratchpad ("Spickzettel") forcing (per-model). One field
+            # `scratchpad_mode`: off|simple|sequential|auto. Back-compat: the old
+            # booleans force_think / force_sequential_thinking map to simple /
+            # sequential. On "auto" the classifier decides per turn (one extra
+            # classify call, only for auto-mode models — cheap locally). Wire-only
+            # request appended below; DISTINCT from the model's thinking level.
+            _sp_mode = (model_cfg.get("scratchpad_mode") or "").strip().lower()
+            if not _sp_mode:
+                if model_cfg.get("force_sequential_thinking"):
+                    _sp_mode = "sequential"
+                elif model_cfg.get("force_think"):
+                    _sp_mode = "simple"
+                else:
+                    _sp_mode = "off"
+            if _sp_mode == "auto":
+                try:
+                    _sp_analysis = engine.resolve_task_analysis(message)
+                except Exception:
+                    _sp_analysis = None
+                _sp_choice = engine.resolve_scratchpad_choice(_sp_analysis)
+            elif _sp_mode in ("simple", "sequential"):
+                _sp_choice = _sp_mode
+            else:
+                _sp_choice = "off"
+            engine.get_request_context().scratchpad_choice = _sp_choice
 
             # Set worker subagent execution overrides from agent config
             engine.get_request_context().execution_overrides = agent_config.config.get("execution_overrides") or {}
@@ -4334,6 +4359,24 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     if _cav_eff and _cav_eff in engine.CAVEMAN_CHAT_PROMPTS:
                         _wire_messages = _append_to_wire_user(
                             _wire_messages, engine.CAVEMAN_CHAT_PROMPTS[_cav_eff])
+                    # SCRATCHPAD ("Spickzettel") forcing (per-model): append a
+                    # wire-only request to use the scratchpad tool — only when that
+                    # tool is actually in-prompt this turn (else the request points at
+                    # an absent tool). Same wire-only, KV-stable mechanism as caveman;
+                    # distinct from thinking level. scratchpad_choice is the per-turn
+                    # resolution of the model's off|simple|sequential|auto mode. Read
+                    # the breakdown from the request context (_bd is scoped to a branch
+                    # that doesn't run every turn).
+                    _sp_choice = engine.get_request_context().scratchpad_choice
+                    if _sp_choice in ("simple", "sequential"):
+                        _ftbd = getattr(engine.get_request_context(), "_tool_breakdown", None) or {}
+                        _ip = _ftbd.get("in_prompt") or []
+                        if _sp_choice == "sequential" and "sequential_thinking" in _ip:
+                            _wire_messages = _append_to_wire_user(
+                                _wire_messages, engine.FORCE_SEQUENTIAL_THINKING_PROMPT)
+                        elif _sp_choice == "simple" and "think" in _ip:
+                            _wire_messages = _append_to_wire_user(
+                                _wire_messages, engine.FORCE_THINK_PROMPT)
                     # UNIVERSAL multimodal-degrade choke point: `session.model`
                     # is now FINAL (after any MoA-executor / override / quota /
                     # GDPR / auto-route swap). If it can't accept the attached
