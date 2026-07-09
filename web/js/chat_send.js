@@ -2076,12 +2076,28 @@ async function openInspectModal() {
         <div style="font-size:20px;font-weight:600;color:${(opts && opts.color) || 'var(--text-000)'};margin-top:4px">${value}</div>
         ${sub ? `<div style="font-size:11px;color:${(opts && opts.color) || 'var(--text-400)'};margin-top:2px">${sub}</div>` : ''}
       </div>`;
-    html += `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
-      ${_tile('Anfragen', String(t.turns || 0), '')}
-      ${_tile('Token ein', (t.tokens_in||0).toLocaleString(), '')}
-      ${_tile('Token aus', (t.tokens_out||0).toLocaleString(), '')}
-      ${_tile('⚡ Gecached', _cached.toLocaleString(), `${_hitPct}% des Prompts`, { color: _cacheColor,
+    // Token-Aufschlüsselung: der PROMPT (Eingabe) teilt sich in full-price
+    // (unique, tokens_in) + gecached (cache_read_tokens); die Summe ist, was das
+    // Modell pro Turn tatsächlich als Prompt sah, kumuliert über alle Tool-Runden
+    // (dieselben Prefix-Tokens werden jede Runde neu gelesen + gezählt — deshalb
+    // ist "gesamt" oft ≫ die Konversationslänge). Ausgabe wird NIE gecached
+    // (Caching betrifft nur den Input-Prefix), daher genau eine Ausgabe-Karte.
+    const _tokIn = t.tokens_in || 0;
+    const _tokOut = t.tokens_out || 0;
+    const _promptTot = _tokIn + _cached;
+    html += `<div style="font-size:11px;font-weight:600;color:var(--text-400);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Tokens</div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px">
+      ${_tile('Ein · gesamt', _promptTot.toLocaleString(), 'unique + gecached', {
+        title: `Gesamter Prompt, den das Modell verarbeitet hat — kumuliert über alle Tool-Runden. = full-price (${_tokIn.toLocaleString()}) + gecached (${_cached.toLocaleString()}). Über die Runden wird derselbe wachsende Prefix mehrfach neu gelesen, daher liegt "gesamt" meist deutlich über der Konversationslänge.` })}
+      ${_tile('Ein · unique', _tokIn.toLocaleString(), 'voller Tarif', {
+        title: 'Der neu verarbeitete Anteil des Prompts (nicht aus dem Cache) — zum vollen Eingabe-Tarif abgerechnet.' })}
+      ${_tile('⚡ Ein · gecached', _cached.toLocaleString(), `${_hitPct}% des Prompts`, { color: _cacheColor,
         title: `Prompt-Cache-Treffer: ${_cached.toLocaleString()} Tokens (${_hitPct}% des Prompts) zum ~0,1×-Tarif abgerechnet. Kosten dafür: $${_cachedCost.toFixed(4)}.` })}
+      ${_tile('Aus', _tokOut.toLocaleString(), 'generiert', {
+        title: 'Vom Modell generierte Ausgabe-Tokens. Ausgabe wird nicht gecached (Prompt-Caching betrifft nur den Eingabe-Prefix).' })}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px">
+      ${_tile('Anfragen', String(t.turns || 0), '')}
       ${_tile('Dauer', t.duration ? t.duration.toFixed(1) + 's' : '-', '')}
       ${_tile('API-Kosten', '$' + _costList.toFixed(4), '', {
         title: 'Diese Sitzung zum API-Listenpreis der Modelle — was ohne Coding-/Vibe-Flatrates fällig wäre. Prompt-Caching ist bereits eingerechnet.' })}
