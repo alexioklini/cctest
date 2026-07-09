@@ -2173,6 +2173,28 @@ function openClassificationModal(idx) {
     </div>`;
   }
 
+  // Section: scratchpad ("Spickzettel") decision — the per-model mode and, on
+  // "auto", which variant the classifier chose (and why). Reads ar.scratchpad.
+  const sp = ar.scratchpad || null;
+  if (sp) {
+    const modeLabel = { off: 'Aus', simple: 'Einfach', sequential: 'Erweitert', auto: 'Automatisch' };
+    const choiceLabel = { off: 'kein Spickzettel', simple: 'Spickzettel (einfach)', sequential: 'Erweiterter Spickzettel' };
+    const chBadge = sp.choice === 'off'
+      ? '<span style="color:var(--text-300);font-weight:600">kein Spickzettel</span>'
+      : `<span style="color:var(--accent-000, #8b5cf6);font-weight:600">${esc(choiceLabel[sp.choice] || sp.choice)}</span>`;
+    const autoRow = sp.mode === 'auto'
+      ? `<div style="color:var(--text-400)">Klassifikation</div><div style="color:var(--text-200)">${(sp.task_types && sp.task_types.length) ? chips(sp.task_types, 'cls-keep') : '—'}${sp.complexity ? ` · Komplexität <b>${esc(sp.complexity)}</b>` : ''}</div>`
+      : '';
+    body += `<div style="margin-bottom:18px">
+      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-400);margin-bottom:6px">Spickzettel <span style="font-weight:400;text-transform:none;letter-spacing:0">(Werkzeug-Denken)</span></div>
+      <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 14px;align-items:start;font-size:13px">
+        <div style="color:var(--text-400)">Modus</div><div style="color:var(--text-200)">${esc(modeLabel[sp.mode] || sp.mode)}</div>
+        ${autoRow}
+        <div style="color:var(--text-400)">Entscheidung</div><div>${chBadge}</div>
+      </div>
+    </div>`;
+  }
+
   // Section: research/grounded-answer discipline — was it injected this turn,
   // which of the three sections (refusal/precision/citation), and how
   // (wire-preamble vs system prompt). Reads ar.discipline (server ground truth).

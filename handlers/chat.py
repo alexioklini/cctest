@@ -3349,6 +3349,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     _sp_mode = "simple"
                 else:
                     _sp_mode = "off"
+            _sp_analysis = None
             if _sp_mode == "auto":
                 try:
                     _sp_analysis = engine.resolve_task_analysis(message)
@@ -3360,6 +3361,13 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             else:
                 _sp_choice = "off"
             engine.get_request_context().scratchpad_choice = _sp_choice
+            # Stash the decision for the classification inspector (auto_route modal).
+            # On "auto" also carry the task_types/complexity that drove the pick.
+            _sp_meta = {"mode": _sp_mode, "choice": _sp_choice}
+            if _sp_mode == "auto" and isinstance(_sp_analysis, dict):
+                _sp_meta["task_types"] = _sp_analysis.get("task_types") or []
+                _sp_meta["complexity"] = _sp_analysis.get("complexity") or ""
+            engine.get_request_context()._scratchpad_meta = _sp_meta
 
             # Set worker subagent execution overrides from agent config
             engine.get_request_context().execution_overrides = agent_config.config.get("execution_overrides") or {}
@@ -4572,6 +4580,16 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 if _discipline_meta is not None:
                                     _ar_meta["discipline"] = _discipline_meta
                             except NameError:
+                                pass
+                            # Scratchpad ("Spickzettel") decision for the inspector:
+                            # {mode, choice, [task_types, complexity]}. Only shown
+                            # when the model has a non-off mode (choice may still be
+                            # 'off' if auto decided against it — that's informative).
+                            try:
+                                _spm = getattr(engine.get_request_context(), "_scratchpad_meta", None)
+                                if _spm and _spm.get("mode") not in (None, "", "off"):
+                                    _ar_meta["scratchpad"] = _spm
+                            except Exception:
                                 pass
                             msg_metadata["auto_route"] = _ar_meta
                         if _partial_tools:
