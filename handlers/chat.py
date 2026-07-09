@@ -3361,6 +3361,23 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             else:
                 _sp_choice = "off"
             engine.get_request_context().scratchpad_choice = _sp_choice
+            # On a FIXED scratchpad mode (simple/sequential — a per-model config,
+            # so KV-prefix-stable) exclude the OTHER scratchpad tool: keeping both
+            # in-prompt lets weak models (gemma-12B) bleed the sequential fields
+            # into a `think` call (chat e136af72). Hard-exclude bypasses the floor;
+            # union with any existing exclude (Websuche lockout). NOT done on
+            # `auto` (the tool set would vary per turn → prefix churn) or `off`.
+            if _sp_mode == "simple":
+                _sp_excl = "sequential_thinking"
+            elif _sp_mode == "sequential":
+                _sp_excl = "think"
+            else:
+                _sp_excl = None
+            if _sp_excl:
+                _rc0 = engine.get_request_context()
+                _cur_excl = list(_rc0.exclude_tools or [])
+                if _sp_excl not in _cur_excl:
+                    _rc0.exclude_tools = _cur_excl + [_sp_excl]
             # Stash the decision for the classification inspector (auto_route modal).
             # On "auto" also carry the task_types/complexity that drove the pick.
             _sp_meta = {"mode": _sp_mode, "choice": _sp_choice}

@@ -1176,6 +1176,15 @@ def run_loop(
         for tu in tool_uses:
             tool_calls_total += 1
             tu_args = tu["input"] or {}
+            # Weak models sometimes bleed the sequential_thinking fields
+            # (nextThoughtNeeded/thoughtNumber/totalThoughts) into a `think` call —
+            # `think` has only `thought`. Drop the strays before the tool_call
+            # event so the chat view / metadata don't show phantom fields. Only the
+            # simple `think` tool (kept minimal on purpose); sequential_thinking's
+            # own numbered fields are legitimate and left untouched.
+            if tu["name"] == "think" and isinstance(tu_args, dict) and len(tu_args) > 1:
+                tu_args = {"thought": tu_args.get("thought", "")}
+                tu["input"] = tu_args
             emit("tool_call", {
                 "name": tu["name"], "args": tu_args,
                 "tool_round": round_no, "tool_use_id": tu["id"],
