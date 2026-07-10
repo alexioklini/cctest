@@ -148,6 +148,68 @@ class WikiHandlerMixin:
         finally:
             cm.__exit__(None, None, None)
 
+    def _handle_wiki_search(self):
+        """GET /v1/wiki/search?q=&limit= — semantic knowledge search for the
+        global search modal (v9.306.0). Two blocks, both scoped to the caller:
+        `wiki` (tool_wiki_read query mode — cross-wing wiki pages, resolved to
+        page id + title) and `memory` (tool_mempalace_query on the caller's own
+        wing — chat memories/artifacts/docs). Read-only, LLM-free."""
+        import json as _json
+        import os as _os
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        query = (qs.get("q") or [""])[0].strip()
+        try:
+            limit = min(max(int((qs.get("limit") or ["6"])[0] or 6), 1), 20)
+        except ValueError:
+            limit = 6
+        if not query:
+            self._send_json({"wiki": [], "memory": [], "query": ""})
+            return
+        cm = self._with_wiki_ctx()
+        try:
+            from engine import mempalace_glue
+            wiki_hits = []
+            try:
+                d = _json.loads(mempalace_glue.tool_wiki_read(
+                    {"query": query, "limit": limit}))
+                for dr in (d.get("drawers") or []):
+                    sf = str(dr.get("source_file") or "")
+                    pid = sf.split("/", 1)[1] if sf.startswith("wiki/") else ""
+                    if not pid:
+                        continue
+                    page = wiki_store.get_page(pid)
+                    if not page:
+                        continue  # stale mirror (deleted page)
+                    wiki_hits.append({
+                        "page_id": pid,
+                        "title": page.get("title") or "(ohne Titel)",
+                        "scope": page.get("scope") or "",
+                        "snippet": (dr.get("text") or "")[:240],
+                        "similarity": dr.get("similarity", 0),
+                    })
+            except Exception:
+                pass
+            memory_hits = []
+            try:
+                d = _json.loads(mempalace_glue.tool_mempalace_query(
+                    {"query": query, "n_results": limit}))
+                for dr in (d.get("drawers") or []):
+                    sf = str(dr.get("source_file") or "")
+                    if sf.startswith("wiki/"):
+                        continue  # already in the wiki block
+                    memory_hits.append({
+                        "source": _os.path.basename(sf.rstrip("/")) or sf or "(Erinnerung)",
+                        "wing": dr.get("wing") or "",
+                        "snippet": (dr.get("text") or "")[:240],
+                        "similarity": dr.get("similarity", 0),
+                    })
+            except Exception:
+                pass
+            self._send_json({"wiki": wiki_hits, "memory": memory_hits, "query": query})
+        finally:
+            cm.__exit__(None, None, None)
+
     def _handle_wiki_from_message(self):
         """POST /v1/wiki/from-message {session_id, message_id} — save ONE assistant
         reply as a wiki page (the explicit per-message save button, v9.303.0).

@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.306.0",
+        "date": "2026-07-10",
+        "title": "Eine Suche über Chats, Wiki und Gedächtnis",
+        "body": "Die Suche in der Seitenleiste (auch per Strg/Cmd+K) durchsucht "
+                "jetzt alles auf einmal: Ihre Chats — einschließlich der "
+                "Nachrichteninhalte, nicht mehr nur der Titel —, Ihre "
+                "Wiki-Seiten (sinngemäße Treffer, nicht nur Wortgleichheit) und "
+                "das Langzeit-Gedächtnis des Assistenten. Die Ergebnisse "
+                "erscheinen gruppiert mit Vorschau; ein Klick springt direkt in "
+                "den Chat oder auf die Wiki-Seite.",
+        "audience": "user",
+        "versions": ["9.306.0"],
+    },
+    {
         "version": "9.305.0",
         "date": "2026-07-10",
         "title": "Projekt-Dokumente im Chat anpinnen",

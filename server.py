@@ -1562,6 +1562,8 @@ class BrainAgentHandler(
             self._handle_wiki_tags_get()
         elif path == "/v1/wiki/tree":
             self._handle_wiki_tree(path)
+        elif path.startswith("/v1/wiki/search"):
+            self._handle_wiki_search()
         elif path.startswith("/v1/wiki/pages/"):
             self._handle_wiki_get(path)
         elif path == "/v1/chat/stream":

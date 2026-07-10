@@ -848,6 +848,12 @@ User-visible, editable markdown wiki with user/team/global scoping (a page may a
 - `GET /v1/wiki/pages/<id>/versions` — immutable per-edit snapshots (newest first; each has `version, title, note, created_at/by`).
 - `GET /v1/wiki/pages/<id>/versions/<n>` — one historical version (read-only). Only the current version is editable / in MemPalace.
 - `POST /v1/wiki/pages` — `{scope, title, body_md?, parent_id?, project_id?, team_id?, source?, source_ref?}` → 201 with the created page.
+- `GET /v1/wiki/search?q=&limit=` — semantic knowledge search for the global
+  search modal (v9.306.0): `{wiki:[{page_id,title,scope,snippet,similarity}],
+  memory:[{source,wing,snippet,similarity}]}`. `wiki` = cross-wing wiki pages
+  (caller's user/team wings + wiki_global); `memory` = the caller's own
+  MemPalace wing (wiki hits deduped out). Read-only, LLM-free. The modal pairs
+  it with `GET /v1/sessions/search` (chat full-text).
 - `POST /v1/wiki/from-message` — `{session_id, message_id}` → save ONE assistant
   reply as a wiki page (`{status, page_id, title}`; the per-message bookmark
   button, v9.303.0). Session access-checked; scope=user, project-tagged when the

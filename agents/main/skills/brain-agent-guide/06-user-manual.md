@@ -503,8 +503,12 @@ statt ein Duplikat anzulegen. Das ist unabhängig vom Speicher-Menü (das die
 MemPalace-Erinnerung steuert) und vom automatischen Chat-Wiki (das den ganzen
 Chat zusammengefasst ablegt) — hier landet die Antwort wortgetreu.
 
-**Suche** (Seitenleiste): semantisch + Stichwort über alle sichtbaren
-Nachrichten.
+**Suche** (Seitenleiste, auch Strg/Cmd+K, v9.306.0): EIN Suchfeld über alles —
+**Chats** (Volltext über Titel, Zusammenfassungen und Nachrichteninhalte, mit
+Treffer-Vorschau), **Wiki** (sinngemäße/semantische Treffer über alle
+zugänglichen Wiki-Seiten) und **Gedächtnis** (MemPalace-Erinnerungen). Die
+Ergebnisse sind gruppiert; ein Klick öffnet den Chat bzw. die Wiki-Seite
+direkt. Es werden nur Inhalte durchsucht, die das eigene Konto sehen darf.
 
 **Archivieren ≠ Löschen**: archivierte Chats sind aus der Liste
 ausgeblendet, ihre Gedächtnis-Drawer bleiben aber erhalten. Löschen
