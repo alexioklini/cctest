@@ -51,7 +51,7 @@ const STUDIO_PRESETS = [
   { kind: 'briefing',       label: 'Briefing',       blurb: 'Kurzfassung · Kernpunkte · Implikationen' },
   { kind: 'faq',            label: 'FAQ',             blurb: 'Belegte Frage-/Antwort-Paare' },
   { kind: 'timeline',       label: 'Timeline',       blurb: 'Datierte Ereignisse (chronologisch)' },
-  { kind: 'audio_overview', label: 'Audio Overview', blurb: 'Podcast: zwei Hosts (englisch) · .mp3' },
+  { kind: 'audio_overview', label: 'Audio Overview', blurb: 'Podcast: 1–4 Sprecher · Sprache wählbar · .mp3' },
 ];
 
 // kind → display label for browse-group headers (covers presets + the later
@@ -181,12 +181,127 @@ function _studioProjectHasSources() {
 async function studioGenerate(kind) {
   const agentId = state._studioAgent, projectName = state._studioProject;
   if (!agentId || !projectName) return;
+  // Audio overviews get an options dialog (language, 1–4 speakers, voices,
+  // personas) instead of firing directly (v9.304.0).
+  if (kind === 'audio_overview') { studioOpenAudioOptions(); return; }
   const focus = (document.getElementById('studio-opt-focus')?.value || '').trim();
   const length = document.getElementById('studio-opt-length')?.value || 'std';
   try {
     await API.generateProjectOutput(agentId, projectName, kind, { focus, length });
     showToast('Generierung gestartet — erscheint unten, wenn fertig');
     refreshStudioOutputs();   // shows the new generating row + starts the poll
+  } catch (e) {
+    showToast('Generierung fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
+// ─── Audio-overview options (language · speakers · voices · personas) ───────
+
+const STUDIO_AUDIO_LANGS = [
+  ['', 'Automatisch erkennen'], ['de', 'Deutsch'], ['en', 'Englisch'],
+  ['fr', 'Französisch'], ['es', 'Spanisch'], ['it', 'Italienisch'],
+  ['nl', 'Niederländisch'], ['pt', 'Portugiesisch'], ['hi', 'Hindi'], ['ar', 'Arabisch'],
+];
+const STUDIO_SPEAKER_DEFAULTS = ['Oliver', 'Jane', 'Alex', 'Maya'];
+
+async function studioOpenAudioOptions() {
+  // Voice roster (best-effort, cached) — the selects render "Automatisch" plus
+  // every provider voice incl. cloned ones.
+  if (!state._studioVoices) {
+    try {
+      const data = await API.get('/v1/translate/tts/voices');
+      state._studioVoices = data.voices || [];
+    } catch (_) { state._studioVoices = []; }
+  }
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.display = 'flex';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  const inputStyle = 'padding:5px 8px;font-size:12px;border:1px solid var(--border-200);border-radius:6px;background:var(--bg-000);color:var(--text-100)';
+  overlay.innerHTML = `<div class="modal-content" style="max-width:620px;width:94vw;max-height:88vh;overflow:auto" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">${studioIcon('audio_overview')} Audio Overview erzeugen</div>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px;font-size:12px;color:var(--text-300)">
+      <div style="display:flex;gap:14px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px">Sprache:
+          <select id="studio-audio-lang" style="${inputStyle}">
+            ${STUDIO_AUDIO_LANGS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}
+          </select>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px">Sprecher:
+          <select id="studio-audio-count" style="${inputStyle}" onchange="studioRenderSpeakerRows()">
+            <option value="1">1 (Monolog)</option>
+            <option value="2" selected>2 (Dialog)</option>
+            <option value="3">3 (Runde)</option>
+            <option value="4">4 (Panel)</option>
+          </select>
+        </label>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px">Publikum (optional):
+        <input id="studio-audio-audience" type="text" placeholder="z. B. Fachpublikum, Einsteiger, Vorstand" style="${inputStyle};flex:1">
+      </label>
+      <div id="studio-audio-speakers" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div style="font-size:11px;color:var(--text-400)">Ohne Stimmen-Auswahl wird automatisch eine zur Sprache passende Stimme gewählt (geklonte Stimmen werden bevorzugt gefunden). Fokus und Länge kommen aus den Feldern unter den Karten.</div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button class="btn-secondary" style="padding:6px 14px;font-size:13px" onclick="this.closest('.modal-overlay').remove()">Abbrechen</button>
+        <button style="padding:6px 14px;font-size:13px;background:var(--accent-brand);border:none;color:#fff;border-radius:6px;cursor:pointer" onclick="studioStartAudioGeneration(this)">Generieren</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  studioRenderSpeakerRows();
+}
+
+function studioRenderSpeakerRows() {
+  const mount = document.getElementById('studio-audio-speakers');
+  if (!mount) return;
+  const count = parseInt(document.getElementById('studio-audio-count')?.value || '2', 10);
+  // Preserve already-entered values across a count change.
+  const prev = Array.from(mount.querySelectorAll('.studio-speaker-row')).map(row => ({
+    name: row.querySelector('.sp-name')?.value || '',
+    voice: row.querySelector('.sp-voice')?.value || '',
+    persona: row.querySelector('.sp-persona')?.value || '',
+  }));
+  const inputStyle = 'padding:5px 8px;font-size:12px;border:1px solid var(--border-200);border-radius:6px;background:var(--bg-000);color:var(--text-100)';
+  const voiceOpts = (sel) => ['<option value="">Automatisch (passend zur Sprache)</option>']
+    .concat((state._studioVoices || []).map(v => {
+      const id = v.slug || v.id || '';
+      const label = `${v.name || id}${v.gender ? ' · ' + v.gender : ''}${(v.languages || []).length ? ' · ' + v.languages.join(',') : ''}`;
+      return `<option value="${esc(id)}" ${id === sel ? 'selected' : ''}>${esc(label)}</option>`;
+    })).join('');
+  mount.innerHTML = Array.from({ length: count }, (_, i) => {
+    const p = prev[i] || {};
+    return `
+    <div class="studio-speaker-row" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;border:1px solid var(--border-100);border-radius:8px;padding:8px">
+      <span style="font-size:11px;color:var(--text-400);min-width:20px">S${i + 1}</span>
+      <input class="sp-name" type="text" maxlength="40" placeholder="${esc(STUDIO_SPEAKER_DEFAULTS[i])}" value="${esc(p.name || '')}" style="${inputStyle};width:110px">
+      <select class="sp-voice" style="${inputStyle};flex:1;min-width:170px">${voiceOpts(p.voice || '')}</select>
+      <input class="sp-persona" type="text" maxlength="240" placeholder="Persona, z. B. skeptische Expertin (optional)" value="${esc(p.persona || '')}" style="${inputStyle};flex:2;min-width:200px">
+    </div>`;
+  }).join('');
+}
+
+async function studioStartAudioGeneration(btn) {
+  const agentId = state._studioAgent, projectName = state._studioProject;
+  if (!agentId || !projectName) return;
+  const overlay = btn.closest('.modal-overlay');
+  const focus = (document.getElementById('studio-opt-focus')?.value || '').trim();
+  const length = document.getElementById('studio-opt-length')?.value || 'std';
+  const lang = overlay.querySelector('#studio-audio-lang')?.value || '';
+  const audience = (overlay.querySelector('#studio-audio-audience')?.value || '').trim();
+  const speakers = Array.from(overlay.querySelectorAll('.studio-speaker-row')).map(row => ({
+    name: (row.querySelector('.sp-name')?.value || '').trim(),
+    voice: row.querySelector('.sp-voice')?.value || '',
+    persona: (row.querySelector('.sp-persona')?.value || '').trim(),
+  }));
+  try {
+    await API.generateProjectOutput(agentId, projectName, 'audio_overview',
+      { focus, length, audience, lang, speakers });
+    overlay.remove();
+    showToast('Podcast-Generierung gestartet — erscheint unten, wenn fertig');
+    refreshStudioOutputs();
   } catch (e) {
     showToast('Generierung fehlgeschlagen: ' + (e.message || e), true);
   }
@@ -492,7 +607,7 @@ async function studioOpenOutput(outputId) {
     body.innerHTML = `
       <div style="display:flex;flex-direction:column;gap:14px;align-items:center;padding:24px 8px">
         <div style="color:var(--text-300)">${studioIcon('audio_overview', '48px')}</div>
-        <div style="font-size:13px;color:var(--text-400);text-align:center">Zwei-Host-Podcast (englisch) aus den Projektquellen.</div>
+        <div style="font-size:13px;color:var(--text-400);text-align:center">KI-Podcast aus den Projektquellen.</div>
         <div class="studio-audio-mount" style="width:100%;display:flex;justify-content:center">Lädt…</div>
       </div>`;
     // Auth'd blob fetch — a bare download URL in <audio src> 401s (Bearer-only).

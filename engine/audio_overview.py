@@ -18,9 +18,16 @@
 # this host (broken libx265 link, 2026-06-06), so we deliberately avoid it — the
 # AUDIO_OVERVIEW_PLAN flagged this exact decision.
 #
-# AUDIO LANGUAGE IS ENGLISH-ONLY by hard TTS constraint (voxtral-mini-tts has 10
-# voices, all English). A German project yields an English podcast ABOUT the
-# German content — the script-gen prompt instructs exactly that.
+# LANGUAGE: the episode language is detected from the material (or set via
+# opts.lang) — Voxtral TTS speaks 9 languages (_TTS_LANGUAGES). Voices are
+# matched to the language from the provider roster (incl. cloned voices);
+# when no matching voice exists the English defaults speak the localized
+# script. (The former "ENGLISH-ONLY" header claim died with v9.304.0 — the
+# Studio worker now feeds lang/speakers like the chat path.)
+#
+# SPEAKERS (v9.304.0): 1–4 speakers with optional names/personas/per-speaker
+# voices via opts.speakers=[{name?,voice?,persona?}]. Script tags are
+# HOST_1:..HOST_4: (parse_dialogue still accepts the legacy HOST_A/HOST_B).
 
 import base64
 import json
@@ -145,6 +152,63 @@ def _voices_for_lang(lang: str) -> tuple[str, str]:
     return (male or DEFAULT_HOST_A_VOICE), (female or DEFAULT_HOST_B_VOICE)
 
 
+def _voice_pool_for_lang(lang: str, n: int) -> list[str]:
+    """n voice ids for `lang`, gender-alternating and distinct where the roster
+    allows; cycles the English defaults when the roster runs short (they speak a
+    localized script acceptably until a native voice is cloned)."""
+    males: list[str] = []
+    females: list[str] = []
+    for v in _list_voices():
+        if not _lang_matches(v.get("languages"), lang):
+            continue
+        ident = v.get("slug") or v.get("id")
+        if not ident:
+            continue
+        (males if (v.get("gender") or "").lower() == "male" else females).append(ident)
+    if lang == "en":
+        males.insert(0, DEFAULT_HOST_A_VOICE)
+        females.insert(0, DEFAULT_HOST_B_VOICE)
+    pool: list[str] = []
+    i = 0
+    while len(pool) < n and (males or females):
+        src = males if ((i % 2 == 0 and males) or not females) else females
+        ident = src.pop(0)
+        if ident not in pool:
+            pool.append(ident)
+        i += 1
+    while len(pool) < n:
+        pool.append(DEFAULT_HOST_A_VOICE if len(pool) % 2 == 0 else DEFAULT_HOST_B_VOICE)
+    return pool
+
+
+_DEFAULT_SPEAKER_NAMES = ["Oliver", "Jane", "Alex", "Maya"]
+
+
+def _resolve_speakers(opts: dict, lang: str) -> list[dict]:
+    """Normalise opts into 1–4 speaker dicts [{name, voice, persona}].
+
+    Accepts opts.speakers=[{name?,voice?,persona?}] (Studio UI) and the legacy
+    opts.host_a_voice/host_b_voice (chat/tool path — mapped onto the first two
+    speakers). Voices left empty are filled from the language-matched roster
+    (gender-alternating, distinct where possible)."""
+    raw = opts.get("speakers")
+    if not isinstance(raw, list) or not raw:
+        raw = [{}, {}]  # classic two-host default
+    raw = [s if isinstance(s, dict) else {} for s in raw[:4]]
+    legacy = [(opts.get("host_a_voice") or "").strip(),
+              (opts.get("host_b_voice") or "").strip()]
+    pool = _voice_pool_for_lang(lang, len(raw))
+    speakers = []
+    for i, s in enumerate(raw):
+        voice = (s.get("voice") or "").strip() or (legacy[i] if i < len(legacy) else "")
+        speakers.append({
+            "name": (s.get("name") or "").strip()[:40] or _DEFAULT_SPEAKER_NAMES[i],
+            "voice": voice or pool[i],
+            "persona": (s.get("persona") or "").strip()[:240],
+        })
+    return speakers
+
+
 def _detect_corpus_lang(text: str) -> str:
     """Detect the dominant language of the material (ISO-639-1). Returns 'en' on
     any failure or for a language Voxtral can't speak (→ English overview)."""
@@ -159,11 +223,17 @@ def _detect_corpus_lang(text: str) -> str:
 
 def _build_script_prompt(sources_text: str, *, focus: str, length: str,
                          audience: str, source_label: str = "RETRIEVED PROJECT SOURCES",
-                         lang: str = "en") -> str:
+                         lang: str = "en", speakers: list | None = None) -> str:
     """The user-turn prompt for the dialogue script-gen transform call.
     `source_label` names the material so the prompt reads naturally for both
     project sources and a chat transcript. `lang` (ISO-639-1) is the language the
-    spoken dialogue should be written in (one of the 9 Voxtral languages)."""
+    spoken dialogue should be written in (one of the 9 Voxtral languages).
+    `speakers` = 1–4 dicts [{name, persona?}]; None → the classic two-host
+    default (keeps wiki_gen and older callers unchanged)."""
+    if not speakers:
+        speakers = [{"name": HOST_A_NAME}, {"name": HOST_B_NAME}]
+    n = len(speakers)
+    tags = [f"HOST_{i + 1}" for i in range(n)]
     length_guidance = _LENGTH_GUIDANCE.get(length, _LENGTH_GUIDANCE["std"])
     aud = (audience or "").strip()
     audience_line = (
@@ -184,23 +254,49 @@ def _build_script_prompt(sources_text: str, *, focus: str, length: str,
             f"speak {lang_name} natively. The material may be in {lang_name} already; "
             f"keep the conversation in {lang_name} throughout (only quote foreign terms "
             f"verbatim where natural).")
+    roster = "\n".join(
+        f"{tags[i]} = {s.get('name') or _DEFAULT_SPEAKER_NAMES[i]}"
+        + (f" — {s['persona']}" if (s.get("persona") or "").strip() else "")
+        for i, s in enumerate(speakers))
+    if n == 1:
+        opening = (
+            f"You are scripting a single-narrator audio overview about the material "
+            f"in the {source_label} below. The narrator explains it engagingly and "
+            f"conversationally — clear, vivid, spoken register; short spoken "
+            f"paragraphs, each on its own line. NOT a dry lecture.\n\n"
+            f"NARRATOR:\n{roster}\n")
+        format_clause = (
+            "OUTPUT FORMAT — strict, one spoken paragraph per line, nothing else:\n"
+            f"{tags[0]}: <what the narrator says>\n"
+            f"Every line MUST start with '{tags[0]}: '. No stage directions, no "
+            "markdown, no section headers — only spoken lines. Do not write "
+            "'[laughs]' or similar; write only words that should be spoken aloud.")
+    else:
+        opening = (
+            f"You are scripting a {n}-speaker audio overview (a podcast) about the "
+            f"material in the {source_label} below. The speakers discuss it in an "
+            f"engaging, natural, conversational style — they explain, react, ask "
+            f"each other questions, and build on each other. NOT a lecture; a real "
+            f"conversation. Stay true to each speaker's persona.\n\n"
+            f"SPEAKERS:\n{roster}\n")
+        example = "\n".join(
+            f"{tags[i]}: <what {speakers[i].get('name') or tags[i]} says>" for i in range(n))
+        tag_list = ", ".join(f"'{t}: '" for t in tags)
+        format_clause = (
+            "OUTPUT FORMAT — strict, one line per spoken turn, nothing else:\n"
+            f"{example}\n"
+            f"Alternate naturally (not rigidly); every speaker gets meaningful turns. "
+            f"Every line MUST start with one of: {tag_list}. No stage directions, no "
+            "markdown, no section headers, no narrator — only spoken dialogue lines. "
+            "Do not write '[laughs]' or similar; write only words that should be "
+            "spoken aloud.")
     return (
-        f"You are scripting a two-host audio overview (a podcast) about the "
-        f"material in the {source_label} below. Two hosts, "
-        f"{HOST_A_NAME} and {HOST_B_NAME}, discuss it in an engaging, natural, "
-        f"conversational style — they explain, react, ask each other questions, "
-        f"and build on each other. NOT a lecture; a real conversation.\n\n"
+        f"{opening}\n"
         f"{audience_line}\n"
         f"{length_guidance}{focus_line}\n\n"
-        "OUTPUT FORMAT — strict, one line per spoken turn, nothing else:\n"
-        f"HOST_A: <what {HOST_A_NAME} says>\n"
-        f"HOST_B: <what {HOST_B_NAME} says>\n"
-        "Alternate naturally (not rigidly). Every line MUST start with 'HOST_A: ' "
-        "or 'HOST_B: '. No stage directions, no markdown, no section headers, no "
-        "narrator — only spoken dialogue lines. Do not write '[laughs]' or similar; "
-        "write only words that should be spoken aloud.\n\n"
+        f"{format_clause}\n\n"
         f"{language_clause}\n\n"
-        f"TODAY'S DATE is {today}. If the hosts refer to the current time, "
+        f"TODAY'S DATE is {today}. If the speakers refer to the current time, "
         f"recent events, or 'this year', anchor it to this date — do NOT assume "
         f"an earlier year.\n\n"
         "GROUNDING: base the conversation ONLY on the material below. Do not "
@@ -213,23 +309,26 @@ def _build_script_prompt(sources_text: str, *, focus: str, length: str,
     )
 
 
-# Each dialogue line → (host_key, spoken_text). host_key ∈ {"A","B"}.
-_LINE_RE = re.compile(r"^\s*HOST_([AB])\s*:\s*(.+?)\s*$")
+# Each dialogue line → (speaker_index, spoken_text). Accepts the numbered tags
+# HOST_1..HOST_4 (current prompt) AND the legacy letters HOST_A/HOST_B.
+_LINE_RE = re.compile(r"^\s*HOST_([A-D1-4])\s*:\s*(.+?)\s*$")
 
 
-def parse_dialogue(script: str) -> list[tuple[str, str]]:
-    """Parse 'HOST_A:/HOST_B:' lines into [(host_key, text)]. Lines that don't
-    match the tag are folded onto the previous speaker (model sometimes wraps a
-    long turn). Returns [] if nothing parsed."""
-    lines: list[tuple[str, str]] = []
+def parse_dialogue(script: str) -> list[tuple[int, str]]:
+    """Parse 'HOST_n:'-tagged lines into [(speaker_index, text)] (0-based).
+    Lines that don't match the tag are folded onto the previous speaker (model
+    sometimes wraps a long turn). Returns [] if nothing parsed."""
+    lines: list[tuple[int, str]] = []
     for raw in (script or "").splitlines():
         m = _LINE_RE.match(raw)
         if m:
-            lines.append((m.group(1), m.group(2).strip()))
+            key = m.group(1)
+            idx = "ABCD".index(key) if key.isalpha() else int(key) - 1
+            lines.append((idx, m.group(2).strip()))
         elif lines and raw.strip():
             # continuation of the previous turn
-            host, prev = lines[-1]
-            lines[-1] = (host, (prev + " " + raw.strip()).strip())
+            idx, prev = lines[-1]
+            lines[-1] = (idx, (prev + " " + raw.strip()).strip())
     return lines
 
 
@@ -262,20 +361,23 @@ def _tts_segment(text: str, voice: str) -> bytes:
     return raw
 
 
-def _stitch(lines: list[tuple[str, str]], voice_a: str, voice_b: str,
+def _stitch(lines: list[tuple[int, str]], voices: list[str],
             on_progress=None) -> tuple[bytes, int, int]:
     """Render every dialogue line and concatenate the MP3 segments (raw byte
-    concat — validated playable; ffmpeg deliberately not required). Returns
-    (mp3_bytes, rendered_line_count, chars_synthesized). Skips empty/over-cap
-    lines. `chars_synthesized` drives TTS cost accounting (char-billed)."""
+    concat — validated playable; ffmpeg deliberately not required). `voices` is
+    the per-speaker voice list (index-matched to parse_dialogue's speaker
+    indices; out-of-range indices wrap). Returns (mp3_bytes,
+    rendered_line_count, chars_synthesized). Skips empty/over-cap lines.
+    `chars_synthesized` drives TTS cost accounting (char-billed)."""
+    voices = voices or [DEFAULT_HOST_A_VOICE, DEFAULT_HOST_B_VOICE]
     segments: list[bytes] = []
     rendered = 0
     chars = 0
     capped = lines[:_MAX_LINES]
-    for i, (host, text) in enumerate(capped):
+    for i, (idx, text) in enumerate(capped):
         if not text.strip():
             continue
-        voice = voice_a if host == "A" else voice_b
+        voice = voices[idx % len(voices)]
         segments.append(_tts_segment(text, voice))
         rendered += 1
         chars += len(text)
@@ -327,8 +429,6 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
         focus = (opts.get("focus") or "").strip()
         length = opts.get("length") or "std"
         audience = (opts.get("audience") or "").strip()
-        voice_a = (opts.get("host_a_voice") or "").strip() or DEFAULT_HOST_A_VOICE
-        voice_b = (opts.get("host_b_voice") or "").strip() or DEFAULT_HOST_B_VOICE
 
         if _cancelled():
             ChatDB.update_project_output(output_id, status="cancelled", phase="")
@@ -340,6 +440,17 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
                 output_id, status="error",
                 error="No sources found for this project — add files, web URLs, or run Research first.")
             return
+
+        # Language + speakers (v9.304.0 — the Studio path previously hardcoded
+        # English/two hosts; now it matches the chat path): explicit opts.lang
+        # wins, else detect from the corpus. Speakers 1–4 with personas +
+        # per-speaker voices via _resolve_speakers.
+        lang = (opts.get("lang") or "").strip().lower()[:2]
+        if lang not in _TTS_LANGUAGES:
+            lang = _detect_corpus_lang(corpus)
+        speakers = _resolve_speakers(opts, lang)
+        print(f"[audio_overview] lang={lang} speakers="
+              f"{[(s['name'], s['voice']) for s in speakers]}", flush=True)
 
         # Dedicated audio_overview_model knob (v9.168.0) for the dialogue-script
         # LLM; empty -> background default. (The TTS voice model is separate:
@@ -366,7 +477,8 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
         from handlers import sidecar_proxy
         result = sidecar_proxy.background_call(
             messages=[{"role": "user", "content": _build_script_prompt(
-                corpus, focus=focus, length=length, audience=audience)}],
+                corpus, focus=focus, length=length, audience=audience,
+                lang=lang, speakers=speakers)}],
             model=model, cost_purpose="audio_overview", agent_id=agent_id,
             session_id=f"output-{output_id}", project=project_name,
             user_id=user_id, max_rounds=1)
@@ -391,10 +503,10 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
         outdir = output_gen._outputs_dir(project_dir)
         script_name = f"{base}.md"
         script_path = os.path.join(outdir, script_name)
-        script_md = (f"# {title} — Script\n\n*Hosts: {HOST_A_NAME} ({voice_a}) · "
-                     f"{HOST_B_NAME} ({voice_b})*\n\n")
-        for host, text in lines:
-            who = HOST_A_NAME if host == "A" else HOST_B_NAME
+        roster = " · ".join(f"{s['name']} ({s['voice']})" for s in speakers)
+        script_md = f"# {title} — Script\n\n*Sprecher: {roster} · Sprache: {lang}*\n\n"
+        for idx, text in lines:
+            who = speakers[idx % len(speakers)]["name"]
             script_md += f"**{who}:** {text}\n\n"
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(script_md)
@@ -410,7 +522,8 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
             # Cheap heartbeat so the UI shows movement on long episodes.
             ChatDB.update_project_output(output_id, phase=f"voicing {done}/{total}")
         try:
-            mp3, rendered, tts_chars = _stitch(lines, voice_a, voice_b, on_progress=_progress)
+            mp3, rendered, tts_chars = _stitch(
+                lines, [s["voice"] for s in speakers], on_progress=_progress)
         except Exception as e:
             ChatDB.update_project_output(
                 output_id, status="error", error=f"TTS render failed: {e}"[:500])
@@ -484,10 +597,9 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
     lang = (opts.get("lang") or "").strip().lower()[:2] or _detect_corpus_lang(corpus)
     if lang not in _TTS_LANGUAGES:
         lang = "en"
-    auto_a, auto_b = _voices_for_lang(lang)
-    voice_a = (opts.get("host_a_voice") or "").strip() or auto_a
-    voice_b = (opts.get("host_b_voice") or "").strip() or auto_b
-    print(f"[audio_overview] lang={lang} voices=({voice_a},{voice_b})", flush=True)
+    speakers = _resolve_speakers(opts, lang)
+    print(f"[audio_overview] lang={lang} speakers="
+          f"{[(s['name'], s['voice']) for s in speakers]}", flush=True)
 
     model = _brain._background_model_default()
     if not model:
@@ -497,26 +609,27 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
     result = sidecar_proxy.background_call(
         messages=[{"role": "user", "content": _build_script_prompt(
             corpus, focus=focus, length=length, audience=audience,
-            source_label=source_label, lang=lang)}],
+            source_label=source_label, lang=lang, speakers=speakers)}],
         model=model, cost_purpose="audio_overview", agent_id=agent_id,
         session_id=cost_session_id, project=project_name, user_id=user_id, max_rounds=1)
     if result.get("error"):
         return {"ok": False, "error": str(result["error"])[:300]}
     lines = parse_dialogue((result.get("reply") or "").strip())
     if not lines:
-        return {"ok": False, "error": "Model did not produce a parseable two-host script."}
+        return {"ok": False, "error": "Model did not produce a parseable script."}
 
     os.makedirs(out_dir, exist_ok=True)
     script_path = os.path.join(out_dir, basename + ".md")
-    script_md = f"# Audio Overview Script\n\n*Hosts: {HOST_A_NAME} ({voice_a}) · {HOST_B_NAME} ({voice_b})*\n\n"
-    for host, text in lines:
-        who = HOST_A_NAME if host == "A" else HOST_B_NAME
+    roster = " · ".join(f"{s['name']} ({s['voice']})" for s in speakers)
+    script_md = f"# Audio Overview Script\n\n*Sprecher: {roster} · Sprache: {lang}*\n\n"
+    for idx, text in lines:
+        who = speakers[idx % len(speakers)]["name"]
         script_md += f"**{who}:** {text}\n\n"
     with open(script_path, "w", encoding="utf-8") as f:
         f.write(script_md)
 
     try:
-        mp3, rendered, tts_chars = _stitch(lines, voice_a, voice_b)
+        mp3, rendered, tts_chars = _stitch(lines, [s["voice"] for s in speakers])
     except Exception as e:
         return {"ok": False, "error": f"TTS render failed: {e}"[:300], "script_path": script_path}
     if not mp3:
@@ -534,7 +647,8 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
                              purpose="audio_overview")
     total_cost = round(script_meta.get("cost", 0) + tts_cost, 6)
     return {"ok": True, "mp3_path": mp3_path, "script_path": script_path,
-            "lines": rendered, "cost": total_cost, "tts_chars": tts_chars}
+            "lines": rendered, "cost": total_cost, "tts_chars": tts_chars,
+            "lang": lang, "speakers": [s["name"] for s in speakers]}
 
 
 def generate_to_folder(*, agent_id: str, project_name: str, out_dir: str,

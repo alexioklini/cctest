@@ -2354,11 +2354,22 @@ class ProjectsHandlerMixin:
         user = getattr(self, '_auth_user', _auth_mod.SYNTHETIC_ADMIN)
         if kind == "audio_overview":
             from engine import audio_overview
+            # Speakers (v9.304.0): 1–4 of {name?, voice?, persona?}; whitelist +
+            # length-cap each field (free-form text ends up in the script prompt).
+            speakers = []
+            for s in (opts.get("speakers") or [])[:4]:
+                if isinstance(s, dict):
+                    speakers.append({
+                        "name": str(s.get("name") or "").strip()[:40],
+                        "voice": str(s.get("voice") or "").strip()[:80],
+                        "persona": str(s.get("persona") or "").strip()[:240]})
             output_id = audio_overview.start(
                 agent_id=agent_id, project=project, user_id=user["id"],
                 opts={"focus": (opts.get("focus") or "").strip(),
                       "length": length or "std",
                       "audience": (opts.get("audience") or "").strip(),
+                      "lang": str(opts.get("lang") or "").strip().lower()[:2],
+                      "speakers": speakers,
                       "host_a_voice": (opts.get("host_a_voice") or "").strip(),
                       "host_b_voice": (opts.get("host_b_voice") or "").strip()})
         else:

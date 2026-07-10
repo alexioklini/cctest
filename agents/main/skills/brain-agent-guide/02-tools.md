@@ -673,7 +673,8 @@ write/exec tool is deliberately excluded.
   understanding — voxtral-small, gemma-4, glm) are **excluded** — they can't drive the
   `/audio/transcriptions` endpoint and would 400 at the wire.
 - `generate_audio_overview(topic?, audience?, length?)` — NotebookLM-style **audio
-  overview / podcast**. Generates a two-host (Oliver & Jane) English conversation
+  overview / podcast**. Generates a spoken conversation (default two hosts,
+  Oliver & Jane; the engine supports 1–4 speakers with personas since v9.304.0)
   voiced via TTS into a `.mp3` (+ a `.md` dialogue script) in the session artifact
   folder. **Source depends on context:** in a PROJECT it discusses the project's
   sources; OUTSIDE a project it discusses the CURRENT CHAT's conversation (so any

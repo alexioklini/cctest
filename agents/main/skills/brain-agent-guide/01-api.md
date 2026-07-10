@@ -286,12 +286,16 @@ streaming call, per-USER history, fixed read-only tool set. See
   str}}` → `{output_id, status:"generating"}`. Requires manage; refuses (400) if
   the project has no sources. Runs async + saved as a `project_outputs` row.
   SHARED endpoint. The text kinds write a cited `.md`; `audio_overview` instead
-  runs a different worker — an LLM writes a two-host (Oliver & Jane) English
-  dialogue, then each line is voiced via Voxtral TTS and the MP3 segments are
-  concatenated into one `.mp3` (phases: gathering → scripting → voicing N/M).
-  The `.mp3` is the output artifact; a `.md` script is saved alongside.
-  `audience` only applies to `audio_overview`. AUDIO IS ENGLISH-ONLY (TTS voice
-  constraint) regardless of source language.
+  runs a different worker — an LLM writes a spoken script, then each line is
+  voiced via Voxtral TTS and the MP3 segments are concatenated into one `.mp3`
+  (phases: gathering → scripting → voicing N/M). The `.mp3` is the output
+  artifact; a `.md` script is saved alongside. `audio_overview` extra options
+  (v9.304.0): `audience` (target-listener pitch), `lang` (ISO-639-1, one of the
+  9 Voxtral languages; empty = auto-detect from the corpus — a German project
+  yields a German episode), and `speakers` (1–4 of `{name?, voice?, persona?}`;
+  empty voices are filled from the language-matched roster incl. cloned voices;
+  1 speaker = monologue, 2 = dialogue, 3–4 = panel). Legacy
+  `host_a_voice`/`host_b_voice` still map onto the first two speakers.
   `custom:<id>` kinds are user-defined presets (below); a preset with
   `per_source: true` runs once PER project source (ingested uploads, input-folder
   files, mined web URLs; cap 40) and files one project-tagged wiki page per

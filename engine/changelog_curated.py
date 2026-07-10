@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.304.0",
+        "date": "2026-07-10",
+        "title": "Podcasts mit eigenen Sprechern — auch auf Deutsch",
+        "body": "Der Audio Overview im Projekt-Studio lässt sich jetzt gestalten: "
+                "Wählen Sie die Sprache der Folge (oder lassen Sie sie automatisch "
+                "erkennen — ein deutsches Projekt ergibt jetzt wirklich einen "
+                "deutschen Podcast), die Zahl der Sprecher (1 bis 4: Monolog, "
+                "Dialog, Gesprächsrunde oder Panel) und geben Sie jedem Sprecher "
+                "auf Wunsch einen Namen, eine Persönlichkeit („skeptische "
+                "Expertin“) und eine eigene Stimme — auch selbst geklonte Stimmen "
+                "stehen zur Auswahl. Ein neues Feld „Publikum“ richtet die Folge "
+                "auf Ihre Zielgruppe aus.",
+        "audience": "user",
+        "versions": ["9.304.0"],
+    },
+    {
         "version": "9.303.0",
         "date": "2026-07-10",
         "title": "Antworten per Klick ins Wiki übernehmen",

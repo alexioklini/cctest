@@ -972,17 +972,24 @@ fertige, belegte Dokumente erzeugen — vier Vorlagen:
 - **FAQ** (❓) — belegte Frage-/Antwort-Paare.
 - **Timeline** (🕒) — chronologische, datierte Ereignisse (lässt sie weg statt
   zu erfinden, wenn die Quellen keine Daten enthalten).
-- **Audio Overview** (🎧) — ein **Podcast** im Stil von NotebookLM: zwei KI-Hosts
-  (Oliver & Jane) besprechen die Projektinhalte in einem natürlichen Gespräch.
-  Ergebnis ist eine **`.mp3`-Audiodatei** (plus das Dialog-Skript als `.md`). Über
-  **Öffnen** erscheint ein Audio-Player direkt im Studio; **Herunterladen** lädt
-  die MP3. **Die Sprache wird automatisch erkannt** — ein deutschsprachiges Projekt
-  ergibt einen deutschen Podcast (Voxtral spricht 9 Sprachen: en/fr/de/es/nl/pt/it/
-  hi/ar). Es werden Stimmen passend zur Sprache gewählt, sofern vorhanden; sonst
-  englische Standardstimmen (für muttersprachlichen Klang eine Stimme unter
-  Einstellungen → Tools → Sprachausgabe klonen). Die Generierung dauert länger als
-  ein Textdokument (Skript schreiben → jede Zeile vertonen → zusammenfügen); der
-  Fortschritt wird als Phase angezeigt (Sammeln → Skript → Vertonen N/M).
+- **Audio Overview** (🎧) — ein **Podcast** im Stil von NotebookLM über die
+  Projektinhalte. Ein Klick auf **Generieren** öffnet einen Optionen-Dialog
+  (v9.304.0): **Sprache** (automatisch erkennen oder fest wählen — ein
+  deutschsprachiges Projekt ergibt einen deutschen Podcast; Voxtral spricht 9
+  Sprachen: en/fr/de/es/nl/pt/it/hi/ar), **Sprecherzahl 1–4** (Monolog,
+  Dialog, Gesprächsrunde oder Panel), je Sprecher optional **Name**, **Stimme**
+  (aus allen Provider-Stimmen inkl. selbst geklonter) und **Persona** (z. B.
+  „skeptische Expertin“ — prägt den Gesprächsstil), sowie ein **Publikum**-Feld
+  (richtet die Folge auf die Zielgruppe aus). Ohne Stimmen-Auswahl wird
+  automatisch eine zur Sprache passende Stimme gewählt; fehlt eine (z. B. keine
+  deutsche Stimme geklont), sprechen die englischen Standardstimmen das
+  lokalisierte Skript (für muttersprachlichen Klang eine Stimme unter
+  Einstellungen → Tools → Sprachausgabe klonen). Ergebnis ist eine
+  **`.mp3`-Audiodatei** (plus das Dialog-Skript als `.md`). Über **Öffnen**
+  erscheint ein Audio-Player direkt im Studio; **Herunterladen** lädt die MP3.
+  Die Generierung dauert länger als ein Textdokument (Skript schreiben → jede
+  Zeile vertonen → zusammenfügen); der Fortschritt wird als Phase angezeigt
+  (Sammeln → Skript → Vertonen N/M).
 
 Jede Text-Ausgabe wird **streng aus dem Projektgedächtnis** erzeugt und **verbatim
 zitiert** (`[Quelle: … — "…"]`); nichts wird hinzuerfunden. Das Ergebnis wird in

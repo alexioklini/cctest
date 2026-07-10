@@ -146,7 +146,7 @@ def generate_podcast(page_id, include_children=False):
 
     # 2. Render to MP3 (reuse the TTS stitch + voice picker).
     voice_a, voice_b = audio_overview._voices_for_lang(lang)
-    mp3, rendered, chars = audio_overview._stitch(lines, voice_a, voice_b)
+    mp3, rendered, chars = audio_overview._stitch(lines, [voice_a, voice_b])
     if not mp3:
         return {"error": "TTS produced no audio"}
 

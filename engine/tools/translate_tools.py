@@ -532,7 +532,7 @@ def tool_generate_audio_overview(args: dict) -> str:
         "script_file": os.path.basename(res["script_path"]),
         "spoken_lines": res.get("lines", 0),
         "cost_usd": res.get("cost", 0),
-        "hosts": f"{audio_overview.HOST_A_NAME} & {audio_overview.HOST_B_NAME} (English)",
+        "hosts": f"{' & '.join(res.get('speakers') or [audio_overview.HOST_A_NAME, audio_overview.HOST_B_NAME])} ({res.get('lang') or 'en'})",
         "note": "Audio overview generated and saved to the session artifact folder. "
                 "The .mp3 is the podcast; the .md is the dialogue script.",
     })
