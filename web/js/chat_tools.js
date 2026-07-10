@@ -64,6 +64,22 @@ function renderMemoryMenuItems(idx) {
   }
   return html;
 }
+// Save ONE assistant reply as an editable wiki page (the bookmark button in the
+// message action bar, v9.303.0). The server keys the page on source_ref
+// message/<id>, so re-saving the same reply re-versions the SAME page instead of
+// duplicating it. Distinct from the memory menu below (MemPalace mirror).
+async function saveMessageAsWiki(idx) {
+  const chat = state.activeChat;
+  const msg = chat?.messages?.[idx];
+  if (!chat?.sessionId || !msg?.id) return;
+  try {
+    const r = await API.post('/v1/wiki/from-message', { session_id: chat.sessionId, message_id: msg.id });
+    showToast(`Als Wiki-Seite gespeichert: „${r.title || ''}“`);
+  } catch (e) {
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
 function toggleMsgMemoryMenu(event, idx) {
   event.stopPropagation();
   document.querySelectorAll('.msg-edit-dropdown.open').forEach(el => el.classList.remove('open'));

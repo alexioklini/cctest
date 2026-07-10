@@ -2019,6 +2019,8 @@ class BrainAgentHandler(
             self._handle_wiki_tags_save()
         elif path == "/v1/wiki/pages":
             self._handle_wiki_create(path)
+        elif path == "/v1/wiki/from-message":
+            self._handle_wiki_from_message()
         elif path.startswith("/v1/wiki/pages/") and "/promote/" in path:
             self._handle_wiki_promote(path)
         elif path.startswith("/v1/wiki/pages/") and path.rstrip("/").endswith("/move"):

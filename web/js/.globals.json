@@ -1362,6 +1362,7 @@
     "saveGoalFromPopover": "writable",
     "saveKeyFromModal": "writable",
     "saveKgConfig": "writable",
+    "saveMessageAsWiki": "writable",
     "saveMoaConfig": "writable",
     "saveModelsConfig": "writable",
     "saveMpClassifier": "writable",

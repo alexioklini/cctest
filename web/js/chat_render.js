@@ -1167,6 +1167,9 @@ function renderAssistantMessage(msg, idx) {
         <button class="msg-action-btn" onclick="copyMessage(${idx})" title="Kopieren">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
         </button>
+        ${msg.id != null ? `<button class="msg-action-btn" onclick="saveMessageAsWiki(${idx})" title="Als Wiki-Seite speichern">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2z"/></svg>
+        </button>` : ''}
         <button class="msg-action-btn" onclick="readMessageAloud(${idx}, this)" title="Vorlesen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/><path d="M19.07 4.93a10 10 0 010 14.14"/></svg>
         </button>

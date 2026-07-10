@@ -830,6 +830,11 @@ User-visible, editable markdown wiki with user/team/global scoping (a page may a
 - `GET /v1/wiki/pages/<id>/versions` — immutable per-edit snapshots (newest first; each has `version, title, note, created_at/by`).
 - `GET /v1/wiki/pages/<id>/versions/<n>` — one historical version (read-only). Only the current version is editable / in MemPalace.
 - `POST /v1/wiki/pages` — `{scope, title, body_md?, parent_id?, project_id?, team_id?, source?, source_ref?}` → 201 with the created page.
+- `POST /v1/wiki/from-message` — `{session_id, message_id}` → save ONE assistant
+  reply as a wiki page (`{status, page_id, title}`; the per-message bookmark
+  button, v9.303.0). Session access-checked; scope=user, project-tagged when the
+  session belongs to a project. `source_ref message/<id>` keeps re-saves
+  idempotent — the same reply re-versions the same page (no LLM merge).
 - `PUT /v1/wiki/pages/<id>` — `{title?, body_md?, project_id?, archived?, tags?}` (a human text change → new version, sets `manually_edited`, re-mirrors; `tags` is an explicit string array — user tags are preserved across auto-tagging). Tree rows + page GET return `tags` (list) + `auto_tags` + `mirrored` (has a MemPalace drawer); tree rows omit `body_md`.
 - `POST /v1/wiki/pages/<id>/promote/<n>` — make version `n` current (copied to a new version; re-mirrors). Append-only history.
 - `POST /v1/wiki/pages/<id>/move` — `{parent_id?, position?}` restructure (`parent_id:""` = top level).

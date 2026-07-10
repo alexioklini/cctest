@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.303.0",
+        "date": "2026-07-10",
+        "title": "Antworten per Klick ins Wiki übernehmen",
+        "body": "Unter jeder Antwort des Agenten gibt es jetzt ein "
+                "Lesezeichen-Symbol: Ein Klick speichert genau diese Antwort als "
+                "eigene Wiki-Seite — sofort auffindbar, bearbeitbar und in "
+                "Projekten automatisch dem Projekt zugeordnet. Speichern Sie "
+                "dieselbe Antwort später erneut, wird die vorhandene Seite als "
+                "neue Version aktualisiert statt doppelt angelegt.",
+        "audience": "user",
+        "versions": ["9.303.0"],
+    },
+    {
         "version": "9.302.0",
         "date": "2026-07-10",
         "title": "Eigene Studio-Vorlagen — auch pro Quelle",

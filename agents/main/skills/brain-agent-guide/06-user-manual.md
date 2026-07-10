@@ -493,6 +493,16 @@ Audio-Knöpfe (neben Kopieren):
   und zählen wie jeder andere Aufruf ins Nutzungsbudget. *(Im Chat genügt auch
   die Bitte „mach einen Podcast aus diesem Gespräch“.)*
 
+**Antwort ins Wiki übernehmen** (v9.303.0) — neben Kopieren gibt es unter jeder
+Assistenten-Antwort ein **Lesezeichen-Symbol** („Als Wiki-Seite speichern“): Ein
+Klick legt genau diese Antwort als eigene, bearbeitbare Wiki-Seite an (Scope
+„Meine“; in einem Projekt-Chat wird die Seite automatisch dem Projekt
+zugeordnet). Der Seitentitel kommt aus der ersten Zeile der Antwort. Dieselbe
+Antwort erneut speichern **aktualisiert die vorhandene Seite als neue Version**
+statt ein Duplikat anzulegen. Das ist unabhängig vom Speicher-Menü (das die
+MemPalace-Erinnerung steuert) und vom automatischen Chat-Wiki (das den ganzen
+Chat zusammengefasst ablegt) — hier landet die Antwort wortgetreu.
+
 **Suche** (Seitenleiste): semantisch + Stichwort über alle sichtbaren
 Nachrichten.
 

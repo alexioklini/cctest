@@ -148,6 +148,66 @@ class WikiHandlerMixin:
         finally:
             cm.__exit__(None, None, None)
 
+    def _handle_wiki_from_message(self):
+        """POST /v1/wiki/from-message {session_id, message_id} — save ONE assistant
+        reply as a wiki page (the explicit per-message save button, v9.303.0).
+        scope=user, project-tagged when the session belongs to a project. The
+        stable source_ref message/<id> keeps re-saves idempotent: saving the same
+        answer again re-versions the SAME page (replace=True — deterministic, no
+        LLM merge) instead of duplicating it. Distinct from the per-turn memorize
+        actions (MemPalace mirror) and the session-level auto-filing
+        (wiki_from_chat, one LLM-organised page per session)."""
+        from server_lib.db import ChatDB, _project_id_for_name
+        body = self._read_json() or {}
+        sid = (body.get("session_id") or "").strip()
+        try:
+            mid = int(body.get("message_id"))
+        except (TypeError, ValueError):
+            mid = 0
+        if not sid or not mid:
+            self._send_json({"error": "session_id and message_id required"}, 400)
+            return
+        info = self._session_access_check(sid)
+        if info is None:
+            return
+        msg = next((m for m in (ChatDB.mempalace_load_new_messages(sid, 0) or [])
+                    if m.get("id") == mid and m.get("role") == "assistant"), None)
+        content = ((msg or {}).get("content") or "").strip()
+        if not content:
+            self._send_json({"error": "Assistant message not found"}, 404)
+            return
+        agent_id = info.get("agent_id") or "main"
+        project_id = ""
+        if info.get("project"):
+            try:
+                project_id = _project_id_for_name(agent_id, info["project"]) or ""
+            except Exception:
+                project_id = ""
+        # Title: first non-empty line of the reply (headings unwrapped), else the
+        # session title — a per-message page needs a per-message name.
+        title = ""
+        for line in content.splitlines():
+            line = line.strip().lstrip("#").strip().strip("*").strip()
+            if line:
+                title = line[:80]
+                break
+        title = title or (info.get("title") or "").strip() or "Chat-Antwort"
+        cm = self._with_wiki_ctx()
+        try:
+            page = wiki_store.upsert_from_source(
+                scope="user", title=title, source_text=content, source="chat",
+                source_ref=f"message/{mid}", project_id=project_id,
+                agent_id=agent_id, replace=True)
+            if not page:
+                self._send_json({"error": "save failed"}, 500)
+                return
+            self._send_json({"status": "ok", "page_id": page.get("id"),
+                             "title": page.get("title") or title})
+        except wiki_store.WikiAccessError as e:
+            self._send_json({"error": str(e)}, 403)
+        finally:
+            cm.__exit__(None, None, None)
+
     def _handle_wiki_create(self, path: str):
         """POST /v1/wiki/pages  {scope, title, body_md?, parent_id?, project_id?, team_id?}"""
         body = self._read_json()
