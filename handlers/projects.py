@@ -2166,6 +2166,125 @@ class ProjectsHandlerMixin:
         else:
             self._send_json(result)
 
+    # ── Studio custom presets (v9.302.0) — user-defined "Transformations" ──
+    # Stored in config.json → studio_presets (list), live-mirrored into the
+    # running server_config (tool_settings pattern) so a save applies without a
+    # restart. Any logged-in user may create; edit/delete = owner or admin.
+    # Generation kind = "custom:<id>" (resolved in engine/output_presets.py).
+
+    _STUDIO_PRESET_MAX = 50
+
+    def _studio_presets_save(self, lst):
+        """Live-mirror + persist the custom-preset list. Returns error str or None."""
+        try:
+            _srv().server_config["studio_presets"] = lst
+        except Exception:
+            pass
+        try:
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+            cfg = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+            cfg["studio_presets"] = lst
+            with open(config_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+        except Exception as e:
+            return f"Persist failed: {e}"
+        return None
+
+    def _handle_studio_presets_get(self):
+        """GET /v1/studio/presets — the user-defined presets. Built-ins live
+        client-side (panels_studio.js) — this serves only what the UI can't know."""
+        from engine import output_presets
+        self._send_json({"presets": output_presets.custom_presets()})
+
+    def _handle_studio_preset_create(self):
+        """POST /v1/studio/presets {label, instructions, title_prefix?, per_source?}"""
+        import time as _t
+        import uuid as _uuid
+        from engine import output_presets
+        body = self._read_json()
+        label = str(body.get("label") or "").strip()
+        instructions = str(body.get("instructions") or "").strip()
+        if not label or not instructions:
+            self._send_json({"error": "label and instructions are required"}, 400)
+            return
+        lst = list(output_presets.custom_presets())
+        if len(lst) >= self._STUDIO_PRESET_MAX:
+            self._send_json({"error": f"Preset limit reached ({self._STUDIO_PRESET_MAX})"}, 400)
+            return
+        user = getattr(self, "_auth_user", _auth_mod.SYNTHETIC_ADMIN)
+        preset = {
+            "id": _uuid.uuid4().hex[:8],
+            "label": label[:80],
+            "title_prefix": str(body.get("title_prefix") or "").strip()[:80],
+            "instructions": instructions[:8000],
+            "per_source": bool(body.get("per_source")),
+            "owner_user_id": user["id"],
+            "created_at": _t.time(),
+        }
+        lst.append(preset)
+        err = self._studio_presets_save(lst)
+        if err:
+            self._send_json({"error": err}, 500)
+            return
+        self._send_json({"status": "ok", "preset": preset}, 201)
+
+    def _studio_preset_owner_gate(self, preset) -> bool:
+        user = getattr(self, "_auth_user", _auth_mod.SYNTHETIC_ADMIN)
+        if user.get("role") == "admin" or preset.get("owner_user_id") == user.get("id"):
+            return True
+        self._send_json({"error": "Only the creator or an admin may modify this preset"}, 403)
+        return False
+
+    def _handle_studio_preset_update(self, path: str):
+        """PUT /v1/studio/presets/{id}"""
+        from engine import output_presets
+        pid = path.rstrip("/").split("/")[-1]
+        body = self._read_json()
+        lst = list(output_presets.custom_presets())
+        for p in lst:
+            if p.get("id") != pid:
+                continue
+            if not self._studio_preset_owner_gate(p):
+                return
+            if str(body.get("label") or "").strip():
+                p["label"] = str(body["label"]).strip()[:80]
+            if "title_prefix" in body:
+                p["title_prefix"] = str(body.get("title_prefix") or "").strip()[:80]
+            if str(body.get("instructions") or "").strip():
+                p["instructions"] = str(body["instructions"]).strip()[:8000]
+            if "per_source" in body:
+                p["per_source"] = bool(body["per_source"])
+            err = self._studio_presets_save(lst)
+            if err:
+                self._send_json({"error": err}, 500)
+            else:
+                self._send_json({"status": "ok", "preset": p})
+            return
+        self._send_json({"error": "Preset not found"}, 404)
+
+    def _handle_studio_preset_delete(self, path: str):
+        """DELETE /v1/studio/presets/{id}"""
+        from engine import output_presets
+        pid = path.rstrip("/").split("/")[-1]
+        lst = list(output_presets.custom_presets())
+        for p in lst:
+            if p.get("id") != pid:
+                continue
+            if not self._studio_preset_owner_gate(p):
+                return
+            lst.remove(p)
+            err = self._studio_presets_save(lst)
+            if err:
+                self._send_json({"error": err}, 500)
+            else:
+                self._send_json({"status": "ok"})
+            return
+        self._send_json({"error": "Preset not found"}, 404)
+
     # ── Output Presets / Studio / Research shared store ──
 
     @staticmethod
@@ -2215,7 +2334,8 @@ class ProjectsHandlerMixin:
         # valid here even though it's not in output_presets.PRESETS.
         if kind != "audio_overview" and not output_presets.is_valid_kind(kind):
             self._send_json(
-                {"error": f"Unknown kind '{kind}'. Valid: {', '.join(output_presets.PRESETS)}, audio_overview"}, 400)
+                {"error": f"Unknown kind '{kind}'. Valid: {', '.join(output_presets.PRESETS)}, "
+                          f"audio_overview, custom:<preset-id>"}, 400)
             return
         # No sources → refuse cleanly (W2). Sources = uploaded/ingested chunks,
         # mined input folders, or project web URLs (all feed the project wing).

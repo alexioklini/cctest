@@ -984,6 +984,28 @@ HTML-Ansicht ist die neue Standarddarstellung beim Öffnen. (Beim Audio Overview
 bleibt das Ergebnis eine `.mp3`.) Optional lassen sich ein **Fokus** (Schwerpunkt-
 Stichwort) und eine **Länge** (Kurz/Standard/Lang) angeben.
 
+**Eigene Vorlagen** (v9.302.0): Neben den eingebauten Karten steht eine
+gestrichelte Karte **„Neue Vorlage“**. Dort definiert man einmal eine eigene
+Anweisung (z. B. „Extrahiere Fragestellung, Methodik, Kernergebnisse,
+Limitationen“), optional mit Titel-Präfix — die Vorlage erscheint danach als
+eigene Karte (Ebenen-Symbol) und lässt sich wie die eingebauten per Klick
+anwenden, inklusive Fokus/Länge und der üblichen Beleg-/Zitierpflicht. Über die
+Stift-/Papierkorb-Symbole auf der Karte wird eine Vorlage bearbeitet oder
+gelöscht (nur durch den Ersteller oder einen Admin; vorhandene Ausgaben bleiben
+erhalten). Vorlagen sind systemweit — jeder Nutzer sieht alle Vorlagen in jedem
+Projekt-Studio.
+
+Die Checkbox **„Pro Quelle anwenden“** macht aus einer Vorlage eine
+Batch-Transformation: Sie läuft dann **einzeln über jedes Dokument** des
+Projekts (hochgeladene Dateien, Eingabe-Ordner, Web-Adressen; max. 40 Quellen
+pro Lauf, Überzählige werden ausgewiesen) und legt **je Quelle automatisch eine
+Wiki-Seite** an (projekt-zugeordnet, Titel „Präfix — Dateiname“). Ein erneuter
+Lauf derselben Vorlage aktualisiert diese Wiki-Seiten als neue Version, statt
+Duplikate anzulegen. Zusätzlich entsteht im Studio eine kombinierte
+Gesamtausgabe mit allen Einzel-Ergebnissen; der Fortschritt wird pro Quelle
+angezeigt („Quelle 3/12 verarbeiten“), und ein Lauf lässt sich zwischen zwei
+Quellen stoppen.
+
 > Der Audio Overview lässt sich auch **im Chat** erzeugen: in einem geöffneten
 > Projekt einfach nach einem „Podcast“ / „Audio-Überblick“ fragen — der Agent nutzt
 > dann das Tool `generate_audio_overview` und legt die MP3 in den Artefakten der

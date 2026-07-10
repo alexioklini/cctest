@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.302.0",
+        "date": "2026-07-10",
+        "title": "Eigene Studio-Vorlagen — auch pro Quelle",
+        "body": "Im Studio-Tab eines Projekts können Sie jetzt eigene Vorlagen "
+                "anlegen: Sie beschreiben einmal, was aus den Quellen extrahiert "
+                "werden soll (z. B. „Literatur-Review: Fragestellung, Methodik, "
+                "Kernergebnisse, Limitationen“), und wenden die Vorlage danach "
+                "per Klick an — wie die eingebauten Karten Study Guide oder FAQ. "
+                "Auf Wunsch läuft eine Vorlage einzeln über jedes Dokument des "
+                "Projekts und legt dabei automatisch eine Wiki-Seite pro Quelle "
+                "an: So entsteht aus einem Ordner voller Papiere mit einem Klick "
+                "eine strukturierte, durchsuchbare Wissensbasis. Alle Ausgaben "
+                "bleiben wie gewohnt belegt und zitiert.",
+        "audience": "user",
+        "versions": ["9.302.0"],
+    },
+    {
         "version": "9.301.0",
         "date": "2026-07-10",
         "title": "Transkriptions-Modell direkt im Übersetzen-Tab wählen",

@@ -136,7 +136,7 @@ def render_metadata_footer(meta: dict) -> str:
 
 
 def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, meta=None,
-                       category=None, sources=None, stats=None):
+                       category=None, sources=None, stats=None, file_wiki=True):
     """SHARED: write a generated report as <pdir>/outputs/<kind>-<id>.md (canonical)
     AND a styled <kind>-<id>.html (the editorial visual report), register BOTH as
     artifacts, and flip the project_outputs row to ready. Used by the preset
@@ -148,7 +148,10 @@ def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, m
     `category`/`sources`/`stats` only style the HTML (Deep Research passes them;
     Studio leaves them None → a clean default-styled report)."""
     outdir = _outputs_dir(project_dir)
-    fname = f"{kind}-{output_id}.md"
+    # Custom kinds are "custom:<id>" — keep the colon out of filenames (ugly on
+    # macOS Finder, breaks Windows sync). The DB row keeps the raw kind.
+    kind_slug = kind.replace(":", "-")
+    fname = f"{kind_slug}-{output_id}.md"
     path = os.path.join(outdir, fname)
     body = f"# {title}\n\n{body_md}\n" + render_metadata_footer(meta)
     with open(path, "w", encoding="utf-8") as f:
@@ -164,7 +167,7 @@ def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, m
         from engine import report_html
         html_doc = report_html.render_report_html(
             body_md, title, meta=meta, sources=sources, category=category, stats=stats)
-        html_name = f"{kind}-{output_id}.html"
+        html_name = f"{kind_slug}-{output_id}.html"
         html_path = os.path.join(outdir, html_name)
         with open(html_path, "w", encoding="utf-8") as f:
             f.write(html_doc)
@@ -184,6 +187,10 @@ def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, m
     # File the finished report into the wiki (best-effort, background) so it's
     # browsable + searchable alongside everything else. Scoped to the project
     # (project_id from the row → project_chat wing), owned by its creator.
+    # file_wiki=False for per-source batches — those file one wiki page PER
+    # source instead; filing the combined report too would double the content.
+    if not file_wiki:
+        return output_id, path, artifact_id
     try:
         row = ChatDB.get_project_output(output_id) or {}
         import threading as _th
@@ -205,6 +212,224 @@ def save_report_output(output_id, agent_id, project_dir, kind, title, body_md, m
     return output_id, path, artifact_id
 
 
+def _studio_model() -> str:
+    """The model for Studio generations: studio_model knob (v9.167.0) if set +
+    available, else the background default. Empty string = nothing available."""
+    model = ""
+    try:
+        _sm = (_brain._server_config().get("studio_model") or "").strip()
+        if _sm and _brain._is_model_available(_sm):
+            model = _sm
+    except Exception:
+        pass
+    return model or _brain._background_model_default() or ""
+
+
+# Per-source batch caps (per_source presets). Bounded so a huge project can't
+# spawn hundreds of LLM calls; the combined report notes any truncation
+# explicitly (no silent caps — repo rule).
+_PER_SOURCE_MAX_FILES = 40
+_PER_SOURCE_CHAR_CAP = 60_000
+# Extensions worth transforming when walking input folders (skip binaries the
+# extractor can't turn into text anyway — images/audio/video/archives).
+_PER_SOURCE_EXTS = {".pdf", ".docx", ".doc", ".xlsx", ".pptx", ".md", ".txt",
+                    ".html", ".htm", ".csv", ".eml", ".msg", ".rtf", ".json"}
+
+
+def _iter_project_sources(agent_id: str, project: dict) -> list[tuple[str, str, "callable"]]:
+    """Enumerate a project's individual sources for per-source presets.
+
+    Returns [(display_name, stable_key, get_text())] over the three source
+    stores: uploaded/ingested docs (chunk files re-joined), input-folder files
+    (extracted via the _do_extract choke point), and mined web-URL markdown.
+    get_text is lazy so the cap can drop sources without paying extraction."""
+    import brain as _brain_mod
+    from engine import doc_convert
+    out: list = []
+    project_name = project.get("folder_name") or project.get("name") or ""
+
+    # 1) Uploaded/ingested docs — re-join each source's chunk .md files.
+    try:
+        ingest_dir = _brain_mod.IngestManager._ingest_dir(agent_id, project_name)
+        groups: dict[str, list[str]] = {}
+        names: dict[str, str] = {}
+        if os.path.isdir(ingest_dir):
+            for fname in sorted(os.listdir(ingest_dir)):
+                key = _brain_mod.IngestManager._key_from_filename(fname)
+                if not key:
+                    continue
+                fpath = os.path.join(ingest_dir, fname)
+                try:
+                    with open(fpath, "r") as f:
+                        fm, _ = _brain_mod._parse_frontmatter(f.read(800))
+                    key = fm.get("source_hash") or key
+                    names.setdefault(key, fm.get("source") or fname)
+                except OSError:
+                    continue
+                groups.setdefault(key, []).append(fpath)
+
+        def _chunks_text(paths):
+            def _get():
+                parts = []
+                for p in paths:
+                    try:
+                        with open(p, "r", encoding="utf-8", errors="replace") as f:
+                            raw = f.read()
+                        _, body = _brain_mod._parse_frontmatter(raw)
+                        parts.append((body or "").strip())
+                    except OSError:
+                        continue
+                return "\n\n".join(x for x in parts if x)
+            return _get
+        for key, paths in groups.items():
+            display = os.path.basename((names.get(key) or "").rstrip("/")) or key
+            out.append((display, f"upload/{key}", _chunks_text(paths)))
+    except Exception:
+        pass
+
+    # 2) Input-folder files (the mined originals; _do_extract's (path,mtime,size)
+    #    cache reuses the mining companion so this rarely re-extracts).
+    def _extract_text(path):
+        def _get():
+            text, _backend, err = doc_convert._do_extract(path, caps=True)
+            if err and not (text or "").strip():
+                raise RuntimeError(err)
+            return (text or "").strip()
+        return _get
+    for folder in (project.get("input_folders") or []):
+        fpath = (folder or {}).get("path") if isinstance(folder, dict) else str(folder or "")
+        if not fpath or not os.path.isdir(fpath):
+            continue
+        for root, dirs, files in os.walk(fpath):
+            dirs[:] = [d for d in dirs
+                       if not d.startswith(".") and d not in ("__pycache__", "node_modules")]
+            for fn in sorted(files):
+                if os.path.splitext(fn)[1].lower() not in _PER_SOURCE_EXTS:
+                    continue
+                ap = os.path.join(root, fn)
+                out.append((fn, f"file/{ap}", _extract_text(ap)))
+
+    # 3) Mined web-URL markdown (pdir/web-urls/*.md — already markdown).
+    weburl_dir = os.path.join(project.get("dir") or "", "web-urls")
+    if os.path.isdir(weburl_dir):
+        def _read_md(path):
+            def _get():
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    return f.read().strip()
+            return _get
+        for fn in sorted(os.listdir(weburl_dir)):
+            if fn.endswith(".md"):
+                ap = os.path.join(weburl_dir, fn)
+                out.append((fn, f"weburl/{fn}", _read_md(ap)))
+    return out
+
+
+def _run_per_source(*, output_id: str, agent_id: str, project_name: str, project_id: str,
+                    project_dir: str, kind: str, preset: dict, opts: dict, user_id: str):
+    """Per-source batch worker (custom per_source presets): one LLM call PER
+    project source, one project-tagged wiki page per source (stable source_ref
+    → a re-run re-versions the same pages), plus ONE combined report row so the
+    batch browses like every other Studio output. Sequential by design —
+    cancellable between sources, and the provider queue serialises local models
+    anyway."""
+    def _cancelled():
+        return ChatDB.project_output_cancelled(output_id)
+
+    import time as _time
+    _t0 = _time.time()
+    try:
+        focus = (opts.get("focus") or "").strip()
+        length = opts.get("length") or "std"
+        ChatDB.update_project_output(output_id, phase="gathering")
+        proj_cfg = _brain.ProjectManager.get_project(agent_id, project_name) or {}
+        sources = _iter_project_sources(agent_id, {**proj_cfg, "dir": project_dir})
+        if not sources:
+            ChatDB.update_project_output(
+                output_id, status="error",
+                error="No readable sources found for this project — add files, folders, or web URLs.")
+            return
+        dropped = max(0, len(sources) - _PER_SOURCE_MAX_FILES)
+        sources = sources[:_PER_SOURCE_MAX_FILES]
+
+        model = _studio_model()
+        if not model:
+            ChatDB.update_project_output(
+                output_id, status="error",
+                error="No model available (set a server default model).")
+            return
+
+        from handlers import sidecar_proxy
+        from engine import wiki_store as _wiki
+        sections, pages = [], 0
+        agg = {"model": model, "tokens_in": 0, "tokens_out": 0, "cost": 0.0}
+        for i, (display, skey, get_text) in enumerate(sources):
+            if _cancelled():
+                ChatDB.update_project_output(output_id, status="cancelled", phase="")
+                return
+            ChatDB.update_project_output(output_id, phase=f"writing {i + 1}/{len(sources)}")
+            try:
+                text = get_text()
+            except Exception as e:
+                sections.append(f"## {display}\n\n_Quelle nicht lesbar: {e}_")
+                continue
+            if not text:
+                sections.append(f"## {display}\n\n_Quelle lieferte keinen Text — übersprungen._")
+                continue
+            if len(text) > _PER_SOURCE_CHAR_CAP:
+                text = text[:_PER_SOURCE_CHAR_CAP] + "\n\n[… truncated for generation …]"
+            prompt = output_presets.build_prompt(
+                kind, f"--- Source: {display} ---\n{text}",
+                focus=focus, length=length, source_label="SOURCE DOCUMENT")
+            result = sidecar_proxy.background_call(
+                messages=[{"role": "user", "content": prompt}],
+                model=model, cost_purpose="studio", agent_id=agent_id,
+                session_id=f"output-{output_id}", project=project_name,
+                user_id=user_id, max_rounds=1)
+            reply = ((result or {}).get("reply") or "").strip()
+            if (result or {}).get("error") or not reply:
+                err = str((result or {}).get("error") or "Modell lieferte keine Ausgabe")
+                sections.append(f"## {display}\n\n_Generierung fehlgeschlagen: {err[:300]}_")
+                continue
+            m = _brain.account_background_usage(
+                result, model, session_id=f"output-{output_id}",
+                user_id=user_id, agent_id=agent_id, purpose="studio", log=False)
+            for k in ("tokens_in", "tokens_out", "cost"):
+                agg[k] = agg.get(k, 0) + (m.get(k) or 0)
+            # One project-tagged wiki page per source. Stable source_ref keyed on
+            # preset+source → a re-run re-versions the page instead of duplicating.
+            try:
+                _wiki.wiki_from_artifact(
+                    title=f"{preset['title_prefix']} — {display}", body_md=reply,
+                    source="studio", source_ref=f"studio-preset/{preset.get('id') or kind}/{skey}",
+                    user_id=user_id, project_id=project_id, scope="user",
+                    agent_id=agent_id, replace=True)
+                pages += 1
+            except Exception as _e:
+                print(f"[output_gen] per-source wiki filing failed ({display}): {_e}", flush=True)
+            sections.append(f"## {display}\n\n{reply}")
+
+        if _cancelled():
+            ChatDB.update_project_output(output_id, status="cancelled", phase="")
+            return
+        agg["duration_s"] = round(_time.time() - _t0, 1)
+        display_name = proj_cfg.get("name") or project_name
+        head = (f"_Vorlage „{preset['label']}“ einzeln auf {len(sources)} Quellen angewendet — "
+                f"{pages} Wiki-Seiten aktualisiert._")
+        if dropped:
+            head += f"\n\n_Hinweis: {dropped} weitere Quellen über dem Limit von {_PER_SOURCE_MAX_FILES} wurden übersprungen._"
+        combined = head + "\n\n" + "\n\n---\n\n".join(sections)
+        title = f"{preset['title_prefix']} — {display_name}"
+        save_report_output(output_id, agent_id, project_dir, kind, title, combined,
+                           meta=agg, file_wiki=False)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        try:
+            ChatDB.update_project_output(output_id, status="error", error=f"{type(e).__name__}: {e}"[:500])
+        except Exception:
+            pass
+
+
 def _run_generation(*, output_id: str, agent_id: str, project_name: str, project_id: str,
                     project_dir: str, kind: str, opts: dict, user_id: str):
     """Daemon-thread body: gather → transform → write → register → flip row.
@@ -216,6 +441,18 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
     import time as _time
     _t0 = _time.time()
     try:
+        preset = output_presets.resolve_preset(kind)
+        if preset is None:
+            ChatDB.update_project_output(
+                output_id, status="error",
+                error=f"Unknown preset kind '{kind}' (deleted custom preset?).")
+            return
+        if preset.get("per_source"):
+            _run_per_source(
+                output_id=output_id, agent_id=agent_id, project_name=project_name,
+                project_id=project_id, project_dir=project_dir, kind=kind,
+                preset=preset, opts=opts, user_id=user_id)
+            return
         focus = (opts.get("focus") or "").strip()
         length = opts.get("length") or "std"
         if _cancelled():
@@ -231,15 +468,7 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
 
         prompt = output_presets.build_prompt(kind, corpus, focus=focus, length=length)
         # Dedicated studio_model knob (v9.167.0); empty -> background default.
-        model = ""
-        try:
-            _sm = (_brain._server_config().get("studio_model") or "").strip()
-            if _sm and _brain._is_model_available(_sm):
-                model = _sm
-        except Exception:
-            pass
-        if not model:
-            model = _brain._background_model_default()
+        model = _studio_model()
         if not model:
             ChatDB.update_project_output(
                 output_id, status="error",
@@ -286,7 +515,7 @@ def _run_generation(*, output_id: str, agent_id: str, project_name: str, project
         # Title: "<preset prefix> — <project display name>".
         proj_cfg = _brain.ProjectManager.get_project(agent_id, project_name) or {}
         display = proj_cfg.get("name") or project_name
-        title = f"{output_presets.PRESETS[kind]['title_prefix']} — {display}"
+        title = f"{preset['title_prefix']} — {display}"
         save_report_output(output_id, agent_id, project_dir, kind, title, reply, meta=meta)
     except Exception as e:  # never let the thread die silently — record it
         import traceback
@@ -305,7 +534,8 @@ def start_generation(*, agent_id: str, project: dict, kind: str, opts: dict, use
     project_id = project.get("id") or ""
     project_name = project.get("folder_name") or project.get("name") or ""
     project_dir = project.get("dir") or ""
-    pending_title = f"{output_presets.PRESETS[kind]['title_prefix']} — {project.get('name') or project_name}"
+    _preset = output_presets.resolve_preset(kind) or {"title_prefix": kind}
+    pending_title = f"{_preset['title_prefix']} — {project.get('name') or project_name}"
     ChatDB.create_project_output(
         output_id, agent_id, project_id, kind, pending_title, json.dumps(opts or {}), user_id)
     threading.Thread(

@@ -94,17 +94,68 @@ PRESETS = {
 }
 
 
+# ── Custom presets (v9.302.0) ───────────────────────────────────────────────
+# User-defined presets ("Transformations") live in config.json → studio_presets
+# (boot-copied into server_config by server.py main(), live-mirrored by the CRUD
+# handlers in handlers/projects.py). Each entry:
+#   {id, label, title_prefix?, instructions, per_source?, owner_user_id, created_at}
+# Their generation kind is "custom:<id>". per_source=True runs the preset once
+# PER project source (one wiki page per document) instead of over the corpus.
+CUSTOM_KIND_PREFIX = "custom:"
+
+
+def custom_presets() -> list:
+    """The raw custom-preset list from the live server config ([] outside a server).
+
+    Read via brain._server_config() so a Service-Modelle-style live mirror (not a
+    stale boot copy) is honoured — same pattern as the studio_model knob."""
+    import brain as _brain
+    try:
+        lst = _brain._server_config().get("studio_presets") or []
+    except Exception:
+        return []
+    return [p for p in lst
+            if isinstance(p, dict) and p.get("id") and (p.get("instructions") or "").strip()]
+
+
+def resolve_preset(kind: str) -> dict | None:
+    """kind → normalised preset dict {icon,label,title_prefix,instructions,
+    per_source,custom[,id]} — or None for an unknown kind. Builtins never set
+    per_source; custom kinds are 'custom:<id>'."""
+    if kind in PRESETS:
+        return {**PRESETS[kind], "per_source": False, "custom": False}
+    if isinstance(kind, str) and kind.startswith(CUSTOM_KIND_PREFIX):
+        cid = kind[len(CUSTOM_KIND_PREFIX):]
+        for p in custom_presets():
+            if p.get("id") == cid:
+                label = str(p.get("label") or "Eigene Vorlage")
+                return {
+                    "icon": "custom",
+                    "label": label,
+                    "title_prefix": str(p.get("title_prefix") or "").strip() or label,
+                    "instructions": str(p.get("instructions") or ""),
+                    "per_source": bool(p.get("per_source")),
+                    "custom": True,
+                    "id": cid,
+                }
+    return None
+
+
 def is_valid_kind(kind: str) -> bool:
-    return kind in PRESETS
+    return resolve_preset(kind) is not None
 
 
-def build_prompt(kind: str, sources_text: str, *, focus: str = "", length: str = "std") -> str:
+def build_prompt(kind: str, sources_text: str, *, focus: str = "", length: str = "std",
+                 source_label: str = "RETRIEVED PROJECT SOURCES") -> str:
     """Assemble the full user-turn prompt for a preset generation.
 
     `sources_text` is the pre-retrieved, source-tagged corpus the generator
     must ground on (the pipeline gathers it via tool_mempalace_query so the
-    one-shot transform call needs no further retrieval round)."""
-    preset = PRESETS[kind]
+    one-shot transform call needs no further retrieval round). Per-source runs
+    pass a single document + source_label="SOURCE DOCUMENT"."""
+    preset = resolve_preset(kind)
+    if preset is None:
+        raise KeyError(f"unknown preset kind: {kind}")
     length_guidance = _LENGTH_GUIDANCE.get(length, _LENGTH_GUIDANCE["std"])
     parts = [preset["instructions"], "", length_guidance]
     if (focus or "").strip():
@@ -113,6 +164,6 @@ def build_prompt(kind: str, sources_text: str, *, focus: str = "", length: str =
     parts.append("")
     parts.append(_GROUNDING_DISCIPLINE)
     parts.append("")
-    parts.append("=== RETRIEVED PROJECT SOURCES ===")
+    parts.append(f"=== {source_label} ===")
     parts.append(sources_text)
     return "\n".join(parts)

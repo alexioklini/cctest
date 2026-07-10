@@ -9,6 +9,8 @@
 // defaults to 1em so each icon inherits the surrounding text size/colour.
 function studioIcon(name, size) {
   const s = size || '1em';
+  // Custom presets share one icon — their kind is "custom:<id>".
+  if (name && name.indexOf('custom:') === 0) name = 'custom';
   const open = `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-0.15em">`;
   const paths = {
     // book — study guide
@@ -31,6 +33,12 @@ function studioIcon(name, size) {
     attachment: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
     // trash-2 — delete
     trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>',
+    // layers — custom preset (user-defined "Transformation")
+    custom: '<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+    // plus — new preset card
+    plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    // edit-3 — pencil (edit preset)
+    edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   };
   return open + (paths[name] || paths.file) + '</svg>';
 }
@@ -61,7 +69,22 @@ const STUDIO_KIND_META = {
 let _studioPollHandle = null;
 
 function _studioKindMeta(kind) {
+  if (kind && kind.indexOf('custom:') === 0) {
+    const p = (state._studioCustomPresets || []).find(x => 'custom:' + x.id === kind);
+    return { label: p ? p.label : 'Eigene Vorlage' };
+  }
   return STUDIO_KIND_META[kind] || { label: kind };
+}
+
+// Fetch the user-defined presets (best-effort — the built-in cards render
+// regardless). Cached on state so browse-group headers can resolve labels.
+async function _loadStudioPresets() {
+  try {
+    const data = await API.listStudioPresets();
+    state._studioCustomPresets = data.presets || [];
+  } catch (_) {
+    state._studioCustomPresets = state._studioCustomPresets || [];
+  }
 }
 
 // Entry point from setProjectChatsFilter('studio').
@@ -76,6 +99,8 @@ function loadProjectStudio(agentId, projectName) {
     <div id="studio-outputs" style="margin-top:18px"></div>`;
   renderStudioGeneratePanel();
   refreshStudioOutputs();
+  // Custom presets arrive async; re-render the cards once they're known.
+  _loadStudioPresets().then(renderStudioGeneratePanel);
 }
 
 function reloadProjectStudio() {
@@ -103,10 +128,34 @@ function renderStudioGeneratePanel() {
       <div style="font-size:11px;color:var(--text-400);flex:1">${esc(p.blurb)}</div>
       <button class="btn-secondary" style="padding:4px 10px;font-size:12px" onclick="studioGenerate('${esc(p.kind)}')">Generieren</button>
     </div>`).join('');
+  // User-defined presets ("Transformationen") — editable/deletable cards + a
+  // dashed "Neue Vorlage" card. Per-source presets run once per project source
+  // and file one wiki page per document.
+  const customCards = (state._studioCustomPresets || []).map(p => `
+    <div class="studio-card" style="flex:1 1 150px;min-width:140px;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span style="color:var(--text-300)">${studioIcon('custom', '22px')}</span>
+        <span style="display:flex;gap:2px">
+          <button title="Vorlage bearbeiten" onclick="studioOpenPresetEditor('${esc(p.id)}')"
+                  style="background:none;border:none;color:var(--text-400);cursor:pointer;padding:2px">${studioIcon('edit', '14px')}</button>
+          <button title="Vorlage löschen" onclick="studioDeletePreset('${esc(p.id)}')"
+                  style="background:none;border:none;color:var(--text-400);cursor:pointer;padding:2px">${studioIcon('trash', '14px')}</button>
+        </span>
+      </div>
+      <div style="font-weight:600;font-size:13px">${esc(p.label)}</div>
+      <div style="font-size:11px;color:var(--text-400);flex:1">${p.per_source ? 'Pro Quelle · eine Wiki-Seite je Dokument' : 'Eigene Vorlage · Gesamtkorpus'}</div>
+      <button class="btn-secondary" style="padding:4px 10px;font-size:12px" onclick="studioGenerate('custom:${esc(p.id)}')">Generieren</button>
+    </div>`).join('');
+  const newCard = `
+    <div class="studio-card" onclick="studioOpenPresetEditor()" style="flex:1 1 150px;min-width:140px;border:1px dashed var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px;cursor:pointer;align-items:flex-start">
+      <div style="color:var(--text-400)">${studioIcon('plus', '22px')}</div>
+      <div style="font-weight:600;font-size:13px;color:var(--text-300)">Neue Vorlage</div>
+      <div style="font-size:11px;color:var(--text-400);flex:1">Eigene Anweisung — einmal definieren, beliebig oft anwenden (optional pro Quelle)</div>
+    </div>`;
   el.innerHTML = `
     <div style="font-weight:600;font-size:14px;margin-bottom:4px">Aus den Quellen generieren</div>
     <div style="font-size:12px;color:var(--text-400);margin-bottom:10px">Erzeuge eine belegte Ausgabe aus den Quellen dieses Projekts.</div>
-    <div style="display:flex;flex-wrap:wrap;gap:10px">${cards}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:10px">${cards}${customCards}${newCard}</div>
     <div style="margin-top:10px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:12px;color:var(--text-300)">
       <label style="display:flex;align-items:center;gap:6px">Fokus:
         <input id="studio-opt-focus" type="text" placeholder="optional" style="padding:3px 8px;font-size:12px;border:1px solid var(--border-200);border-radius:6px;background:var(--bg-000);color:var(--text-100);width:180px">
@@ -153,6 +202,77 @@ async function studioRegenerate(kind, focus, length) {
     refreshStudioOutputs();
   } catch (e) {
     showToast('Neu generieren fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
+// ─── Custom preset editor (create/edit/delete user-defined "Transformationen") ──
+
+function studioOpenPresetEditor(presetId) {
+  const p = presetId ? (state._studioCustomPresets || []).find(x => x.id === presetId) : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.display = 'flex';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  const inputStyle = 'width:100%;padding:6px 10px;font-size:13px;border:1px solid var(--border-200);border-radius:6px;background:var(--bg-000);color:var(--text-100)';
+  overlay.innerHTML = `<div class="modal-content" style="max-width:560px;width:92vw" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">${p ? 'Vorlage bearbeiten' : 'Neue Vorlage'}</div>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:12px">
+      <label style="font-size:12px;color:var(--text-300)">Name
+        <input id="studio-preset-label" type="text" maxlength="80" style="${inputStyle};margin-top:4px" value="${esc(p ? p.label : '')}" placeholder="z. B. Literatur-Review">
+      </label>
+      <label style="font-size:12px;color:var(--text-300)">Anweisungen an das Modell
+        <textarea id="studio-preset-instructions" rows="8" style="${inputStyle};margin-top:4px;resize:vertical;font-family:inherit" placeholder="z. B. Extrahiere aus dem Dokument: Fragestellung, Methodik, Kernergebnisse (nummeriert), Limitationen. Halte jeden Abschnitt auf 2–3 Sätze.">${esc(p ? p.instructions : '')}</textarea>
+      </label>
+      <label style="font-size:12px;color:var(--text-300)">Titel-Präfix der Ausgaben (optional, sonst der Name)
+        <input id="studio-preset-prefix" type="text" maxlength="80" style="${inputStyle};margin-top:4px" value="${esc(p ? (p.title_prefix || '') : '')}" placeholder="z. B. Review">
+      </label>
+      <label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--text-300);cursor:pointer">
+        <input id="studio-preset-per-source" type="checkbox" ${p && p.per_source ? 'checked' : ''} style="margin-top:2px">
+        <span><b>Pro Quelle anwenden</b> — die Vorlage läuft einzeln über jedes Dokument des Projekts und legt je Quelle eine Wiki-Seite an (statt einer Gesamtausgabe über den Korpus). Belege/Zitate bleiben in beiden Modi Pflicht.</span>
+      </label>
+      <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px">
+        <button class="btn-secondary" style="padding:6px 14px;font-size:13px" onclick="this.closest('.modal-overlay').remove()">Abbrechen</button>
+        <button style="padding:6px 14px;font-size:13px;background:var(--accent-brand);border:none;color:#fff;border-radius:6px;cursor:pointer" onclick="studioSavePreset('${esc(presetId || '')}', this)">Speichern</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#studio-preset-label').focus();
+}
+
+async function studioSavePreset(presetId, btn) {
+  const overlay = btn.closest('.modal-overlay');
+  const label = overlay.querySelector('#studio-preset-label').value.trim();
+  const instructions = overlay.querySelector('#studio-preset-instructions').value.trim();
+  const title_prefix = overlay.querySelector('#studio-preset-prefix').value.trim();
+  const per_source = overlay.querySelector('#studio-preset-per-source').checked;
+  if (!label || !instructions) { showToast('Name und Anweisungen sind erforderlich', true); return; }
+  try {
+    if (presetId) await API.updateStudioPreset(presetId, { label, instructions, title_prefix, per_source });
+    else await API.createStudioPreset({ label, instructions, title_prefix, per_source });
+    overlay.remove();
+    showToast(presetId ? 'Vorlage aktualisiert' : 'Vorlage angelegt');
+    await _loadStudioPresets();
+    renderStudioGeneratePanel();
+  } catch (e) {
+    showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
+  }
+}
+
+async function studioDeletePreset(presetId) {
+  const p = (state._studioCustomPresets || []).find(x => x.id === presetId);
+  if (!p) return;
+  if (!await showConfirmDanger(`Vorlage „${p.label}“ löschen? Bereits generierte Ausgaben und Wiki-Seiten bleiben erhalten.`, 'Vorlage löschen', 'Löschen')) return;
+  try {
+    await API.deleteStudioPreset(presetId);
+    showToast('Vorlage gelöscht');
+    await _loadStudioPresets();
+    renderStudioGeneratePanel();
+  } catch (e) {
+    showToast('Löschen fehlgeschlagen: ' + (e.message || e), true);
   }
 }
 
@@ -289,6 +409,8 @@ function studioOutputCardHtml(o) {
   if (o.status === 'generating') {
     const phaseLabel = o.phase === 'gathering' ? 'Quellen sammeln'
                      : o.phase === 'writing' ? 'Bericht schreiben'
+                     : (o.phase || '').indexOf('writing ') === 0
+                       ? `Quelle ${o.phase.slice(8)} verarbeiten`
                      : 'Wird vorbereitet';
     // Live elapsed clock (data-since drives the ticker; see studioTickElapsed).
     statusLine = `<span style="color:var(--text-400)">⟳ ${esc(phaseLabel)}… <span class="studio-elapsed" data-since="${o.created_at || ''}">${_studioElapsedStr(o.created_at)}</span></span>`;

@@ -1585,6 +1585,8 @@ class BrainAgentHandler(
             self._handle_export_bundle_download()
         elif path.startswith("/v1/sessions/search"):
             self._handle_session_search()
+        elif path == "/v1/studio/presets":
+            self._handle_studio_presets_get()
         elif path.startswith("/v1/sessions/") and path.endswith("/inspect"):
             self._handle_session_inspect(path)
         elif path.startswith("/v1/sessions/") and path.endswith("/gdpr-maps"):
@@ -2072,6 +2074,8 @@ class BrainAgentHandler(
             self._handle_helpdesk_config_save()
         elif path == "/v1/web/search":
             self._handle_web_search()
+        elif path == "/v1/studio/presets":
+            self._handle_studio_preset_create()
         elif path == "/v1/sessions/manage":
             self._handle_manage_session()
         elif path == "/v1/sessions/export":
@@ -2388,6 +2392,8 @@ class BrainAgentHandler(
             self._auth_user = user
         if path.startswith("/v1/wiki/pages/"):
             self._handle_wiki_update(path)
+        elif path.startswith("/v1/studio/presets/"):
+            self._handle_studio_preset_update(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/notes/" in path:
             self._handle_notes(path, "PUT")
         elif path.startswith("/v1/agents/") and "/projects/" in path:
@@ -2409,6 +2415,9 @@ class BrainAgentHandler(
             return
         if path.startswith("/v1/wiki/pages/"):
             self._handle_wiki_delete(path)
+            return
+        if path.startswith("/v1/studio/presets/"):
+            self._handle_studio_preset_delete(path)
             return
         if path == "/v1/background-tasks":
             self._handle_background_task_delete()
@@ -3687,6 +3696,9 @@ def main():
     server_config["wiki_model"] = file_config.get("wiki_model", "") or ""
     server_config["user_profile_model"] = file_config.get("user_profile_model", "") or ""
     server_config["studio_model"] = file_config.get("studio_model", "") or ""
+    # Custom Studio presets (v9.302.0) — boot copy; the CRUD handlers live-mirror
+    # every save into this dict, so changes apply without a restart.
+    server_config["studio_presets"] = file_config.get("studio_presets", []) or []
     server_config["audio_overview_model"] = file_config.get("audio_overview_model", "") or ""
     server_config["code_graph_model"] = file_config.get("code_graph_model", "") or ""
     server_config["deep_research_model"] = file_config.get("deep_research_model", "") or ""

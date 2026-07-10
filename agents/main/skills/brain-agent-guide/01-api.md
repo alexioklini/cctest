@@ -281,17 +281,31 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST .../projects/<name>/instruction-gen/<gen_id>/cancel` — abort the run (manage)
 - `GET .../projects/<name>/image` — project thumbnail
 - `POST .../projects/<name>/generate` — generate a grounded output from the
-  project's sources. Body `{kind: study_guide|briefing|faq|timeline|audio_overview,
-  options?: {focus?: str, length?: short|std|long, audience?: str}}` → `{output_id,
-  status:"generating"}`. Requires manage; refuses (400) if the project has no
-  sources. Runs async + saved as a `project_outputs` row. SHARED endpoint. The
-  four text kinds write a cited `.md`; `audio_overview` instead runs a different
-  worker — an LLM writes a two-host (Oliver & Jane) English dialogue, then each
-  line is voiced via Voxtral TTS and the MP3 segments are concatenated into one
-  `.mp3` (phases: gathering → scripting → voicing N/M). The `.mp3` is the output
-  artifact; a `.md` script is saved alongside. `audience` only applies to
-  `audio_overview`. AUDIO IS ENGLISH-ONLY (TTS voice constraint) regardless of
-  source language.
+  project's sources. Body `{kind: study_guide|briefing|faq|timeline|audio_overview
+  |custom:<preset-id>, options?: {focus?: str, length?: short|std|long, audience?:
+  str}}` → `{output_id, status:"generating"}`. Requires manage; refuses (400) if
+  the project has no sources. Runs async + saved as a `project_outputs` row.
+  SHARED endpoint. The text kinds write a cited `.md`; `audio_overview` instead
+  runs a different worker — an LLM writes a two-host (Oliver & Jane) English
+  dialogue, then each line is voiced via Voxtral TTS and the MP3 segments are
+  concatenated into one `.mp3` (phases: gathering → scripting → voicing N/M).
+  The `.mp3` is the output artifact; a `.md` script is saved alongside.
+  `audience` only applies to `audio_overview`. AUDIO IS ENGLISH-ONLY (TTS voice
+  constraint) regardless of source language.
+  `custom:<id>` kinds are user-defined presets (below); a preset with
+  `per_source: true` runs once PER project source (ingested uploads, input-folder
+  files, mined web URLs; cap 40) and files one project-tagged wiki page per
+  source (stable `source_ref studio-preset/<id>/<key>` → a re-run re-versions
+  the pages) plus ONE combined report row (v9.302.0).
+- Custom Studio presets ("Transformations", v9.302.0) — global, stored in
+  `config.json → studio_presets`, live-mirrored:
+  - `GET /v1/studio/presets` → `{presets:[{id,label,title_prefix,instructions,
+    per_source,owner_user_id,created_at}]}` (built-ins are client-side).
+  - `POST /v1/studio/presets {label, instructions, title_prefix?, per_source?}`
+    → `{status, preset}` (201). Any logged-in user; cap 50 presets.
+  - `PUT /v1/studio/presets/<id>` — partial update; owner or admin only (403).
+  - `DELETE /v1/studio/presets/<id>` — owner or admin only. Existing outputs and
+    wiki pages survive a delete.
 - `GET .../projects/<name>/outputs` — list this project's generated outputs
   (poll for `status` generating→ready/error).
 - `GET .../projects/<name>/outputs/<output_id>` — one output's status/metadata.

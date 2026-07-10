@@ -434,6 +434,12 @@ class API {
   static archiveProjectArtifact(agentId, projectName, artifactId, archived) { return this.post(`${this._projOutBase(agentId, projectName)}/artifacts/${encodeURIComponent(artifactId)}/archive`, {archived}); }
   static deleteProjectArtifact(agentId, projectName, artifactId) { return this.del(`${this._projOutBase(agentId, projectName)}/artifacts/${encodeURIComponent(artifactId)}`); }
 
+  // Custom Studio presets ("Transformations", v9.302.0) — global, owner-gated CRUD.
+  static listStudioPresets() { return this.get('/v1/studio/presets'); }
+  static createStudioPreset(data) { return this.post('/v1/studio/presets', data); }
+  static updateStudioPreset(id, data) { return this.put(`/v1/studio/presets/${encodeURIComponent(id)}`, data); }
+  static deleteStudioPreset(id) { return this.del(`/v1/studio/presets/${encodeURIComponent(id)}`); }
+
   // Discover document links inside the project's configured HTML web_urls
   // (Option B — returns proposals, imports nothing).
   static discoverProjectWebLinks(agentId, projectName) { return this.post(`${this._projOutBase(agentId, projectName)}/web-urls/discover-links`, {}); }
