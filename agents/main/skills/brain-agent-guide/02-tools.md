@@ -450,6 +450,13 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   the raw bytes being returned. Academic landing pages (arxiv,
   bioRxiv/medRxiv, PubMed Central) are auto-resolved to their full-text PDF —
   just pass the abstract URL.
+  **Audio + YouTube (v9.307.0)**: a direct audio URL (`.mp3`/`.m4a`/`.wav`/…
+  or an `audio/*` Content-Type) is TRANSCRIBED via the shared STT pipeline
+  (default: local Whisper, $0) → `fetch_method: audio-transcript`; a YouTube
+  link (watch/shorts/live/youtu.be) is downloaded as audio via yt-dlp (host
+  dependency; bounded 80 MB / 300 s) and transcribed → `youtube-transcript`.
+  Works everywhere web_fetch is used: chat, Websuche-basket prefetch, AND the
+  project web_urls miner (a linked video becomes project knowledge).
   The chat view shows the method as a colored badge.
 - `exa_search(query, num_results?)` — semantic web search (Exa cloud, API
   key). **Search-only**: returns title + link, no page content. After a

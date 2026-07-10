@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.307.0",
+        "date": "2026-07-10",
+        "title": "YouTube-Videos und Audio-Links als Quellen",
+        "body": "Der Assistent kann jetzt mit YouTube-Links und direkten "
+                "Audio-Dateien (z. B. MP3-Podcasts) arbeiten: Der Ton wird "
+                "automatisch heruntergeladen und lokal transkribiert, und der "
+                "Assistent antwortet auf Basis des gesprochenen Inhalts. Das "
+                "funktioniert überall, wo Web-Adressen genutzt werden — im Chat, "
+                "im Websuche-Korb und bei den Web-Adressen eines Projekts (ein "
+                "verlinktes Video wird damit Teil des Projektwissens).",
+        "audience": "user",
+        "versions": ["9.307.0"],
+    },
+    {
         "version": "9.306.0",
         "date": "2026-07-10",
         "title": "Eine Suche über Chats, Wiki und Gedächtnis",

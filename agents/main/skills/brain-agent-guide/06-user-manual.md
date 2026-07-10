@@ -1512,6 +1512,13 @@ pro Sitzung) hebt die Sperre auf — die kuratierten Quellen werden weiter
 vorab abgerufen, das Modell darf zusätzlich selbst suchen/abrufen. Das
 Kästchen ist wirkungslos, solange der Korb leer ist.
 
+**YouTube & Audio-Links** (v9.307.0): Auch YouTube-Videos und direkte
+Audio-Dateien (z. B. MP3-Podcasts) funktionieren als Quellen — der Ton wird
+automatisch heruntergeladen und **lokal transkribiert**; der Assistent
+arbeitet dann mit dem gesprochenen Inhalt. Das gilt überall, wo Web-Adressen
+genutzt werden: im Chat, im Websuche-Korb und bei den Web-Adressen eines
+Projekts (Limit: ~80 Minuten Audio pro Video).
+
 (Anderer Mechanismus als die **Web-Adressen** eines Projekts, die dauerhaft
 ins Projektgedächtnis eingespeist werden.)
 

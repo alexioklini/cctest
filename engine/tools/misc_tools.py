@@ -795,6 +795,109 @@ def _fetch_as_file_result(raw: bytes, ext: str, final_url: str, status: int,
                 pass
 
 
+# ── Audio / YouTube → transcript (v9.307.0) ─────────────────────────────────
+# Direct audio-file URLs and YouTube links become TRANSCRIPTS instead of
+# garbage bytes / useless watch-page HTML. Both routes go through the shared
+# STT pipeline (server_lib/translate/media.transcribe_and_translate — the same
+# resolver + cost logging as the Übersetzen tab; default = local Whisper).
+_AUDIO_CTYPES = {
+    "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".m4a",
+    "audio/x-m4a": ".m4a", "audio/aac": ".aac", "audio/wav": ".wav",
+    "audio/x-wav": ".wav", "audio/ogg": ".ogg", "audio/flac": ".flac",
+    "audio/opus": ".opus", "audio/webm": ".webm",
+}
+_AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac", ".opus"}
+
+
+def _audio_ext_for(url: str, content_type: str) -> str | None:
+    """Audio detection for the transcript branch: audio/* Content-Type first,
+    else a clearly-audio URL extension. `.webm` only via Content-Type — the
+    extension alone is ambiguous (it's also a video container)."""
+    ctype = (content_type or "").lower().split(";")[0].strip()
+    if ctype in _AUDIO_CTYPES:
+        return _AUDIO_CTYPES[ctype]
+    try:
+        path = urllib.parse.urlparse(url).path
+    except ValueError:
+        path = ""
+    ext = os.path.splitext(path)[1].lower()
+    return ext if ext in _AUDIO_EXTS else None
+
+
+def _transcript_result_from_file(path: str, final_url: str, max_length: int, *,
+                                 title: str = "", method: str = "audio-transcript") -> dict | None:
+    """Transcribe a downloaded audio/video file via the shared STT pipeline and
+    shape it like a web_fetch result. None on failure (caller degrades)."""
+    try:
+        from server_lib.translate import media as _media
+        res = _media.transcribe_and_translate(path, target_lang="")
+    except Exception as e:
+        print(f"[web_fetch] transcription failed for {final_url}: {e}", flush=True)
+        return None
+    text = (res.get("transcript") or "").strip()
+    if not text:
+        return None
+    dur = float(res.get("duration_s") or 0)
+    head = f"# {title}\n\n" if title else ""
+    meta = (f"[Audio-Transkript · {int(dur // 60)}:{int(dur % 60):02d} min · "
+            f"Sprache: {res.get('language') or '?'}]\n\n")
+    text = head + meta + text
+    if len(text) > max_length:
+        text = text[:max_length] + "\n... (truncated)"
+    return {"url": final_url, "status": 200, "length": len(text),
+            "content": text, "fetch_method": method}
+
+
+_YT_URL_RE = re.compile(
+    r"^https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?|shorts/|live/)|youtu\.be/)",
+    re.IGNORECASE)
+
+
+def _fetch_youtube_transcript(url: str, max_length: int) -> dict:
+    """YouTube URL → yt-dlp bestaudio download → STT transcript. Returns a
+    web_fetch-shaped dict, or {'error': …}. Bounded: --max-filesize 80m
+    (≈80 min audio), 300s download timeout; temp files always removed.
+    yt-dlp is a host dependency (brew) — a clear error when it's missing."""
+    import shutil as _shutil
+    import subprocess as _sp
+    ytdlp = _shutil.which("yt-dlp") or "/opt/homebrew/bin/yt-dlp"
+    if not os.path.exists(ytdlp):
+        return {"error": "YouTube-Transkription nicht verfügbar: yt-dlp ist "
+                         "nicht installiert (brew install yt-dlp)"}
+    tmpdir = tempfile.mkdtemp(prefix="brain-yt-")
+    try:
+        try:
+            from engine.context import report_tool_progress
+            report_tool_progress(phase="YouTube-Audio laden", note=url)
+        except Exception:
+            pass
+        proc = _sp.run(
+            [ytdlp, "--no-playlist", "-f", "bestaudio[ext=m4a]/bestaudio",
+             "--max-filesize", "80m", "--no-simulate", "--print", "%(title)s",
+             "-o", os.path.join(tmpdir, "audio.%(ext)s"), url],
+            capture_output=True, text=True, timeout=300)
+        title = (proc.stdout or "").strip().splitlines()[0] if (proc.stdout or "").strip() else ""
+        files = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir)]
+        if proc.returncode != 0 or not files:
+            _errlines = (proc.stderr or "").strip().splitlines()
+            return {"error": "YouTube-Download fehlgeschlagen: "
+                             + (_errlines[-1][:300] if _errlines else "unbekannter Fehler")}
+        try:
+            from engine.context import report_tool_progress as _rtp
+            _rtp(phase="Transkribieren", note=title or url)
+        except Exception:
+            pass
+        res = _transcript_result_from_file(files[0], url, max_length,
+                                           title=title, method="youtube-transcript")
+        if res is None:
+            return {"error": "YouTube-Audio konnte nicht transkribiert werden."}
+        return res
+    except _sp.TimeoutExpired:
+        return {"error": "YouTube-Download-Timeout (300s) — Video zu lang?"}
+    finally:
+        _shutil.rmtree(tmpdir, ignore_errors=True)
+
+
 def _fetch_academic_pdf(pdf_url: str, max_length: int, timeout: int, max_size_mb: int) -> dict | None:
     """Download an academic PDF and extract its text via the shared doc_convert
     pipeline (same path as every other PDF read — fitz/pdfplumber + OCR). Spills
@@ -892,6 +995,17 @@ def tool_web_fetch(args: dict) -> str:
                 if cache_key:
                     _brain._web_cache.put(cache_key, dict(_ac))
                 return _ok(_ac)
+        # YouTube → transcript (v9.307.0): the watch page's HTML is useless to
+        # an LLM; download the audio via yt-dlp and transcribe it through the
+        # shared STT pipeline instead. Cached like any GET (transcripts are
+        # expensive to redo); project web_urls reach this branch via the miner.
+        if _YT_URL_RE.match(url):
+            _yt = _fetch_youtube_transcript(url, max_length)
+            if _yt.get("error"):
+                return _err(f"web_fetch: {_yt['error']}")
+            if cache_key:
+                _brain._web_cache.put(cache_key, dict(_yt))
+            return _ok(_yt)
 
     try:
         from engine.context import report_tool_progress
@@ -922,6 +1036,28 @@ def tool_web_fetch(args: dict) -> str:
         # — the project web-url miner then stored that garbage). HTML/text/JSON
         # keep the existing path below. Falls back to the text path on any
         # extraction failure (graceful degradation).
+        # Direct audio-file URL → transcript (v9.307.0): route the bytes
+        # through the shared STT pipeline instead of doc_convert (which can't
+        # read audio) or the text decode (which dumped MP3 bytes as garbage).
+        _audio_ext = _audio_ext_for(final_url, content_type)
+        if _audio_ext:
+            _afd, _tmp_audio = tempfile.mkstemp(suffix=_audio_ext, prefix="brain-webaudio-")
+            try:
+                with os.fdopen(_afd, "wb") as _fh:
+                    _fh.write(raw)
+                _ares = _transcript_result_from_file(_tmp_audio, final_url, max_length)
+            finally:
+                try:
+                    os.remove(_tmp_audio)
+                except OSError:
+                    pass
+            if _ares is not None:
+                _ares["status"] = resp.status
+                _ares["etag"] = resp.headers.get("ETag", "") or ""
+                _ares["last_modified"] = resp.headers.get("Last-Modified", "") or ""
+                if cache_key:
+                    _brain._web_cache.put(cache_key, dict(_ares))
+                return _ok(_ares)
         _file_ext = _binary_ext_for(final_url, content_type, raw)
         if _file_ext:
             _fres = _fetch_as_file_result(raw, _file_ext, final_url, resp.status, max_length)
