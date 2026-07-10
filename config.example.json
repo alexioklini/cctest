@@ -3281,7 +3281,8 @@
       "raw_formats": [],
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false
     }
   },
   "nodes": {},

@@ -1355,6 +1355,7 @@ class BrainAgentHandler(
         "/v1/gdpr/ner-models",
         "/v1/classification/config",
         "/v1/helpdesk/config",
+        "/v1/admin/classify",
     }
     _ADMIN_POST_PATHS = _ADMIN_POST_EXACT
     _ADMIN_POST_PREFIXES = (
@@ -2355,6 +2356,8 @@ class BrainAgentHandler(
             self._handle_tools_config_save()
         elif path.startswith("/v1/agents/") and path.endswith("/hooks"):
             self._handle_hooks_save(path)
+        elif path == "/v1/admin/classify":
+            self._handle_classify_probe()
         elif path == "/v1/context/compact":
             self._handle_context_compact()
         elif path == "/v1/context/uncompact":

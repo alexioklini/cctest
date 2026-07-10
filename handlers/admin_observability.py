@@ -1860,6 +1860,40 @@ class AdminObservabilityHandlers:
         engine._context_manager.save_config(body)
         self._send_json({"status": "saved", "config": engine._context_manager.get_config()})
 
+    def _handle_classify_probe(self):
+        """POST /v1/admin/classify — run the prompt classifier over a message
+        and return the analysis + the scratchpad choice it would drive.
+
+        Admin/debug probe: exercises the PRODUCTION classification path
+        (resolve_task_analysis → classify_task_structured, same config/model
+        the chat worker uses) inside the running server — the honest way to
+        measure classifier discrimination without an import-brain replica.
+        Accepts {message} or {messages: [..]} for batch probing."""
+        body = self._read_json()
+        msgs = body.get("messages")
+        if not isinstance(msgs, list):
+            single = (body.get("message") or "").strip()
+            if not single:
+                self._send_json({"error": "message or messages required"}, 400)
+                return
+            msgs = [single]
+        out = []
+        for m in msgs[:50]:  # sanity cap
+            m = str(m).strip()
+            if not m:
+                continue
+            try:
+                analysis = engine.resolve_task_analysis(m)
+            except Exception as e:
+                out.append({"message": m, "error": str(e)})
+                continue
+            out.append({
+                "message": m,
+                "analysis": analysis,
+                "scratchpad_choice": engine.resolve_scratchpad_choice(analysis),
+            })
+        self._send_json({"results": out})
+
     def _handle_context_compact(self):
         """POST /v1/context/compact — manually trigger compaction for a session."""
         body = self._read_json()

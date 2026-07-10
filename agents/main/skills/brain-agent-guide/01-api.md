@@ -592,6 +592,16 @@ Nutzer darf generieren (nicht admin-gated).
 - `POST /v1/context/compact` — `{session_id, force?}` trigger LCM (returns
   409 `auto_lcm_active` when the session's model has auto-LCM on)
 
+## Classifier probe (admin debug)
+
+- `POST /v1/admin/classify` (admin) — `{message}` or `{messages: [...]}` (batch
+  cap 50) → `{results: [{message, analysis, scratchpad_choice}]}`. Runs the
+  PRODUCTION prompt classifier (`resolve_task_analysis` — same model/config the
+  chat worker uses) inside the running server and reports the scratchpad choice
+  it would drive. Use it to measure classifier discrimination on a question set
+  before wiring any classifier-driven routing (added for the calibrate-routing
+  investigation, v9.299.0).
+
 ## Chat cleanup (auto archive + delete)
 
 - `GET /v1/cleanup/config` — auto archive/delete settings (any logged-in user):
