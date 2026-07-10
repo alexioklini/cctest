@@ -1630,6 +1630,82 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        # Trimmed port of waldzellai/model-enhancement-servers
+        # metacognitiveMonitoring — flattened to gemma-manageable string arrays
+        # (the original's nested object arrays are beyond weak local models'
+        # tool-call reliability, see the v9.295.2 field-bleed incident). Like
+        # think/sequential_thinking this is a NO-OP: the value is the forced
+        # fact/inference/speculation split + the model following its own
+        # recommendation. The procedural "You should:" list is the behavioral
+        # trigger (Beschreibungs-Falle, v9.295.0) — do NOT abbreviate it.
+        "name": "calibrate",
+        "description": (
+            "A tool for calibrating your answer against the evidence you actually found.\n"
+            "It does not obtain new information and changes nothing — it forces an honest\n"
+            "self-assessment before you answer: which statements are backed by documents\n"
+            "you read, which are inferences, which are unsupported guesses, and what is\n"
+            "missing.\n"
+            "\n"
+            "When to use this tool:\n"
+            "- After searching/reading and BEFORE writing your final answer\n"
+            "- Questions where the available documents might not contain the answer\n"
+            "- Compliance/policy questions where a wrong guess has consequences\n"
+            "- Whenever you are about to state something you did not actually read\n"
+            "\n"
+            "Parameters explained:\n"
+            "- task: the question you are answering, in your own words\n"
+            "- facts: statements DIRECTLY supported by documents you read this\n"
+            "  conversation — name the source document for each\n"
+            "- inferences: statements you derive from facts, but that no document states directly\n"
+            "- speculation: statements supported by NO retrieved document (world knowledge, guesses)\n"
+            "- gaps: what the question asks for that you could NOT find in the documents\n"
+            "- confidence: 0.0-1.0 — how confident you are that the retrieved documents answer the question\n"
+            "- recommendation: 'answer' (facts cover the question), 'answer_with_caveats'\n"
+            "  (facts cover only part), or 'refuse' (the documents do not answer it)\n"
+            "\n"
+            "You should:\n"
+            "1. Search and read the relevant documents FIRST — then calibrate\n"
+            "2. Put a statement into facts ONLY if you actually read it in a document this conversation, and name the source\n"
+            "3. Be honest: an empty facts list is a valid and useful result\n"
+            "4. List every part of the question you found nothing about under gaps\n"
+            "5. Recommend 'refuse' when facts is empty or the gaps cover the core of the question\n"
+            "6. Recommend 'answer_with_caveats' when facts cover part of the question but real gaps remain\n"
+            "7. Follow your own recommendation in the final answer: on 'refuse', state clearly that the documents do not answer the question and do NOT guess; on 'answer_with_caveats', name the gaps explicitly\n"
+            "8. Never state anything in the final answer that you listed under speculation"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task": {"type": "string", "description": "The question being answered, in your own words"},
+                "facts": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "Statements directly supported by documents read this conversation, each with its source",
+                },
+                "inferences": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "Statements derived from facts but not directly stated in any document",
+                },
+                "speculation": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "Statements supported by no retrieved document",
+                },
+                "gaps": {
+                    "type": "array", "items": {"type": "string"},
+                    "description": "What the question asks for that was not found in the documents",
+                },
+                "confidence": {
+                    "type": "number", "minimum": 0, "maximum": 1,
+                    "description": "Confidence (0.0-1.0) that the retrieved documents answer the question",
+                },
+                "recommendation": {
+                    "type": "string", "enum": ["answer", "answer_with_caveats", "refuse"],
+                    "description": "What the final answer should do, given facts and gaps",
+                },
+            },
+            "required": ["task", "facts", "gaps", "confidence", "recommendation"],
+        },
+    },
+    {
         "name": "schedule_history",
         "description": "Get execution history for scheduled tasks. Shows status, results, and timestamps.",
         "input_schema": {

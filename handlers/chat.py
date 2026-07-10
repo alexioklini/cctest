@@ -3356,28 +3356,38 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 except Exception:
                     _sp_analysis = None
                 _sp_choice = engine.resolve_scratchpad_choice(_sp_analysis)
-            elif _sp_mode in ("simple", "sequential"):
+            elif _sp_mode in ("simple", "sequential", "calibrate"):
                 _sp_choice = _sp_mode
             else:
                 _sp_choice = "off"
             engine.get_request_context().scratchpad_choice = _sp_choice
-            # On a FIXED scratchpad mode (simple/sequential — a per-model config,
-            # so KV-prefix-stable) exclude the OTHER scratchpad tool: keeping both
-            # in-prompt lets weak models (gemma-12B) bleed the sequential fields
-            # into a `think` call (chat e136af72). Hard-exclude bypasses the floor;
-            # union with any existing exclude (Websuche lockout). NOT done on
-            # `auto` (the tool set would vary per turn → prefix churn) or `off`.
+            # On a FIXED scratchpad mode (simple/sequential/calibrate — a per-model
+            # config, so KV-prefix-stable) exclude the OTHER scratchpad tools:
+            # keeping several in-prompt lets weak models (gemma-12B) bleed the
+            # sequential fields into a `think` call (chat e136af72). Hard-exclude
+            # bypasses the floor; union with any existing exclude (Websuche
+            # lockout). NOT done on `auto` (the tool set would vary per turn →
+            # prefix churn) or `off`. `calibrate` itself is opt-in-only: statically
+            # deferred via tool_settings (never in-prompt outside its own fixed
+            # mode — keeps every other mode's wire byte-identical), pulled
+            # in-prompt here via undefer_tools (the code-mode pattern; undefer
+            # wins over classifier defer_extra).
             if _sp_mode == "simple":
-                _sp_excl = "sequential_thinking"
+                _sp_excl = ["sequential_thinking"]
             elif _sp_mode == "sequential":
-                _sp_excl = "think"
+                _sp_excl = ["think"]
+            elif _sp_mode == "calibrate":
+                _sp_excl = ["think", "sequential_thinking"]
+                _rc0 = engine.get_request_context()
+                _rc0.undefer_tools = list(dict.fromkeys(
+                    (_rc0.undefer_tools or []) + ["calibrate"]))
             else:
-                _sp_excl = None
+                _sp_excl = []
             if _sp_excl:
                 _rc0 = engine.get_request_context()
                 _cur_excl = list(_rc0.exclude_tools or [])
-                if _sp_excl not in _cur_excl:
-                    _rc0.exclude_tools = _cur_excl + [_sp_excl]
+                _rc0.exclude_tools = _cur_excl + [t for t in _sp_excl
+                                                 if t not in _cur_excl]
             # Stash the decision for the classification inspector (auto_route modal).
             # On "auto" also carry the task_types/complexity that drove the pick.
             _sp_meta = {"mode": _sp_mode, "choice": _sp_choice}
@@ -4393,7 +4403,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # the breakdown from the request context (_bd is scoped to a branch
                     # that doesn't run every turn).
                     _sp_choice = engine.get_request_context().scratchpad_choice
-                    if _sp_choice in ("simple", "sequential"):
+                    if _sp_choice in ("simple", "sequential", "calibrate"):
                         _ftbd = getattr(engine.get_request_context(), "_tool_breakdown", None) or {}
                         _ip = _ftbd.get("in_prompt") or []
                         if _sp_choice == "sequential" and "sequential_thinking" in _ip:
@@ -4402,6 +4412,9 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         elif _sp_choice == "simple" and "think" in _ip:
                             _wire_messages = _append_to_wire_user(
                                 _wire_messages, engine.FORCE_THINK_PROMPT)
+                        elif _sp_choice == "calibrate" and "calibrate" in _ip:
+                            _wire_messages = _append_to_wire_user(
+                                _wire_messages, engine.FORCE_CALIBRATE_PROMPT)
                     # UNIVERSAL multimodal-degrade choke point: `session.model`
                     # is now FINAL (after any MoA-executor / override / quota /
                     # GDPR / auto-route swap). If it can't accept the attached

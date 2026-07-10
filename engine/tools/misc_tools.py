@@ -337,6 +337,65 @@ def tool_sequential_thinking(args: dict) -> str:
     })
 
 
+# ─── calibrate ───────────────────────────────────────────────────────────────
+
+def _coerce_str_list(v) -> list[str]:
+    """Tolerant list-of-strings coercion for weak tool-callers: a bare string
+    becomes a one-element list; non-string items are stringified; None → []."""
+    if v is None:
+        return []
+    if isinstance(v, str):
+        return [v] if v.strip() else []
+    if isinstance(v, list):
+        return [str(x).strip() for x in v if str(x).strip()]
+    return [str(v)]
+
+
+def tool_calibrate(args: dict) -> str:
+    """No-op calibration scratchpad (trimmed metacognitive-monitoring port).
+
+    Like `think`, obtains nothing and changes nothing — the value is (a) the
+    forced fact/inference/speculation/gaps split persisting in the wire
+    history and (b) the model following its own recommendation. The one piece
+    of real logic is a DETERMINISTIC consistency check (code, not model): an
+    'answer' recommendation with zero facts is flagged back at the model so
+    the final answer doesn't confidently guess.
+    """
+    task = (args.get("task") or "").strip()
+    if not task:
+        return _err("`task` is required and must be non-empty.")
+    facts = _coerce_str_list(args.get("facts"))
+    inferences = _coerce_str_list(args.get("inferences"))
+    speculation = _coerce_str_list(args.get("speculation"))
+    gaps = _coerce_str_list(args.get("gaps"))
+    try:
+        confidence = max(0.0, min(1.0, float(args.get("confidence", 0.0))))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    rec = (args.get("recommendation") or "").strip().lower()
+    if rec not in ("answer", "answer_with_caveats", "refuse"):
+        return _err("`recommendation` must be one of: answer, answer_with_caveats, refuse.")
+
+    consistency = "ok"
+    if rec == "answer" and not facts:
+        consistency = ("inconsistent: recommendation is 'answer' but facts is empty — "
+                       "the documents do not support an answer; refuse or state the gaps.")
+    elif rec == "answer" and gaps:
+        consistency = ("note: recommendation is 'answer' but gaps are listed — "
+                       "consider answer_with_caveats and name the gaps.")
+
+    return _ok({
+        "logged": True,
+        "facts": len(facts),
+        "inferences": len(inferences),
+        "speculation": len(speculation),
+        "gaps": len(gaps),
+        "confidence": confidence,
+        "recommendation": rec,
+        "consistency": consistency,
+    })
+
+
 # ─── MCP client tools ─────────────────────────────────────────────────────────
 
 def tool_mcp_connect(args: dict) -> str:

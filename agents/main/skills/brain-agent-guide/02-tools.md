@@ -739,21 +739,45 @@ write/exec tool is deliberately excluded.
   call the tool MULTIPLE times (numbered thoughts) instead of once — an
   abbreviated description made gemma-12B call it 1× (no decomposition), the full
   one makes it call 3×. Don't trim it despite prompt-bloat instincts.
+- `calibrate(task, facts, gaps, confidence, recommendation, [inferences,
+  speculation])` — no-op calibration scratchpad (shown as "Kalibrier-Spickzettel";
+  trimmed port of the metacognitive-monitoring idea from
+  waldzellai/model-enhancement-servers). Instead of "think first" it forces
+  "check whether you actually KNOW": the model must split its planned answer
+  into facts (read in documents this conversation, with source) / inferences /
+  speculation, list gaps, give a confidence 0-1 and a recommendation
+  (`answer` | `answer_with_caveats` | `refuse`) — and then follow that
+  recommendation in the final answer. The only real logic is a deterministic
+  consistency check (recommendation=answer with empty facts → flagged back in
+  the tool result). Deliberately flat string-array schema (weak local models
+  can't fill nested object arrays). UNLIKE think/sequential_thinking it is NOT
+  in the structural floor and NOT in-prompt by default: statically deferred via
+  tool_settings (interactive=deferred) and pulled in-prompt per turn (via
+  undefer) ONLY when the model's `scratchpad_mode` is `calibrate` — every other
+  mode's wire stays byte-identical.
 - Per-model `scratchpad_mode` (config + Models-tab dropdown "Spickzettel"):
-  `off` | `simple` | `sequential` | `auto`. On simple/sequential, every turn
-  appends a wire-only request (FORCE_THINK_PROMPT / FORCE_SEQUENTIAL_THINKING_PROMPT,
-  on the last user message — KV-stable, same mechanism as caveman) telling the
-  model to call `think` / `sequential_thinking` before answering. On `auto`,
-  `resolve_scratchpad_choice(analysis)` decides per turn from the classifier's
-  task_types + complexity: synthesis/reasoning at medium/high → simple; very hard
-  multi-facet reasoning (high + ≥2 reasoning types) → sequential; lookups / low
-  complexity / fast / reporting-only → off. DISTINCT from the model's thinking
-  level (native reasoning); both can be on at once. Grounded in a 3-arm gemma-12B
-  eval: a scratchpad lifts multi-doc synthesis a lot, hurts refusal-type lookups,
-  and the sequential variant is steadier but never better in the mean at ~2.8×
-  time — so `auto` is conservative. Recommended `auto` for weak local models,
-  `off` for cloud (token cost). Legacy `force_think`/`force_sequential_thinking`
-  booleans map to `simple`/`sequential` and are dropped on next save.
+  `off` | `simple` | `sequential` | `calibrate` | `auto`. On a fixed mode, every
+  turn appends a wire-only request (FORCE_THINK_PROMPT /
+  FORCE_SEQUENTIAL_THINKING_PROMPT / FORCE_CALIBRATE_PROMPT, on the last user
+  message — KV-stable, same mechanism as caveman) telling the model to call the
+  matching scratchpad tool before answering; the other scratchpad tools are
+  hard-excluded that turn (weak models bleed fields between coexisting
+  scratchpad tools). On `auto`, `resolve_scratchpad_choice(analysis)` decides
+  per turn from the classifier's task_types + complexity: synthesis/reasoning at
+  medium/high → simple; very hard multi-facet reasoning (high + ≥2 reasoning
+  types) → sequential; lookups / low complexity / fast / reporting-only → off.
+  `auto` NEVER picks `calibrate` (the classifier has no refusal signal).
+  DISTINCT from the model's thinking level (native reasoning); both can be on at
+  once. Grounded in two gemma-12B evals: a scratchpad lifts multi-doc synthesis
+  a lot (simple 0.92 vs off 0.55 bucket mean), sequential is steadier but never
+  better in the mean at ~2.8× time; `calibrate` is the REFUSAL SPECIALIST —
+  refusal-bucket total 0.61→0.83 and refusal axis 0.07→0.67 vs off, but it
+  regresses broad multi-doc synthesis (M2 0.93→0.62 with occasional turn stalls)
+  — so use it for policy/compliance Q&A surfaces where "the documents don't
+  answer this" must be said out loud, NOT as the general default. Recommended
+  `auto` for weak local models, `off` for cloud (token cost). Legacy
+  `force_think`/`force_sequential_thinking` booleans map to `simple`/`sequential`
+  and are dropped on next save.
 
 ## Tool group → name map (groups in `agent.json → tool_groups`)
 
@@ -778,7 +802,7 @@ scheduler     schedule_list schedule_history
 mcp           mcp_connect mcp_disconnect mcp_servers
 skills        use_skill
 nodes         list_nodes
-thinking      think sequential_thinking
+thinking      think sequential_thinking calibrate
 code_exec     python_exec
 audio         transcribe_audio generate_audio_overview
 translation   translate_text translate_document detect_language

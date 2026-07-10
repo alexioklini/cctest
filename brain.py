@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.297.0"
+VERSION = "9.298.0"
 VERSION_DATE = "2026-07-09"
 CHANGELOG = [
+    ("9.298.0", "2026-07-10", "feat(Kalibrier-Spickzettel `calibrate` — Eval-belegter Refusal-Spezialist): dritte Scratchpad-Variante, gezielt auf die Refusal-Lücke (Eval-Memory: 'Refusal letzte strukturelle Lücke'; der einfache Spickzettel SCHADET Refusal-Fragen leicht). IDEE (aus der Analyse von waldzellai/model-enhancement-servers): getrimmter Port des metacognitiveMonitoring-Servers — statt 'denk erst nach' erzwingt das Werkzeug 'prüfe, ob du es überhaupt weißt': geplante Antwort aufsplitten in facts (in Dokumenten GELESEN, mit Quelle) / inferences (abgeleitet) / speculation (unbelegt) + gaps + confidence + recommendation ∈ answer|answer_with_caveats|refuse; die Antwort muss der eigenen recommendation folgen. Wie think/sequential_thinking ein No-op (4-Site-registriert, Impl engine/tools/misc_tools.py:tool_calibrate) — einzige echte Logik ist ein DETERMINISTISCHER Konsistenz-Check im Code (recommendation=answer bei leeren facts → 'inconsistent…refuse or state the gaps' im Tool-Result zurückgespiegelt; Regel 5: Code entscheidet, nicht Modell). Schema BEWUSST flach (String-Arrays, 5 Pflichtfelder) statt der Original-Nested-Objects — gemma-12B-tauglich (Feld-Bluten v9.295.2); Beschreibung mit voller prozeduraler 'You should:'-Liste (Beschreibungs-Falle v9.295.0 — nicht kürzen). SICHTBARKEIT opt-in-only: statisch deferred via config.json tool_settings (interactive=deferred) → in KEINEM bestehenden Modus in-prompt, alle bisherigen Wire-Shapes/KV-Prefixe byte-identisch (heutige ft-* Eval-Baselines bleiben poolbar; Warmup unberührt — der deferred-Zustand ist statisch, dieselbe Begründung wie code_graph_* in v9.210.0). NUR scratchpad_mode='calibrate' (neuer per-Modell-Wert, handlers/chat.py) hebt es per ctx.undefer_tools in-prompt (undefer schlägt classifier-defer_extra, v9.59.0), excludet think+sequential_thinking (Mutual-Exclusion-Muster v9.295.2) und injiziert FORCE_CALIBRATE_PROMPT wire-only auf die letzte User-Nachricht (KV-stabiles Caveman-Muster). `auto` wählt calibrate NIE (resolve_scratchpad_choice unverändert — der Klassifikator hat kein Refusal-Signal; bewusste Entscheidung, s. Eval); kein Scheduler-Support. NICHT in _TOOL_GATING_NEVER_STRIP_TOOLS (undefer reicht; Floor würde es bei non-warm Modellen auch im off-Modus in-prompt zwingen). EVAL-BELEG (gemma-12B, 5 Reps, Mistral-Judge, Opus-Gold-Reuse; off/simple-Baselines für M1/M2/F1 aus den ft-* Läufen v9.295.0 gepoolt — zulässig, weil die Wire-Shapes byte-identisch blieben; 2 Timeout-Samples als gedroppte Proben behandelt, nicht als 0): REFUSAL-Bucket (F1/F2/F3) total 0.610(off)/0.583(simple)→0.827(calibrate), Refusal-ACHSE 0.07/0.10→0.67 (F2 0.73→0.94 @0.9, F3 0.63→0.96 @0.8, F1 0.47→0.58 @0.3 — schwächer, weil die Doku AML tangential erwähnt → Modell cavated statt zu verweigern). ABER Multi-Doc-REGRESSION: M1 ok (0.86 vs simple 0.90), M2 0.93→0.62 mit 2/5 480s-Timeouts (gemma stallt in der facts-mit-Quelle-Disziplin bei breiter Synthese) → calibrate ist der Refusal-SPEZIALIST für Policy-/Compliance-QA, KEIN Allround-Ersatz für simple; deshalb bleibt auto bei simple/sequential. Live-Smoke: Antwort BEGINNT mit der Lücke statt zu raten, speculation-Einträge tauchen nicht als Fakt auf. SHIP-Umfang (User-Entscheidung): UI-Dropdown-Option 'Kalibriert (immer)' im Models-Tab (settings_general_tabs.js; Save-Pfad war generisch, nur Kommentar angepasst), Skill 02-tools + SKILL.md (1.166.0) im selben Commit, kuratierter Eintrag 9.298.0 (audience admin). py_compile OK; js_gate GRÜN. Server-Restart nötig."),
     ("9.297.0", "2026-07-09", "feat(Unit-Kosten für OCR/TTS/STT PRO MODELL + STT-Abrechnung geschlossen): die nach Einheit (nicht Token) abgerechneten Dienste werden jetzt PRO MODELL bepreist statt über globale Dienst-Knöpfe. ANLASS (User): OCR/TTS/Transcribe rechnen nicht nach Token — die Raten gehören ans Modell. VORHER: OCR-Rate global (ocr.cost_per_page_usd), TTS global (text_to_speech.cost_per_1k_chars_usd), STT gar nicht abgerechnet (tool_transcribe_audio loggte KEINE Kostenzeile — Lücke). NEU: (1) drei per-Modell-Felder in der Modell-DB: cost_per_page_usd (OCR/Seite), cost_per_1k_chars_usd (TTS/1k Zeichen), cost_per_minute_usd (STT/Audio-Minute — neue Einheit). (2) EIN Rate-Choke-Point quotas._unit_rate(model, field) liest die Rate vom Modell-Eintrag; _unit_list_cost(purpose, units, model) bekommt model + neuen purpose 'transcribe' (Audio-Sekunden/60 × cost_per_minute_usd). (3) STT-Abrechnung geschlossen: neue CostTracker.log_transcribe (Audio-Sekunden in tokens_in, mirror log_ocr/log_tts) + _log_transcribe_cost-Helfer, verdrahtet an ALLEN drei STT-Pfaden — Agent-Tool (tool_transcribe_audio, fallback-aware model_id), Übersetzungs-Tab Audio/Video (server_lib/translate/media.py) und LIVE-Transkription (server_lib/translate/live.py: pro-Chunk-Sekunden akkumuliert, EINE Kostenzeile beim Session-Ende in _worker_loop-finally statt Flut pro Chunk). (4) OCR (doc_convert._log_ocr_cost-Aufruf) + TTS (audio_overview._log_tts_cost) lesen die Rate jetzt per-Modell statt global; die globalen Knöpfe ocr.cost_per_page_usd + text_to_speech.cost_per_1k_chars_usd ENTFERNT. (5) GUI Models-Tab: capability-bedingte Kostenfelder — audio_transcription→'Kosten STT ($/Min)', tts→'Kosten TTS ($/1k Zeichen)', OCR-Modell→'Kosten OCR ($/Seite)'; Speicherung in settings_general.js (delete bei nicht-anwendbar). MODELLE BEFÜLLT (config.json): mistral-ocr-latest=$0.001/Seite, voxtral-mini-tts-*=$0.00015/1k Zeichen, voxtral-mini-* (STT)=$0.003/min, whisper-* (lokal)=$0 (editierbar). NEBENFIX: TTS-Default stand fälschlich auf voxtral-small-latest (Audio-Chat, KEIN TTS) → korrigiert auf voxtral-mini-tts-latest. VERIFIZIERT (Cost-Math gegen echte config): 17-min-Russisch-Audio auf voxtral-mini = $0.0505 Listenpreis (flat_plan → real $0), whisper = $0; 4 Seiten OCR = $0.004; gemma-4 (kein Transkriber) hat keine STT-Rate. Flatrate-Logik (real $0 / Listenpreis via _unit_list_cost) unverändert für alle drei. py_compile OK; js_gate GRÜN (net-globals unverändert, smoke passed). Skill 03-storage + SKILL.md im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (admin-sichtbar: per-Modell-Kostenfelder für OCR/TTS/Transkription)."),
     ("9.296.0", "2026-07-09", "feat(neue Fähigkeit `audio_transcription` — trennt „Audio verstehen“ von „Audio transkribieren“): ANLASS (User-Fund): gemma-4-12B war im transcribe_audio-Dropdown wählbar (Fähigkeit `audio`), brach aber zur Laufzeit mit HTTP 400 „Model is not a speech-to-text model“ ab — der oMLX-Server lehnt am /audio/transcriptions-Endpunkt alles ab, was kein echtes STT-Modell ist. URSACHE: die eine `audio`-Fähigkeit vermischte ZWEI verschiedene Betriebsarten, die selbst Mistrals API strikt trennt (live gegen api.mistral.ai/v1/models verifiziert): `audio:true` = Audio-VERSTÄNDNIS (Audio-in-Chat, das Modell hört zu und antwortet frei — voxtral-small, gemma-4, glm) vs. `audio_transcription:true` = wörtliche Sprache-zu-Text über den dedizierten Endpunkt (whisper, voxtral-mini). Ein Modell kann das eine, das andere, beides oder keines. FIX: NEUE kanonische Fähigkeit `audio_transcription` (CAPABILITY_VALUES → chat/image/audio/audio_transcription/tts/video). (1) _infer_canonical_capabilities leitet sie ab: whisper-* + voxtral-mini* (inkl. realtime/transcribe, wie gewünscht zusammengefasst) → audio_transcription; voxtral-small* → audio (Audio-Chat, KEIN Transkriber); audio-fähige LLMs (gemma-4/glm) behalten chat+audio, bekommen aber NICHT audio_transcription. (2) _transcription_resolve (engine/tools/translate_tools.py) filtert jetzt auf `audio_transcription` statt `audio` — nicht-transkribierende Modelle werden VOR dem Wire mit klarer deutscher Meldung abgelehnt statt am Endpunkt zu 400en. (3) GUI: neue Checkbox „Transkription“ im Models-Tab (settings_general_tabs.js + _capOrder in settings_general.js), transcribe_audio-Dropdown (settings_tools.js) listet nur noch audio_transcription-Modelle. (4) Seeds: KNOWN_MODELS voxtral/whisper + _ensure_audio_models (Whisper-Erstseed + Voxtral-Backfill) auf die richtige Fähigkeit umgestellt. MIGRATION: config.json einmalig per Heuristik neu abgeleitet (16 Modelle: 10 → audio_transcription, voxtral-small bleibt audio, voxtral-*-tts → nur tts; glm-5.2 image-Fähigkeit nach Force-Migration wiederhergestellt — sie hatte leere raw_formats). VERIFIZIERT: live-Server nach Neustart listet 10 STT-Modelle im Dropdown, gemma-4/voxtral-small/glm draußen; Resolver-Gate akzeptiert whisper/voxtral-mini, lehnt gemma/voxtral-small/glm ab. NEBENBEFUND: gemma-4 KANN prinzipiell Audio-Chat (input_audio-Block an /chat/completions, live getestet), ist aber KEIN Transkriber — für STT bleibt whisper-large-v3 (auf sauberem Audio wortgenau) bzw. voxtral-mini (bei Telefon-/Rauschaudio robuster, Whisper halluziniert dort Wiederhol-Schleifen — an russischem 17-min-Telefonmitschnitt belegt). py_compile OK; js_gate GRÜN (net-globals unverändert 1895, smoke passed). Skill 02-tools + SKILL.md im selben Commit. Server-Restart nötig (erfolgt). KURATIERTER Eintrag (admin-sichtbar: neue Fähigkeits-Checkbox + saubereres STT-Dropdown)."),
     ("9.295.3", "2026-07-09", "fix(Sitzungs-Inspektor: Token-Aufschlüsselung ein·gesamt / ein·unique / ein·gecached / aus): gemeldet (Chat ea024875) — die Inspektor-Kachel 'Token ein: 123.247' neben '⚡ Gecached: 550.528' las sich widersprüchlich (gecached ≫ ein), weil 'Token ein' NUR den full-price-Anteil (tokens_in) zeigte und der gecachte Prompt-Anteil (cache_read_tokens) als separate, größere Zahl daneben stand — der Nutzer las 550k fälschlich als Prompt-Größe. URSACHE ist keine Fehlrechnung (beide Werte stimmen: der Prompt teilt sich pro Tool-Runde in neu-verarbeitet + Cache-Treffer, und derselbe wachsende Prefix wird über die Runden mehrfach neu gelesen+gezählt → cache_read summiert sich über 15 Runden auf 550k, während nur 123k je full-price verarbeitet wurden), sondern eine ANZEIGE-Semantik-Lücke. FIX (rein Frontend, web/js/chat_send.js openInspectModal): die Summenleiste zeigt jetzt eine eigene 'Tokens'-Zeile mit vier Kacheln — Ein·gesamt (= tokens_in + cache_read_tokens, der volle über alle Tool-Runden verarbeitete Prompt), Ein·unique (tokens_in, voller Tarif), ⚡ Ein·gecached (cache_read_tokens, ~0,1×-Tarif, % des Prompts), Aus (tokens_out); die Kosten-/Meta-Kacheln (Anfragen · Dauer · API-Kosten · Verrechnete Kosten · Cache-Ersparnis) bleiben unverändert in einer zweiten Zeile. Genau EINE Ausgabe-Kachel, weil Ausgabe-Tokens beim Prompt-Caching NIE gecached werden (Caching betrifft nur den Eingabe-Prefix) — 'Aus gesamt'/'Aus gecached' wären dauerhaft redundant/0 gewesen (bewusste Design-Entscheidung, im Kommentar dokumentiert für den Fall künftiger Reasoning-/Cache-Write-Meldungen). Jede Kachel trägt einen Tooltip, der die 'gesamt ≫ Konversationslänge'-Falle erklärt. KEINE Server-Änderung (data.totals lieferte tokens_in/tokens_out/cache_read_tokens/cache_hit_pct bereits). VERIFIZIERT live gegen die echte /v1/sessions/<id>/inspect-Antwort für ea0248752975: Ein·gesamt=673.775 (=123.247+550.528), Ein·unique=123.247, Ein·gecached=550.528 (81,7%), Aus=19.083 — deckt sich exakt mit den Metadaten. js_gate GRÜN (eslint clean, net-globals unverändert 1895 = kein neues Global, smoke 4/5 + 1 flaky-retry passed). Nur Web-Assets — kein Server-Restart nötig (UI-Reload genügt). Kein neuer kuratierter Eintrag (interner Anzeige-Fix im Admin-/Debug-Inspektor)."),
@@ -1260,6 +1261,24 @@ FORCE_SEQUENTIAL_THINKING_PROMPT = (
     "vorliegt. Antworte erst danach.\n"
 )
 
+# FORCE-CALIBRATE — third scratchpad variant (mode "calibrate"). Same
+# wire-only mechanism; targets the `calibrate` tool (trimmed metacognitive-
+# monitoring port). Aimed at the refusal gap: forces the model to split its
+# planned answer into belegt/abgeleitet/geraten BEFORE answering and to
+# follow its own answer/refuse recommendation.
+FORCE_CALIBRATE_PROMPT = (
+    "\n\nWICHTIG — KALIBRIER-SPICKZETTEL NUTZEN: Bevor du endgültig antwortest, "
+    "rufe das Werkzeug `calibrate` auf. Suche zuerst die nötigen Informationen "
+    "(z. B. mit mempalace_query / read_document), und trage DANN ein: facts = nur "
+    "Aussagen, die du in den gefundenen Dokumenten wirklich gelesen hast (mit "
+    "Quelle), inferences = daraus abgeleitet, speculation = unbelegt/geraten, "
+    "gaps = wonach gefragt ist, wozu du aber nichts gefunden hast, confidence = "
+    "0-1, recommendation = answer | answer_with_caveats | refuse. HALTE dich in "
+    "der endgültigen Antwort an deine recommendation: bei refuse sage klar, dass "
+    "die vorliegenden Dokumente die Frage nicht beantworten, und rate NICHT; bei "
+    "answer_with_caveats nenne die Lücken ausdrücklich.\n"
+)
+
 
 def _caveman_compress_text(text: str, level: int) -> str:
     """Rule-based text compression by caveman level (0-3). Used ONLY to compress
@@ -1334,7 +1353,7 @@ TOOL_GROUPS = {
     "helpdesk": {"helpdesk_session_info", "helpdesk_user_context",
                  "helpdesk_user_activity"},
     "nodes": {"list_nodes"},
-    "thinking": {"think", "sequential_thinking"},
+    "thinking": {"think", "sequential_thinking", "calibrate"},
     "code_exec": {"python_exec"},
     "audio": {"transcribe_audio", "generate_audio_overview"},
     "translation": {"translate_text", "translate_document", "detect_language",
@@ -13598,6 +13617,7 @@ TOOL_ICONS = {
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
     "think": "*",
     "sequential_thinking": "*",
+    "calibrate": "*",
     "read_document": "D", "write_document": "D", "edit_document": "D",
     "xlsx_inspect": "D", "xlsx_query": "D", "xlsx_create": "D", "xlsx_edit": "D",
     "xlsx_diff": "D",
@@ -13621,6 +13641,7 @@ TOOL_VERBS = {
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
     "think": "Spickzettel",
     "sequential_thinking": "Erweiterter Spickzettel",
+    "calibrate": "Kalibrier-Spickzettel",
     "read_document": "Reading Document", "write_document": "Writing Document", "edit_document": "Editing Document",
     "xlsx_inspect": "Inspecting Spreadsheet", "xlsx_query": "Querying Spreadsheet",
     "xlsx_create": "Creating Spreadsheet", "xlsx_edit": "Editing Spreadsheet",
@@ -14218,6 +14239,7 @@ from engine.tools.misc_tools import (  # noqa: E402
     tool_list_nodes,
     tool_think,
     tool_sequential_thinking,
+    tool_calibrate,
     tool_mcp_connect,
     tool_mcp_disconnect,
     tool_mcp_servers,
@@ -14296,6 +14318,7 @@ TOOL_DISPATCH = {
     "list_nodes": tool_list_nodes,
     "think": tool_think,
     "sequential_thinking": tool_sequential_thinking,
+    "calibrate": tool_calibrate,
     "context_search": tool_context_search,
     "context_detail": tool_context_detail,
     "context_recall": tool_context_recall,

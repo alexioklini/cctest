@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.298.0",
+        "date": "2026-07-10",
+        "title": "Kalibrier-Spickzettel gegen erfundene Antworten",
+        "body": "Neue Option „Kalibriert“ im Spickzettel-Regler eines Modells "
+                "(Einstellungen → Allgemein → Modelle): Vor der Antwort muss das "
+                "Modell offenlegen, welche Aussagen wirklich in Ihren Dokumenten "
+                "stehen, was nur abgeleitet oder geraten ist und wo Lücken sind — "
+                "und sich daran halten. Fragen, die Ihre Richtlinien nicht "
+                "beantworten, bekommen so ein ehrliches „dazu steht nichts in den "
+                "Dokumenten“ statt einer plausibel klingenden Vermutung; in "
+                "Messungen stieg die Qualität genau solcher Antworten deutlich. "
+                "Empfohlen für Compliance- und Richtlinien-Auskünfte; für breite "
+                "Zusammenfassungen über viele Dokumente bleibt die bisherige "
+                "Einstellung die bessere Wahl.",
+        "audience": "admin",
+        "versions": ["9.298.0"],
+    },
+    {
         "version": "9.297.0",
         "date": "2026-07-09",
         "title": "Kosten für OCR, TTS und Transkription pro Modell",
