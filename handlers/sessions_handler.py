@@ -333,6 +333,7 @@ def _build_session_inspect_data(sid, info):
                     "thinking_level": meta.get("thinking_level"),
                     "request_payloads": meta.get("request_payloads", []),
                     "web_sources": meta.get("web_sources") or [],
+                    "pinned_sources": meta.get("pinned_sources") or [],
                     "citation_validation": meta.get("citation_validation") or {},
                     "auto_route": meta.get("auto_route") or {},
                     "gdpr_mapping_id": meta.get("gdpr_mapping_id") or "",
@@ -689,6 +690,7 @@ class SessionsHandlerMixin:
             resp["gdpr_feedback_ask"] = bool(getattr(session, "gdpr_feedback_ask", False))
             resp["gdpr_details_visible"] = bool(getattr(session, "gdpr_details_visible", False))
             resp["web_basket"] = getattr(session, "web_basket", "") or ""
+            resp["pinned_sources"] = getattr(session, "pinned_sources", "") or ""
             resp["message_queue"] = getattr(session, "message_queue", "") or ""
             resp["goal_text"] = getattr(session, "goal_text", "") or ""
             resp["goal_status"] = getattr(session, "goal_status", "") or ""
@@ -722,6 +724,7 @@ class SessionsHandlerMixin:
                 resp["gdpr_feedback_ask"] = bool(info.get("gdpr_feedback_ask", 0))
                 resp["gdpr_details_visible"] = bool(info.get("gdpr_details_visible", 0))
                 resp["web_basket"] = info.get("web_basket", "") or ""
+                resp["pinned_sources"] = info.get("pinned_sources", "") or ""
                 resp["message_queue"] = info.get("message_queue", "") or ""
                 resp["goal_text"] = info.get("goal_text", "") or ""
                 resp["goal_status"] = info.get("goal_status", "") or ""
@@ -1056,6 +1059,10 @@ class SessionsHandlerMixin:
                         # the inspector show each source's FULL content per turn
                         # — distinct fetches across re-sends.
                         "web_sources": meta.get("web_sources") or [],
+                        # Quellen-Pinning: which project documents were injected
+                        # into this turn [{key,name,chars,error}] (names/sizes
+                        # only — the documents live on disk).
+                        "pinned_sources": meta.get("pinned_sources") or [],
                     } if assistant_msg else None,
                     "compacted": bool(m.get("compacted")),
                 })
@@ -2176,6 +2183,20 @@ class SessionsHandlerMixin:
             s = sessions.get(sid)
             if s:
                 s.web_basket = basket_json
+            self._send_json({"status": "ok", "session_id": sid})
+        elif action == "pinned_sources":
+            # Persist the per-session pinned project sources (v9.305.0). value
+            # is the pinned list (array of {key,name,enabled}); stored as JSON —
+            # the Websuche-basket pattern for project documents.
+            val = body.get("value")
+            try:
+                pinned_json = json.dumps(val if isinstance(val, list) else [])
+            except (TypeError, ValueError):
+                pinned_json = "[]"
+            ChatDB.update_session_pinned_sources(sid, pinned_json)
+            s = sessions.get(sid)
+            if s:
+                s.pinned_sources = pinned_json
             self._send_json({"status": "ok", "session_id": sid})
         elif action == "message_queue":
             # Persist the per-session message queue. value is the queue list

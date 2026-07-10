@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.305.0",
+        "date": "2026-07-10",
+        "title": "Projekt-Dokumente im Chat anpinnen",
+        "body": "In Projekt-Chats gibt es jetzt ein Pin-Symbol im Eingabefeld: "
+                "Damit heften Sie ausgewählte Projekt-Dokumente an den Chat — "
+                "ihr vollständiger Inhalt wird dann jeder Anfrage automatisch "
+                "mitgegeben, statt dass der Assistent die Unterlagen erst suchen "
+                "muss. Ideal, wenn eine Aufgabe genau mit bestimmten Dokumenten "
+                "arbeiten soll. Die Pins bleiben pro Chat gespeichert, und unter "
+                "jeder Antwort sehen Sie, welche Quellen eingeflossen sind.",
+        "audience": "user",
+        "versions": ["9.305.0"],
+    },
+    {
         "version": "9.304.0",
         "date": "2026-07-10",
         "title": "Podcasts mit eigenen Sprechern — auch auf Deutsch",

@@ -162,6 +162,18 @@ function updateStatusBar() {
     hBtn.style.display = canHandover ? '' : 'none';
   }
 
+  // Quellen-Pinning (v9.305.0): only meaningful in a project chat (the pinnable
+  // sources ARE the project's). Colored while pins are active.
+  const pinCount = (typeof pinnedSourcesEnabled === 'function')
+    ? pinnedSourcesEnabled().length : 0;
+  for (const pBtn of _composerToggleEls('btn-pin-sources')) {
+    pBtn.style.display = chat.project ? '' : 'none';
+    pBtn.style.color = pinCount ? 'var(--accent-brand)' : '';
+    pBtn.title = pinCount
+      ? `Projekt-Quellen angepinnt: ${pinCount} — Volltext wird jeder Anfrage mitgegeben`
+      : 'Projekt-Quellen anpinnen — Volltext wird jeder Anfrage mitgegeben';
+  }
+
   // 9.198.0: the sticky-preference shield button is GONE. The "override PII
   // warnings for the whole chat" mechanism is replaced by the automated
   // new-findings trigger (the dialog re-fires whenever a NEW value appears, and

@@ -487,6 +487,7 @@ class Session:
                 self.gdpr_feedback_ask = bool(info.get("gdpr_feedback_ask", 0))
                 self.gdpr_details_visible = bool(info.get("gdpr_details_visible", 0))
                 self.web_basket = info.get("web_basket", "") or ""
+                self.pinned_sources = info.get("pinned_sources", "") or ""
                 self.message_queue = info.get("message_queue", "") or ""
                 self.goal_text = info.get("goal_text", "") or ""
                 _gst = str(info.get("goal_status", "") or "")
@@ -1827,6 +1828,8 @@ class BrainAgentHandler(
             self._handle_project_instruction_files_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/docs" in path:
             self._handle_project_docs(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sources"):
+            self._handle_project_sources_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/input-folders"):
             self._handle_project_input_folders_list(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/terminal/sessions"):

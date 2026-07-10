@@ -229,6 +229,70 @@ def _build_web_sources(web_urls, web_locked):
     return head + "\n\n" + "\n\n---\n\n".join(blocks), sources
 
 
+# Quellen-Pinning caps (v9.305.0): bounded so a pin-everything click can't blow
+# the context. Overflow is surfaced in the preamble + metadata (no silent cut).
+_PINNED_MAX_SOURCES = 12
+_PINNED_CHAR_CAP = 60_000
+
+
+def _build_pinned_sources(agent_id, project_name, pinned):
+    """Read the user-PINNED project sources NOW (turn time, wire-only).
+
+    The Websuche-basket pattern for project documents: `pinned` is the enabled
+    set [{key, name}] the client sends each turn; each `key` is resolved
+    against engine.output_gen._iter_project_sources for THIS project — keys
+    the enumerator doesn't yield are ignored, so the client can never read an
+    arbitrary path. Returns `(wire_text, used)`: the markdown preamble for the
+    transient wire copy, and the per-source record [{key, name, chars, error}]
+    for the assistant turn's metadata (names + sizes only — the documents live
+    on disk, unlike web pages there's nothing volatile to snapshot)."""
+    if not pinned or not project_name:
+        return "", []
+    import brain as _engine
+    from engine import output_gen
+    agent_id = agent_id or "main"
+    cfg = _engine.ProjectManager.get_project(agent_id, project_name)
+    if not cfg:
+        return "", []
+    pdir = _engine.ProjectManager._project_dir(agent_id, project_name)
+    project = {**cfg, "folder_name": project_name, "dir": pdir}
+    try:
+        entries = {key: (name, getter) for name, key, getter
+                   in output_gen._iter_project_sources(agent_id, project)}
+    except Exception as e:
+        print(f"[pinned_sources] enumeration failed: {e}", flush=True)
+        return "", []
+    used, blocks = [], []
+    capped = pinned[:_PINNED_MAX_SOURCES]
+    for p in capped:
+        key = (p.get("key") or "").strip() if isinstance(p, dict) else ""
+        if not key or key not in entries:
+            continue
+        name, getter = entries[key]
+        try:
+            text = (getter() or "").strip()
+        except Exception as e:
+            used.append({"key": key, "name": name, "chars": 0, "error": str(e)[:200]})
+            blocks.append(f"### {name}\n(could not be read: {e})")
+            continue
+        if not text:
+            used.append({"key": key, "name": name, "chars": 0, "error": "empty"})
+            continue
+        if len(text) > _PINNED_CHAR_CAP:
+            text = text[:_PINNED_CHAR_CAP] + "\n\n[… truncated …]"
+        used.append({"key": key, "name": name, "chars": len(text), "error": ""})
+        blocks.append(f"### {name}\n\n{text}")
+    if not blocks:
+        return "", []
+    head = ("[The user PINNED the following project documents for this request. "
+            "Their full text is provided below — ground your answer on them "
+            "directly; you do not need to retrieve these documents again.]")
+    if len(pinned) > _PINNED_MAX_SOURCES:
+        head += (f"\n[Note: {len(pinned) - _PINNED_MAX_SOURCES} additional pinned "
+                 f"sources over the {_PINNED_MAX_SOURCES}-source limit were skipped.]")
+    return head + "\n\n" + "\n\n---\n\n".join(blocks), used
+
+
 def _inject_web_preamble_into_wire(messages, preamble):
     """Return a transient wire copy of `messages` with `preamble` prepended to
     the LAST user message's content. The original list + message dicts are NOT
@@ -3146,7 +3210,7 @@ def _run_deep_research_turn(session, sid, message, live, *, saved_paths=None,
     return {"reply": card, "error": None, "_dr_meta": meta, "_dr_files": _dr_files}
 
 
-def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False):
+def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False, pinned_sources=None):
     """Run one chat turn for `session`, end to end.
 
     Extracted verbatim from the former `_handle_chat.worker()` closure (it
@@ -3979,6 +4043,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 _goal_iter = 0
                 _goal_done_meta = None   # → done_data["goal"]
                 _goal_web_cache = None   # curated-web fetch: once, reused per iteration
+                _pinned_cache = None     # pinned project sources: read once per send
                 _moa_cache = None        # MoA reference fan-out: once, reused per iteration
                 _moa_delegate_state = None  # delegate mode: (plan_text,) once per turn
                 _moa_verify_rounds = 0   # delegate post-verify re-rounds spent (v9.286.0)
@@ -4078,6 +4143,19 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         if _web_pre:
                             _wire_messages = _inject_web_preamble_into_wire(
                                 _wire_messages, _web_pre)
+                    # Pinned project sources (v9.305.0): same ephemeral wire
+                    # seam as the Websuche basket, but for project documents —
+                    # full text injected per send, never persisted into history.
+                    _pinned_sources_used = []
+                    if pinned_sources and project_name:
+                        if _pinned_cache is None:
+                            _pinned_cache = _build_pinned_sources(
+                                getattr(session, "agent_id", "") or "main",
+                                project_name, pinned_sources)
+                        _pin_pre, _pinned_sources_used = _pinned_cache
+                        if _pin_pre:
+                            _wire_messages = _inject_web_preamble_into_wire(
+                                _wire_messages, _pin_pre)
                     # Detached background tasks: any that FINISHED since the last
                     # turn have their full output folded into THIS turn wire-only
                     # (same ephemeral seam as web sources — never persisted, so it
@@ -4577,6 +4655,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         # was used; stripped before the wire so it never replays.
                         if _web_sources_used:
                             msg_metadata["web_sources"] = _web_sources_used
+                        # Quellen-Pinning: record which project documents were
+                        # injected into this turn (names + sizes; the documents
+                        # themselves live on disk — nothing volatile to snapshot).
+                        if _pinned_sources_used:
+                            msg_metadata["pinned_sources"] = _pinned_sources_used
                         # Auto-LCM: record this turn's compaction level (before/after
                         # tokens + pct, turns compressed/total) on the turn metadata
                         # so the status line + the in-chat compacted block can show
@@ -6712,6 +6795,12 @@ class ChatHandlerMixin:
         # project knowledge, NOT injected per-turn here.)
         web_urls = body.get("web_urls_to_fetch") or []
         web_locked = bool(web_urls) and not bool(getattr(session, "allow_further_web", False))
+        # Quellen-Pinning (v9.305.0): the enabled pinned project sources
+        # [{key,name}] the client re-sends every turn (Websuche-basket pattern) —
+        # resolved + injected wire-only in the worker (_build_pinned_sources).
+        pinned_sources = body.get("pinned_sources_to_read") or []
+        if not isinstance(pinned_sources, list):
+            pinned_sources = []
         # Deep Research toggle (composer 🔬): when on, this turn runs the bounded
         # research loop instead of the LLM chat turn and drops the report as
         # session artifacts. Independent of the other toggles (per the design).
@@ -7123,6 +7212,7 @@ class ChatHandlerMixin:
             project_name=project_name, preamble_text=preamble_text,
             content_blocks=content_blocks, disk_files=disk_files,
             auto_route=auto_route, want_auto=want_auto, deep_research=deep_research,
+            pinned_sources=pinned_sources,
             # Interactive clients (web chat + terminal chat) send this flag —
             # it gates the MoA delegate-plan review (headless callers: none).
             interactive=bool(body.get("interactive")),

@@ -150,7 +150,8 @@ streaming call, per-USER history, fixed read-only tool set. See
     "caveman_mode": 0..3,
     "thinking_level": "off|low|medium|high",
     "web_urls_to_fetch": [{"url": "...", "title": "..."}],  # Websuche basket
-    "web_abstract_first": false  # fetch each curated source as a ~1500-char abstract instead of the full page
+    "web_abstract_first": false,  # fetch each curated source as a ~1500-char abstract instead of the full page
+    "pinned_sources_to_read": [{"key": "...", "name": "..."}]  # Quellen-Pinning (project chats, v9.305.0)
   }
   ```
   When `web_urls_to_fetch` is present, the worker pre-fetches each URL
@@ -160,6 +161,15 @@ streaming call, per-USER history, fixed read-only tool set. See
   are locked out for that turn so the model works strictly from the
   curated set. Fetched sources are recorded on the assistant turn's
   `metadata.web_sources` (rendered as "Webquellen dieser Anfrage").
+  `pinned_sources_to_read` (Quellen-Pinning, project chats only) works the
+  same ephemeral wire seam for PROJECT documents: each `key` is resolved
+  against `GET .../projects/<name>/sources` (keys the enumerator doesn't
+  yield are ignored — no raw paths), the documents' FULL text (cap 12
+  sources / 60k chars each, overflow noted) is injected wire-only, and the
+  set used is recorded on `metadata.pinned_sources` [{key,name,chars,error}].
+  The pinned set persists per session (`sessions.pinned_sources`, manage
+  action `pinned_sources`; echoed by GET /messages as `pinned_sources`) —
+  unlike the Websuche lockout, pinning never disables tools.
   Response: SSE events (`text_delta`, `thinking`, `tool_use`, `tool_result`,
   `done`, `error`, …).
 - `GET /v1/chat/stream?session_id=<sid>` — re-attach to a live turn (SSE)
@@ -254,6 +264,10 @@ streaming call, per-USER history, fixed read-only tool set. See
   set_research_mode`
 - `GET .../projects/<name>/notes` / `POST` — project notes
 - `GET .../projects/<name>/docs` — list ingested docs
+- `GET .../projects/<name>/sources` — flat list of the project's individual
+  pinnable sources (uploads · input-folder files · mined web URLs) as
+  `{sources:[{key,name,kind}]}` — the keys the Quellen-Pinning UI stores and
+  `POST /v1/chat` `pinned_sources_to_read` resolves (v9.305.0)
 - `GET/POST .../projects/<name>/input-folders` — list/edit folders
 - `POST .../projects/<name>/input-folders/<idx>` — edit/delete one
 - `GET .../projects/<name>/sync-status` — current sync state

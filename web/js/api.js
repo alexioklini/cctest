@@ -434,6 +434,9 @@ class API {
   static archiveProjectArtifact(agentId, projectName, artifactId, archived) { return this.post(`${this._projOutBase(agentId, projectName)}/artifacts/${encodeURIComponent(artifactId)}/archive`, {archived}); }
   static deleteProjectArtifact(agentId, projectName, artifactId) { return this.del(`${this._projOutBase(agentId, projectName)}/artifacts/${encodeURIComponent(artifactId)}`); }
 
+  // Quellen-Pinning (v9.305.0): the project's pinnable sources [{key,name,kind}].
+  static getProjectSources(agentId, projectName) { return this.get(`${this._projOutBase(agentId, projectName)}/sources`); }
+
   // Custom Studio presets ("Transformations", v9.302.0) — global, owner-gated CRUD.
   static listStudioPresets() { return this.get('/v1/studio/presets'); }
   static createStudioPreset(data) { return this.post('/v1/studio/presets', data); }
@@ -615,6 +618,17 @@ class API {
       const _web = webBasketEnabled();
       if (_web.length) {
         body.web_urls_to_fetch = _web.map(e => ({ url: e.url, title: e.title }));
+      }
+    }
+
+    // Quellen-Pinning (v9.305.0): the pinned project documents. The server
+    // resolves the keys against the project's own source enumeration and
+    // injects their FULL text wire-only (never persisted). Pins persist
+    // across sends like the basket.
+    if (typeof pinnedSourcesEnabled === 'function') {
+      const _pin = pinnedSourcesEnabled();
+      if (_pin.length) {
+        body.pinned_sources_to_read = _pin.map(e => ({ key: e.key, name: e.name }));
       }
     }
 

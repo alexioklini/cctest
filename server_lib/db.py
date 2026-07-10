@@ -512,6 +512,14 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN web_basket TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Per-session pinned project sources (v9.305.0): the user-marked set
+            # of project documents whose FULL text is injected wire-only into
+            # each send (the Websuche-basket pattern for project files). JSON
+            # list of {key,name,enabled}; '' = nothing pinned.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN pinned_sources TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # Per-session message queue: messages the user typed WHILE a turn was
             # streaming, held to auto-send as normal turns after the current one
             # finishes. JSON list of {id,text}. Stored per session so a reload /
@@ -2580,6 +2588,16 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET web_basket = ? WHERE id = ?",
                         (basket_json or '', session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_pinned_sources(session_id, pinned_json):
+        """Persist the per-session pinned project sources. pinned_json is a
+        JSON string (list of {key,name,enabled}); '' clears it."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET pinned_sources = ? WHERE id = ?",
+                        (pinned_json or '', session_id))
             conn.commit()
 
     @staticmethod

@@ -1909,6 +1909,31 @@ class ProjectsHandlerMixin:
                 pass
         self._send_json({"agent": agent_id, "project": proj_name, "documents": docs})
 
+    def _handle_project_sources_list(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/sources — flat list of the
+        project's individual pinnable sources (uploads, input-folder files,
+        mined web URLs) as [{key, name, kind}] (v9.305.0). The stable `key` is
+        what the Quellen-Pinning UI stores and the chat worker resolves —
+        clients never send raw paths."""
+        from engine import output_gen
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        sources = []
+        try:
+            for name, key, _get in output_gen._iter_project_sources(agent_id, project):
+                sources.append({"key": key, "name": name,
+                                "kind": key.split("/", 1)[0]})
+        except Exception as e:
+            self._send_json({"error": f"source listing failed: {e}"}, 500)
+            return
+        self._send_json({"agent": agent_id, "project": proj_name, "sources": sources})
+
     @staticmethod
     def _git_worktree_states(working_dir: str) -> dict:
         """Map {realpath: status_code} for a code-mode project's git worktree.

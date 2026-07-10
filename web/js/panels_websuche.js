@@ -89,6 +89,103 @@ function toggleWebBasketEntry(url) {
   if (e) { e.enabled = !e.enabled; _saveWebBasket(); _refreshWebsuche(); }
 }
 
+// ═══ Quellen-Pinning (v9.305.0) — DISTINCT from the Websuche basket ═════════
+// Pinned PROJECT documents whose FULL text is injected wire-only into every
+// send of this session (server seam: handlers/chat._build_pinned_sources).
+// Persisted per session (sessions.pinned_sources) like the basket, but a
+// different store + a different server mechanism — do NOT merge the two.
+
+function _pinnedArr() {
+  try {
+    const chat = state.activeChat;
+    if (!chat) return [];
+    if (!Array.isArray(chat.pinnedSources)) chat.pinnedSources = [];
+    return chat.pinnedSources;
+  } catch (e) { return []; }
+}
+
+// Enabled entries — what a chat send will actually inject.
+function pinnedSourcesEnabled() { return _pinnedArr().filter(e => e.enabled); }
+
+// Replace the active chat's pinned set from a JSON string (server load).
+// Called by openSession after GET /messages.
+function pinnedSourcesLoadFromJson(jsonStr) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  let arr = [];
+  try { const p = jsonStr ? JSON.parse(jsonStr) : []; if (Array.isArray(p)) arr = p; } catch (e) {}
+  chat.pinnedSources = arr;
+  if (typeof updateStatusBar === 'function') updateStatusBar();
+}
+
+function _savePinnedSources() {
+  try {
+    const chat = state.activeChat;
+    const sid = chat && chat.sessionId;
+    if (!sid) return;   // lazy chat — held in memory until the session exists
+    API.post('/v1/sessions/manage', {
+      action: 'pinned_sources', session_id: sid, value: _pinnedArr(),
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+function togglePinnedSource(key, name, checked) {
+  const arr = _pinnedArr();
+  const i = arr.findIndex(e => e.key === key);
+  if (checked && i < 0) arr.push({ key, name, enabled: true });
+  else if (!checked && i >= 0) arr.splice(i, 1);
+  _savePinnedSources();
+  const cnt = document.getElementById('pin-modal-count');
+  if (cnt) cnt.textContent = String(pinnedSourcesEnabled().length);
+  if (typeof updateStatusBar === 'function') updateStatusBar();
+}
+
+// Composer 📌 button → list the project's sources with pin checkboxes.
+async function openPinnedSourcesModal() {
+  const chat = state.activeChat;
+  if (!chat || !chat.project) {
+    showToast('Quellen-Pinning gibt es nur in Projekt-Chats', true);
+    return;
+  }
+  let sources = [];
+  try {
+    const data = await API.getProjectSources(chat.agent || 'main', chat.project);
+    sources = data.sources || [];
+  } catch (e) {
+    showToast('Quellen konnten nicht geladen werden: ' + (e.message || e), true);
+    return;
+  }
+  const pinnedKeys = new Set(_pinnedArr().map(e => e.key));
+  const kindLabel = { upload: 'Upload', file: 'Ordner', weburl: 'Web' };
+  const rows = sources.map(s => `
+    <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border-100);cursor:pointer;font-size:12px">
+      <input type="checkbox" ${pinnedKeys.has(s.key) ? 'checked' : ''}
+             onchange="togglePinnedSource('${esc(s.key).replace(/'/g, '&#39;')}', '${esc(s.name).replace(/'/g, '&#39;')}', this.checked)">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.name)}">${esc(s.name)}</span>
+      <span style="font-size:10px;color:var(--text-400);border:1px solid var(--border-200);border-radius:4px;padding:1px 6px">${esc(kindLabel[s.kind] || s.kind)}</span>
+    </label>`).join('');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.display = 'flex';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `<div class="modal-content" style="max-width:560px;width:92vw;max-height:80vh;display:flex;flex-direction:column" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <div class="modal-title">Projekt-Quellen anpinnen (<span id="pin-modal-count">${pinnedSourcesEnabled().length}</span> aktiv)</div>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
+    </div>
+    <div class="modal-body" style="overflow:auto;flex:1">
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:8px">
+        Angepinnte Dokumente werden mit ihrem <b>Volltext</b> in jede Anfrage dieses
+        Chats eingespeist (max. 12 Quellen, je bis 60k Zeichen) — das Modell muss sie
+        nicht erst per Suche finden. Gilt nur für diesen Chat; nichts davon landet im
+        gespeicherten Verlauf. Viele große Quellen erhöhen Kosten und Antwortzeit.
+      </div>
+      ${rows || '<div style="padding:14px;color:var(--text-400);font-size:13px">Dieses Projekt hat keine lesbaren Quellen.</div>'}
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
 function webBasketBulk(op) {
   const chat = state.activeChat;
   if (op === 'enable') _webBasketArr().forEach(e => e.enabled = true);

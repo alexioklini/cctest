@@ -226,6 +226,8 @@ async function openSession(sessionId, agentId) {
     // Per-session Websuche basket — load THIS session's own curated sources.
     // Never inherit the basket of the chat we just left.
     if (typeof webBasketLoadFromJson === 'function') webBasketLoadFromJson(data.web_basket || '');
+    // Per-session pinned project sources (Quellen-Pinning, v9.305.0) — same rule.
+    if (typeof pinnedSourcesLoadFromJson === 'function') pinnedSourcesLoadFromJson(data.pinned_sources || '');
     // Per-session message queue — load THIS session's queued messages so a
     // reload / reconnect restores what the user lined up while a turn ran.
     if (typeof ChatTurnControl !== 'undefined') ChatTurnControl.loadFromJson(chat, data.message_queue || '');

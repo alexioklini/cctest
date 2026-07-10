@@ -1513,6 +1513,32 @@ ins Projektgedächtnis eingespeist werden.)
 
 ---
 
+## Quellen-Pinning (Projekt-Dokumente anheften, v9.305.0)
+
+In **Projekt-Chats** erscheint im Composer ein **Pin-Symbol** 📌: Darüber
+lassen sich einzelne **Projekt-Dokumente anpinnen** (hochgeladene Dateien,
+Dateien aus Eingabe-Ordnern, eingelesene Web-Adressen). Angepinnte Dokumente
+werden mit ihrem **Volltext in jede Anfrage dieses Chats** eingespeist — das
+Modell muss sie nicht erst über die Projektsuche finden und arbeitet garantiert
+mit dem ganzen Dokument. Das ist das Websuche-Korb-Prinzip für Projektdateien:
+
+- **Pro Chat gespeichert** — die Pins bleiben über Neuladen/Gerätewechsel
+  erhalten und gelten nur für diesen Chat. Das Pin-Symbol färbt sich, solange
+  Pins aktiv sind.
+- **Nichts landet im Verlauf** — der Volltext wird nur für die jeweilige
+  Anfrage mitgegeben (wire-only) und nie in die Chat-Historie geschrieben;
+  unter jeder Antwort zeigt eine Zeile „Angepinnte Quellen dieser Anfrage“,
+  welche Dokumente einflossen.
+- **Grenzen**: max. 12 Quellen pro Anfrage, je bis 60.000 Zeichen (Überhang
+  wird ausgewiesen, nie still gekappt). Viele große Pins erhöhen Kosten und
+  Antwortzeit — für breite Fragen über viele Dokumente bleibt die normale
+  Projektsuche (MemPalace) der bessere Weg; Pinning ist für „arbeite genau
+  mit diesen Unterlagen“.
+- Anders als bei der Websuche werden **keine Werkzeuge gesperrt** — das Modell
+  darf zusätzlich suchen.
+
+---
+
 ## Aktivität (Tool-Aufrufe) & Hintergrundaufgaben
 
 Der **Aktivität**-Tab im rechten Panel zeigt **alle Tool-Aufrufe dieses Chats** an

@@ -1977,6 +1977,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="composer-btn" data-id="btn-skill" data-composer-toggle="btn-skill" onclick="skillGenerateFromChat()" title="Skill aus diesem Chat erstellen — die gezeigte Vorgehensweise als wiederverwendbaren, teilbaren Skill speichern">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10L12 5 2 10l10 5 10-5z"/><path d="M6 12v5c0 1 2.7 2.5 6 2.5s6-1.5 6-2.5v-5"/></svg>
         </button>
+        <!-- Quellen-Pinning (v9.305.0): pin project documents whose FULL text
+             is injected into every send of this chat (wire-only, per session).
+             Only shown in project chats (updateStatusBar). -->
+        <button class="composer-btn" data-id="btn-pin-sources" data-composer-toggle="btn-pin-sources" onclick="openPinnedSourcesModal()" title="Projekt-Quellen anpinnen — Volltext wird jeder Anfrage mitgegeben" style="display:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>
+        </button>
         <!-- Transparent-anonymisation sticky preference (step 6.3). Hidden by
              default; surfaced when chat.gdprActionPref is set so the user can
              see at a glance that PII handling is automatic for this chat, and

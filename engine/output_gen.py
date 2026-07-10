@@ -342,7 +342,10 @@ def _run_per_source(*, output_id: str, agent_id: str, project_name: str, project
         length = opts.get("length") or "std"
         ChatDB.update_project_output(output_id, phase="gathering")
         proj_cfg = _brain.ProjectManager.get_project(agent_id, project_name) or {}
-        sources = _iter_project_sources(agent_id, {**proj_cfg, "dir": project_dir})
+        # folder_name explicitly: project.json's `name` is the DISPLAY name — a
+        # renamed project would otherwise resolve the wrong ingest dir.
+        sources = _iter_project_sources(
+            agent_id, {**proj_cfg, "folder_name": project_name, "dir": project_dir})
         if not sources:
             ChatDB.update_project_output(
                 output_id, status="error",

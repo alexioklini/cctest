@@ -948,6 +948,23 @@ function renderAssistantMessage(msg, idx) {
     filesHtml += '</div>';
   }
 
+  // Quellen-Pinning (v9.305.0): compact line naming the project documents whose
+  // full text was injected into THIS turn (metadata.pinned_sources — names +
+  // sizes only; the documents live on disk, nothing volatile to snapshot).
+  let pinnedSourcesHtml = '';
+  const pinnedSrc = msg.metadata?.pinned_sources;
+  if (Array.isArray(pinnedSrc) && pinnedSrc.length) {
+    const names = pinnedSrc.map(p => p.error
+      ? `<span style="color:var(--error)" title="${esc(p.error)}">${esc(p.name)} ⚠</span>`
+      : `<span title="${(p.chars || 0).toLocaleString()} Zeichen">${esc(p.name)}</span>`
+    ).join('<span style="color:var(--text-400)"> · </span>');
+    pinnedSourcesHtml = `
+      <div style="font-size:11px;color:var(--text-400);margin:4px 0;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none;align-self:center"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/></svg>
+        <span>Angepinnte Quellen dieser Anfrage:</span> ${names}
+      </div>`;
+  }
+
   // Manual web-search: the curated sources this turn used, each with its FULL
   // fetched content — fetched fresh per turn and ephemeral on the wire (never
   // replayed from history), surfaced here from metadata.web_sources. Each
@@ -1156,6 +1173,7 @@ function renderAssistantMessage(msg, idx) {
       ${citationWarnHtml}
       ${citationLegendHtml}
       ${filesHtml}
+      ${pinnedSourcesHtml}
       ${webSourcesHtml}
       ${refsHtml}
       <div class="msg-actions-bar">
