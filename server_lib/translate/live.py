@@ -197,12 +197,15 @@ class LiveSession:
     """Per-recording state: audio queue, output segments, subscriber list."""
 
     def __init__(self, sess_id: str, *, target_lang: str, source_lang: str,
-                 glossary: str, model: str, agent_id: str, user_id: str = "") -> None:
+                 glossary: str, model: str, transcribe_model: str = "",
+                 agent_id: str, user_id: str = "") -> None:
         self.id = sess_id
         self.target_lang = target_lang
         self.source_lang = source_lang
         self.glossary = glossary
         self.model = model
+        # Per-session STT model pick (GUI dropdown); empty = tools-config default.
+        self.transcribe_model = transcribe_model
         self.agent_id = agent_id
         self.user_id = user_id
         self.created_at = time.time()
@@ -374,11 +377,10 @@ class LiveSession:
         """
         import brain  # late, avoids circular at module load
 
-        # Resolve transcription model — default Voxtral. Don't go through
-        # _transcription_resolve here because it needs an arg; we hard-code
-        # the default-model lookup, which honors tools_config.json.
+        # Resolve transcription model — the session's dropdown pick wins,
+        # else the tools-config default, else Voxtral.
         cfg = brain._transcription_config()
-        model_arg = cfg.get("default_model") or "voxtral-mini-latest"
+        model_arg = self.transcribe_model or cfg.get("default_model") or "voxtral-mini-latest"
         try:
             model_id, route = brain._transcription_resolve(model_arg)
         except Exception as e:

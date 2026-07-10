@@ -666,8 +666,10 @@ write/exec tool is deliberately excluded.
 - `detect_language(text)`
 - `list_glossaries()` / `get_glossary(slug)`
 - `transcribe_audio(path)` — Whisper/Voxtral. Routes only to models flagged with the
-  `audio_transcription` capability (verbatim speech-to-text): local Whisper + cloud
-  Voxtral-mini. Models with only the plain `audio` capability (audio-in *chat* /
+  `audio_transcription` capability (verbatim speech-to-text): local Whisper
+  (tiny/base/small/medium/large-v3 plus large-v3-turbo — turbo ≈ same quality on
+  clean audio but much faster; on noisy/phone audio prefer large-v3 or Voxtral) +
+  cloud Voxtral-mini. Models with only the plain `audio` capability (audio-in *chat* /
   understanding — voxtral-small, gemma-4, glm) are **excluded** — they can't drive the
   `/audio/transcriptions` endpoint and would 400 at the wire.
 - `generate_audio_overview(topic?, audience?, length?)` — NotebookLM-style **audio

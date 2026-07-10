@@ -1108,11 +1108,17 @@ Seitenleiste → **Übersetzung**. Vier Tabs:
 ### Audio-/Video-Tab
 - Audio oder Video ablegen. Voxtral transkribiert + übersetzt.
 - **Modus**-Auswahl: Untertitel (SRT/VTT), Transkript (TXT) oder beides.
+- **STT-Modell**-Auswahl: welches Transkriptions-Modell die Spracherkennung
+  übernimmt (nur Modelle mit der Fähigkeit „Transkription“, z. B. Whisper
+  lokal/kostenlos oder Voxtral-mini in der Cloud). Vorausgewählt ist das in
+  Einstellungen → Werkzeuge → transcribe_audio hinterlegte Standardmodell.
 - Verlaufszeile hat eigene Herunterladen-Knöpfe pro Ausgabeformat.
 
 ### Live-Mikrofon-Tab
 - Aufnahme klicken. Sprechen. Übersetzung erscheint während des Sprechens.
 - **Modus**: Live-Untertitel vs. satzweise Stücke.
+- **STT-Modell**-Auswahl wie im Audio-/Video-Tab (gilt pro Aufnahme; greift
+  ab der nächsten gestarteten Aufnahme).
 - Stopp finalisiert; als SRT/VTT/TXT herunterladbar.
 
 ### Glossare

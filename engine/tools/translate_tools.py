@@ -40,13 +40,24 @@ from engine.tool_exec import _ok, _err, _get_artifact_session_folder
 
 # ─── Transcription helper cluster (private to transcribe_audio) ──────────────
 
+# Repos that don't follow the mechanical '-mlx' suffix scheme: mlx-community
+# published large-v3-turbo WITHOUT the suffix — a derived
+# 'mlx-community/whisper-large-v3-turbo-mlx' repo does not exist on HF.
+_WHISPER_REPO_EXCEPTIONS = {
+    "whisper-large-v3-turbo": "mlx-community/whisper-large-v3-turbo",
+}
+
+
 def _whisper_repo_for(model_id: str) -> str:
     """Map a whisper model id (e.g. 'whisper-base', 'whisper-large-v3') to the
-    HuggingFace mlx-community repo id. The id-to-repo derivation is mechanical:
-    'whisper-<size>' → 'mlx-community/whisper-<size>-mlx'."""
+    HuggingFace mlx-community repo id. The id-to-repo derivation is mechanical
+    ('whisper-<size>' → 'mlx-community/whisper-<size>-mlx') except for the ids
+    in _WHISPER_REPO_EXCEPTIONS."""
     base = model_id.split("/")[-1]  # tolerate scoped ids
     if not base.startswith("whisper-"):
         raise ValueError(f"not a whisper model id: '{model_id}'")
+    if base in _WHISPER_REPO_EXCEPTIONS:
+        return _WHISPER_REPO_EXCEPTIONS[base]
     return f"mlx-community/{base}-mlx"
 
 

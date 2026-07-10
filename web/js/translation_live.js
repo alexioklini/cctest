@@ -188,6 +188,7 @@ async function trLiveStart() {
     source_lang: (trState.sourceLangManual && trState.sourceLang) ? trState.sourceLang : '',
     glossary: trState.glossarySlug || '',
     model: trState.model || '',
+    transcribe_model: document.getElementById('tr-live-stt-model')?.value || '',
   };
   let res;
   try {

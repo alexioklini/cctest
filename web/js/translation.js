@@ -116,7 +116,41 @@ function trSwitchTab(tab) {
   if (modeGroup) modeGroup.style.display = (tab === 'audio') ? '' : 'none';
   const liveModeGroup = document.getElementById('tr-toolbar-live-mode-group');
   if (liveModeGroup) liveModeGroup.style.display = (tab === 'live') ? '' : 'none';
+  const sttGroup = document.getElementById('tr-toolbar-stt-group');
+  if (sttGroup) sttGroup.style.display = (tab === 'audio') ? '' : 'none';
+  const liveSttGroup = document.getElementById('tr-toolbar-live-stt-group');
+  if (liveSttGroup) liveSttGroup.style.display = (tab === 'live') ? '' : 'none';
+  if (tab === 'audio' || tab === 'live') trEnsureSttModels();
   if (typeof _updateTranslationHeaderStar === 'function') _updateTranslationHeaderStar(tab);
+}
+
+/* ─── STT model dropdowns (audio + live tabs) ──────────────── */
+
+// Lazy-populates both STT dropdowns once per page load from
+// /v1/translate/stt-models (models with the audio_transcription capability).
+// The admin-configured transcribe_audio default is preselected; the pick is
+// sent as transcribe_model with the media upload / live start. On fetch
+// failure the selects stay empty and nothing is sent → server default.
+async function trEnsureSttModels() {
+  if (trState._sttModelsLoaded) return;
+  trState._sttModelsLoaded = true;  // in-flight marker — fetch only once
+  let data;
+  try {
+    const res = await fetch('/v1/translate/stt-models', { headers: trAuthHeaders() });
+    if (!res.ok) return;
+    data = await res.json();
+  } catch (e) { return; }
+  const models = data.models || [];
+  if (!models.length) return;
+  for (const selId of ['tr-media-stt-model', 'tr-live-stt-model']) {
+    const sel = document.getElementById(selId);
+    if (!sel) continue;
+    sel.innerHTML = models.map(m => {
+      const isDefault = m.id === data.default;
+      const label = (m.display_name || m.id) + (isDefault ? ' (Standard)' : '');
+      return `<option value="${escapeHtml(m.id)}"${isDefault ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+    }).join('');
+  }
 }
 
 /* ─── Source / target language pills ──────────────────────── */
@@ -1179,6 +1213,8 @@ async function trRunMediaTranslation() {
   }
   if (trState.glossarySlug) fd.append('glossary', trState.glossarySlug);
   if (trState.model) fd.append('model', trState.model);
+  const sttModel = document.getElementById('tr-media-stt-model')?.value || '';
+  if (sttModel) fd.append('transcribe_model', sttModel);
 
   document.getElementById('tr-media-translate-btn').disabled = true;
   status.textContent = 'Wird hochgeladen…';

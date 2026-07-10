@@ -1618,6 +1618,7 @@
     "trDocSubscribe": "writable",
     "trEditGlossary": "writable",
     "trEncodeWav": "writable",
+    "trEnsureSttModels": "writable",
     "trFormatTimeShort": "writable",
     "trGlossaryFormHtml": "writable",
     "trHistoryDelete": "writable",

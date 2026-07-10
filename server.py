@@ -1644,6 +1644,8 @@ class BrainAgentHandler(
             tail = path[len("/v1/translate/history/"):]
             entry_id = tail.split("/", 1)[0]
             self._handle_translate_history_file(entry_id)
+        elif path == "/v1/translate/stt-models":
+            self._handle_stt_models()
         elif path == "/v1/translate/glossaries":
             self._handle_glossaries_list()
         elif path.startswith("/v1/translate/glossaries/"):

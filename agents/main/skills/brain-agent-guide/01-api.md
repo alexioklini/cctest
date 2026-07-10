@@ -530,11 +530,17 @@ already anonymises (see 05-internals).
 
 - `POST /v1/translate/text` — `{text, target, source?, glossary?}` (Mistral)
 - `POST /v1/translate/document` — multipart, returns job id
-- `POST /v1/translate/media` — audio/video translate
+- `POST /v1/translate/media` — audio/video translate (multipart; optional
+  `transcribe_model` = an `audio_transcription`-capable model id, else the
+  tools-config default)
 - `POST /v1/translate/detect` — language detect
 - `POST /v1/translate/tts` / `GET /v1/translate/tts/voices` — TTS
 - `POST /v1/translate/live/start` → SSE `GET /v1/translate/live/<sid>` →
-  `POST /v1/translate/live/<sid>/chunk` → `/stop` — mic streaming
+  `POST /v1/translate/live/<sid>/chunk` → `/stop` — mic streaming; start body
+  takes optional `transcribe_model` (same semantics as media)
+- `GET /v1/translate/stt-models` — `{models:[{id,display_name,local}], default}`;
+  enabled `audio_transcription` models + the transcribe_audio default (feeds
+  the STT-Modell dropdowns in the Audio/Video + Live tabs)
 - `GET /v1/translate/history` / `GET /v1/translate/history/<id>/file?which=...`
 - `POST /v1/translate/glossaries` / `GET /v1/translate/glossaries[/<slug>]`
 - `GET /v1/translate/jobs/<id>` / `/result` — job poll

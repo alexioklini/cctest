@@ -3283,6 +3283,25 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false
+    },
+    "whisper-large-v3-turbo": {
+      "enabled": true,
+      "shortname": "whisper-large-v3-turbo",
+      "display_name": "Whisper large-v3-turbo",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "local-mlx-whisper",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "_audio_backfilled": true,
+      "_caps_canonical": true,
+      "max_context": 0
     }
   },
   "nodes": {},

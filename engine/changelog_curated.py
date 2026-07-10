@@ -29,6 +29,37 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.301.0",
+        "date": "2026-07-10",
+        "title": "Transkriptions-Modell direkt im Übersetzen-Tab wählen",
+        "body": "In den Übersetzungs-Bereichen mit Spracherkennung — Audio/Video "
+                "und Live-Mikrofon — gibt es jetzt eine Auswahl „STT-Modell“ in "
+                "der Werkzeugleiste. Dort wählen Sie pro Durchlauf, welches "
+                "Transkriptions-Modell die Spracherkennung übernimmt: etwa das "
+                "schnelle lokale Whisper Turbo für saubere Aufnahmen oder die "
+                "Cloud-Transkription für schwierige Tonqualität. Vorausgewählt "
+                "ist immer das vom Administrator hinterlegte Standardmodell — "
+                "wer nichts ändert, bekommt das bisherige Verhalten.",
+        "audience": "user",
+        "versions": ["9.301.0"],
+    },
+    {
+        "version": "9.300.0",
+        "date": "2026-07-10",
+        "title": "Schnellere lokale Transkription mit Whisper Turbo",
+        "body": "Für die Audio-Transkription steht jetzt zusätzlich „Whisper "
+                "large-v3-turbo“ zur Wahl (Einstellungen → Werkzeuge → "
+                "transcribe_audio). Das Turbo-Modell liefert auf sauberen "
+                "Aufnahmen praktisch dieselbe Qualität wie das große "
+                "Whisper-Modell, transkribiert aber deutlich schneller — und "
+                "läuft wie bisher komplett lokal und kostenlos. Für schwierige "
+                "Aufnahmen (Telefonmitschnitte, starkes Rauschen) bleibt das "
+                "bisherige Standard-Modell bzw. die Cloud-Transkription die "
+                "robustere Wahl; der Standard wurde deshalb nicht umgestellt.",
+        "audience": "admin",
+        "versions": ["9.300.0"],
+    },
+    {
         "version": "9.298.0",
         "date": "2026-07-10",
         "title": "Kalibrier-Spickzettel gegen erfundene Antworten",

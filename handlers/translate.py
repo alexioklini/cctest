@@ -841,12 +841,35 @@ class TranslateHandlerMixin:
         t.start()
         self._send_json({"job_id": job.id, **job.to_dict()})
 
+    def _handle_stt_models(self):
+        """GET /v1/translate/stt-models — STT model choices for the GUI dropdowns.
+
+        Lists enabled models flagged with the `audio_transcription` capability
+        (the same gate `_transcription_resolve` enforces) plus the configured
+        transcribe_audio default — so the Übersetzen tab can offer a per-run
+        model pick that always starts on the admin-configured default.
+        """
+        import brain
+        models = []
+        for mid, cfg in sorted((brain._models_config or {}).items()):
+            if not cfg.get("enabled", True):
+                continue
+            if "audio_transcription" not in (cfg.get("capabilities") or []):
+                continue
+            models.append({
+                "id": mid,
+                "display_name": cfg.get("display_name") or cfg.get("shortname") or mid,
+                "local": bool(cfg.get("is_local")),
+            })
+        default = (brain._transcription_config().get("default_model") or "").strip()
+        self._send_json({"models": models, "default": default})
+
     # ─── Live microphone translation ───────────────────────────────────
 
     def _handle_live_start(self):
         """POST /v1/translate/live/start — open a live transcription session.
 
-        Body: {target_lang, source_lang?, glossary?, model?}
+        Body: {target_lang, source_lang?, glossary?, model?, transcribe_model?}
         Returns: {id, target_lang, source_lang, glossary, model}.
         """
         body = self._read_json()
@@ -855,6 +878,7 @@ class TranslateHandlerMixin:
         source_lang = (body.get("source_lang") or "").strip().lower()
         glossary = (body.get("glossary") or "").strip()
         model = (body.get("model") or "").strip()
+        transcribe_model = (body.get("transcribe_model") or "").strip()
         # Best-effort current user / agent — used for cleanup tracking.
         agent_id = (body.get("agent_id") or "main").strip() or "main"
         try:
@@ -866,6 +890,7 @@ class TranslateHandlerMixin:
             source_lang=source_lang,
             glossary=glossary,
             model=model,
+            transcribe_model=transcribe_model,
             agent_id=agent_id,
             user_id=user_id,
         )
@@ -875,6 +900,7 @@ class TranslateHandlerMixin:
             "source_lang": sess.source_lang,
             "glossary": sess.glossary,
             "model": sess.model,
+            "transcribe_model": sess.transcribe_model,
         })
 
     def _handle_live_chunk(self, sess_id: str):
