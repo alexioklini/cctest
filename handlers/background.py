@@ -37,10 +37,17 @@ class BackgroundTasksHandlerMixin:
         (left-sidebar subagent tree). Non-admins see only tasks of their own
         sessions (legacy empty-owner sessions included — the list_sessions
         posture)."""
+        import time as _t
+        from engine.background_tasks import _TIMEOUT_S
         user = getattr(self, "_auth_user", None) or {}
         is_admin = user.get("role") == "admin" or user.get("id") == "__system__"
         uid = None if is_admin else (user.get("id") or "")
-        self._send_json({"tasks": ChatDB.list_running_background_tasks(user_id=uid)})
+        # `now` + `timeout_s`: the card shows elapsed-vs-timeout without
+        # hard-coding the limit client-side and without trusting the browser
+        # clock (a skewed client would otherwise mis-age every task).
+        self._send_json({"tasks": ChatDB.list_running_background_tasks(user_id=uid),
+                         "now": _t.time(),
+                         "timeout_s": _TIMEOUT_S})
 
     def _handle_background_task_cancel(self):
         """POST /v1/background-tasks/cancel {task_id}"""

@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.6",
+        "date": "2026-07-11",
+        "title": "Subagenten-Ansicht folgt dem Chat, mit Laufzeit",
+        "body": "Der Subagenten-Tab zeigt jetzt immer die Aufgaben des Chats, "
+                "in dem Sie gerade sind, und schaltet beim Wechsel automatisch "
+                "um — vorher konnten sich nach einem Neuladen die Subagenten "
+                "mehrerer Chats vermischen. Jede Karte zeigt außerdem, wie "
+                "lange die Aufgabe schon läuft und wie viel Zeit ihr bis zum "
+                "Abbruch bleibt; ist sie fertig, sehen Sie die Gesamtlaufzeit.",
+        "audience": "user",
+        "versions": ["9.312.6"],
+    },
+    {
         "version": "9.312.5",
         "date": "2026-07-11",
         "title": "Subagenten können jetzt zurückfragen",

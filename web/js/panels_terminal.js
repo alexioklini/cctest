@@ -904,6 +904,11 @@ function _terminalActivate(id) {
   if (pane) { pane.active = id; _term.activePane = pane.id; }
   _terminalShowActiveTabs();
   _terminalRenderTabs();
+  // Das Subagenten-Hub folgt dem aktiven CHAT: beim Wechsel auf einen anderen
+  // Chat-Tab zeigt es dessen Subagenten (und laedt sie bei Bedarf nach).
+  if (tab.kind === 'chat' && tab.sessionId && typeof agentHubSetFocus === 'function') {
+    try { agentHubSetFocus(tab.sessionId); } catch (_) {}
+  }
   if (tab.kind === 'editor') {
     setTimeout(() => {
       try {

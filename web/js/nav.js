@@ -1435,16 +1435,19 @@ async function pollRunningSubagents() {
     for (const t of tasks) {
       (map[t.session_id] = map[t.session_id] || []).push(t);
     }
+    state.runningSubagents = map;
+    // Rückfragen blockierter Subagenten in die Hub-Karten spielen (Antwort-Box)
+    // + Server-Uhr/Timeout für die Laufzeit-Anzeige übernehmen. VOR dem
+    // Signatur-Check: die Uhr muss auch dann nachgeführt werden, wenn sich die
+    // Task-Menge nicht geändert hat (sonst driftet die Laufzeit-Anzeige weg).
+    if (typeof agentHubApplyPendingQuestions === 'function') {
+      agentHubApplyPendingQuestions(tasks, { now: res?.now, timeout_s: res?.timeout_s });
+    }
     // Signatur enthält die offene-Frage-Kennung mit: eine NEUE Rückfrage muss ein
     // Repaint auslösen, auch wenn sich die Task-Menge nicht geändert hat.
     const sig = tasks.map(t => t.id + (t.pending_question ? '?' : '')).sort().join(',');
-    if (sig === _subagentSig) return;   // keine Änderung → kein Repaint
+    if (sig === _subagentSig) return;   // keine Änderung → kein Listen-Repaint
     _subagentSig = sig;
-    state.runningSubagents = map;
-    // Rückfragen blockierter Subagenten in die Hub-Karten spielen (Antwort-Box).
-    if (typeof agentHubApplyPendingQuestions === 'function') {
-      agentHubApplyPendingQuestions(tasks);
-    }
     if (typeof renderRecentChats === 'function') renderRecentChats();
     if (state.currentView === 'chats' && typeof loadChatsList === 'function') {
       loadChatsList();

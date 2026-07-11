@@ -32,10 +32,57 @@ function _agentHubTab() {
   return (typeof _term !== 'undefined' ? _term.tabs : []).find(t => t.kind === 'agent');
 }
 
+// ── Fokus: das Hub zeigt die Subagenten EINES Chats ──────────────────────────
+// Der Hub ist ein Singleton-Tab, seine Karten gehoerten aber Chats. Ohne Fokus
+// mischte ein Reload die Subagenten ALLER offenen Chat-Tabs in ein Kartenset
+// (und der 12er-Deckel konnte die eines Chats verdraengen) — man sah nicht, wer
+// wessen Subagent ist. Jetzt zeigt das Hub immer nur den AKTIVEN Chat und
+// schaltet beim Chat-Wechsel dynamisch um (agentHubSetFocus).
+// Fokus = der aktive Chat-Tab des Terminals, sonst der offene Web-Chat.
+function _agentHubResolveFocus() {
+  try {
+    if (typeof _term !== 'undefined' && _term.panes) {
+      for (const p of _term.panes) {
+        const t = (_term.tabs || []).find(x => x.id === p.active);
+        if (t && t.kind === 'chat' && t.sessionId) return t.sessionId;
+      }
+    }
+  } catch (_) { /* fallthrough */ }
+  try {
+    return (state && state.activeChat && state.activeChat.sessionId) || '';
+  } catch (_) { return ''; }
+}
+
+// Karten des fokussierten Chats. Karten anderer Chats bleiben im Speicher
+// (ihr Transcript-Reader laeuft weiter), werden aber ausgeblendet — ein
+// Zurueckwechseln zeigt sie sofort wieder, ohne neu zu laden.
+function _agentHubVisibleCards(tab) {
+  const cards = Object.values((tab && tab._cards) || {});
+  const sid = tab && tab._focusSid;
+  return sid ? cards.filter(c => c.sessionId === sid) : cards;
+}
+
 // Anzahl laufender Karten — von _terminalRenderTabs fürs Tab-Label gelesen.
+// Zaehlt NUR den fokussierten Chat, damit Zaehler + Puls zu dem passen, was der
+// Nutzer im Hub sieht.
 function agentHubRunningCount(tab) {
-  const cards = (tab && tab._cards) || {};
-  return Object.values(cards).filter(c => c.status === 'running').length;
+  return _agentHubVisibleCards(tab).filter(c => c.status === 'running').length;
+}
+
+// Fokus umschalten (Chat-Tab-Wechsel). Blendet die Karten des neuen Chats ein,
+// die der anderen aus, laedt fehlende Karten dieses Chats nach.
+function agentHubSetFocus(sessionId) {
+  const tab = _agentHubTab();
+  if (!tab) return;
+  const sid = sessionId || _agentHubResolveFocus();
+  if (tab._focusSid === sid) return;
+  tab._focusSid = sid;
+  for (const card of Object.values(tab._cards || {})) {
+    card.el.style.display = (!sid || card.sessionId === sid) ? '' : 'none';
+  }
+  _agentHubEmptyState(tab);
+  _terminalRenderTabs();
+  if (sid) _agentPaneReattachSession(sid);   // Karten dieses Chats nachladen
 }
 
 // Öffnet das Hub (erstellt es bei Bedarf) und stellt sicher, dass die Aufgabe
@@ -57,15 +104,16 @@ function terminalOpenAgentPane(taskId, title, sessionId, opts) {
     tab = {
       id: _AGENT_HUB_ID, kind: 'agent', name: 'Subagenten', el,
       _cards: {}, pane: pane ? pane.id : 'pane-a',
+      _focusSid: _agentHubResolveFocus(),   // Hub zeigt den AKTIVEN Chat
     };
     _term.tabs.push(tab);
     el.className = 'termchat agenthub';
     el.innerHTML = `<div class="ap-cards" id="${_AGENT_HUB_ID}-cards"></div>
-      <div class="ap-empty" id="${_AGENT_HUB_ID}-empty">Keine Subagenten in dieser Sitzung.</div>`;
+      <div class="ap-empty" id="${_AGENT_HUB_ID}-empty">Keine Subagenten in diesem Chat.</div>`;
     _terminalRenderTabs();
   }
   if (taskId && !tab._cards[taskId]) {
-    const c = _agentHubAddCard(tab, taskId, title || '', sessionId || '');
+    const c = _agentHubAddCard(tab, taskId, title || '', sessionId || '', opts.meta);
     if (c) c._notifyOnDone = opts.notify !== false;
   }
   if (_activate) _terminalActivate(tab.id);
@@ -74,11 +122,19 @@ function terminalOpenAgentPane(taskId, title, sessionId, opts) {
 
 function _agentHubEmptyState(tab) {
   const empty = document.getElementById(_AGENT_HUB_ID + '-empty');
-  if (empty) empty.style.display = Object.keys(tab._cards).length ? 'none' : 'block';
+  if (empty) empty.style.display = _agentHubVisibleCards(tab).length ? 'none' : 'block';
 }
 
+// Vom Poller gesetztes Server-Timeout (_TIMEOUT_S) — nicht im Client hartkodiert.
+let _agentHubTimeoutS = 0;
+// Differenz Browser-Uhr ↔ Server-Uhr, aus dem `now` des Pollers. MUSS vor dem
+// ersten Kartenbau deklariert sein (`let` wird nicht gehoistet → sonst TDZ).
+let _agentHubClockSkew = 0;
+
 // ── Karte ────────────────────────────────────────────────────────────────────
-function _agentHubAddCard(tab, taskId, title, sessionId) {
+// `meta` (optional): {createdAt, finishedAt, timeoutS} aus der Server-Zeile —
+// beim Reattach bekannt, beim Live-Spawn nicht (dann: jetzt + Default-Timeout).
+function _agentHubAddCard(tab, taskId, title, sessionId, meta) {
   const host = document.getElementById(_AGENT_HUB_ID + '-cards');
   if (!host) return null;
   const el = document.createElement('div');
@@ -99,6 +155,11 @@ function _agentHubAddCard(tab, taskId, title, sessionId) {
   const card = {
     taskId, sessionId: sessionId || '', el, status: 'running', expanded: false,
     tokensIn: 0, tokensOut: 0, model: '',
+    // Zeitstempel der SERVER-Uhr (created_at/finished_at); timeoutS = das
+    // serverseitige Task-Limit (_TIMEOUT_S), durchgereicht statt hier hartkodiert.
+    createdAt: (meta && meta.createdAt) || (Date.now() / 1000) - (_agentHubClockSkew || 0),
+    finishedAt: (meta && meta.finishedAt) || 0,
+    timeoutS: (meta && meta.timeoutS) || _agentHubTimeoutS || 0,
     logEl: el.querySelector('.ap-card-log'),
     tailEl: el.querySelector('.ap-tail'),
     askEl: el.querySelector('.ap-ask'),
@@ -106,8 +167,13 @@ function _agentHubAddCard(tab, taskId, title, sessionId) {
     _live: null, _ctrl: null,
   };
   tab._cards[taskId] = card;
-  // Nur eine Karte → direkt aufklappen (Einzelfall = volle Sicht).
-  if (Object.keys(tab._cards).length === 1) _agentCardToggle(tab, card, true);
+  // Karte eines NICHT fokussierten Chats: anlegen (ihr Transcript-Reader laeuft),
+  // aber ausblenden — sichtbar wird sie beim Wechsel auf ihren Chat.
+  if (tab._focusSid && card.sessionId && card.sessionId !== tab._focusSid) {
+    el.style.display = 'none';
+  }
+  // Nur eine SICHTBARE Karte → direkt aufklappen (Einzelfall = volle Sicht).
+  if (_agentHubVisibleCards(tab).length === 1) _agentCardToggle(tab, card, true);
   el.querySelector('.ap-card-head').addEventListener('click', (e) => {
     if (e.target.closest('.ap-stop') || e.target.closest('.ap-x')) return;
     _agentCardToggle(tab, card);
@@ -212,16 +278,32 @@ function _agentCardRenderAsk(card, pq) {
 }
 
 // Vom Poller (nav.js) gerufen: verteilt die offenen Fragen aus
-// /v1/background-tasks/running auf die Hub-Karten.
-function agentHubApplyPendingQuestions(tasks) {
+// /v1/background-tasks/running auf die Hub-Karten und synchronisiert Uhr +
+// Timeout mit dem Server (`now`/`timeout_s` der Antwort), damit die Laufzeit auf
+// den Karten nicht an einer schiefen Browser-Uhr haengt.
+function agentHubApplyPendingQuestions(tasks, meta) {
+  if (meta && typeof meta.now === 'number') {
+    _agentHubClockSkew = (Date.now() / 1000) - meta.now;
+  }
+  if (meta && typeof meta.timeout_s === 'number') {
+    _agentHubTimeoutS = meta.timeout_s;
+  }
   const tab = _agentHubTab();
   if (!tab || !tab._cards) return;
+  // Fokus nachziehen, falls der aktive Chat auf einem Weg gewechselt hat, der
+  // NICHT über _terminalActivate lief (z.B. openSession aus der Sidebar).
+  const focus = _agentHubResolveFocus();
+  if (focus && focus !== tab._focusSid) agentHubSetFocus(focus);
   const byId = {};
-  for (const t of (tasks || [])) byId[t.id] = t.pending_question || null;
+  for (const t of (tasks || [])) byId[t.id] = t;
   for (const [taskId, card] of Object.entries(tab._cards)) {
+    const row = byId[taskId];
+    if (row && !card.createdAt && row.created_at) card.createdAt = row.created_at;
+    if (row && !card.timeoutS && _agentHubTimeoutS) card.timeoutS = _agentHubTimeoutS;
     if (card.status !== 'running') { _agentCardRenderAsk(card, null); continue; }
-    _agentCardRenderAsk(card, byId[taskId] || null);
+    _agentCardRenderAsk(card, (row && row.pending_question) || null);
   }
+  _agentHubEnsureTicker();
 }
 
 function _agentCardMeta(card) {
@@ -229,7 +311,57 @@ function _agentCardMeta(card) {
   if (!m) return;
   const tok = (card.tokensIn || card.tokensOut) ? `${card.tokensIn}↑ ${card.tokensOut}↓` : '';
   const label = { running: '', done: 'fertig', error: 'Fehler', cancelled: 'gestoppt' }[card.status] || card.status;
-  m.textContent = [label, tok].filter(Boolean).join(' · ');
+  m.textContent = [label, _agentCardTimeText(card), tok].filter(Boolean).join(' · ');
+}
+
+// ── Laufzeit / Timeout ───────────────────────────────────────────────────────
+// Laufend: verstrichene Zeit gegen das Server-Timeout ("4:12 / 60:00") — man
+// sieht, wie viel Luft die Aufgabe noch hat, bevor sie abgebrochen wird.
+// Fertig: die Gesamtlaufzeit ("lief 6:41"). Beides aus SERVER-Zeitstempeln
+// (created_at/finished_at + der `now` des Pollers), damit eine schiefe
+// Browser-Uhr die Aufgaben nicht falsch altern laesst.
+function _agentFmtDur(sec) {
+  const s = Math.max(0, Math.round(sec || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
+           : `${m}:${String(r).padStart(2, '0')}`;
+}
+
+function _agentCardTimeText(card) {
+  if (!card.createdAt) return '';
+  if (card.status === 'running') {
+    // Server-Uhr fortschreiben statt Date.now() zu vertrauen: _skew ist die
+    // Differenz, die der letzte Poll gemessen hat.
+    const now = (Date.now() / 1000) - (_agentHubClockSkew || 0);
+    const el = now - card.createdAt;
+    const cap = card.timeoutS || 0;
+    return cap ? `${_agentFmtDur(el)} / ${_agentFmtDur(cap)}` : _agentFmtDur(el);
+  }
+  if (card.finishedAt) return `lief ${_agentFmtDur(card.finishedAt - card.createdAt)}`;
+  return '';
+}
+
+// 1s-Ticker: haelt die Laufzeit der laufenden Karten aktuell (der 3s-Poller
+// waere sichtbar ruckelig). Laeuft nur, solange es laufende Karten gibt.
+let _agentHubTicker = null;
+function _agentHubEnsureTicker() {
+  const tab = _agentHubTab();
+  const running = tab ? _agentHubVisibleCards(tab).some(c => c.status === 'running') : false;
+  if (running && !_agentHubTicker) {
+    _agentHubTicker = setInterval(() => {
+      const t = _agentHubTab();
+      if (!t) return;
+      for (const c of _agentHubVisibleCards(t)) {
+        if (c.status === 'running') _agentCardMeta(c);
+      }
+      _agentHubEnsureTicker();   // stoppt sich selbst, wenn nichts mehr laeuft
+    }, 1000);
+  } else if (!running && _agentHubTicker) {
+    clearInterval(_agentHubTicker);
+    _agentHubTicker = null;
+  }
 }
 
 function _agentCardSetState(tab, card, status) {
@@ -270,6 +402,11 @@ function _agentCardAttach(tab, card) {
       if (d && d.usage) {
         if (typeof d.usage.input === 'number') card.tokensIn = d.usage.input;
         if (typeof d.usage.output === 'number') card.tokensOut = d.usage.output;
+      }
+      // Endzeit für die Gesamtlaufzeit ("lief 6:41"). Ein Reattach FERTIGER
+      // Karten hat sie schon aus der Server-Zeile; ein live beendeter Lauf nicht.
+      if (!card.finishedAt) {
+        card.finishedAt = (Date.now() / 1000) - (_agentHubClockSkew || 0);
       }
       _agentCardSetState(tab, card, st === 'running' ? 'done' : st);
       _agentCardTail(card, { done: '✓ fertig', error: '✗ Fehler', cancelled: '⏹ gestoppt' }[card.status] || card.status);
@@ -374,40 +511,49 @@ function terminalMaybeOpenAgentPane(toolName, resultStr, title, turnKey, session
   setTimeout(() => { try { terminalOpenAgentPane(taskId, title || '', sessionId || ''); } catch (_) {} }, 250);
 }
 
-// Re-Attach beim Laden des Bottom-Panels: die Hintergrundaufgaben der offenen
-// Chat-Sessions (Terminal-Chats + aktiver Haupt-Chat) als Karten wiederholen —
-// LAUFENDE live (Replay+Follow) UND FERTIGE aus dem Stored-Replay (der seit
-// 9.312.0 auch die gespeicherten Tool-Events ausspielt), damit ein Seiten-
-// Reload die Subagenten-Ansicht nicht verliert (User-Anforderung). Gecappt
-// auf die neuesten 12 je Ladevorgang, damit alte Sessions das Hub nicht fluten.
+// Re-Attach der Hintergrundaufgaben EINES Chats als Karten — LAUFENDE live
+// (Replay+Follow) UND FERTIGE aus dem Stored-Replay (der seit 9.312.0 auch die
+// gespeicherten Tool-Events ausspielt), damit ein Seiten-Reload die Subagenten-
+// Ansicht nicht verliert. Der Deckel gilt PRO CHAT (vorher global ueber alle
+// offenen Chats — ein Chat mit vielen Tasks konnte die eines anderen verdraengen).
 const _AGENT_HUB_REATTACH_MAX = 12;
-async function _agentPaneReattachAll() {
-  if (typeof _term === 'undefined' || !_term.open) return;
-  const sids = new Set();
-  for (const t of _term.tabs) {
-    if (t.kind === 'chat' && t.sessionId) sids.add(t.sessionId);
-  }
+async function _agentPaneReattachSession(sid) {
+  if (!sid || typeof _term === 'undefined' || !_term.open) return;
+  let tasks = [];
   try {
-    const cur = (typeof state !== 'undefined' && state.activeChat && state.activeChat.sessionId);
-    if (cur) sids.add(cur);
-  } catch (_) {}
-  let all = [];
-  for (const sid of sids) {
-    try {
-      const d = await API.getBackgroundTasks(sid);
-      for (const t of ((d && d.tasks) || [])) {
-        t._sid = sid;
-        all.push(t);
-      }
-    } catch (_) { /* Session ohne Tasks / transient */ }
-  }
+    const d = await API.getBackgroundTasks(sid);
+    tasks = (d && d.tasks) || [];
+  } catch (_) { return; }   // Session ohne Tasks / transient
   // Neueste zuerst behalten, dann ÄLTESTE zuerst anlegen (prepend → neueste oben).
-  all.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  all = all.slice(0, _AGENT_HUB_REATTACH_MAX).reverse();
-  for (const t of all) {
+  tasks.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  for (const t of tasks.slice(0, _AGENT_HUB_REATTACH_MAX).reverse()) {
     const hub = _agentHubTab();
     if (hub && hub._cards[t.id]) continue;
-    terminalOpenAgentPane(t.id, t.title || '', t.session_id || t._sid,
-      { activate: false, notify: t.status === 'running' });
+    terminalOpenAgentPane(t.id, t.title || '', t.session_id || sid, {
+      activate: false,
+      notify: t.status === 'running',
+      // Server-Zeitstempel: laufend → verstrichene Zeit vs. Timeout,
+      // fertig → Gesamtlaufzeit.
+      meta: { createdAt: t.created_at || 0, finishedAt: t.finished_at || 0 },
+    });
+    // Eine FERTIGE Karte darf nicht als "läuft" pulsieren, bis ihr Stored-Replay
+    // durch ist — Status sofort aus der Server-Zeile setzen.
+    if (t.status && t.status !== 'running') {
+      const hub2 = _agentHubTab();
+      const c = hub2 && hub2._cards[t.id];
+      if (c) _agentCardSetState(hub2, c, t.status);
+    }
   }
+  _agentHubEnsureTicker();
+}
+
+// Beim Laden des Bottom-Panels: Fokus auf den aktiven Chat setzen und NUR dessen
+// Subagenten laden. Weitere Chats werden erst beim Umschalten nachgeladen.
+async function _agentPaneReattachAll() {
+  if (typeof _term === 'undefined' || !_term.open) return;
+  const sid = _agentHubResolveFocus();
+  if (!sid) return;
+  const hub = _agentHubTab();
+  if (hub) hub._focusSid = sid;
+  await _agentPaneReattachSession(sid);
 }
