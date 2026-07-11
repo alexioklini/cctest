@@ -6837,16 +6837,51 @@ class ChatHandlerMixin:
         # ctx.working_dir is set, but working_dir is only populated later by
         # apply_domain_context (inside run_session_turn) — too late for this
         # build. Check code_mode directly here so the pointer is never emitted.
+        # Resolve the project from the SESSION, not just the request body: a client
+        # may send only `project_id` (or neither, on a follow-up turn) while the
+        # session carries the binding. Reading `project_name` alone made
+        # _is_code_mode False on such turns → the artifact-folder pointer was
+        # emitted into a code-mode chat and the model then wrote its output into
+        # the artifact folder AND the project root.
+        _proj = project_name or getattr(session, "project", "") or ""
         _is_code_mode = False
-        if project_name:
+        if _proj:
             try:
-                _pcfg = engine.ProjectManager.get_project(session.agent_id, project_name)
+                _pcfg = engine.ProjectManager.get_project(session.agent_id, _proj)
                 _is_code_mode = bool(_pcfg and _pcfg.get("code_mode"))
             except Exception:
                 _is_code_mode = False
         preamble_text = ""
-        if len(session.messages) == 0 and _has_file_tools and not _is_code_mode:
-            _art_pre = engine._artifact_folder_preamble_text(session.agent_id, session.id)
+        # Non-code chats: the artifact-folder pointer is a FIRST-turn hint (the
+        # folder never changes and the model keeps it in context).
+        # CODE MODE: the same helper emits THIS CHAT's output folder inside the
+        # project (v9.312.7) — and that one is repeated on EVERY turn with a file
+        # tool: the model must not fall back to inventing a folder name on turn 2+
+        # (observed: it made up `chats/sql_report_<date>_<short-id>` instead of the
+        # real `chats/<slug>_<date>_<full-id>`), and the line is cheap.
+        if _has_file_tools and (_is_code_mode or len(session.messages) == 0):
+            # In code mode the folder name carries the chat TITLE — derive it NOW
+            # if the session has none yet. The worker sets it too, but only when it
+            # appends the user message, i.e. AFTER this preamble is built: on the
+            # first turn the folder would otherwise come out title-less
+            # (`chats/<date>_<id>`) while every later turn carries the title →
+            # two folders for one chat. Same deriver, same result, just earlier;
+            # the worker's `if not session.title` then finds it already set.
+            if _is_code_mode and not session.title:
+                try:
+                    from server import _derive_session_title
+                    _t = _derive_session_title(message)
+                    with session.lock:
+                        if not session.title:
+                            session.title = _t
+                    # Hand it to the folder builder directly: it reads the DB row,
+                    # and this title is not persisted yet (the worker saves the
+                    # session a moment later, with the same value).
+                    engine.get_request_context()._dynamic["_codemode_chat_title"] = _t
+                except Exception:
+                    pass  # best-effort — falls back to the title-less folder
+            _art_pre = engine._artifact_folder_preamble_text(
+                session.agent_id, session.id, code_mode=_is_code_mode)
             if _art_pre:
                 preamble_text = _art_pre
                 message = f"{_art_pre}\n\n{message}"

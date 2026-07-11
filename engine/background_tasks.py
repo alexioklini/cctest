@@ -347,6 +347,22 @@ class BackgroundTaskRunner:
                     is_openai_shape=False,
                     purpose="interactive",
                 )
+                # Code mode: tell the sub-agent ITS output folder — the spawning
+                # CHAT's folder plus a per-task subfolder (`…/subagents/<task_id>/`).
+                # Without it the model invents a name, and a fan-out's concurrent
+                # sub-agents would collide on the same `report.html`. Runs AFTER
+                # apply_domain_context (working_dir is set) and inside the
+                # request_context that carries current_bg_task_id.
+                try:
+                    _pre = _brain._artifact_folder_preamble_text(
+                        snap["agent_id"], snap["session_id"])
+                    if _pre:
+                        prompt = f"{_pre}\n\n{prompt}"
+                    else:
+                        print(f"[bg-task] {task_id[:8]} no output-folder preamble "
+                              f"(code_mode off or no working_dir)", flush=True)
+                except Exception as _e:
+                    print(f"[bg-task] {task_id[:8]} preamble failed: {_e}", flush=True)
                 messages = [{"role": "user", "content": prompt}]
                 # GDPR / quota seam — same gate every background caller passes
                 # through (never a bypass). May swap to a local model or raise.

@@ -132,6 +132,18 @@ def _run(tool: str, payload: dict, cache_dir: str, *, want_project: bool = True)
 # binary docs), which cbm DOES index — making the ShowCase SQL searchable like
 # the plain .sql files. Hash-gated so re-index only rewrites changed files.
 _DBQ_EXTRACT_SUBDIR = ".brain-extracted"
+
+# Directories the code index must never descend into. Single-sourced — the same
+# set was duplicated across the walkers here and in server_daemons' fingerprint,
+# which is exactly how such lists drift apart.
+# `chats` = the per-chat OUTPUT folders the agent writes into (v9.312.7,
+# `chats/<title>_<date>_<id>/`): the index must show the USER's code, not the
+# agent's own generated helper scripts and reports — otherwise they'd surface in
+# `code_search` as if they were project code, and each generated file would
+# re-trigger indexing.
+CBM_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
+                 ".cbm-cache", ".brain-extracted", ".trash", "dist", "build",
+                 "chats"}
 _DISPLAYSQL_RE = None  # compiled lazily in _extract_dbq_sql
 
 
@@ -158,8 +170,7 @@ def _sync_dbq_companions(repo_path: str) -> int:
     import hashlib
     root = os.path.abspath(repo_path)
     written = 0
-    skip = {".git", "__pycache__", "node_modules", ".venv", "venv",
-            ".cbm-cache", ".trash", "dist", "build"}
+    skip = CBM_SKIP_DIRS
     for dirpath, dirnames, filenames in os.walk(root):
         # don't descend into .brain-extracted (its own output) or hidden dirs
         dirnames[:] = [d for d in dirnames
@@ -302,8 +313,7 @@ def per_file_state(working_dir: str, cache_dir: str) -> dict:
     except OSError:
         idx_mtime = 0
     files: dict[str, dict] = {}
-    skip = {".git", "__pycache__", "node_modules", ".venv", "venv", ".cbm-cache",
-            ".brain-extracted", ".trash", "dist", "build"}
+    skip = CBM_SKIP_DIRS
     wd_abs = os.path.abspath(working_dir)
     for dirpath, dirnames, filenames in os.walk(wd_abs):
         dirnames[:] = [d for d in dirnames if d not in skip and not d.startswith(".")]

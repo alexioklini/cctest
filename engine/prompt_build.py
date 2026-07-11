@@ -886,7 +886,8 @@ def _workflow_run_preamble_text(execution_id: str) -> str:
     return "\n\n".join(parts) + "]"
 
 
-def _artifact_folder_preamble_text(agent_id: str, session_id: str) -> str:
+def _artifact_folder_preamble_text(agent_id: str, session_id: str,
+                                   code_mode: bool = False) -> str:
     """One-line per-session artifact-folder pointer for the first user message.
 
     Moved out of `_build_system_prompt` (v9.9.9) so the system prompt stays
@@ -897,11 +898,30 @@ def _artifact_folder_preamble_text(agent_id: str, session_id: str) -> str:
     """
     if not session_id:
         return ""
-    # Code mode: the system prompt already states the working directory as the
-    # cwd, and file tools write THERE (not the artifact folder). Emitting the
-    # artifact-folder pointer here would contradict that — suppress it.
-    if get_request_context().working_dir:
-        return ""
+    # Code mode: file tools write into the PROJECT (working_dir), not into an
+    # artifact folder — so the artifact pointer would be wrong here. Instead give
+    # the model THIS CHAT's output folder inside the project. The path can only
+    # be built server-side (the model doesn't know its session id, and the title
+    # must be slugified consistently), so it belongs in the preamble, not in a
+    # tool schema (which is part of the warm KV prefix and must stay static).
+    #
+    # `code_mode` is passed IN by the caller: at preamble-build time the request
+    # context does NOT yet carry working_dir (apply_domain_context runs later,
+    # inside run_session_turn) — relying on ctx.working_dir here silently fell
+    # through to the artifact branch and the model then invented its own folder
+    # name. The ctx check stays as a fallback for callers that already have it.
+    if code_mode or get_request_context().working_dir:
+        _chat_dir = _brain.get_code_mode_chat_folder(session_id)
+        if not _chat_dir:
+            return ""
+        # A sub-agent gets its OWN subfolder under the chat's (…/subagents/<id>/) —
+        # concurrent fan-out tasks must not collide on the same output filenames.
+        _mine = "THIS TASK" if get_request_context().current_bg_task else "THIS chat"
+        return (f"[Output folder for {_mine}: {_chat_dir}/ (relative to the project root). "
+                f"Everything YOU generate — helper/analysis scripts, reports, diagrams, exports, "
+                f"intermediate files — goes THERE, e.g. `{_chat_dir}/scripts/analyse.py` or "
+                f"`{_chat_dir}/reports/report.html`. Write nothing outside it. Source code you "
+                f"change or add stays where the project's existing code lives — never move it.]")
     _folder = os.path.join(
         _brain.AGENTS_DIR, agent_id, "artifacts",
         _brain._get_artifact_session_folder(session_id))

@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.7",
+        "date": "2026-07-11",
+        "title": "Jeder Chat bekommt seinen eigenen Ausgabeordner",
+        "body": "Was der Agent in einem Code-Projekt erzeugt — Hilfsskripte, "
+                "Reports, Diagramme — liegt jetzt in einem Ordner pro Chat: "
+                "`chats/<Titel>_<Datum>_<ID>/`. Läuft eine Aufgabe über mehrere "
+                "Subagenten, bekommt jeder von ihnen darin ein eigenes "
+                "Unterverzeichnis, sodass sie sich nicht mehr gegenseitig "
+                "überschreiben können. Ihr Quellcode bleibt unberührt, und die "
+                "erzeugten Dateien fließen nicht in die Code-Suche ein.",
+        "audience": "user",
+        "versions": ["9.312.7"],
+    },
+    {
         "version": "9.312.6",
         "date": "2026-07-11",
         "title": "Subagenten-Ansicht folgt dem Chat, mit Laufzeit",

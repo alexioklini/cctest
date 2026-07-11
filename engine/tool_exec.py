@@ -97,6 +97,74 @@ def _get_artifact_session_folder(session_id: str) -> str:
     return folder
 
 
+# --- Code-Mode chat folder -------------------------------------------------
+# In Code Mode the file tools write into the PROJECT (working_dir), not into an
+# artifact folder — so generated helper scripts / reports need a home that does
+# not pollute the source tree AND does not throw every chat's output into one
+# shared bucket. Scheme (user's call): <project>/chats/<title>_<date>_<id>/…
+# Mirrors the per-chat isolation the artifact folders already have outside code
+# mode; the title makes the folder recognisable when browsing the file tree, the
+# id keeps it unique (two chats can share a title), the date sorts.
+
+def _slug_for_folder(text: str, cap: int = 40) -> str:
+    """Filesystem-safe slug: lowercase, word chars + hyphens only, capped on a
+    word boundary. Umlauts survive (Unicode \\w). Empty → ''."""
+    import re as _re
+    s = _re.sub(r"[^\w\s-]", "", (text or "").strip().lower())
+    s = _re.sub(r"[\s_]+", "-", s).strip("-")
+    if len(s) > cap:
+        s = s[:cap].rsplit("-", 1)[0] or s[:cap]
+    return s.strip("-")
+
+
+def get_code_mode_chat_folder(session_id: str) -> str:
+    """Relative folder for THIS chat's generated files inside a code-mode project:
+    `chats/<title>_<date>_<id>`. Falls back to `chats/<date>_<id>` when the chat
+    has no title yet (the title is derived from the first user message, so in
+    practice it is always set before the first tool call — the fallback covers
+    session-less/scheduler paths).
+
+    A SUB-AGENT (detached background task) gets its OWN subfolder underneath:
+    `chats/<title>_<date>_<id>/subagents/<task_id>/`. The chat identity stays the
+    CHAT's (title + session id — a sub-agent has no title of its own and belongs
+    to the chat that spawned it), but each task is isolated: several sub-agents of
+    one fan-out run CONCURRENTLY and would otherwise overwrite each other's
+    `report.html` / read each other's half-written intermediates.
+
+    Cached per request so every tool call of a turn agrees on one folder even if
+    the chat title changes mid-turn (it would otherwise move under the model's
+    feet).
+    """
+    if not session_id:
+        return ""
+    ctx = get_request_context()
+    task_id = (ctx.current_bg_task_id or "") if ctx.current_bg_task else ""
+    ck = f"_codemode_chat_folder_{session_id}_{task_id}"
+    cached = ctx._dynamic.get(ck)
+    if cached:
+        return cached
+    from datetime import datetime as _dt
+    # Title source: the DB row. On the FIRST turn the title is derived just before
+    # this call but not yet persisted, so the caller may hand it over via the
+    # request context (`_codemode_chat_title`) — without that the first turn would
+    # get a title-less folder while every later turn carries the title, i.e. TWO
+    # folders for one chat.
+    title = _slug_for_folder(ctx._dynamic.get("_codemode_chat_title") or "")
+    if not title:
+        try:
+            from server_lib.db import ChatDB
+            row = ChatDB.get_session_info(session_id) or {}
+            title = _slug_for_folder(row.get("title") or "")
+        except Exception:
+            title = ""
+    stamp = f"{_dt.now().strftime('%Y-%m-%d')}_{session_id}"
+    folder = f"chats/{title + '_' if title else ''}{stamp}"
+    if task_id:
+        folder = f"{folder}/subagents/{task_id}"
+    ctx._dynamic[ck] = folder
+    return folder
+
+
 # --- Tool-call dedup (session-scoped loop-breaker) ------------------------
 
 _tool_dedup_lock = threading.Lock()

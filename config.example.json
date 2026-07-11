@@ -244,7 +244,6 @@
       "warmup": false,
       "_caps_canonical": true,
       "description": "Groß (Mistral) — komplexe Analysen, lange Dokumente, 256k Kontext.",
-      "parallel_tool_calls": false,
       "cost_input": 1.5,
       "cost_output": 7.5,
       "background_task_model": "mistral-small-latest",
@@ -350,8 +349,7 @@
         }
       },
       "cost_cache_read": 0.15,
-      "coding_plan": "mistral-vibe",
-      "scratchpad_mode": "sequential"
+      "coding_plan": "mistral-vibe"
     },
     "mistral-small-latest": {
       "enabled": true,
@@ -483,8 +481,7 @@
       },
       "raw_formats": [],
       "cost_cache_read": 0.01275,
-      "coding_plan": "mistral-vibe",
-      "scratchpad_mode": "auto"
+      "coding_plan": "mistral-vibe"
     },
     "mistral-medium-latest": {
       "enabled": false,
@@ -3199,7 +3196,7 @@
       "warmup": false
     },
     "openai/gpt-5.6-luna-pro": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gpt-5.6-luna-pro",
       "display_name": "gpt-5.6-luna-pro (Kilo)",
       "icon": "🤖",
@@ -3429,7 +3426,7 @@
       }
     },
     "openai/gpt-5.6-terra-pro": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gpt-5.6-terra-pro",
       "display_name": "gpt-5.6-terra-pro (Kilo)",
       "icon": "🤖",
@@ -3659,7 +3656,7 @@
       }
     },
     "openai/gpt-5.6-sol-pro": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gpt-5.6-sol-pro",
       "display_name": "gpt-5.6-sol-pro (Kilo)",
       "icon": "🤖",
@@ -3958,7 +3955,7 @@
       "warmup_mode": "minimal"
     },
     "openrouter/openai/gpt-5.6-luna-pro": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gpt-5.6-luna-pro",
       "display_name": "gpt-5.6-luna-pro",
       "icon": "🧭",
@@ -4190,7 +4187,7 @@
       "warmup": false
     },
     "openrouter/openai/gpt-5.6-terra-pro": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gpt-5.6-terra-pro",
       "display_name": "gpt-5.6-terra-pro",
       "icon": "🧭",
@@ -4422,7 +4419,7 @@
       "warmup": false
     },
     "openrouter/openai/gpt-5.6-sol-pro": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gpt-5.6-sol-pro",
       "display_name": "gpt-5.6-sol-pro",
       "icon": "🧭",
@@ -8174,7 +8171,7 @@
     "bin": "/Users/alexander/Documents/dev/cctest/.codebase-memory/bin/codebase-memory-mcp",
     "cache_root": "/Users/alexander/Documents/dev/cctest/.codebase-memory/cache"
   },
-  "code_mode_extension": "**CODE-MODE-ARBEITSWEISE** (gilt für alle Sprachen):\nDu arbeitest in einem Projekt, dessen Code bereits indexiert (gesynct) ist. Der Index ist die frische Quelle der Wahrheit für die Struktur des Codes.\n1. NUTZE ZUERST die Code-Index-Werkzeuge — `code_search` (Symbole/Code finden), `code_query` (strukturelle Abfragen über Symbole/Beziehungen), `code_snippet` (Quelltext eines Symbols lesen), `code_trace` (Aufrufer/Verwendungen). Das gilt für JEDE Arbeit am Code, NICHT nur fürs Schreiben/Ändern: auch wenn du Code ANALYSIERST, DOKUMENTIERST, einen BERICHT/REPORT erstellst, Bestände/Abhängigkeiten/Muster INVENTARISIERST oder Fragen zur Struktur beantwortest. Diese Werkzeuge ersetzen `find`/`grep`/Datei-für-Datei-Listen und das Schreiben eigener Parser-Skripte — sie sind vollständiger (der Index kennt ALLE Treffer, nicht nur die, die du zufällig findest) und schneller. Greife erst auf direktes Lesen/Shell zurück, wenn der Index eine Frage nachweislich nicht beantworten kann.\n2. Wenn du eine Funktion änderst: benenne explizit, welche globalen Variablen oder externen Abhängigkeiten sie nutzt, und mache sie zu Parametern ODER dokumentiere die Kopplung — verändere die Ergebnis-Semantik nicht unbeabsichtigt.\n3. Gib IMMER VOLLSTÄNDIGEN, LAUFFÄHIGEN Code aus — nichts abschneiden; wird es lang, fasse Unwichtiges zusammen, liefere die Lösung aber komplett.\n4. Halte dich an den vorhandenen Projektstil und die Konventionen; achte auf Duplikate / Versions-Drift und weise darauf hin.\n5. PRÜFE VOR dem Start jeder Analyse-/Report-/Recherche-Aufgabe, ob du sie als Hintergrundaufgabe abkoppelst (`run_background_task`) statt inline zu arbeiten. Kopple ab, wenn MINDESTENS EINES zutrifft: (a) die Aufgabe verlangt einen vollständigen Bericht/Audit über einen GANZEN Bestand (alle Prozeduren, alle Module, das ganze Projekt — nicht nur einzelne Symbole), (b) sie deckt MEHRERE unabhängige Themen ab (dann: EIN Aufruf pro Thema, gleiche group_id, Kombination in follow_up), (c) der Nutzer signalisiert, dass er nicht auf die Antwort wartet ('gründlich', 'nimm dir Zeit', 'ich schaue später'). Der Nutzer sieht den Fortschritt live im Subagent-Pane und der Chat bleibt frei. Nur klar kleine, direkte Aufgaben (einzelne Symbole, gezielte Fixes, kurze Fragen) erledigst du inline.\n6. ABLAGE — verschmutze das Projekt nicht. Unterscheide zwei Fälle:\n   • QUELLCODE des Projekts, den du änderst oder ergänzt: bleibt dort, wo er hingehört — am Ort der bestehenden Dateien, nach den Konventionen des Projekts. Verschiebe ihn NICHT.\n   • ALLES, was du SELBST für deine Arbeit erzeugst — Hilfs-/Analyse-/Auswertungsskripte, Reports, Diagramme, Exporte, Zwischen- und Ergebnisdateien: NICHT ins Projekt-Wurzelverzeichnis, sondern in ein eigenes Unterverzeichnis. Nutze ein bereits vorhandenes, wenn das Projekt einen passenden Ort hat (z.B. `tools/`, `scripts/`, `analysis/`, `reports/`, `build/`, `out/`); gibt es keinen, lege `brain/` an und gliedere darin sinnvoll (etwa `brain/scripts/`, `brain/reports/`). Schau NACH, was existiert, bevor du etwas Neues anlegst, und schreibe relative Pfade entsprechend (`brain/scripts/analyse.py`, nicht `analyse.py`). Nenne dem Nutzer am Ende, wo die erzeugten Dateien liegen.",
+  "code_mode_extension": "**CODE-MODE-ARBEITSWEISE** (gilt für alle Sprachen):\nDu arbeitest in einem Projekt, dessen Code bereits indexiert (gesynct) ist. Der Index ist die frische Quelle der Wahrheit für die Struktur des Codes.\n1. NUTZE ZUERST die Code-Index-Werkzeuge — `code_search` (Symbole/Code finden), `code_query` (strukturelle Abfragen über Symbole/Beziehungen), `code_snippet` (Quelltext eines Symbols lesen), `code_trace` (Aufrufer/Verwendungen). Das gilt für JEDE Arbeit am Code, NICHT nur fürs Schreiben/Ändern: auch wenn du Code ANALYSIERST, DOKUMENTIERST, einen BERICHT/REPORT erstellst, Bestände/Abhängigkeiten/Muster INVENTARISIERST oder Fragen zur Struktur beantwortest. Diese Werkzeuge ersetzen `find`/`grep`/Datei-für-Datei-Listen und das Schreiben eigener Parser-Skripte — sie sind vollständiger (der Index kennt ALLE Treffer, nicht nur die, die du zufällig findest) und schneller. Greife erst auf direktes Lesen/Shell zurück, wenn der Index eine Frage nachweislich nicht beantworten kann.\n2. Wenn du eine Funktion änderst: benenne explizit, welche globalen Variablen oder externen Abhängigkeiten sie nutzt, und mache sie zu Parametern ODER dokumentiere die Kopplung — verändere die Ergebnis-Semantik nicht unbeabsichtigt.\n3. Gib IMMER VOLLSTÄNDIGEN, LAUFFÄHIGEN Code aus — nichts abschneiden; wird es lang, fasse Unwichtiges zusammen, liefere die Lösung aber komplett.\n4. Halte dich an den vorhandenen Projektstil und die Konventionen; achte auf Duplikate / Versions-Drift und weise darauf hin.\n5. PRÜFE VOR dem Start jeder Analyse-/Report-/Recherche-Aufgabe, ob du sie als Hintergrundaufgabe abkoppelst (`run_background_task`) statt inline zu arbeiten. Kopple ab, wenn MINDESTENS EINES zutrifft: (a) die Aufgabe verlangt einen vollständigen Bericht/Audit über einen GANZEN Bestand (alle Prozeduren, alle Module, das ganze Projekt — nicht nur einzelne Symbole), (b) sie deckt MEHRERE unabhängige Themen ab (dann: EIN Aufruf pro Thema, gleiche group_id, Kombination in follow_up), (c) der Nutzer signalisiert, dass er nicht auf die Antwort wartet ('gründlich', 'nimm dir Zeit', 'ich schaue später'). Der Nutzer sieht den Fortschritt live im Subagent-Pane und der Chat bleibt frei. Nur klar kleine, direkte Aufgaben (einzelne Symbole, gezielte Fixes, kurze Fragen) erledigst du inline.\n6. ABLAGE — verschmutze das Projekt nicht. Unterscheide zwei Fälle:\n   • QUELLCODE des Projekts, den du änderst oder ergänzt: bleibt dort, wo er hingehört — am Ort der bestehenden Dateien, nach den Konventionen des Projekts. Verschiebe ihn NICHT.\n   • ALLES, was du SELBST für deine Arbeit erzeugst — Hilfs-/Analyse-/Auswertungsskripte, Reports, Diagramme, Exporte, Zwischen- und Ergebnisdateien: gehört in den AUSGABEORDNER DIESES CHATS (`chats/<titel>_<datum>_<id>/`), NICHT ins Projekt-Wurzelverzeichnis und NICHT in die Verzeichnisse des Projekts. Der genaue Ordner für diesen Chat wird dir im Gespräch genannt — verwende ihn wörtlich und gliedere darin sinnvoll (z.B. `<chat-ordner>/scripts/analyse.py`, `<chat-ordner>/reports/report.html`), niemals einen nackten Dateinamen. So bleibt jeder Chat für sich und das Projekt sauber. Nenne dem Nutzer am Ende, wo die erzeugten Dateien liegen.",
   "use_inprocess_openai_loop": true,
   "moa": {
     "enabled": true,

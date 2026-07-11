@@ -3715,7 +3715,7 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
                                event_callback, tool_use_id: str) -> str:
     """Execute command with streaming output via event_callback."""
     import brain as _brain
-    env = os.environ.copy()
+    env = _inject_out_dir_env(os.environ.copy())
     env["TERM"] = "dumb"
     env["NO_COLOR"] = "1"
     env["PAGER"] = "cat"
@@ -3823,9 +3823,12 @@ def tool_execute_command(args: dict) -> str:
         _session_id = get_request_context().current_session_id
         _agent = get_request_context().current_agent or _brain._current_agent
         if cwd and _session_id and _agent:
-            _expected = os.path.join(_brain.AGENTS_DIR, _agent.agent_id, "artifacts",
-                                     _get_artifact_session_folder(_session_id))
-            if os.path.realpath(cwd) == os.path.realpath(_expected):
+            # Ask the resolver instead of rebuilding the path here: a sub-agent's
+            # write root carries a `subagents/<task_id>/` suffix (v9.312.7), and a
+            # hand-built `<date>_<sid>` would no longer match → the produced files
+            # would silently stop being registered as artifacts.
+            _expected, _ = _resolve_artifact_dir()
+            if _expected and os.path.realpath(cwd) == os.path.realpath(_expected):
                 _artifact_cwd = _expected
                 _pre_files = _snapshot_dir(_artifact_cwd)
 
@@ -3841,7 +3844,7 @@ def tool_execute_command(args: dict) -> str:
             return _res
 
         # Force non-interactive environment
-        env = os.environ.copy()
+        env = _inject_out_dir_env(os.environ.copy())
         env["TERM"] = "dumb"
         env["NO_COLOR"] = "1"
         env["PAGER"] = "cat"
@@ -4043,12 +4046,24 @@ def _resolve_artifact_dir():
     if _wd and os.path.isdir(_wd):
         agent = get_request_context().current_agent or _brain._current_agent
         return _wd, (agent.agent_id if agent else "main")
-    session_id = get_request_context().current_session_id
-    agent = get_request_context().current_agent or _brain._current_agent
+    _ctx = get_request_context()
+    session_id = _ctx.current_session_id
+    agent = _ctx.current_agent or _brain._current_agent
     agent_id = agent.agent_id if agent else "main"
     if session_id and agent:
         folder = _get_artifact_session_folder(session_id)
-        return os.path.join(_brain.AGENTS_DIR, agent_id, "artifacts", folder), agent_id
+        root = os.path.join(_brain.AGENTS_DIR, agent_id, "artifacts", folder)
+        # A detached sub-agent gets its own subfolder (v9.312.7). Same reason as
+        # in code mode: the sub-agents of one fan-out run CONCURRENTLY and share
+        # the spawning chat's session id, so without this they all resolve
+        # `report.html` to the SAME path and silently overwrite each other
+        # (reproduced). Artifact registration handles subfolders already
+        # (existing artifacts live under `source/`, `venv/`, …), so the files
+        # still surface in the Artifacts panel.
+        task_id = (_ctx.current_bg_task_id or "") if _ctx.current_bg_task else ""
+        if task_id:
+            root = os.path.join(root, "subagents", task_id)
+        return root, agent_id
     return None, agent_id
 
 
@@ -4063,6 +4078,71 @@ def _path_within(child: str, parent: str) -> bool:
     return c == p or c.startswith(p + os.sep)
 
 
+def _inject_out_dir_env(env: dict) -> dict:
+    """In code mode, export `BRAIN_OUT` = the ABSOLUTE output folder of this chat
+    (or of this sub-agent) into a subprocess env.
+
+    `python_exec` / `execute_command` run with cwd = the PROJECT root — they must,
+    because the model's shell commands read source with relative paths
+    (`q1/Queries/…`). But that means a script writing `open('report.html','w')`
+    lands in the source tree, bypassing the write-tool enforcement entirely
+    (observed: a sub-agent's generated script hard-coded the CHAT folder from the
+    preamble and wrote its report there, not into its own sub-agent folder).
+    Handing the correct directory to the script as an env var closes that hole
+    without moving cwd. The folder is created so a script can write into it
+    immediately.
+    """
+    _wd = get_request_context().working_dir
+    if not (_wd and os.path.isdir(_wd)):
+        return env
+    try:
+        base = _code_mode_write_base(_wd)
+        os.makedirs(base, exist_ok=True)
+        env["BRAIN_OUT"] = base
+    except OSError:
+        pass
+    return env
+
+
+def _brain_code_mode_chat_prefix() -> str:
+    """The CHAT's folder (without any sub-agent part) — a sub-agent that echoes the
+    chat folder back must not have it nested under its own subfolder."""
+    import brain as _brain
+    ctx = get_request_context()
+    sid = ctx.current_session_id
+    if not sid:
+        return ""
+    saved_task, saved_flag = ctx.current_bg_task_id, ctx.current_bg_task
+    try:
+        ctx.current_bg_task = False   # ask for the plain chat folder
+        return _brain.get_code_mode_chat_folder(sid)
+    finally:
+        ctx.current_bg_task_id, ctx.current_bg_task = saved_task, saved_flag
+
+
+def _code_mode_write_base(working_dir: str) -> str:
+    """Base a RELATIVE write path resolves against inside a code-mode project.
+
+    NOT the project root: that is where generated helper scripts and reports used
+    to land, next to the user's source. It is this chat's output folder —
+    `chats/<title>_<date>_<id>/` — and, for a detached sub-agent, its own
+    `…/subagents/<task_id>/` underneath (concurrent fan-out tasks would otherwise
+    overwrite each other's `report.html`).
+
+    Enforced HERE rather than asked for in the prompt: the model is told its
+    folder in the preamble, but a fan-out's sub-agents demonstrably ignored it and
+    all wrote into the shared chat folder. Code decides the path; the model only
+    supplies a name (rule 5). Absolute paths are untouched — editing project
+    source anywhere in the tree stays possible.
+    """
+    import brain as _brain
+    sid = get_request_context().current_session_id
+    if not sid:
+        return working_dir
+    sub = _brain.get_code_mode_chat_folder(sid)
+    return os.path.join(working_dir, sub) if sub else working_dir
+
+
 def _enforce_artifact_path(raw_path: str, tool: str):
     """Resolve a model-supplied write path to its FINAL location and require it to
     be inside the session artifact folder. Returns (final_path, error_or_None):
@@ -4075,6 +4155,11 @@ def _enforce_artifact_path(raw_path: str, tool: str):
       • no session context (CLI/warmup) → no artifact dir to enforce against;
         fall back to abspath, no restriction.
 
+    CODE MODE is different: the write root is the PROJECT (the agent legitimately
+    edits source anywhere in it), so the containment check would be meaningless.
+    There, a RELATIVE path is instead rebased onto this chat's / this sub-agent's
+    output folder (`_code_mode_write_base`), and absolute paths are left alone.
+
     This is the hard block: writing anywhere but the artifact folder is not
     allowed, so the user always sees/downloads what the agent produced.
     """
@@ -4083,6 +4168,27 @@ def _enforce_artifact_path(raw_path: str, tool: str):
     if not artifact_dir:
         # No chat/scheduled session — nothing to scope to; keep prior behavior.
         return (p if os.path.isabs(p) else os.path.abspath(p)), None
+    _wd = get_request_context().working_dir
+    if _wd and os.path.isdir(_wd):
+        # Code mode: rebase relatives into the chat/sub-agent output folder;
+        # absolute paths (source edits) pass through untouched.
+        if os.path.isabs(p):
+            return p, None
+        base = _code_mode_write_base(_wd)
+        # The model is TOLD its folder in the preamble, so it often passes the
+        # full `chats/<chat>/reports/x.html` already. Rebasing that would nest it
+        # a second time (`subagents/<id>/chats/<chat>/…` — observed live), so
+        # strip a leading copy of either the sub-agent base or the plain chat
+        # folder before joining. Idempotent: a path that is already correct stays
+        # put, a bare `reports/x.html` gets the prefix.
+        _norm = os.path.normpath(p)
+        for _pref in (os.path.relpath(base, _wd),
+                      _brain_code_mode_chat_prefix()):
+            if _pref and (_norm == _pref or _norm.startswith(_pref + os.sep)):
+                _norm = os.path.relpath(_norm, _pref)
+                break
+        os.makedirs(base, exist_ok=True)
+        return os.path.join(base, _norm), None
     os.makedirs(artifact_dir, exist_ok=True)
     final = p if os.path.isabs(p) else os.path.join(artifact_dir, p)
     if not _path_within(final, artifact_dir):
@@ -4158,7 +4264,7 @@ def tool_python_exec(args: dict) -> str:
     session_id = get_request_context().current_session_id or ""
     _brain._after_file_write(script_path, "created", agent_id)
 
-    env = os.environ.copy()
+    env = _inject_out_dir_env(os.environ.copy())
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
     if venv_path and os.path.isdir(venv_path):

@@ -865,22 +865,43 @@ python_exec cwd prefer working_dir, and `_resolve_under_cwd` (file_tools.py)
 resolves RELATIVE paths in read_file/list_directory/search_files under
 working_dir (non-code-mode keeps process-cwd abspath).
 
-*Write-path steering (v9.312.3).* Because relative paths resolve against the
-PROJECT ROOT here, the write tools' stock "use a relative filename → lands in
-your artifact folder" advice (v9.153.0) points straight into the user's source
-tree — models dropped helper scripts and reports next to the code. `_filter_tools`
-(the single seam every purpose + warmup path goes through) therefore appends
-`_CODE_MODE_WRITE_HINT` to the wire description of `_CODE_MODE_WRITE_TOOLS`
-(write_file / write_document / python_exec / execute_command / render_diagram)
-whenever `_in_code_mode()` (= a `working_dir` is bound): source code stays where
-the project's code lives; anything the model GENERATES (helper/analysis scripts,
-reports, diagrams, exports) goes in a subdirectory — reuse `tools/` `scripts/`
-`analysis/` `reports/` `build/` `out/`, else create `brain/`. Same shallow-copy
-discipline as the admin `wire_description` override, so non-code turns and warmup
-keep object-identical tool dicts (KV prefix untouched). The system-prompt rule
-(code-mode extension point 6 "ABLAGE") states the same policy but is NOT
-sufficient on its own — verified: a model with the rule in its prompt still wrote
-a bare filename; the tool description sits where the path is chosen and wins.
+*Output folder + write-path enforcement (v9.312.3 → v9.312.7).* Relative paths
+resolve against the PROJECT ROOT here, so the write tools' stock "relative
+filename → artifact folder" advice (v9.153.0) points straight into the user's
+source tree. Two layers fix that:
+
+1. *Prose (necessary, not sufficient).* `_filter_tools` appends
+   `_CODE_MODE_WRITE_HINT` to the wire description of `_CODE_MODE_WRITE_TOOLS`
+   (write_file / write_document / python_exec / execute_command / render_diagram)
+   whenever `_in_code_mode()`; the preamble additionally names THIS chat's exact
+   folder. Same shallow-copy discipline as the admin `wire_description` override,
+   so non-code turns and warmup keep object-identical tool dicts (KV prefix
+   untouched). Verified insufficient on its own: models — sub-agents especially —
+   read the folder and still wrote elsewhere.
+2. *Enforcement in code (rule 5).* `_enforce_artifact_path` (the write_file /
+   write_document choke point) rebases every RELATIVE path onto
+   `_code_mode_write_base()` = **`chats/<slug(title)>_<date>_<session_id>/`**, and
+   for a detached sub-agent **`…/subagents/<task_id>/`** underneath (concurrent
+   fan-out tasks otherwise overwrite each other's `report.html` — reproduced).
+   Idempotent: a path that already echoes the chat or sub-agent prefix is not
+   nested again. ABSOLUTE paths pass through untouched and read_file/edit_file
+   keep resolving under the project root, so editing source anywhere still works.
+   `python_exec`/`execute_command` keep cwd = project root (their shell commands
+   read source relatively), so a script's `open('x','w')` would bypass all of
+   this — `_inject_out_dir_env` therefore exports the absolute target as
+   **`BRAIN_OUT`** into all three subprocess envs.
+
+The chat TITLE is part of the folder name, so `handlers/chat.py` derives it
+(`_derive_session_title`, a pure text transform — no LLM call) BEFORE building the
+preamble and hands it over via `_dynamic['_codemode_chat_title']`; the worker's
+own `if not session.title` then finds it set. Without that the first turn would
+get a title-less folder and every later turn a titled one — two folders per chat.
+
+`chats` is in `CBM_SKIP_DIRS` (single-sourced in `engine/tools/codebase_memory`,
+reused by the daemon's fingerprint): the code index must show the USER's code, not
+the agent's generated scripts/reports, and every generated file would otherwise
+re-trigger indexing. MemPalace is unaffected — the project sync mines `pdir/input`,
+never the `working_dir` (code mode = no ingest).
 
 `BRAIN.md` at the
 working-dir root is the project memory — plain markdown, NEVER mined, injected

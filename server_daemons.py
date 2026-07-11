@@ -3386,8 +3386,11 @@ def _code_index_runs(agent_id: str, project_name: str) -> list:
         return list(_code_index_history.get((agent_id, project_name), []))
 
 
-_CODE_INDEX_SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
-                         ".cbm-cache", ".brain-extracted", ".trash", "dist", "build"}
+# Single-sourced from the indexer (engine/tools/codebase_memory.CBM_SKIP_DIRS) —
+# the fingerprint MUST skip exactly what the index skips, or a change in an
+# ignored dir (e.g. a generated report under `chats/`) triggers a re-index that
+# then indexes nothing new.
+from engine.tools.codebase_memory import CBM_SKIP_DIRS as _CODE_INDEX_SKIP_DIRS
 
 
 def _code_dir_fingerprint(root: str) -> str:
