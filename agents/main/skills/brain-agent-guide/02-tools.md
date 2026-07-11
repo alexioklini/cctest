@@ -757,9 +757,10 @@ write/exec tool is deliberately excluded.
   turn's tool history so the model can re-read it on later rounds. Unlike a
   model's native reasoning field (generated per round, then discarded), a `think`
   note persists across tool rounds — use it after a tool result to check the
-  result against the relevant policy/constraint before acting. Always in-prompt
-  on interactive turns (structural floor, like `tool_search`/`ask_user`), so it
-  survives classifier tool-gating.
+  result against the relevant policy/constraint before acting. In-prompt on a
+  classifier-gated turn ONLY when the model's `scratchpad_mode` is not `off`
+  (conditional floor — see `scratchpad_mode` below); on `off` it is deferred like
+  any other unflagged tool (still `tool_search`-discoverable, never removed).
 - `sequential_thinking(thought, thoughtNumber, totalThoughts, nextThoughtNeeded, …)`
   — the FULL upstream-MCP scratchpad (shown as "Erweiterter Spickzettel"). Same
   no-op nature as `think` but with structured bookkeeping: numbered thoughts, a
@@ -768,7 +769,7 @@ write/exec tool is deliberately excluded.
   (thought history + branches) is per-request in RequestContext._dynamic — NOT
   process-global like the upstream server (that would leak across sessions).
   Returns a status JSON {thoughtNumber, totalThoughts, nextThoughtNeeded,
-  branches, thoughtHistoryLength}. Also in the structural floor. Its wire
+  branches, thoughtHistoryLength}. Same conditional floor as `think`. Its wire
   description is kept VERBATIM from the upstream MCP server (incl. the 11-point
   "You should:" list) on purpose: that procedural guidance is what makes a model
   call the tool MULTIPLE times (numbered thoughts) instead of once — an
@@ -791,7 +792,15 @@ write/exec tool is deliberately excluded.
   undefer) ONLY when the model's `scratchpad_mode` is `calibrate` — every other
   mode's wire stays byte-identical.
 - Per-model `scratchpad_mode` (config + Models-tab dropdown "Spickzettel"):
-  `off` | `simple` | `sequential` | `calibrate` | `auto`. On a fixed mode, every
+  `off` | `simple` | `sequential` | `calibrate` | `auto`. It gates TWO things,
+  and both follow the mode (v9.312.1 — before that only the first did, so `off`
+  suppressed the request but still handed the model the tools, and strong models
+  called them unprompted): (1) the wire-only "think first" REQUEST, and (2) the
+  tool FLOOR — `brain.tool_gating_floor(model)` adds `think`/`sequential_thinking`
+  to the structural floor (`tool_search`/`ask_user`) only when the mode is not
+  `off`. The floor is keyed on the STATIC model config, so it is identical on
+  every turn of a model (incl. `auto` turns the classifier answers "off" for) →
+  KV-prefix-stable; only changing the dropdown invalidates the prefix. On a fixed mode, every
   turn appends a wire-only request (FORCE_THINK_PROMPT /
   FORCE_SEQUENTIAL_THINKING_PROMPT / FORCE_CALIBRATE_PROMPT, on the last user
   message — KV-stable, same mechanism as caveman) telling the model to call the

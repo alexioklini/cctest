@@ -2710,7 +2710,8 @@
         }
       },
       "base_model_id": "glm-5.2",
-      "coding_plan": "glm-lite"
+      "coding_plan": "glm-lite",
+      "background_task_model": "auto"
     },
     "kimi-k2.6": {
       "enabled": true,
@@ -3218,8 +3219,8 @@
       "warmup": false,
       "max_context": 1050000,
       "max_output": 128000,
-      "cost_input": 1.0,
-      "cost_output": 6.0,
+      "cost_input": 1,
+      "cost_output": 6,
       "benchmark": {
         "coding": {
           "measured": {
@@ -3325,8 +3326,8 @@
       "warmup": false,
       "max_context": 1050000,
       "max_output": 128000,
-      "cost_input": 1.0,
-      "cost_output": 6.0,
+      "cost_input": 1,
+      "cost_output": 6,
       "benchmark": {
         "coding": {
           "measured": {
@@ -3342,7 +3343,7 @@
         "math": {
           "measured": {
             "capability": 80,
-            "tps": 48.0,
+            "tps": 48,
             "n": 5,
             "ts": "2026-07-11T10:57:34Z",
             "source": "internal"
@@ -3449,7 +3450,7 @@
       "max_context": 1050000,
       "max_output": 128000,
       "cost_input": 2.5,
-      "cost_output": 15.0,
+      "cost_output": 15,
       "benchmark": {
         "coding": {
           "measured": {
@@ -3490,7 +3491,7 @@
         "reporting": {
           "measured": {
             "capability": 100,
-            "tps": 59.0,
+            "tps": 59,
             "n": 3,
             "ts": "2026-07-11T11:08:23Z",
             "source": "internal"
@@ -3556,7 +3557,7 @@
       "max_context": 1050000,
       "max_output": 128000,
       "cost_input": 2.5,
-      "cost_output": 15.0,
+      "cost_output": 15,
       "benchmark": {
         "coding": {
           "measured": {
@@ -3585,29 +3586,29 @@
             "ts": "2026-07-11T11:02:39Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
         "analysis": {
           "measured": {
-            "tps": 89.0,
+            "tps": 89,
             "n": 3,
             "ts": "2026-07-11T11:03:13Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
         "reporting": {
           "measured": {
-            "tps": 33.0,
+            "tps": 33,
             "n": 3,
             "ts": "2026-07-11T11:03:17Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -3618,7 +3619,7 @@
             "ts": "2026-07-11T11:03:22Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -3629,7 +3630,7 @@
             "ts": "2026-07-11T11:03:46Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -3640,7 +3641,7 @@
             "ts": "2026-07-11T11:03:52Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -3651,7 +3652,7 @@
             "ts": "2026-07-11T11:03:59Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         }
@@ -3678,8 +3679,8 @@
       "warmup": false,
       "max_context": 1050000,
       "max_output": 128000,
-      "cost_input": 5.0,
-      "cost_output": 30.0,
+      "cost_input": 5,
+      "cost_output": 30,
       "benchmark": {
         "coding": {
           "measured": {
@@ -3756,7 +3757,7 @@
         "fast": {
           "measured": {
             "capability": 100,
-            "tps": 10.0,
+            "tps": 10,
             "n": 4,
             "ts": "2026-07-11T11:20:25Z",
             "source": "internal"
@@ -3785,8 +3786,8 @@
       "warmup": false,
       "max_context": 1050000,
       "max_output": 128000,
-      "cost_input": 5.0,
-      "cost_output": 30.0,
+      "cost_input": 5,
+      "cost_output": 30,
       "benchmark": {
         "coding": {
           "measured": {
@@ -3976,8 +3977,8 @@
       "_caps_canonical": true,
       "max_context": 1050000,
       "max_output": 128000,
-      "cost_input": 1.0,
-      "cost_output": 6.0,
+      "cost_input": 1,
+      "cost_output": 6,
       "benchmark": {
         "coding": {
           "measured": {
@@ -4045,7 +4046,7 @@
         "agentic": {
           "measured": {
             "capability": 92,
-            "tps": 162.0,
+            "tps": 162,
             "n": 3,
             "ts": "2026-07-11T10:40:35Z",
             "source": "internal"
@@ -4060,7 +4061,9 @@
             "source": "internal"
           }
         }
-      }
+      },
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/openai/gpt-5.6-luna": {
       "enabled": true,
@@ -4082,8 +4085,8 @@
       "_caps_canonical": true,
       "max_context": 1050000,
       "max_output": 128000,
-      "cost_input": 1.0,
-      "cost_output": 6.0,
+      "cost_input": 1,
+      "cost_output": 6,
       "benchmark": {
         "coding": {
           "measured": {
@@ -4182,7 +4185,9 @@
             "official_name": "GPT-5.6 Luna (max)"
           }
         }
-      }
+      },
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/openai/gpt-5.6-terra-pro": {
       "enabled": true,
@@ -4205,7 +4210,7 @@
       "max_context": 1050000,
       "max_output": 128000,
       "cost_input": 2.5,
-      "cost_output": 15.0,
+      "cost_output": 15,
       "benchmark": {
         "coding": {
           "measured": {
@@ -4288,7 +4293,9 @@
             "source": "internal"
           }
         }
-      }
+      },
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/openai/gpt-5.6-terra": {
       "enabled": true,
@@ -4311,11 +4318,11 @@
       "max_context": 1050000,
       "max_output": 128000,
       "cost_input": 2.5,
-      "cost_output": 15.0,
+      "cost_output": 15,
       "benchmark": {
         "coding": {
           "measured": {
-            "tps": 72.0,
+            "tps": 72,
             "n": 4,
             "ts": "2026-07-11T10:40:55Z",
             "capability": 98,
@@ -4340,7 +4347,7 @@
             "ts": "2026-07-11T10:41:34Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -4351,7 +4358,7 @@
             "ts": "2026-07-11T10:42:07Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -4362,7 +4369,7 @@
             "ts": "2026-07-11T10:42:11Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -4373,7 +4380,7 @@
             "ts": "2026-07-11T10:42:15Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -4384,7 +4391,7 @@
             "ts": "2026-07-11T10:42:37Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -4395,7 +4402,7 @@
             "ts": "2026-07-11T10:42:42Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         },
@@ -4406,11 +4413,13 @@
             "ts": "2026-07-11T10:42:47Z",
             "capability": 99,
             "source": "artificialanalysis",
-            "raw": 55.0,
+            "raw": 55,
             "official_name": "GPT-5.6 Terra (max)"
           }
         }
-      }
+      },
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/openai/gpt-5.6-sol-pro": {
       "enabled": true,
@@ -4432,8 +4441,8 @@
       "_caps_canonical": true,
       "max_context": 1050000,
       "max_output": 128000,
-      "cost_input": 5.0,
-      "cost_output": 30.0,
+      "cost_input": 5,
+      "cost_output": 30,
       "benchmark": {
         "coding": {
           "measured": {
@@ -4516,7 +4525,9 @@
             "source": "internal"
           }
         }
-      }
+      },
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/openai/gpt-5.6-sol": {
       "enabled": true,
@@ -4538,8 +4549,8 @@
       "_caps_canonical": true,
       "max_context": 1050000,
       "max_output": 128000,
-      "cost_input": 5.0,
-      "cost_output": 30.0,
+      "cost_input": 5,
+      "cost_output": 30,
       "benchmark": {
         "coding": {
           "measured": {
@@ -4555,7 +4566,7 @@
         "math": {
           "measured": {
             "capability": 80,
-            "tps": 29.0,
+            "tps": 29,
             "n": 5,
             "ts": "2026-07-11T10:48:05Z",
             "source": "internal"
@@ -4638,7 +4649,9 @@
             "official_name": "gpt-5.6-sol-xhigh"
           }
         }
-      }
+      },
+      "is_local": false,
+      "warmup": false
     },
     "x-ai/grok-4.5": {
       "enabled": false,
@@ -4653,7 +4666,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "~x-ai/grok-latest": {
       "enabled": false,
@@ -4668,7 +4683,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/aion-labs/aion-3.0-mini": {
       "enabled": false,
@@ -4684,7 +4701,9 @@
       "provider": "openrouter",
       "base_model_id": "aion-labs/aion-3.0-mini",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/aion-labs/aion-3.0": {
       "enabled": false,
@@ -4700,7 +4719,9 @@
       "provider": "openrouter",
       "base_model_id": "aion-labs/aion-3.0",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/tencent/hy3:free": {
       "enabled": false,
@@ -4716,7 +4737,9 @@
       "provider": "openrouter",
       "base_model_id": "tencent/hy3:free",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/tencent/hy3": {
       "enabled": false,
@@ -4732,7 +4755,9 @@
       "provider": "openrouter",
       "base_model_id": "tencent/hy3",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/nex-agi/nex-n2-mini": {
       "enabled": false,
@@ -4748,7 +4773,9 @@
       "provider": "openrouter",
       "base_model_id": "nex-agi/nex-n2-mini",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "sakana/fugu-ultra": {
       "enabled": false,
@@ -4763,7 +4790,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "google/gemma-4-26b-a4b-it:free": {
       "enabled": false,
@@ -4787,7 +4816,9 @@
       ],
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "google/gemma-4-31b-it:free": {
       "enabled": false,
@@ -4811,7 +4842,9 @@
       ],
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "liquid/lfm-2.5-1.2b-thinking:free": {
       "enabled": false,
@@ -4826,7 +4859,9 @@
       "thinking_format": "inline_tags",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "liquid/lfm-2.5-1.2b-instruct:free": {
       "enabled": false,
@@ -4841,7 +4876,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "nvidia/nemotron-3-nano-30b-a3b:free": {
       "enabled": false,
@@ -4856,7 +4893,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "nvidia/nemotron-nano-12b-v2-vl:free": {
       "enabled": false,
@@ -4871,7 +4910,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "qwen/qwen3-next-80b-a3b-instruct:free": {
       "enabled": false,
@@ -4892,7 +4933,9 @@
       "raw_formats": [],
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "nvidia/nemotron-nano-9b-v2:free": {
       "enabled": false,
@@ -4907,7 +4950,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openai/gpt-oss-120b:free": {
       "enabled": false,
@@ -4922,7 +4967,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openai/gpt-oss-20b:free": {
       "enabled": false,
@@ -4937,7 +4984,9 @@
       "thinking_format": "none",
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "qwen/qwen3-coder:free": {
       "enabled": false,
@@ -4958,7 +5007,9 @@
       "raw_formats": [],
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "cognitivecomputations/dolphin-mistral-24b-venice-edition:free": {
       "enabled": false,
@@ -4978,7 +5029,9 @@
       "raw_formats": [],
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition": {
       "enabled": false,
@@ -4999,7 +5052,9 @@
       "provider": "openrouter",
       "base_model_id": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "meta-llama/llama-3.3-70b-instruct:free": {
       "enabled": false,
@@ -5020,7 +5075,9 @@
       "raw_formats": [],
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "meta-llama/llama-3.2-3b-instruct:free": {
       "enabled": false,
@@ -5041,7 +5098,9 @@
       "raw_formats": [],
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "nousresearch/hermes-3-llama-3.1-405b:free": {
       "enabled": false,
@@ -5062,7 +5121,9 @@
       "raw_formats": [],
       "provider": "openrouter",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     }
   },
   "nodes": {},

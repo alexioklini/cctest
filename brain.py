@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.312.0"
+VERSION = "9.312.1"
 VERSION_DATE = "2026-07-11"
 CHANGELOG = [
+    ("9.312.1", "2026-07-11", "fix(Spickzettel): `scratchpad_mode: off` war KEIN Aus-Schalter — der Tool-Floor stellte `think`+`sequential_thinking` trotzdem in JEDEN klassifikator-gegateten Prompt. USER-REPORT (Session ed68e2b92b0f, glm-5.2, SQL-Code-Mode-Projekt): 'ich habe think-Toolaufrufe — ist das der Spickzettel? Spickzettel ist deaktiviert fuer glm'. JA, war er. ZWEI ENTKOPPELTE HEBEL, nur einer hoerte auf den Modus: (a) die wire-only 'denk erst nach'-AUFFORDERUNG (handlers/chat.py) respektierte `off` korrekt; (b) `_TOOL_GATING_NEVER_STRIP_TOOLS` (v9.295.0) florte die beiden Werkzeuge NAMENS-basiert und MODUS-BLIND — der Floor fragte `scratchpad_mode` nie ab. Belegt an den Turn-Metadaten: tool_gating.excluded_groups enthaelt `thinking` (Klassifikator deferrte die Gruppe korrekt), tool_resolution.in_prompt enthaelt trotzdem `think`+`sequential_thinking` (der Floor zog sie wieder rein); `calibrate` (nicht im Floor) blieb korrekt deferred. FOLGE: ein Modell, das stark genug ist, ein sichtbares Werkzeug zu benutzen, ruft es ungefragt auf — glm rief `think` 4x auf; im dritten Aufruf argumentierte es sich aus einer bereits zweimal getroffenen Hintergrundaufgaben-Entscheidung wieder HERAUS ('I'll do this inline because … more reliable than delegating to a background LLM'), d.h. der ungewollte Spickzettel kostete nicht nur Token, er kippte eine Ausfuehrungsentscheidung. Der Floor war fuer gemma-12B gedacht (ein Denk-Werkzeug wird NIE als 'needed' klassifiziert, ein schwaches Modell tool_search't nicht danach) — die Begruendung traegt aber nur, wenn der Spickzettel fuer das Modell ueberhaupt AN ist. FIX: der Floor ist jetzt modell-abhaengig. `_TOOL_GATING_NEVER_STRIP_TOOLS` = {tool_search, ask_user} (rein STRUKTURELL, immer); neu `_SCRATCHPAD_FLOOR_TOOLS` = {think, sequential_thinking} + `tool_gating_floor(model)`, die die Scratchpad-Haelfte nur dazunimmt, wenn `model_scratchpad_mode(model) != 'off'` (neue Helper-Fn, spiegelt die Aufloesung aus handlers/chat.py inkl. der Legacy-Booleans force_think/force_sequential_thinking, damit Floor und Aufforderung sich einig sind). Beide Konsumenten umgestellt (classifier_tool_deferral + classifier_gating_decision — das Inspector-Modal meldet damit denselben Floor, den die Deferral tatsaechlich anwendet). KEIN Dead-End: bei `off` sind die Werkzeuge deferred, nicht entfernt — ein Modell, das wirklich einen Spickzettel will, erreicht ihn per tool_search. KV-STABIL: der Floor haengt an der STATISCHEN Modell-Config, nicht am Per-Turn-Signal — er ist auf jedem Turn eines Modells identisch (auch auf `auto`-Turns, die der Klassifikator mit 'off' beantwortet; nur eine Dropdown-Aenderung invalidiert den Prefix, wie jede andere Tool-Set-Aenderung auch). Warmup-Modelle erreichen den Code ohnehin nie (classifier_tool_deferral bailt fuer sie mit ([],[]) aus — der alte Kommentar 'warmup applies the same floor' beschrieb einen Pfad, den es nicht gibt; korrigiert). VERIFIZIERT gegen die echte config.json: glm-5.2 (off) + kimi-k2.6 (off) → Spickzettel DEFERRED; gemma-12B (auto) + mistral-medium-3.5 (sequential) → weiter in-prompt; strukturelle Floor-Werkzeuge in allen Faellen in-prompt. NEUE Testklasse TestScratchpadFloorFollowsMode (5 Faelle: off deferrt / simple+sequential+auto floren / Legacy-Booleans floren / struktureller Floor ueberlebt off / Modal-Floor == Deferral-Floor); tests/test_websearch_escalation_gating.py 17/17 gruen (1 Skip, vorbestehend). py_compile OK. Server-Restart noetig. KURATIERTER Eintrag (der 'Spickzettel'-Regler pro Modell wirkt jetzt wie beschriftet)."),
     ("9.312.0", "2026-07-11", "feat(Subagenten-Hub + Sidebar-Tree + Reload-Persistenz + Delivery-Sichtbarkeit): Ueberarbeitung der 9.308.0-Subagent-Panes nach erstem echten Einsatz (User-Feedback, glm-5.2-Fan-out mit 4 Tasks): (1) HUB statt N Tabs — EIN Singleton-Tab 'Subagenten' (kind agent, web/js/panels_agentpane.js neu geschrieben): pro Aufgabe eine KARTE mit Status-Punkt, Titel, ausfuehrendem MODELL (request-Event des Transcript-SSE traegt seit dieser Version row.model — der tatsaechliche Executor inkl. Fan-out-Offload/GDPR-Swap), Token-Zaehlern, Stopp-Knopf, Tail-Zeile (aktuelles Werkzeug/letzter Text) und aufklappbarem Live-Transcript; Tab-Label mit Laufend-Zaehler + Puls — das 'es arbeitet noch'-Signal, nachdem der spawnende Turn fertig ist. Einzelkarte klappt auto auf. (2) SIDEBAR-TREE — laufende Subagenten erscheinen als Kind-Zeilen unter ihrem Chat-Eintrag in der linken Liste (nav.js renderSessionsList + pollRunningSubagents, exaktes pollActiveSessions-Muster: 3s, Signatur-Vergleich, Repaint nur bei Aenderung); NEUER Endpoint GET /v1/background-tasks/running (handlers/background.py + ChatDB.list_running_background_tasks, JOIN sessions; Non-Admins nur eigene Sessions inkl. Legacy-Leer-Owner — list_sessions-Posture). (3) RELOAD-PERSISTENZ (User-Anforderung): _agentPaneReattachAll haengt jetzt auch FERTIGE Aufgaben der offenen Sessions als Karten an (neueste 12, activate:false = kein Fokus-Klau, notify:false = kein Delivery-Reload); der Stored-Replay des Transcript-Endpoints spielt dafuer die gespeicherten tool_events als tool_call/tool_result-Paare VOR dem Output aus (Result-View 4000-Zeichen-Cap wie live) — eine reloadete Karte sieht aus wie die Live-Ansicht. (4) DELIVERY-SICHTBARKEIT (User-Report 'Subagenten fertig, aber der Chat verarbeitet nichts, wirkt tot'): DB-Diagnose zeigte, die Group-Delivery LIEF (consumed=1, Delivery-User-Message da, streaming_text gesetzt) — aber der TERMINAL-Chat hat nur seinen eigenen POST-Reader und attacht extern gestartete Turns nie (der Haupt-Web-Chat hat _reattachForBackgroundDelivery, code_chat nicht). FIX: _agentHubNotifyDelivery — wird eine Karte fertig (nur live verfolgte, _notifyOnDone), laedt der offene Terminal-Chat-Tab der Spawner-Session nach 1.5s/6s via tcLoadTranscript neu, das bei streaming:true den laufenden Delivery-Turn live attacht (_tcAttachLive; der User verifizierte den Mechanismus manuell per Reload). sessionId dafuer durch beide tool_result-Hooks + Reattach gefaedelt. py_compile OK (background/db/server); js_gate GRUEN (eslint clean, net-globals 1927->1937 = +10, Baseline im selben Commit, smoke passed). VERIFIZIERT live nach Restart: /v1/background-tasks/running liefert laufende Tasks user-gefiltert; Stored-Replay eines fertigen Tasks beginnt mit request{model}+tool_call/tool_result-Paaren. Skill 01-api + 05-internals + 06-user-manual + SKILL.md (1.180.0) im selben Commit. Server-Restart noetig. KURATIERTER Eintrag (user-sichtbar)."),
     ("9.311.3", "2026-07-11", "fix(inspector): metadata.auto_route.tool_resolution fehlte seit dem Breakdown-Stash-Refactor auf ALLEN Turns (nicht nur Code-Mode — der 9.311.2-Nebenbefund war die Spitze eines groesseren Eisbergs). ROOT CAUSE (Refactor-Drift): _build_prefix_for stasht den Ground-Truth-Breakdown seit langem auf dem REQUEST CONTEXT (get_request_context()._tool_breakdown, handlers/chat.py:3984) — die beiden Persist-Stellen (msg_metadata ~4685 + done-Event ~5234) lasen aber weiterhin die bare LOKALE `_tool_breakdown`, die nirgends mehr zugewiesen wird → NameError → vom bestehenden `except NameError: pass` STILL geschluckt, auf jedem Turn. Das Klassifikations-Modal zeigte seither nie mehr die 'Tatsaechlich uebergebene Tools (Wire dieser Anfrage)'-Sektion (9.101.6/.7-Feature), ohne dass es jemand bemerkte — ein Lehrbuch-Fall, warum breite except-NameError-Gurte gefaehrlich sind. FIX: beide Stellen lesen jetzt via getattr aus dem Request-Context (dasselbe Muster wie der Scratchpad-Zweig ~4485, der es immer richtig machte); NameError-Gurte entfernt. VERIFIZIERT live nach Restart (konkretes Modell, Code-Mode-Projekt): metadata.auto_route.tool_resolution enthaelt in_prompt/deferred/excluded — und in_prompt fuehrt run_background_task, was zugleich den 9.311.2-Undefer erstmals auf WIRE-Ebene belegt (vorher nur via Verhalten). py_compile OK. Server-Restart noetig. KEIN kuratierter Eintrag (Bugfix, Inspector-Metadata)."),
     ("9.311.2", "2026-07-11", "fix(code-mode): Modelle koppelten Bestands-Analysen NICHT als Hintergrundaufgabe ab (User-Report, Session 67e2274577b9: 'Analysiere alle SQL-Prozeduren + Abhaengigkeits-Report' auf gpt-5.6-luna → inline trotz Punkt-5-Nudge aus 9.311.1). ZWEI Ursachen, beide gefixt: (1) HARTER BLOCKER — run_background_task war auf der Wire NICHT DEKLARIERT: der Klassifikator flaggt fuer Analyse-/Report-Prompts die delegation-Gruppe nicht (belegt: metadata analysis.tools=[memory,files,code_graph,python]) → defer_extra nimmt sie raus; ein deferred Tool ist nur tool_search-discoverable, und ein Modell waehlt keinen Weg, den es nicht sieht. FIX: apply_domain_context undefert run_background_task im Code-Mode-Zweig (zusaetzlich zu code_*/ast_grep_*; undefer schlaegt classifier-defer_extra seit v9.59.0); Nicht-Code-Chats unveraendert. (2) WEICHER BLOCKER — der 9.311.1-Nudge war unpruefbar vage ('absehbar viele Tool-Aufrufe' kann das Modell vor dem Start nicht wissen; Retest nach Fix 1: luna blieb inline und erledigte den 227-Prozeduren-Report in 33s ueber den Index — aus seiner Sicht vertretbar). FIX: Punkt 5 neu als PRUEF-Anweisung mit drei messbaren Auslösern — (a) vollstaendiger Bericht/Audit ueber einen GANZEN Bestand (alle Prozeduren/Module/das ganze Projekt), (b) mehrere unabhaengige Themen (Fan-out, gleiche group_id, follow_up), (c) Nutzer signalisiert Nicht-Warten ('gruendlich', 'ich schaue spaeter'); klar kleine Aufgaben explizit weiter inline. Live-Override wieder mitgezogen (materialisierte Kopie, 9.243.0-Lektion; Text aus brain.py extrahiert, 2279 Zeichen). VERIFIZIERT (gleicher Prompt/Modell/Projekt): vorher 2x inline, nach beiden Fixes 2/2 Reps → run_background_task als ERSTER Call, Chat sofort frei, Subagent-Pane-Fluss aktiv. NEBENBEFUND (nicht gefixt): metadata.auto_route.tool_resolution ist auf diesem Pfad LEER ({}) — Breakdown-Erfassung greift dort nicht, Diagnose lief ueber analysis.tools. KV: Code-Mode-Prompt ist eigener per-Projekt-Prefix — ein Tool + geaenderter Text = einmaliger Prefix-Miss. py_compile OK. Server-Restart noetig. KEIN kuratierter Eintrag (Bugfix/Prompt-Tuning)."),
@@ -12229,14 +12230,64 @@ def classify_task_purpose_llm(message: str) -> str | None:
 _TOOL_GATING_NEVER_STRIP: set[str] = set()  # no whole-group floor anymore
 # Tool NAMES that stay in-prompt on every classifier-gated turn, regardless of
 # which groups the classifier marked as needed. `tool_search`/`ask_user` are
-# structural (reach deferred tools + clarify). `think` is here because a "think
-# about it first" tool is NEVER classified as needed for a task — it returns no
-# information the classifier can attribute to a task type — so it would always be
-# deferred, and a weak local model never proactively tool_search's for a thinking
-# tool. Floored so it is always available as a scratchpad on policy-heavy,
-# multi-step turns. KV-stable: warmup applies the same floor, so the prefix stays
-# byte-identical. See the think-tool handover.
-_TOOL_GATING_NEVER_STRIP_TOOLS = {"tool_search", "ask_user", "think", "sequential_thinking"}
+# STRUCTURAL (reach deferred tools + clarify) — they floor unconditionally.
+_TOOL_GATING_NEVER_STRIP_TOOLS = {"tool_search", "ask_user"}
+
+# Scratchpad tools floor CONDITIONALLY — only for a model whose `scratchpad_mode`
+# is on. They need a floor at all because a "think about it first" tool is NEVER
+# classified as needed for a task (it returns no information the classifier can
+# attribute to a task type) → it would always be deferred, and a weak local model
+# never proactively tool_search's for a thinking tool. But flooring them
+# UNCONDITIONALLY (v9.295.0) made `scratchpad_mode: off` a lie: the mode only
+# gates the wire-only "think first" REQUEST, so an off-mode cloud model still got
+# `think` handed to it in-prompt and — being strong enough to use a tool it can
+# see — called it unprompted. Observed on glm-5.2 (mode off): 4 `think` calls on a
+# code-mode turn, one of which talked it out of a background task it had already
+# decided on. `calibrate` is deliberately NOT here: it is opt-in-only, statically
+# deferred, and pulled in-prompt by its own mode via ctx.undefer_tools (v9.298.0).
+_SCRATCHPAD_FLOOR_TOOLS = {"think", "sequential_thinking"}
+
+
+def model_scratchpad_mode(model: str) -> str:
+    """Resolve a model's `scratchpad_mode` → off|simple|sequential|calibrate|auto.
+
+    Mirrors handlers/chat.py's resolution (incl. the legacy force_think /
+    force_sequential_thinking booleans) so the FLOOR and the wire-only request
+    agree on whether the scratchpad is on for this model. Reads CONFIG only (not
+    the per-turn classifier choice `auto` resolves to), so the floor — and hence
+    the tool list and the KV prefix — stays byte-stable across every turn of a
+    model, including the `auto` turns the classifier answers "off" for.
+    """
+    try:
+        cfg = resolve_model_settings(model) if _models_config else {}
+    except Exception:
+        return "off"
+    mode = (cfg.get("scratchpad_mode") or "").strip().lower()
+    if not mode:
+        if cfg.get("force_sequential_thinking"):
+            mode = "sequential"
+        elif cfg.get("force_think"):
+            mode = "simple"
+        else:
+            mode = "off"
+    return mode
+
+
+def tool_gating_floor(model: str) -> set[str]:
+    """The never-strip tool-name floor for THIS model's classifier-gated turns.
+
+    Structural floor always; the scratchpad tools only when the model's
+    `scratchpad_mode` is anything but `off` — so the Models-tab dropdown is a
+    real off switch, not just a suppressor of the "think first" request.
+
+    KV-stability: keyed on static model CONFIG, so the floor is identical on
+    every turn of a model (a changed dropdown invalidates the prefix, exactly
+    like any other tool-set edit). Warmup-protected models never reach this at
+    all — `classifier_tool_deferral` bails out for them before the floor applies.
+    """
+    if model_scratchpad_mode(model) == "off":
+        return _TOOL_GATING_NEVER_STRIP_TOOLS
+    return _TOOL_GATING_NEVER_STRIP_TOOLS | _SCRATCHPAD_FLOOR_TOOLS
 
 
 def model_maintains_warm_prefix(model: str) -> bool:
@@ -12441,6 +12492,7 @@ def classifier_tool_deferral(model: str, tool_groups: list[str] | None) -> tuple
     if not (model_should_optimize_tools(model) or model_is_cache_priced(model)):
         return [], []  # preserve KV prefix — never reshape a warmup-protected model
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
+    _floor = tool_gating_floor(model)
     defer_extra: list[str] = []
     undefer: list[str] = []
     for gname, gtools in TOOL_GROUPS.items():
@@ -12448,16 +12500,15 @@ def classifier_tool_deferral(model: str, tool_groups: list[str] | None) -> tuple
             # A needed group: pull its tools in even if normally deferred.
             undefer.extend(gtools)
         else:
-            # Not needed → defer the group's tools OUT, EXCEPT the structural-floor
-            # tool names (tool_search/ask_user), which must always stay in-prompt so
+            # Not needed → defer the group's tools OUT, EXCEPT the floor tool
+            # names (tool_search/ask_user always, the scratchpad tools only when
+            # this model's scratchpad_mode is on), which must stay in-prompt so
             # the turn can reach deferred tools + clarify. Defer everything else —
             # including the file/shell cluster that used to ride in via the `core`
             # floor and bloated the prompt.
-            defer_extra.extend(t for t in gtools
-                               if t not in _TOOL_GATING_NEVER_STRIP_TOOLS)
+            defer_extra.extend(t for t in gtools if t not in _floor)
     # Floor tool names are never deferred and never need explicit undeferring
     # (they're already in-prompt); make sure nothing pushed them out.
-    _floor = _TOOL_GATING_NEVER_STRIP_TOOLS
     defer_extra = [t for t in defer_extra if t not in _floor]
     return defer_extra, undefer
 
@@ -12488,7 +12539,7 @@ def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dic
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
     kept = sorted(g for g in TOOL_GROUPS if g in keep)
     deferred = sorted(g for g in TOOL_GROUPS if g not in keep)
-    floor = sorted(_TOOL_GATING_NEVER_STRIP_TOOLS)
+    floor = sorted(tool_gating_floor(model))
     return {"applied": True,
             "reason": f"non-warmup model — needed groups un-deferred + minimal floor ({', '.join(floor)}) in-prompt; rest deferred (still tool_search-discoverable)",
             "kept_groups": kept, "excluded_groups": deferred, "needed_groups": needed}

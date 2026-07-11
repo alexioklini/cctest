@@ -178,6 +178,72 @@ class TestClassifierDeferralInvariants(unittest.TestCase):
                              f"floor tool {floor_tool} must stay in-prompt")
 
 
+class TestScratchpadFloorFollowsMode(unittest.TestCase):
+    """The per-model `scratchpad_mode` dropdown must be a REAL off switch.
+
+    It gates two things that were wrongly decoupled: the wire-only "think first"
+    request (always honoured the mode) and the tool FLOOR that puts `think` /
+    `sequential_thinking` in-prompt (used to ignore it). With the floor
+    unconditional, an off-mode model still SAW the scratchpad and — if strong
+    enough to use a tool it can see — called it unprompted (glm-5.2, 4 unasked
+    `think` calls). Deferring them on `off` doesn't dead-end anything: they stay
+    tool_search-discoverable, so a model that genuinely wants a scratchpad can
+    still reach one.
+    """
+
+    def setUp(self):
+        self._saved = getattr(brain, "_models_config", None)
+
+    def tearDown(self):
+        if self._saved is not None:
+            brain._models_config = self._saved
+
+    def _defer_for(self, cfg):
+        brain._models_config = {"m": dict(cfg)}
+        defer_extra, _ = brain.classifier_tool_deferral(model="m", tool_groups=["web"])
+        return defer_extra
+
+    def test_mode_off_defers_scratchpad(self):
+        for cfg in ({}, {"scratchpad_mode": "off"}):
+            with self.subTest(cfg=cfg):
+                defer = self._defer_for(cfg)
+                for t in ("think", "sequential_thinking"):
+                    self.assertIn(t, defer,
+                                  f"scratchpad off → {t} must be deferred, not floored in-prompt")
+
+    def test_mode_on_floors_scratchpad(self):
+        for mode in ("simple", "sequential", "auto"):
+            with self.subTest(mode=mode):
+                defer = self._defer_for({"scratchpad_mode": mode})
+                for t in ("think", "sequential_thinking"):
+                    self.assertNotIn(t, defer,
+                                     f"scratchpad {mode} → {t} must stay in-prompt (floored)")
+
+    def test_legacy_booleans_still_floor(self):
+        # Back-compat: the pre-9.295 force_think / force_sequential_thinking
+        # booleans map onto simple / sequential and must keep the floor on.
+        for flag in ("force_think", "force_sequential_thinking"):
+            with self.subTest(flag=flag):
+                defer = self._defer_for({flag: True})
+                self.assertNotIn("think", defer,
+                                 f"legacy {flag} → scratchpad floored in-prompt")
+
+    def test_structural_floor_survives_scratchpad_off(self):
+        # Turning the scratchpad off must not touch the STRUCTURAL floor — the
+        # model still needs to reach deferred tools + clarify.
+        defer = self._defer_for({"scratchpad_mode": "off"})
+        for t in ("tool_search", "ask_user"):
+            self.assertNotIn(t, defer, f"{t} is structural — never deferred")
+
+    def test_gating_decision_floor_matches_deferral(self):
+        # The inspector modal reports the floor; it must not claim a scratchpad
+        # is in-prompt when the deferral just pushed it out.
+        brain._models_config = {"m": {"scratchpad_mode": "off"}}
+        decision = brain.classifier_gating_decision(model="m", tool_groups=["web"])
+        self.assertNotIn("think", decision["reason"],
+                         "modal must not advertise a floored `think` on an off-mode model")
+
+
 class TestResearchDisciplinesAreToolAgnostic(unittest.TestCase):
     """The refusal/precision/citation disciplines are injected on EVERY
     grounding turn (memory, web, documents, context) — incl. a pure-web turn.

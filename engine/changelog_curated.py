@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.1",
+        "date": "2026-07-11",
+        "title": "Spickzettel-Regler schaltet jetzt wirklich ab",
+        "body": "Der Spickzettel-Regler pro Modell (Einstellungen → Modelle) "
+                "wirkt jetzt so, wie er beschriftet ist: Steht er auf „Aus“, "
+                "bekommt das Modell die Denk-Werkzeuge nicht mehr angeboten. "
+                "Bisher wurde nur die Aufforderung zum Nachdenken unterdrückt, "
+                "die Werkzeuge selbst blieben sichtbar — starke Modelle griffen "
+                "trotz „Aus“ danach und verbrauchten dafür Zeit und Budget. "
+                "Modelle mit eingeschaltetem Spickzettel sind unverändert.",
+        "audience": "admin",
+        "versions": ["9.312.1"],
+    },
+    {
         "version": "9.312.0",
         "date": "2026-07-11",
         "title": "Subagenten übersichtlich: ein Hub statt vieler Tabs",
