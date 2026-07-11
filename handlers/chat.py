@@ -4680,12 +4680,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             # from build_first_turn_prefix, NOT reconstructed from
                             # group tables. Computed per turn (classifier re-runs
                             # every turn). May be unset if the turn errored before
-                            # the prefix build.
-                            try:
-                                if _tool_breakdown:
-                                    _ar_meta["tool_resolution"] = _tool_breakdown
-                            except NameError:
-                                pass
+                            # the prefix build. Read from the REQUEST CONTEXT —
+                            # _build_prefix_for stashes it there; the old bare local
+                            # `_tool_breakdown` no longer exists, so the previous
+                            # NameError-guarded read silently skipped EVERY turn
+                            # (tool_resolution missing since the stash refactor).
+                            _ftbd = getattr(engine.get_request_context(),
+                                            "_tool_breakdown", None)
+                            if _ftbd:
+                                _ar_meta["tool_resolution"] = _ftbd
                             # Per-turn research-discipline record (active? which
                             # sections? injected via wire-preamble or system prompt?)
                             # for the inspector's discipline section.
@@ -5230,11 +5233,12 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             _ar_done = dict(auto_route)
                             if _gating_decision is not None:
                                 _ar_done["tool_gating"] = _gating_decision
-                            try:
-                                if _tool_breakdown:
-                                    _ar_done["tool_resolution"] = _tool_breakdown
-                            except NameError:
-                                pass
+                            # From the request context — same fix as the persisted
+                            # metadata site above (bare local was a dead NameError).
+                            _ftbd_done = getattr(engine.get_request_context(),
+                                                 "_tool_breakdown", None)
+                            if _ftbd_done:
+                                _ar_done["tool_resolution"] = _ftbd_done
                             try:
                                 if _discipline_meta is not None:
                                     _ar_done["discipline"] = _discipline_meta
