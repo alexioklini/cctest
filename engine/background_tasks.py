@@ -93,6 +93,12 @@ class BackgroundTaskRunner:
                 "model": session.model,
                 "user_id": getattr(session, "user_id", "") or "",
                 "project": getattr(session, "project", "") or "",
+                # Needed so the worker thread can rebuild the project's DOMAIN
+                # context (apply_domain_context) — a Code-Mode project's
+                # working_dir / code index / tool scoping live there, and a bare
+                # `with request_context()` on a fresh thread has none of it.
+                "project_id": getattr(session, "project_id", "") or "",
+                "research_mode_override": getattr(session, "research_mode_override", None),
                 "thinking_level": getattr(session, "thinking_level", "") or "",
                 "group_id": group_id or None,
             }
@@ -312,6 +318,27 @@ class BackgroundTaskRunner:
                 current_bg_task=True,  # nesting guard: run_background_task refuses here
                 cost_purpose="background_task",  # cost-ledger use-case bucket
             ):
+                # Rebuild the session's DOMAIN context on this fresh thread —
+                # the SAME seam the chat worker uses. Without it the sub-agent
+                # ran with working_dir=None: in a Code-Mode project that means
+                # relative paths fall back to the SERVER's process cwd instead of
+                # the project (user-reported: "die Subagenten schreiben in das
+                # Arbeitsverzeichnis"), the per-project code index is missing
+                # (code_graph_db=None), the code_* tools stay deferred and the
+                # MemPalace exclusions don't apply. Calling apply_domain_context
+                # inherits ALL of it at once instead of re-deriving fields here.
+                # MUST run BEFORE build_first_turn_prefix — the code-mode branch
+                # of the system prompt and the un-deferred code tools depend on it.
+                try:
+                    _brain.apply_domain_context(
+                        agent_id=snap["agent_id"],
+                        project=snap.get("project") or "",
+                        project_id=snap.get("project_id") or "",
+                        user_id=snap["user_id"],
+                        research_mode_override=snap.get("research_mode_override"),
+                    )
+                except Exception:
+                    pass  # best-effort: a broken project must not kill the task
                 system_prompt, _tools, _ = _brain.build_first_turn_prefix(
                     model, snap["agent_id"],
                     mcp_manager=getattr(_brain, "_mcp_manager", None),
