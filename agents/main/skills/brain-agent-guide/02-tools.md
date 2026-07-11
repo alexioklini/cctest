@@ -590,6 +590,15 @@ state (indexed / stale / not-indexed). Querying an unbuilt index returns a
 
 - `git_command(cmd, cwd?)` — subset of git verbs
 - `github_command(...)` — `gh` CLI passthrough
+- `git_worktree(action, slug?, base?, purpose?, force?)` — **worktree lanes**
+  (9.311.0, code-mode only): isolated checkouts under
+  `<working_dir>/.worktrees/<slug>` on branch `brain/<slug>` for risky/parallel
+  work. Actions `create` / `list` / `diff` (base...branch + uncommitted) /
+  `remove` (refuses a dirty lane without `force`). NO auto-merge — integration
+  is the user's deliberate terminal action; the tool prose instructs the agent
+  to confirm create/remove with the user first. Lanes are git-ignored via
+  `.git/info/exclude` (repo-private, never the user's .gitignore); registry
+  (purpose/base/created) in `.worktrees/lanes.json`.
 
 ## MCP
 
@@ -823,7 +832,7 @@ email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply
 delegation    delegate_task task_status task_cancel
 background     run_background_task
 code_graph    code_search code_trace code_query code_snippet ast_grep_search ast_grep_replace
-git           git_command github_command
+git           git_command github_command git_worktree
 scheduler     schedule_list schedule_history
 mcp           mcp_connect mcp_disconnect mcp_servers
 skills        use_skill

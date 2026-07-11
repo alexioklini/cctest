@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.311.0",
+        "date": "2026-07-11",
+        "title": "Code-Modus: sicherer bauen, gezielter suchen",
+        "body": "Drei Verbesserungen für Code-Projekte: Der Assistent kann "
+                "riskante Umbauten jetzt in einem isolierten Arbeitsbereich "
+                "erledigen (eigene Kopie auf eigenem Branch — Sie prüfen den "
+                "Diff und führen selbst zusammen, nie automatisch). Für "
+                "strukturelle Code-Suchen und -Umbauten nutzt er eine "
+                "syntaxbewusste Suche mit Vorschau vor jeder Änderung. Und "
+                "Datei-Änderungen schlagen deutlich seltener fehl: fast "
+                "passende Änderungsstellen mit Anführungszeichen- oder "
+                "Einrückungs-Abweichungen werden sicher erkannt — bei "
+                "Mehrdeutigkeit wird nachgefragt statt geraten.",
+        "audience": "user",
+        "versions": ["9.309.0", "9.310.0", "9.311.0"],
+    },
+    {
         "version": "9.308.0",
         "date": "2026-07-11",
         "title": "Subagenten live im Code-Modus zusehen",

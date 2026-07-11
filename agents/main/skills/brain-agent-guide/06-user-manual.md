@@ -607,6 +607,23 @@ Fehler). Der **Datei-Baum des Arbeitsverzeichnisses** darunter aktualisiert sich
 während `init` oder einer Chat-Antwort) — kein manuelles Neuladen nötig (der
 ⟳-Knopf bleibt für eine sofortige Aktualisierung).
 
+**Isolierte Arbeitsbereiche (Worktree-Lanes, Code-Projekte):** Für riskante
+oder parallele Arbeiten (großes Refactoring, Paket-Upgrade testen) kann der
+Assistent auf Wunsch eine **Lane** anlegen — eine isolierte Kopie des Projekts
+unter `.worktrees/<name>` auf einem eigenen Branch (`brain/<name>`). Er fragt
+vor dem Anlegen und Entfernen nach, arbeitet dann in der Lane statt im
+Hauptverzeichnis und zeigt Ihnen zum Review den **Diff gegen den
+Ausgangsstand**. Das **Zusammenführen bleibt bewusst bei Ihnen** (im Terminal:
+`git merge brain/<name>`) — der Assistent merged nie automatisch. Eine Lane
+mit uncommitteten Änderungen wird nicht stillschweigend gelöscht.
+
+Außerdem arbeitet der Assistent in Code-Projekten präziser: **Datei-Änderungen
+schlagen seltener fehl** (fast-richtige Änderungsstellen mit typografischen
+oder Einrückungs-Abweichungen werden sicher erkannt — bei Mehrdeutigkeit wird
+nachgefragt statt geraten), und für **strukturelle Code-Suchen und
+-Umbauten** („alle Aufrufe von X auf Y umstellen") nutzt er eine syntaxbewusste
+Suche mit **Vorschau vor jeder Änderung**.
+
 **Code-Index nutzen** (Code-Projekte): Der untere Bereich kennt alle Symbole des
 Projekts (aus dem automatisch gepflegten Code-Index) und macht sie direkt
 nutzbar:

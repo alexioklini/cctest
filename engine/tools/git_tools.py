@@ -399,3 +399,206 @@ def tool_github_command(args: dict) -> str:
             return _ok({"output": out[:20000]})
 
     return _err(f"Unknown GitHub action: {action}")
+
+
+# ── git worktree lanes (v9.311.0) ─────────────────────────────────────────────
+# Idea 4/4 from the oh-my-opencode-slim analysis (their `worktrees` skill):
+# git worktrees as ISOLATED coding lanes for code-mode projects — risky
+# refactors / package upgrades / parallel work run in their own checkout under
+# <working_dir>/.worktrees/<slug> on branch brain/<slug>, without touching the
+# main tree. The lane dir sits INSIDE working_dir on purpose: the bottom-panel
+# terminal cwd-lockdown, the file tree and all file tools cover it. It is kept
+# out of git's view via .git/info/exclude (repo-PRIVATE ignore — we never edit
+# the user's .gitignore).
+#
+# v1 scope: create / list / remove / diff. NO auto-merge — integrating a lane
+# is a deliberate user action (terminal: git merge brain/<slug>), the diff
+# action is the review step. Registry (purpose/base/created) in
+# .worktrees/lanes.json next to the lanes.
+
+_WORKTREE_DIRNAME = ".worktrees"
+_WORKTREE_SLUG_RE = None  # compiled lazily
+
+
+def _worktree_repo_root():
+    """The code-mode project's working_dir, if it is a git repo.
+    Returns (root, err)."""
+    from engine.context import get_request_context
+    wd = get_request_context().working_dir or ""
+    if not wd:
+        return "", _err("git_worktree: nur in einem Code-Projekt verfügbar "
+                        "(kein working_dir im Kontext)")
+    wd = os.path.abspath(os.path.expanduser(wd))
+    if not os.path.isdir(os.path.join(wd, ".git")):
+        code, out = _run_git(["rev-parse", "--show-toplevel"], cwd=wd)
+        if code != 0:
+            return "", _err(f"git_worktree: {wd} ist kein Git-Repository")
+    return wd, None
+
+
+def _worktree_slug(raw: str):
+    import re
+    global _WORKTREE_SLUG_RE
+    if _WORKTREE_SLUG_RE is None:
+        _WORKTREE_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+    slug = (raw or "").strip().lower()
+    if not _WORKTREE_SLUG_RE.match(slug):
+        return "", _err("git_worktree: slug muss ^[a-z0-9][a-z0-9_-]{0,39}$ "
+                        "erfüllen (z. B. 'refactor-auth')")
+    return slug, None
+
+
+def _worktree_registry_path(root: str) -> str:
+    return os.path.join(root, _WORKTREE_DIRNAME, "lanes.json")
+
+
+def _worktree_registry_load(root: str) -> dict:
+    try:
+        with open(_worktree_registry_path(root)) as f:
+            return json.load(f) or {}
+    except Exception:
+        return {}
+
+
+def _worktree_registry_save(root: str, reg: dict) -> None:
+    p = _worktree_registry_path(root)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w") as f:
+        json.dump(reg, f, indent=2, ensure_ascii=False)
+
+
+def _worktree_ensure_excluded(root: str) -> None:
+    """Append `.worktrees/` to .git/info/exclude (repo-private, idempotent) so
+    lanes never show up as untracked noise in the MAIN tree. Never touches the
+    user's .gitignore."""
+    try:
+        info_dir = os.path.join(root, ".git", "info")
+        if not os.path.isdir(info_dir):  # .git may be a file (this IS a worktree)
+            return
+        p = os.path.join(info_dir, "exclude")
+        existing = ""
+        if os.path.exists(p):
+            with open(p) as f:
+                existing = f.read()
+        if f"{_WORKTREE_DIRNAME}/" not in existing:
+            with open(p, "a") as f:
+                f.write(f"\n# Brain-Agent worktree lanes\n{_WORKTREE_DIRNAME}/\n")
+    except Exception:
+        pass  # cosmetic only — a failed exclude never blocks the lane
+
+
+def _worktree_dirty(lane_dir: str) -> list[str]:
+    code, out = _run_git(["status", "--porcelain"], cwd=lane_dir)
+    if code != 0:
+        return []
+    return [l for l in out.split("\n") if l.strip()]
+
+
+def tool_git_worktree(args: dict) -> str:
+    """Manage git-worktree lanes for the code-mode project."""
+    action = (args.get("action") or "").strip()
+    root, err = _worktree_repo_root()
+    if err:
+        return err
+
+    if action == "list":
+        code, out = _run_git(["worktree", "list", "--porcelain"], cwd=root)
+        if code != 0:
+            return _err(f"git_worktree: {out}")
+        reg = _worktree_registry_load(root)
+        lanes = []
+        cur: dict = {}
+        for line in out.split("\n") + [""]:
+            if not line.strip():
+                if cur.get("worktree"):
+                    wt = cur["worktree"]
+                    if _WORKTREE_DIRNAME + os.sep in wt or wt == root:
+                        slug = os.path.basename(wt) if wt != root else "(main)"
+                        meta = reg.get(slug, {})
+                        lanes.append({
+                            "slug": slug, "path": wt,
+                            "branch": (cur.get("branch") or "").replace("refs/heads/", ""),
+                            "is_main": wt == root,
+                            "dirty_files": len(_worktree_dirty(wt)) if wt != root else None,
+                            **({"purpose": meta.get("purpose"), "base": meta.get("base"),
+                                "created": meta.get("created")} if meta else {}),
+                        })
+                cur = {}
+                continue
+            k, _, v = line.partition(" ")
+            cur[k] = v or True
+        return _ok({"root": root, "lanes": lanes})
+
+    slug, err = _worktree_slug(args.get("slug", ""))
+    if err and action != "list":
+        return err
+    lane_dir = os.path.join(root, _WORKTREE_DIRNAME, slug)
+    branch = f"brain/{slug}"
+
+    if action == "create":
+        if os.path.isdir(lane_dir):
+            return _err(f"git_worktree: Lane '{slug}' existiert bereits ({lane_dir})")
+        base = (args.get("base") or "").strip() or "HEAD"
+        _worktree_ensure_excluded(root)
+        code, out = _run_git(["worktree", "add", lane_dir, "-b", branch, base],
+                             cwd=root, timeout=120)
+        if code != 0:
+            return _err(f"git_worktree: {out}")
+        reg = _worktree_registry_load(root)
+        code2, base_sha = _run_git(["rev-parse", "--short", base], cwd=root)
+        import datetime as _dt
+        reg[slug] = {"branch": branch, "base": base,
+                     "base_sha": base_sha if code2 == 0 else "",
+                     "purpose": (args.get("purpose") or "").strip()[:300],
+                     "created": _dt.datetime.now().isoformat(timespec="seconds")}
+        _worktree_registry_save(root, reg)
+        return _ok({"slug": slug, "path": lane_dir, "branch": branch, "base": base,
+                    "note": ("Lane erstellt. Dort arbeiten (Dateipfade unter "
+                             f"{lane_dir}), mit action='diff' reviewen; die "
+                             "Integration (merge) macht der Nutzer bewusst im "
+                             "Terminal — nie automatisch.")})
+
+    if action == "diff":
+        if not os.path.isdir(lane_dir):
+            return _err(f"git_worktree: Lane '{slug}' existiert nicht")
+        reg = _worktree_registry_load(root)
+        base = (args.get("base") or (reg.get(slug) or {}).get("base") or "HEAD").strip()
+        code, out = _run_git(["diff", f"{base}...{branch}", "--stat"], cwd=root, timeout=60)
+        if code != 0:
+            return _err(f"git_worktree: {out}")
+        stat = out
+        code, full = _run_git(["diff", f"{base}...{branch}"], cwd=root, timeout=60)
+        if len(full) > 30000:
+            full = full[:30000] + "\n... (Diff gekürzt — pro Datei mit git_command action=diff ansehen)"
+        dirty = _worktree_dirty(lane_dir)
+        return _ok({"slug": slug, "branch": branch, "base": base, "stat": stat,
+                    "diff": full,
+                    "uncommitted_in_lane": dirty[:50],
+                    **({"note": "Es gibt UNCOMMITTETE Änderungen in der Lane — "
+                                "der Diff zeigt nur Committetes."} if dirty else {})})
+
+    if action == "remove":
+        if not os.path.isdir(lane_dir):
+            return _err(f"git_worktree: Lane '{slug}' existiert nicht")
+        dirty = _worktree_dirty(lane_dir)
+        force = bool(args.get("force", False))
+        if dirty and not force:
+            return _err(f"git_worktree: Lane '{slug}' hat {len(dirty)} "
+                        f"uncommittete Änderung(en) — erst committen/verwerfen "
+                        f"oder force=true (verwirft sie ENDGÜLTIG). Nur nach "
+                        f"Rückfrage beim Nutzer forcen.")
+        cmd = ["worktree", "remove", lane_dir]
+        if force:
+            cmd.append("--force")
+        code, out = _run_git(cmd, cwd=root, timeout=60)
+        if code != 0:
+            return _err(f"git_worktree: {out}")
+        reg = _worktree_registry_load(root)
+        reg.pop(slug, None)
+        _worktree_registry_save(root, reg)
+        return _ok({"slug": slug, "removed": True,
+                    "note": f"Worktree entfernt. Der Branch {branch} bleibt "
+                            f"erhalten (Löschung nur bewusst durch den Nutzer: "
+                            f"git branch -D {branch})."})
+
+    return _err("git_worktree: action muss create|list|diff|remove sein")

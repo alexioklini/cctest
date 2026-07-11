@@ -1928,6 +1928,34 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "git_worktree",
+        "description": (
+            "Manage git-worktree LANES for the code-mode project: isolated checkouts under "
+            "<working_dir>/.worktrees/<slug> on branch brain/<slug>, for risky or parallel "
+            "work (refactors, dependency upgrades, experiments) that must not touch the main "
+            "tree. You should: (1) ASK THE USER before creating or removing a lane (state "
+            "slug, base and purpose), (2) after creating, do the work with normal file tools "
+            "INSIDE the lane path and commit there, (3) review with action='diff' (base...branch "
+            "+ uncommitted files), (4) NEVER merge automatically — integration is the user's "
+            "deliberate terminal action (git merge brain/<slug>); offer the diff as the review. "
+            "Actions: create {slug, base?, purpose?} · list · diff {slug, base?} · "
+            "remove {slug, force?} (refuses a dirty lane without force; force discards). "
+            "The lane dir is ignored via .git/info/exclude, never via the user's .gitignore. "
+            "Only available in code-mode projects (uses the project's working directory)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "description": "create | list | diff | remove"},
+                "slug": {"type": "string", "description": "Lane name, ^[a-z0-9][a-z0-9_-]{0,39}$ (e.g. refactor-auth)"},
+                "base": {"type": "string", "description": "Base ref for create/diff (default HEAD / the lane's recorded base)"},
+                "purpose": {"type": "string", "description": "One-line purpose, stored in the lane registry"},
+                "force": {"type": "boolean", "description": "remove only: discard uncommitted lane changes (ask the user first)"},
+            },
+            "required": ["action"],
+        },
+    },
+    {
         "name": "github_command",
         "description": (
             "Interact with GitHub via the gh CLI. Requires gh to be installed and authenticated. Actions:\n"
