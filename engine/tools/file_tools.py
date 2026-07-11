@@ -203,6 +203,118 @@ def tool_write_file(args: dict) -> str:
         return _err(f"write_file: {e}")
 
 
+# ── edit_file rescue (v9.309.0) ──────────────────────────────────────────────
+# Tolerant matching for ALMOST-right old_strings — the dominant edit failure of
+# local models (and pasted-from-render text): typographic quote/dash/nbsp drift
+# and trailing-whitespace/indentation drift. Ported idea from
+# oh-my-opencode-slim's apply_patch rescue. Invariants:
+#   - the file region that matched keeps NOTHING of old_string — it is replaced
+#     by the authored new_string bytes verbatim (indent rescue re-indents
+#     new_string by the same uniform delta the match needed);
+#   - rescue NEVER guesses on ambiguity: >1 tolerant match without
+#     replace_all → hard error, exactly like the exact path;
+#   - rescue only fires when the EXACT match found nothing, so existing
+#     behaviour is byte-identical for every edit that worked before.
+
+# Typographic look-alikes the model (or a rendered view) swaps silently.
+_EDIT_NORM_MAP = {
+    " ": " ",   # nbsp
+    "‘": "'", "’": "'",   # curly single quotes
+    "“": '"', "”": '"',   # curly double quotes
+    "–": "-", "—": "-", "−": "-",   # en/em dash, minus
+    "​": "", "﻿": "",     # zero-width space / BOM
+}
+_EDIT_RESCUE_MIN_CHARS = 6  # tolerant match of a tiny fragment is a guess — refuse
+
+
+def _edit_normalize_with_map(s: str):
+    """Normalize typographic look-alikes, keeping a per-char map back to the
+    original index (zero-width chars drop out, so it's not 1:1). Returns
+    (normalized_string, index_list) where index_list[j] = original index of
+    normalized char j."""
+    out: list[str] = []
+    idx: list[int] = []
+    for i, ch in enumerate(s):
+        for c in _EDIT_NORM_MAP.get(ch, ch):
+            out.append(c)
+            idx.append(i)
+    return "".join(out), idx
+
+
+def _edit_rescue_unicode(content: str, old_string: str):
+    """Find old_string in content under typographic normalization. Returns a
+    list of (start, end) ORIGINAL-byte regions."""
+    norm_content, idx = _edit_normalize_with_map(content)
+    norm_old, _ = _edit_normalize_with_map(old_string)
+    if not norm_old:
+        return []
+    regions = []
+    pos = norm_content.find(norm_old)
+    while pos != -1:
+        start = idx[pos]
+        end = idx[pos + len(norm_old) - 1] + 1
+        regions.append((start, end))
+        pos = norm_content.find(norm_old, pos + 1)
+    return regions
+
+
+def _edit_rescue_lines(content: str, old_string: str):
+    """Line-based tolerant match: trailing whitespace ignored, plus a UNIFORM
+    leading-indentation delta across all non-empty lines. Only applies when
+    old_string spans whole lines (the normal code-edit case). Returns a list of
+    (line_start, line_count, indent_delta)."""
+    old_lines = old_string.split("\n")
+    # Trailing newline in old_string produces a dangling '' — drop it (the
+    # match is on the full lines; the splice preserves the file's own breaks).
+    if len(old_lines) > 1 and old_lines[-1] == "":
+        old_lines = old_lines[:-1]
+    if not any(l.strip() for l in old_lines):
+        return []
+    file_lines = content.split("\n")
+    n = len(old_lines)
+    regions = []
+    for start in range(len(file_lines) - n + 1):
+        deltas = set()
+        ok = True
+        for w, o in zip(file_lines[start:start + n], old_lines):
+            if not o.strip():
+                if w.strip():
+                    ok = False
+                    break
+                continue  # both blank (modulo whitespace) — no delta constraint
+            if w.lstrip().rstrip() != o.lstrip().rstrip():
+                ok = False
+                break
+            deltas.add((len(w) - len(w.lstrip())) - (len(o) - len(o.lstrip())))
+        if ok and len(deltas) <= 1:
+            regions.append((start, n, deltas.pop() if deltas else 0))
+    return regions
+
+
+def _edit_apply_line_regions(content: str, regions, new_string: str) -> str:
+    """Replace whole-line regions with new_string, re-indented by each region's
+    uniform delta (so the replacement lands at the file's ACTUAL indentation,
+    not the drifted one the model wrote)."""
+    file_lines = content.split("\n")
+    for line_start, n, delta in sorted(regions, key=lambda r: r[0], reverse=True):
+        new_lines = new_string.split("\n")
+        if len(new_lines) > 1 and new_lines[-1] == "":
+            new_lines = new_lines[:-1]
+        if delta:
+            adj = []
+            for l in new_lines:
+                if not l.strip():
+                    adj.append(l)
+                elif delta > 0:
+                    adj.append(" " * delta + l)
+                else:
+                    cur = len(l) - len(l.lstrip())
+                    adj.append(l[min(-delta, cur):])
+            new_lines = adj
+        file_lines[line_start:line_start + n] = new_lines
+    return "\n".join(file_lines)
+
+
 def tool_edit_file(args: dict) -> str:
     import brain as _brain
     path = args.get("path", "")
@@ -215,7 +327,47 @@ def tool_edit_file(args: dict) -> str:
             path = os.path.abspath(path)
         with open(path, "r") as f:
             content = f.read()
+        rescued = ""
         count = content.count(old_string)
+        if count == 0 and len(old_string.strip()) >= _EDIT_RESCUE_MIN_CHARS:
+            # Rescue 1: typographic normalization (quotes/dashes/nbsp/zero-width).
+            regions = _edit_rescue_unicode(content, old_string)
+            if regions:
+                if len(regions) > 1 and not replace_all:
+                    return _err(f"edit_file: old_string not found verbatim; a "
+                                f"unicode-normalized match is AMBIGUOUS "
+                                f"({len(regions)} places) — provide a more "
+                                f"specific match or use replace_all=true")
+                for start, end in sorted(regions, reverse=True):
+                    content_new = content[:start] + new_string + content[end:]
+                    content = content_new
+                    if not replace_all:
+                        break
+                rescued, count = "unicode-normalized", len(regions) if replace_all else 1
+            else:
+                # Rescue 2: whole-line match with trailing-ws tolerance + uniform
+                # indent delta; new_string is re-indented by the same delta.
+                line_regions = _edit_rescue_lines(content, old_string)
+                if len(line_regions) > 1 and not replace_all:
+                    return _err(f"edit_file: old_string not found verbatim; a "
+                                f"whitespace-tolerant match is AMBIGUOUS "
+                                f"({len(line_regions)} places) — provide a more "
+                                f"specific match or use replace_all=true")
+                if line_regions:
+                    if not replace_all:
+                        line_regions = line_regions[:1]
+                    content = _edit_apply_line_regions(content, line_regions, new_string)
+                    rescued, count = "whitespace-indent", len(line_regions)
+            if rescued:
+                with open(path, "w") as f:
+                    f.write(content)
+                agent = get_request_context().current_agent or _brain._current_agent
+                _brain._after_file_write(path, "modified", agent.agent_id if agent else "main")
+                return _ok({"path": path, "replacements": count, "status": "edited",
+                            "rescued": rescued,
+                            "note": f"old_string did not match verbatim; applied via "
+                                    f"{rescued} rescue — re-read the region if exact "
+                                    f"bytes matter."})
         if count == 0:
             return _err(f"edit_file: old_string not found in {path}")
         if count > 1 and not replace_all:

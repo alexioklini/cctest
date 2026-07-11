@@ -103,7 +103,13 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   an absolute path or a relative `..` escape that resolves outside it is REFUSED
   with an error (v9.153.0). Same restriction on `write_document`. (CLI/warmup
   with no session: unrestricted fallback.)
-- `edit_file(path, old_string, new_string, replace_all?)` — exact-string edit
+- `edit_file(path, old_string, new_string, replace_all?)` — exact-string edit.
+  **Rescue (9.309.0)**: when the exact match finds nothing, two tolerant passes
+  run — typographic normalization (curly quotes/dashes/nbsp/zero-width) and
+  whole-line matching with trailing-whitespace tolerance + a uniform indent
+  delta (new_string is re-indented by that delta). A UNIQUE tolerant match is
+  applied (result carries `rescued: <mode>` + a note); an ambiguous one errors.
+  Edits that matched exactly before behave byte-identically.
 - `list_directory(path, recursive?)` — ls
 - `search_files(root, pattern, ...)` — grep / find
 - `execute_command(cmd, cwd?, timeout?)` — shell. NO TTY, no stdin,
