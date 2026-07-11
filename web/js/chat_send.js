@@ -733,6 +733,17 @@ function buildStreamCallbacks(chat, isActive) {
         }
       },
       tool_result: (d) => {
+        // Subagent-Pane im Bottom-Panel öffnen, sobald run_background_task eine
+        // task_id liefert (nur Code-Mode — terminalMaybeOpenAgentPane gate't selbst).
+        if (d.name === 'run_background_task' && typeof terminalMaybeOpenAgentPane === 'function') {
+          const call = chat.messages.slice().reverse().find(m =>
+            m.role === 'tool_call' && m.tool_use_id && m.tool_use_id === d.tool_use_id);
+          // Turn-Schlüssel = Anzahl User-Messages → der Auto-Open-Deckel (max 4
+          // Panes) gilt pro Turn, nicht pro Session.
+          terminalMaybeOpenAgentPane(d.name, d.result,
+            (call && call.args && call.args.title) || '',
+            chat.sessionId + '-t' + chat.messages.filter(m => m.role === 'user').length);
+        }
         // d.references is pre-extracted server-side; attach to the message so
         // extractReferencesFromToolResult reads from it directly (no re-parsing).
         const toolMsg = { role: 'tool_result', name: d.name, result: d.result,

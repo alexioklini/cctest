@@ -592,6 +592,11 @@ function _tcCallbacks(tab, live) {
     queue_wait: (d) => { _tcSpinSet(tab, 'Wartet in der Warteschlange' + (d.position ? ` (#${d.position})` : '')); },
     queue_acquired: () => { _tcSpinSet(tab, 'Denkt nach'); },
     tool_call: (d) => {
+      // Subagent-Pane: Titel des Spawns für den tool_result-Hook vormerken
+      // (tool_result trägt keine args mehr).
+      if (d.name === 'run_background_task' && d.tool_use_id) {
+        (live._bgSpawn = live._bgSpawn || {})[d.tool_use_id] = (d.args || {}).title || '';
+      }
       if (!tab.showTools) { _tcSpinSet(tab, 'Werkzeug: ' + (d.name || '')); return; }
       const tuid = d.tool_use_id || ('t' + Object.keys(live.toolById).length);
       let row = live.toolById[tuid];
@@ -613,6 +618,13 @@ function _tcCallbacks(tab, live) {
       _tcScroll(tab);
     },
     tool_result: (d) => {
+      // Subagent-Pane im Bottom-Panel öffnen, sobald run_background_task eine
+      // task_id liefert (Code-Mode only; no-op sonst).
+      if (d.name === 'run_background_task' && typeof terminalMaybeOpenAgentPane === 'function') {
+        live._apKey = live._apKey || (tab.id + '-' + Date.now());
+        terminalMaybeOpenAgentPane(d.name, d.result,
+          (live._bgSpawn || {})[d.tool_use_id] || '', live._apKey);
+      }
       if (!tab.showTools) return;
       const row = live.toolById[d.tool_use_id];
       if (row) { const s = row.querySelector('.tc-tool-state'); if (s) { s.textContent = '✓'; s.classList.add('ok'); } }

@@ -892,9 +892,15 @@ logged-in user (not admin-gated).
   (already returned / not live).
 - `DELETE /v1/background-tasks?task_id=` — remove a finished/aborted row
   (refuses a still-running task with 409 — cancel it first).
-- `GET /v1/background-tasks/<id>/transcript` — SSE. Running → live loop
-  events; finished (or log purged) → one `text_delta` replay of the stored
-  output + a terminal `done`.
+- `GET /v1/background-tasks/<id>/transcript` — SSE. Running → attaches to the
+  runner's per-task LiveStream (replay + follow, 5s keepalives): a leading
+  `request {title,prompt}`, then Brain-vocabulary events (`text_delta`,
+  `thinking_start/delta/done`, `tool_call`, `tool_result` — result VIEW capped
+  at 4000 chars, `result_chars` carries the true length —, `usage`) up to the
+  terminal `done {status,error,usage,tool_calls}`. Finished (or Brain restarted
+  mid-run) → one `text_delta` replay of the stored output + `done`. (Before
+  9.308.0 the live branch proxied the deleted sidecar and silently degraded to
+  the stored replay.)
 
 The finished result is delivered into the spawning chat's NEXT turn wire-only
 (never persisted) — see `05-internals.md`.

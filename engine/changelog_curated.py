@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.308.0",
+        "date": "2026-07-11",
+        "title": "Subagenten live im Code-Modus zusehen",
+        "body": "Wenn der Assistent in einem Code-Modus-Projekt eine "
+                "Hintergrundaufgabe startet, öffnet sich unten automatisch ein "
+                "eigenes Fenster, in dem Sie dem Subagenten live zusehen können — "
+                "seine Antwort, seine Werkzeug-Aufrufe und sein Fortschritt "
+                "erscheinen in Echtzeit, mit Stopp-Knopf direkt daneben. "
+                "Zusätzlich zeigt das Hintergrundaufgaben-Panel rechts bei "
+                "laufenden Aufgaben wieder den Live-Verlauf statt erst das "
+                "Endergebnis.",
+        "audience": "user",
+        "versions": ["9.308.0"],
+    },
+    {
         "version": "9.307.0",
         "date": "2026-07-10",
         "title": "YouTube-Videos und Audio-Links als Quellen",

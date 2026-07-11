@@ -343,7 +343,7 @@ function _terminalMakeDivider(dir, which) {
 function _terminalShowActiveTabs() {
   for (const p of _term.panes) {
     for (const t of _terminalPaneTabs(p.id)) {
-      const shown = t.kind === 'chat' ? 'flex' : 'block';
+      const shown = (t.kind === 'chat' || t.kind === 'agent') ? 'flex' : 'block';
       t.el.style.display = (t.id === p.active) ? shown : 'none';
     }
   }
@@ -736,6 +736,9 @@ async function _terminalLoadSessions() {
   const aPane = _terminalGetPane('pane-a');
   if (aPane && aPane.active) _terminalActivate(aPane.active);
   if (typeof renderTermchatHistory === 'function') renderTermchatHistory();
+  // Subagent-Panes: laufende Hintergrundaufgaben der offenen Sessions wieder
+  // als Live-Tabs anhängen (ephemer — nichts davon steckt in bottom_workspace).
+  if (typeof _agentPaneReattachAll === 'function') { try { _agentPaneReattachAll(); } catch (_) {} }
 }
 
 // Persist the bottom workspace (open editor file paths + active tab) to the
@@ -924,6 +927,10 @@ function _terminalActivate(id) {
     _terminalPersist();
     return;
   }
+  if (tab.kind === 'agent') {
+    // Read-only Subagent-Pane — its transcript stream is already attached.
+    return;
+  }
   // terminal: (re)attach the output stream from our current offset
   if (!tab.attached) _terminalAttach(tab);
   setTimeout(() => { try { tab.fit.fit(); tab.term.focus(); _terminalSendResize(tab); } catch (_) {} }, 30);
@@ -1006,6 +1013,11 @@ async function terminalCloseTab(id, ev) {
     // view never cancels a turn; an explicit /cancel does). Then drop the el.
     if (tab._abort) { try { tab._abort.abort(); } catch (_) {} }
     if (tab._spinTimer) { try { clearInterval(tab._spinTimer); } catch (_) {} }
+    tab.el.remove();
+  } else if (tab.kind === 'agent') {
+    // Closing the VIEW never cancels the background task (the Stopp button
+    // does) — just detach the transcript stream and drop the DOM.
+    if (tab._ctrl) { try { tab._ctrl.abort(); } catch (_) {} }
     tab.el.remove();
   } else {
     if (tab.abort) { try { tab.abort.abort(); } catch (_) {} }
@@ -1129,6 +1141,12 @@ function _terminalRenderTabs() {
         // ◈ chat icon + title; pulse dot while a turn streams.
         label = '◈ ' + esc(t.name || 'Chat');
         if (t.streaming) cls = ' tc-tab-live';
+      } else if (t.kind === 'agent') {
+        // ✦ subagent pane (live transcript of a background task); pulse while
+        // the task runs, ✗-tint once it errored.
+        label = '✦ ' + esc(t.name || 'Subagent');
+        if (t.status === 'running') cls = ' tc-tab-live';
+        else if (t.status === 'error') cls = ' ap-tab-err';
       } else {
         label = 'Terminal ' + (termNum.get(t.id) || '');
       }

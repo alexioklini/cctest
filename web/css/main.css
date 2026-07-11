@@ -948,6 +948,22 @@ textarea { resize: none; }
 .tc-tool-name { color: var(--text-200); font-weight: 600; }
 .tc-tool-arg { color: var(--text-400); }
 .tc-tool-state.ok { color: var(--git-added); }
+.tc-tool-state.err { color: var(--git-deleted); }
+/* Subagent-Pane (kind:'agent') — Kopfzeile + Statuspunkt; Log/Footer erben
+   die termchat-Klassen. */
+.agentpane .ap-head { flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
+  padding: 5px 12px; font-size: 12px; background: var(--bg-200);
+  border-bottom: 1px solid var(--border-200); }
+.agentpane .ap-title { font-weight: 600; color: var(--text-200);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agentpane .ap-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.agentpane .ap-dot.running { background: var(--git-added); animation: ap-pulse 1.4s ease-in-out infinite; }
+.agentpane .ap-dot.done { background: var(--text-400); }
+.agentpane .ap-dot.cancelled { background: var(--accent-brand); }
+.agentpane .ap-dot.error { background: var(--git-deleted); }
+.agentpane .ap-stop { font-size: 11px; padding: 1px 8px; }
+@keyframes ap-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.terminal-tab.ap-tab-err .tt-name { color: var(--git-deleted); }
 /* turn-control rows: btw side-answer, injected clarification, queue ack.
    Uses the terminal's own accent (--accent-brand = terracotta inside .termchat)
    so it matches the CLI look instead of introducing an off-palette colour. */

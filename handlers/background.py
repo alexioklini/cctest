@@ -4,9 +4,10 @@ Routes (registered in server.py):
   GET    /v1/background-tasks?session_id=X      → list tasks for a session
   POST   /v1/background-tasks/cancel {task_id}   → request cancel (partial kept)
   DELETE /v1/background-tasks {task_id}          → remove a finished/aborted row
-  GET    /v1/background-tasks/<id>/transcript    → SSE: live sidecar events while
-                                                   running, else a single replay
-                                                   of the stored final output
+  GET    /v1/background-tasks/<id>/transcript    → SSE: live Brain-vocabulary
+                                                   events while running (LiveStream
+                                                   replay+follow), else a single
+                                                   replay of the stored final output
 
 Durable state lives in the `background_tasks` table (ChatDB); the runner
 (`engine.background_tasks.background_task_runner`) owns the live threads.
@@ -14,8 +15,6 @@ Durable state lives in the `background_tasks` table (ChatDB); the runner
 
 from __future__ import annotations
 
-import urllib.request
-import urllib.error
 from urllib.parse import urlparse, parse_qs
 
 from server_lib.db import ChatDB
@@ -91,9 +90,13 @@ class BackgroundTasksHandlerMixin:
     def _handle_background_task_transcript(self, path: str):
         """GET /v1/background-tasks/<id>/transcript — 'Transkript anzeigen'.
 
-        Running task → proxy the sidecar's live event stream. Finished task (or
-        sidecar log already purged) → replay the stored output as one terminal
-        event, so the client uses a single SSE code path either way.
+        Running task → attach to the runner's per-task LiveStream (replay the
+        buffered events, then follow live until the terminal `done`). Finished
+        task (or no live stream, e.g. after a restart) → replay the stored
+        output as one terminal event, so the client uses a single SSE code path
+        either way. (Until v9.308.0 the live branch proxied the sidecar's
+        per-turn event log — dead since the sidecar was deleted in v9.247.0, so
+        'Transkript anzeigen' silently degraded to the stored replay.)
         """
         # path = /v1/background-tasks/<id>/transcript
         parts = path.strip("/").split("/")
@@ -128,30 +131,36 @@ class BackgroundTasksHandlerMixin:
         # both the live and the stored-replay path below.
         emit("request", {"title": row.get("title") or "", "prompt": row.get("prompt") or ""})
 
-        turn_id = row.get("turn_id") or ""
-        if row.get("status") == "running" and turn_id:
-            import handlers.sidecar_proxy as _sp
-            sc_url = _sp.sidecar_url() + f"/turn/{turn_id}/events?since=0"
-            req = urllib.request.Request(sc_url, method="GET")
-            req.add_header("Accept", "text/event-stream")
+        from engine.background_tasks import background_task_runner
+        stream = background_task_runner.get_stream(task_id)
+        if row.get("status") == "running" and stream is not None:
+            import queue as _q
+            sub, replay, already_done = stream.attach()
             try:
-                resp = urllib.request.urlopen(req, timeout=3600.0)
-            except (urllib.error.HTTPError, urllib.error.URLError, OSError):
-                resp = None
-            if resp is not None:
-                try:
-                    # Raw passthrough of the sidecar SSE frames — same wire shape
-                    # the chat recovery path consumes, no re-translation needed.
-                    for raw in resp:
+                for ev_type, ev_data in replay:
+                    if not emit(ev_type, ev_data):
+                        return
+                if already_done:
+                    return  # replay already ended with the terminal event
+                while True:
+                    try:
+                        ev_type, ev_data = sub.get(timeout=5.0)
+                    except _q.Empty:
+                        # SSE keepalive comment (5s rule) so proxies don't cut us.
                         try:
-                            self.wfile.write(raw)
+                            self.wfile.write(b": keepalive\n\n")
                             self.wfile.flush()
                         except (OSError, BrokenPipeError):
-                            break
-                finally:
-                    resp.close()
-                return
-            # Sidecar unreachable / log purged → fall through to stored replay.
+                            return
+                        continue
+                    if not emit(ev_type, ev_data):
+                        return
+                    if ev_type in ("done", "error"):
+                        return
+            finally:
+                stream.detach(sub)
+            # unreachable — every path above returns; kept for clarity
+        # No live stream (finished, or Brain restarted mid-run) → stored replay.
 
         # Finished (or no live stream available): replay the stored output.
         full = ChatDB.get_background_task(task_id) or row

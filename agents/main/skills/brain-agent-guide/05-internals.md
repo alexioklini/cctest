@@ -1036,10 +1036,28 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
   Either path consumes the task exactly once.
 - **Cancel = partial kept**: Stopp trips a flag + cancels the in-flight turn; the
   worker stores whatever output it had and marks the row `cancelled`.
+- **Live transcript (9.308.0)**: the runner holds a per-task `LiveStream`
+  (`server.LiveStream` resolved via the sys.modules seam; None-tolerant) and
+  passes an `emit` tap into `background_call` (the same seam the workflow
+  `agent_step` uses) — the run's Brain-vocabulary events land in a replay log
+  that `GET /v1/background-tasks/<id>/transcript` serves (attach = replay +
+  follow). `tool_result` views are capped at 4000 chars (`result_chars` = true
+  length); the terminal `done` is emitted after the DB write and before the
+  `_live` pop, so late attaches fall back to the stored replay cleanly.
 - **Panel**: the "Hintergrundaufgaben" right-panel tab + top-bar pill
   (`web/js/panels_background.js`) poll `GET /v1/background-tasks` every 2s while
-  ≥1 task runs (no new SSE channel). "Transkript anzeigen" hits the transcript
-  endpoint (live loop SSE while running, stored replay once finished).
+  ≥1 task runs, plus one transcript-SSE per running task for the live timeline.
+- **Subagent-Panes (Code-Mode, 9.308.0)**: in a code-mode project the bottom
+  workspace grows a fourth tab kind `agent` (`web/js/panels_agentpane.js`):
+  when a chat turn's `run_background_task` tool_result carries a task_id, the
+  tool_result callbacks (termchat `_tcCallbacks` + main-chat
+  `buildStreamCallbacks`) call `terminalMaybeOpenAgentPane` — gated on
+  `terminalAvailable()`, opens the panel if needed, max 4 auto-panes per turn.
+  The pane is a read-only termchat-styled view of the transcript SSE (request
+  line, markdown text, dimmed thinking, tool rows) with a status dot + Stopp
+  button (`POST /v1/background-tasks/cancel`); closing the TAB never cancels.
+  Panes are ephemeral (not in `bottom_workspace`); `_terminalLoadSessions`
+  re-attaches running tasks via `_agentPaneReattachAll`.
 - **Boot reconcile**: a `running` row whose thread died on shutdown is set to
   `error` at startup so the panel never shows a zombie.
 

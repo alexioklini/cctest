@@ -46,8 +46,31 @@ class BackgroundTaskRunner:
 
     def __init__(self):
         self._lock = threading.Lock()
-        # task_id -> {"turn_id": str, "cancel": threading.Event}
+        # task_id -> {"turn_id": str, "cancel": threading.Event,
+        #             "stream": LiveStream|None}
         self._live: dict[str, dict] = {}
+
+    @staticmethod
+    def _make_stream():
+        """Per-task live event buffer for the transcript SSE (replay + follow).
+        Reuses server.py's LiveStream — resolved via sys.modules like the other
+        engine→server seams (the entry module is `__main__` under launchd).
+        Returns None when unavailable (unit tests) — the run then simply has no
+        live transcript; everything else is unaffected."""
+        import sys as _sys
+        _srv = _sys.modules.get("__main__") or _sys.modules.get("server")
+        cls = getattr(_srv, "LiveStream", None) if _srv else None
+        try:
+            return cls() if cls is not None else None
+        except Exception:
+            return None
+
+    def get_stream(self, task_id: str):
+        """The live transcript stream of a RUNNING task, or None once finished
+        (the transcript endpoint then replays the stored row instead)."""
+        with self._lock:
+            live = self._live.get(task_id)
+            return live.get("stream") if live else None
 
     # ---- public API -------------------------------------------------------
 
@@ -88,7 +111,8 @@ class BackgroundTaskRunner:
             group_id=group_id, follow_up=follow_up, parent_task_id=parent_task_id)
         cancel_ev = threading.Event()
         with self._lock:
-            self._live[task_id] = {"turn_id": "", "cancel": cancel_ev}
+            self._live[task_id] = {"turn_id": "", "cancel": cancel_ev,
+                                   "stream": self._make_stream()}
         t = threading.Thread(
             target=self._run, args=(task_id, snapshot, prompt, cancel_ev),
             daemon=True, name=f"bgtask-{task_id[:8]}")
@@ -242,7 +266,30 @@ class BackgroundTaskRunner:
         with self._lock:
             if task_id in self._live:
                 self._live[task_id]["turn_id"] = turn_id
+            live_stream = (self._live.get(task_id) or {}).get("stream")
         ChatDB.set_background_task_turn(task_id, turn_id)
+
+        # Live transcript tap: forward the loop's Brain-vocabulary events
+        # (text_delta / thinking_* / tool_call / tool_result / usage) into the
+        # per-task LiveStream so GET /v1/background-tasks/<id>/transcript can
+        # replay + follow while the task runs. Tool results are capped so a
+        # 100KB read_document result doesn't balloon the replay buffer — the
+        # full text still reaches the model; only the transcript VIEW is
+        # trimmed (result_chars carries the true length).
+        def _emit(et, data):
+            if live_stream is None:
+                return
+            try:
+                if et == "tool_result" and isinstance(data, dict):
+                    r = data.get("result")
+                    if isinstance(r, str):
+                        data = dict(data)
+                        data["result_chars"] = len(r)
+                        if len(r) > 4000:
+                            data["result"] = r[:4000] + " … [gekürzt]"
+                live_stream.emit(et, data)
+            except Exception:
+                pass  # a transcript viewer must never break the run
 
         status = "done"
         output = ""
@@ -299,6 +346,7 @@ class BackgroundTaskRunner:
                     timeout_s=_TIMEOUT_S,
                     turn_id=turn_id,
                     bg_task=True,  # nesting guard: this run can't spawn bg-tasks
+                    emit=_emit,    # live transcript tap (subagent pane / panel)
                 )
             output = res.get("reply") or ""
             usage = res.get("usage_total") or {}
@@ -354,6 +402,14 @@ class BackgroundTaskRunner:
                 task_id, status, output=output, error=error,
                 usage_in=usage_in, usage_out=usage_out, tool_calls=tool_calls,
                 tool_events=tool_events)
+            # Terminal event for attached transcript viewers — emitted AFTER the
+            # DB write (a viewer reconciling on `done` finds the finished row)
+            # and BEFORE the pop (late attaches fall back to the stored replay).
+            _emit("done", {
+                "status": status, "error": error,
+                "usage": {"input": usage_in, "output": usage_out},
+                "tool_calls": tool_calls,
+            })
             with self._lock:
                 self._live.pop(task_id, None)
             # Group-aware delivery. If this task belongs to a group, attempt the

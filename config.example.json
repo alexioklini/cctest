@@ -85,6 +85,20 @@
       "api_key": "YOUR_API_KEY",
       "is_local": false,
       "_comment": "Kimi Coding Plan DIRECT (kimi.com) — moved off Kilo in 9.292.0. Model kimi-for-coding (K2.7 Code, thinking-ONLY, 262k ctx). wire_api:anthropic (9.293.0): the OpenAI endpoint (/chat/completions) rejects reasoning_effort:none (400) and is unstable with tools; the Anthropic endpoint (/v1/messages) supports thinking:{type:disabled} + tools together — verified vs Kilo. Brain speaks the Anthropic wire for this provider via llm_loop's adapter."
+    },
+    "openrouter": {
+      "base_url": "https://openrouter.ai/api/v1",
+      "type": "openai",
+      "api_key": "YOUR_API_KEY",
+      "api_keys": [
+        {
+          "name": "default",
+          "key": "YOUR_API_KEY",
+          "usage": "preferred"
+        }
+      ],
+      "is_local": false,
+      "_comment": "OpenRouter direct (openrouter.ai) — angelegt 2026-07-11 fuer die GPT-5.6-Modelle (luna/terra/sol +/- pro). Gleiche Upstream-IDs wie Kilo (openai/gpt-5.6-*), daher provider-scoped Keys openrouter/openai/gpt-5.6-*."
     }
   },
   "ocr": {
@@ -2409,7 +2423,7 @@
       "coding_plan": "mistral-vibe"
     },
     "gemma-4-12B-it-qat-4bit": {
-      "enabled": true,
+      "enabled": false,
       "shortname": "gemma-4-12B-it-qat-4bit",
       "display_name": "gemma-4-12B-it-qat-4bit",
       "icon": "💎",
@@ -2434,7 +2448,7 @@
       "_caps_canonical": true,
       "is_local": true,
       "auto_lcm": true,
-      "warmup": true,
+      "warmup": false,
       "warmup_mode": "minimal",
       "benchmark": {
         "coding": {
@@ -3184,106 +3198,694 @@
       "warmup": false
     },
     "openai/gpt-5.6-luna-pro": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "gpt-5.6-luna-pro",
-      "display_name": "gpt-5.6-luna-pro",
+      "display_name": "gpt-5.6-luna-pro (Kilo)",
       "icon": "🤖",
       "priority": 10,
       "capabilities": [
-        "chat"
+        "chat",
+        "image"
       ],
-      "raw_formats": [],
-      "thinking_format": "none",
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
       "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 1.0,
+      "cost_output": 6.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 116.5,
+            "n": 4,
+            "ts": "2026-07-11T10:59:01Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 87.6,
+            "n": 5,
+            "ts": "2026-07-11T10:59:13Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 97,
+            "tps": 330.5,
+            "n": 3,
+            "ts": "2026-07-11T10:59:46Z",
+            "source": "internal"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 98,
+            "tps": 305.5,
+            "n": 3,
+            "ts": "2026-07-11T11:00:17Z",
+            "source": "internal"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 98,
+            "tps": 57.1,
+            "n": 3,
+            "ts": "2026-07-11T11:00:33Z",
+            "source": "internal"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 97,
+            "tps": 51.6,
+            "n": 3,
+            "ts": "2026-07-11T11:00:47Z",
+            "source": "internal"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 99,
+            "tps": 292.8,
+            "n": 3,
+            "ts": "2026-07-11T11:01:14Z",
+            "source": "internal"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 82,
+            "tps": 136.4,
+            "n": 3,
+            "ts": "2026-07-11T11:01:29Z",
+            "source": "internal"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 14.5,
+            "n": 4,
+            "ts": "2026-07-11T11:01:37Z",
+            "source": "internal"
+          }
+        }
+      }
     },
     "openai/gpt-5.6-luna": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "gpt-5.6-luna",
-      "display_name": "gpt-5.6-luna",
+      "display_name": "gpt-5.6-luna (Kilo)",
       "icon": "🤖",
       "priority": 10,
       "capabilities": [
-        "chat"
+        "chat",
+        "image"
       ],
-      "raw_formats": [],
-      "thinking_format": "none",
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
       "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 1.0,
+      "cost_output": 6.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 57.2,
+            "n": 4,
+            "ts": "2026-07-11T10:57:27Z",
+            "capability": 92,
+            "source": "artificialanalysis",
+            "raw": 71.4,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 48.0,
+            "n": 5,
+            "ts": "2026-07-11T10:57:34Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 127.8,
+            "n": 3,
+            "ts": "2026-07-11T10:57:55Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 116.8,
+            "n": 3,
+            "ts": "2026-07-11T10:58:15Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 37.9,
+            "n": 3,
+            "ts": "2026-07-11T10:58:18Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 18.9,
+            "n": 3,
+            "ts": "2026-07-11T10:58:24Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 116.1,
+            "n": 3,
+            "ts": "2026-07-11T10:58:38Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 71.4,
+            "n": 3,
+            "ts": "2026-07-11T10:58:45Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 4.5,
+            "n": 4,
+            "ts": "2026-07-11T10:58:49Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        }
+      }
     },
     "openai/gpt-5.6-terra-pro": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "gpt-5.6-terra-pro",
-      "display_name": "gpt-5.6-terra-pro",
+      "display_name": "gpt-5.6-terra-pro (Kilo)",
       "icon": "🤖",
       "priority": 10,
       "capabilities": [
-        "chat"
+        "chat",
+        "image"
       ],
-      "raw_formats": [],
-      "thinking_format": "none",
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
       "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 2.5,
+      "cost_output": 15.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 126.8,
+            "n": 4,
+            "ts": "2026-07-11T11:04:16Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 82.7,
+            "n": 5,
+            "ts": "2026-07-11T11:04:28Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 98,
+            "tps": 90.2,
+            "n": 3,
+            "ts": "2026-07-11T11:06:18Z",
+            "source": "internal"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 97,
+            "tps": 89.2,
+            "n": 3,
+            "ts": "2026-07-11T11:08:08Z",
+            "source": "internal"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 100,
+            "tps": 59.0,
+            "n": 3,
+            "ts": "2026-07-11T11:08:23Z",
+            "source": "internal"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 98,
+            "tps": 46.2,
+            "n": 3,
+            "ts": "2026-07-11T11:08:36Z",
+            "source": "internal"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 97,
+            "tps": 112.1,
+            "n": 3,
+            "ts": "2026-07-11T11:09:51Z",
+            "source": "internal"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 92,
+            "tps": 130.7,
+            "n": 3,
+            "ts": "2026-07-11T11:10:07Z",
+            "source": "internal"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 15.3,
+            "n": 4,
+            "ts": "2026-07-11T11:10:15Z",
+            "source": "internal"
+          }
+        }
+      }
     },
     "openai/gpt-5.6-terra": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "gpt-5.6-terra",
-      "display_name": "gpt-5.6-terra",
+      "display_name": "gpt-5.6-terra (Kilo)",
       "icon": "🤖",
       "priority": 10,
       "capabilities": [
-        "chat"
+        "chat",
+        "image"
       ],
-      "raw_formats": [],
-      "thinking_format": "none",
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
       "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 2.5,
+      "cost_output": 15.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 59.7,
+            "n": 4,
+            "ts": "2026-07-11T11:01:58Z",
+            "capability": 98,
+            "source": "artificialanalysis",
+            "raw": 76.7,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 36.1,
+            "n": 5,
+            "ts": "2026-07-11T11:02:04Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 88.5,
+            "n": 3,
+            "ts": "2026-07-11T11:02:39Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 89.0,
+            "n": 3,
+            "ts": "2026-07-11T11:03:13Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 33.0,
+            "n": 3,
+            "ts": "2026-07-11T11:03:17Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 20.4,
+            "n": 3,
+            "ts": "2026-07-11T11:03:22Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 83.4,
+            "n": 3,
+            "ts": "2026-07-11T11:03:46Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 60.8,
+            "n": 3,
+            "ts": "2026-07-11T11:03:52Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 3.4,
+            "n": 4,
+            "ts": "2026-07-11T11:03:59Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        }
+      }
     },
     "openai/gpt-5.6-sol-pro": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "gpt-5.6-sol-pro",
-      "display_name": "gpt-5.6-sol-pro",
+      "display_name": "gpt-5.6-sol-pro (Kilo)",
       "icon": "🤖",
       "priority": 10,
       "capabilities": [
-        "chat"
+        "chat",
+        "image"
       ],
-      "raw_formats": [],
-      "thinking_format": "none",
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
       "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 5.0,
+      "cost_output": 30.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 72.8,
+            "n": 4,
+            "ts": "2026-07-11T11:13:23Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 44.6,
+            "n": 5,
+            "ts": "2026-07-11T11:13:38Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 98,
+            "tps": 57.7,
+            "n": 3,
+            "ts": "2026-07-11T11:15:47Z",
+            "source": "internal"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 98,
+            "tps": 65.8,
+            "n": 3,
+            "ts": "2026-07-11T11:17:41Z",
+            "source": "internal"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 100,
+            "tps": 40.7,
+            "n": 3,
+            "ts": "2026-07-11T11:18:02Z",
+            "source": "internal"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 98,
+            "tps": 28.7,
+            "n": 3,
+            "ts": "2026-07-11T11:18:23Z",
+            "source": "internal"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 100,
+            "tps": 77.2,
+            "n": 3,
+            "ts": "2026-07-11T11:19:49Z",
+            "source": "internal"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 72,
+            "tps": 65.6,
+            "n": 3,
+            "ts": "2026-07-11T11:20:12Z",
+            "source": "internal"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 10.0,
+            "n": 4,
+            "ts": "2026-07-11T11:20:25Z",
+            "source": "internal"
+          }
+        }
+      }
     },
     "openai/gpt-5.6-sol": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "gpt-5.6-sol",
-      "display_name": "gpt-5.6-sol",
+      "display_name": "gpt-5.6-sol (Kilo)",
       "icon": "🤖",
       "priority": 10,
       "capabilities": [
-        "chat"
+        "chat",
+        "image"
       ],
-      "raw_formats": [],
-      "thinking_format": "none",
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
       "provider": "Kilo",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 5.0,
+      "cost_output": 30.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 40.8,
+            "n": 4,
+            "ts": "2026-07-11T11:10:31Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 77.4,
+            "official_name": "GPT-5.6 Sol (max)"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 16.9,
+            "n": 5,
+            "ts": "2026-07-11T11:10:42Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 57.1,
+            "n": 3,
+            "ts": "2026-07-11T11:11:21Z",
+            "capability": 100,
+            "source": "artificialanalysis",
+            "raw": 58.9,
+            "official_name": "GPT-5.6 Sol (max)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 56.9,
+            "n": 3,
+            "ts": "2026-07-11T11:12:08Z",
+            "capability": 100,
+            "source": "artificialanalysis",
+            "raw": 58.9,
+            "official_name": "GPT-5.6 Sol (max)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 25.2,
+            "n": 3,
+            "ts": "2026-07-11T11:12:12Z",
+            "capability": 98,
+            "source": "lmarena",
+            "raw": 1489.66,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 14.9,
+            "n": 3,
+            "ts": "2026-07-11T11:12:18Z",
+            "capability": 99,
+            "source": "lmarena",
+            "raw": 1486.31,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 59.6,
+            "n": 3,
+            "ts": "2026-07-11T11:12:44Z",
+            "capability": 92,
+            "source": "lmarena",
+            "raw": 1477.17,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 30.3,
+            "n": 3,
+            "ts": "2026-07-11T11:12:51Z",
+            "capability": 92,
+            "source": "lmarena",
+            "raw": 1477.17,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 3.8,
+            "n": 4,
+            "ts": "2026-07-11T11:12:56Z",
+            "capability": 98,
+            "source": "lmarena",
+            "raw": 1486.31,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        }
+      }
     },
     "cognitivecomputations/dolphin-mistral-24b-venice-edition": {
       "enabled": false,
@@ -3325,6 +3927,1142 @@
       "_audio_backfilled": true,
       "_caps_canonical": true,
       "max_context": 0
+    },
+    "gemma-4-12B-it-qat-oQ4-fp16": {
+      "enabled": true,
+      "shortname": "gemma-4-12B-it-qat-oQ4-fp16",
+      "display_name": "gemma-4-12B-it-qat-oQ4-fp16",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 256000,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": true,
+      "scratchpad_mode": "auto",
+      "warmup_mode": "minimal"
+    },
+    "openrouter/openai/gpt-5.6-luna-pro": {
+      "enabled": true,
+      "shortname": "gpt-5.6-luna-pro",
+      "display_name": "gpt-5.6-luna-pro",
+      "icon": "🧭",
+      "priority": 10,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
+      "provider": "openrouter",
+      "base_model_id": "openai/gpt-5.6-luna-pro",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 1.0,
+      "cost_output": 6.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 140.9,
+            "n": 4,
+            "ts": "2026-07-11T10:38:12Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 105.3,
+            "n": 5,
+            "ts": "2026-07-11T10:38:22Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 98,
+            "tps": 350.3,
+            "n": 3,
+            "ts": "2026-07-11T10:38:56Z",
+            "source": "internal"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 98,
+            "tps": 269.6,
+            "n": 3,
+            "ts": "2026-07-11T10:39:34Z",
+            "source": "internal"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 100,
+            "tps": 70.7,
+            "n": 3,
+            "ts": "2026-07-11T10:39:47Z",
+            "source": "internal"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 98,
+            "tps": 61.3,
+            "n": 3,
+            "ts": "2026-07-11T10:39:59Z",
+            "source": "internal"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 100,
+            "tps": 303.9,
+            "n": 3,
+            "ts": "2026-07-11T10:40:23Z",
+            "source": "internal"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 92,
+            "tps": 162.0,
+            "n": 3,
+            "ts": "2026-07-11T10:40:35Z",
+            "source": "internal"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 19.8,
+            "n": 4,
+            "ts": "2026-07-11T10:40:42Z",
+            "source": "internal"
+          }
+        }
+      }
+    },
+    "openrouter/openai/gpt-5.6-luna": {
+      "enabled": true,
+      "shortname": "gpt-5.6-luna",
+      "display_name": "gpt-5.6-luna",
+      "icon": "🧭",
+      "priority": 10,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
+      "provider": "openrouter",
+      "base_model_id": "openai/gpt-5.6-luna",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 1.0,
+      "cost_output": 6.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 68.8,
+            "n": 4,
+            "ts": "2026-07-11T10:36:37Z",
+            "capability": 92,
+            "source": "artificialanalysis",
+            "raw": 71.4,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 52.9,
+            "n": 5,
+            "ts": "2026-07-11T10:36:42Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 143.2,
+            "n": 3,
+            "ts": "2026-07-11T10:37:02Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 135.6,
+            "n": 3,
+            "ts": "2026-07-11T10:37:20Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 33.5,
+            "n": 3,
+            "ts": "2026-07-11T10:37:24Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 29.7,
+            "n": 3,
+            "ts": "2026-07-11T10:37:27Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 120.1,
+            "n": 3,
+            "ts": "2026-07-11T10:37:41Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 92.8,
+            "n": 3,
+            "ts": "2026-07-11T10:37:46Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 4.4,
+            "n": 4,
+            "ts": "2026-07-11T10:37:52Z",
+            "capability": 97,
+            "source": "artificialanalysis",
+            "raw": 51.2,
+            "official_name": "GPT-5.6 Luna (max)"
+          }
+        }
+      }
+    },
+    "openrouter/openai/gpt-5.6-terra-pro": {
+      "enabled": true,
+      "shortname": "gpt-5.6-terra-pro",
+      "display_name": "gpt-5.6-terra-pro",
+      "icon": "🧭",
+      "priority": 10,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
+      "provider": "openrouter",
+      "base_model_id": "openai/gpt-5.6-terra-pro",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 2.5,
+      "cost_output": 15.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 130.6,
+            "n": 4,
+            "ts": "2026-07-11T10:42:59Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 82.6,
+            "n": 5,
+            "ts": "2026-07-11T10:43:11Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 98,
+            "tps": 127.3,
+            "n": 3,
+            "ts": "2026-07-11T10:44:32Z",
+            "source": "internal"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 98,
+            "tps": 122.1,
+            "n": 3,
+            "ts": "2026-07-11T10:45:55Z",
+            "source": "internal"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 100,
+            "tps": 54.7,
+            "n": 3,
+            "ts": "2026-07-11T10:46:12Z",
+            "source": "internal"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 100,
+            "tps": 41.5,
+            "n": 3,
+            "ts": "2026-07-11T10:46:29Z",
+            "source": "internal"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 98,
+            "tps": 135.2,
+            "n": 3,
+            "ts": "2026-07-11T10:47:24Z",
+            "source": "internal"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 83,
+            "tps": 117.7,
+            "n": 3,
+            "ts": "2026-07-11T10:47:42Z",
+            "source": "internal"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 15.2,
+            "n": 4,
+            "ts": "2026-07-11T10:47:50Z",
+            "source": "internal"
+          }
+        }
+      }
+    },
+    "openrouter/openai/gpt-5.6-terra": {
+      "enabled": true,
+      "shortname": "gpt-5.6-terra",
+      "display_name": "gpt-5.6-terra",
+      "icon": "🧭",
+      "priority": 10,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
+      "provider": "openrouter",
+      "base_model_id": "openai/gpt-5.6-terra",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 2.5,
+      "cost_output": 15.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 72.0,
+            "n": 4,
+            "ts": "2026-07-11T10:40:55Z",
+            "capability": 98,
+            "source": "artificialanalysis",
+            "raw": 76.7,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 48.9,
+            "n": 5,
+            "ts": "2026-07-11T10:41:01Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 92.6,
+            "n": 3,
+            "ts": "2026-07-11T10:41:34Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 85.2,
+            "n": 3,
+            "ts": "2026-07-11T10:42:07Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 34.3,
+            "n": 3,
+            "ts": "2026-07-11T10:42:11Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 23.4,
+            "n": 3,
+            "ts": "2026-07-11T10:42:15Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 92.6,
+            "n": 3,
+            "ts": "2026-07-11T10:42:37Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 70.3,
+            "n": 3,
+            "ts": "2026-07-11T10:42:42Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 4.4,
+            "n": 4,
+            "ts": "2026-07-11T10:42:47Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 55.0,
+            "official_name": "GPT-5.6 Terra (max)"
+          }
+        }
+      }
+    },
+    "openrouter/openai/gpt-5.6-sol-pro": {
+      "enabled": true,
+      "shortname": "gpt-5.6-sol-pro",
+      "display_name": "gpt-5.6-sol-pro",
+      "icon": "🧭",
+      "priority": 10,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
+      "provider": "openrouter",
+      "base_model_id": "openai/gpt-5.6-sol-pro",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 5.0,
+      "cost_output": 30.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 89.7,
+            "n": 4,
+            "ts": "2026-07-11T10:50:47Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 40.8,
+            "n": 5,
+            "ts": "2026-07-11T10:51:03Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 100,
+            "tps": 80.1,
+            "n": 3,
+            "ts": "2026-07-11T10:52:36Z",
+            "source": "internal"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 100,
+            "tps": 63.1,
+            "n": 3,
+            "ts": "2026-07-11T10:55:02Z",
+            "source": "internal"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 100,
+            "tps": 41.9,
+            "n": 3,
+            "ts": "2026-07-11T10:55:19Z",
+            "source": "internal"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 98,
+            "tps": 29.2,
+            "n": 3,
+            "ts": "2026-07-11T10:55:35Z",
+            "source": "internal"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 99,
+            "tps": 83.4,
+            "n": 3,
+            "ts": "2026-07-11T10:56:49Z",
+            "source": "internal"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 93,
+            "tps": 75.4,
+            "n": 3,
+            "ts": "2026-07-11T10:57:08Z",
+            "source": "internal"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 12.4,
+            "n": 4,
+            "ts": "2026-07-11T10:57:19Z",
+            "source": "internal"
+          }
+        }
+      }
+    },
+    "openrouter/openai/gpt-5.6-sol": {
+      "enabled": true,
+      "shortname": "gpt-5.6-sol",
+      "display_name": "gpt-5.6-sol",
+      "icon": "🧭",
+      "priority": 10,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "reasoning_field",
+      "provider": "openrouter",
+      "base_model_id": "openai/gpt-5.6-sol",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "max_context": 1050000,
+      "max_output": 128000,
+      "cost_input": 5.0,
+      "cost_output": 30.0,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 41.1,
+            "n": 4,
+            "ts": "2026-07-11T10:47:58Z",
+            "capability": 99,
+            "source": "artificialanalysis",
+            "raw": 77.4,
+            "official_name": "GPT-5.6 Sol (max)"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 29.0,
+            "n": 5,
+            "ts": "2026-07-11T10:48:05Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 55.3,
+            "n": 3,
+            "ts": "2026-07-11T10:48:50Z",
+            "capability": 100,
+            "source": "artificialanalysis",
+            "raw": 58.9,
+            "official_name": "GPT-5.6 Sol (max)"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 55.2,
+            "n": 3,
+            "ts": "2026-07-11T10:49:32Z",
+            "capability": 100,
+            "source": "artificialanalysis",
+            "raw": 58.9,
+            "official_name": "GPT-5.6 Sol (max)"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 22.2,
+            "n": 3,
+            "ts": "2026-07-11T10:49:37Z",
+            "capability": 98,
+            "source": "lmarena",
+            "raw": 1489.66,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 16.7,
+            "n": 3,
+            "ts": "2026-07-11T10:49:42Z",
+            "capability": 99,
+            "source": "lmarena",
+            "raw": 1486.31,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 55.1,
+            "n": 3,
+            "ts": "2026-07-11T10:50:13Z",
+            "capability": 92,
+            "source": "lmarena",
+            "raw": 1477.17,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 38.7,
+            "n": 3,
+            "ts": "2026-07-11T10:50:22Z",
+            "capability": 92,
+            "source": "lmarena",
+            "raw": 1477.17,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 3.9,
+            "n": 4,
+            "ts": "2026-07-11T10:50:28Z",
+            "capability": 98,
+            "source": "lmarena",
+            "raw": 1486.31,
+            "official_name": "gpt-5.6-sol-xhigh"
+          }
+        }
+      }
+    },
+    "x-ai/grok-4.5": {
+      "enabled": false,
+      "shortname": "grok-4.5",
+      "display_name": "grok-4.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "~x-ai/grok-latest": {
+      "enabled": false,
+      "shortname": "grok-latest",
+      "display_name": "grok-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/aion-labs/aion-3.0-mini": {
+      "enabled": false,
+      "shortname": "aion-3.0-mini",
+      "display_name": "aion-3.0-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "aion-labs/aion-3.0-mini",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/aion-labs/aion-3.0": {
+      "enabled": false,
+      "shortname": "aion-3.0",
+      "display_name": "aion-3.0",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "aion-labs/aion-3.0",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/tencent/hy3:free": {
+      "enabled": false,
+      "shortname": "hy3:free",
+      "display_name": "hy3:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "tencent/hy3:free",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/tencent/hy3": {
+      "enabled": false,
+      "shortname": "hy3",
+      "display_name": "hy3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "tencent/hy3",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/nex-agi/nex-n2-mini": {
+      "enabled": false,
+      "shortname": "nex-n2-mini",
+      "display_name": "nex-n2-mini",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "nex-agi/nex-n2-mini",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "sakana/fugu-ultra": {
+      "enabled": false,
+      "shortname": "fugu-ultra",
+      "display_name": "fugu-ultra",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-4-26b-a4b-it:free": {
+      "enabled": false,
+      "shortname": "gemma-4-26b-a4b-it:free",
+      "display_name": "gemma-4-26b-a4b-it:free",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "google/gemma-4-31b-it:free": {
+      "enabled": false,
+      "shortname": "gemma-4-31b-it:free",
+      "display_name": "gemma-4-31b-it:free",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "liquid/lfm-2.5-1.2b-thinking:free": {
+      "enabled": false,
+      "shortname": "lfm-2.5-1.2b-thinking:free",
+      "display_name": "lfm-2.5-1.2b-thinking:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "inline_tags",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "liquid/lfm-2.5-1.2b-instruct:free": {
+      "enabled": false,
+      "shortname": "lfm-2.5-1.2b-instruct:free",
+      "display_name": "lfm-2.5-1.2b-instruct:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-3-nano-30b-a3b:free": {
+      "enabled": false,
+      "shortname": "nemotron-3-nano-30b-a3b:free",
+      "display_name": "nemotron-3-nano-30b-a3b:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-nano-12b-v2-vl:free": {
+      "enabled": false,
+      "shortname": "nemotron-nano-12b-v2-vl:free",
+      "display_name": "nemotron-nano-12b-v2-vl:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-next-80b-a3b-instruct:free": {
+      "enabled": false,
+      "shortname": "qwen3-next-80b-a3b-instruct:free",
+      "display_name": "qwen3-next-80b-a3b-instruct:free",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nvidia/nemotron-nano-9b-v2:free": {
+      "enabled": false,
+      "shortname": "nemotron-nano-9b-v2:free",
+      "display_name": "nemotron-nano-9b-v2:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-oss-120b:free": {
+      "enabled": false,
+      "shortname": "gpt-oss-120b:free",
+      "display_name": "gpt-oss-120b:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openai/gpt-oss-20b:free": {
+      "enabled": false,
+      "shortname": "gpt-oss-20b:free",
+      "display_name": "gpt-oss-20b:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "qwen/qwen3-coder:free": {
+      "enabled": false,
+      "shortname": "qwen3-coder:free",
+      "display_name": "qwen3-coder:free",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "cognitivecomputations/dolphin-mistral-24b-venice-edition:free": {
+      "enabled": false,
+      "shortname": "dolphin-mistral-24b-venice-edition:free",
+      "display_name": "dolphin-mistral-24b-venice-edition:free",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition": {
+      "enabled": false,
+      "shortname": "dolphin-mistral-24b-venice-edition",
+      "display_name": "dolphin-mistral-24b-venice-edition",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "openrouter",
+      "base_model_id": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3.3-70b-instruct:free": {
+      "enabled": false,
+      "shortname": "llama-3.3-70b-instruct:free",
+      "display_name": "llama-3.3-70b-instruct:free",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta-llama/llama-3.2-3b-instruct:free": {
+      "enabled": false,
+      "shortname": "llama-3.2-3b-instruct:free",
+      "display_name": "llama-3.2-3b-instruct:free",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "nousresearch/hermes-3-llama-3.1-405b:free": {
+      "enabled": false,
+      "shortname": "hermes-3-llama-3.1-405b:free",
+      "display_name": "hermes-3-llama-3.1-405b:free",
+      "icon": "🦙",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "openrouter",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

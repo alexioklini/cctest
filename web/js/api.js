@@ -464,16 +464,19 @@ class API {
   // Live/replay transcript SSE. Callbacks:
   //   onRequest({title,prompt})  — leading ANFRAGE event
   //   onText(chunk)              — appended output chunks (live + stored replay)
-  //   onDone(payload)            — terminal event
+  //   onDone(payload)            — terminal event ({status,error,usage,tool_calls})
   //   onTool(ev)                 — live tool activity (running tasks only):
   //       {phase:'start', tool_use_id, name, args, round}
-  //       {phase:'done',  tool_use_id, name, elapsed_ms, result_chars, is_error}
-  // During a RUNNING task the endpoint proxies the sidecar's raw Anthropic-shape
-  // frames (anthropic.content_block_delta for text, tool_dispatch_start/done for
-  // tools); a FINISHED task replays the stored output as a single `text_delta`.
-  // We normalise both wire shapes here so callers get one event vocabulary.
+  //       {phase:'done',  tool_use_id, name, elapsed_ms, result, result_chars, is_error}
+  //   onThinking(chunk)          — optional: live reasoning text (running only)
+  //   onUsage(d)                 — optional: live per-round usage figures
+  // A RUNNING task streams the runner's per-task LiveStream in the Brain event
+  // vocabulary (text_delta/thinking_*/tool_call/tool_result/usage/error) as
+  // canonical `event:` + `data:` frames; a FINISHED task replays the stored
+  // output as a single `text_delta` + `done`. (The old raw-sidecar passthrough
+  // shape died with the sidecar, v9.247.0 — v9.308.0 rewired the live branch.)
   // Returns an AbortController so the caller can stop it.
-  static streamBackgroundTranscript(taskId, onText, onDone, onRequest, onTool) {
+  static streamBackgroundTranscript(taskId, onText, onDone, onRequest, onTool, onThinking, onUsage) {
     const ctrl = new AbortController();
     (async () => {
       let resp;
@@ -486,29 +489,23 @@ class API {
       const reader = resp.body.getReader();
       const dec = new TextDecoder();
       let buf = '', ev = '';
-      // The transcript endpoint mixes two SSE wire shapes:
-      //  (a) FINISHED-task replay (server, encode_sse): canonical
-      //      `event: <type>\ndata: <json>` — type is in the SSE event field.
-      //  (b) RUNNING-task live passthrough (raw sidecar frames): bare
-      //      `data: {"type":<type>,"data":<inner>}` — type is nested in JSON,
-      //      no event: line. We normalise both to (type, payload) here.
       const dispatch = (type, payload) => {
         if (type === 'request') { if (onRequest) onRequest(payload); }
         else if (type === 'text_delta') { if (onText) onText(payload.text || ''); }
-        else if (type === 'anthropic.content_block_delta') {
-          const dd = payload.delta || {};
-          if (dd.type === 'text_delta' && dd.text && onText) onText(dd.text);
-        }
-        else if (type === 'tool_dispatch_start') {
+        else if (type === 'thinking_delta') { if (onThinking) onThinking(payload.text || ''); }
+        else if (type === 'tool_call') {
           if (onTool) onTool({phase: 'start', tool_use_id: payload.tool_use_id,
-                              name: payload.name, args: payload.args || {}, round: payload.round});
+                              name: payload.name, args: payload.args || {}, round: payload.tool_round});
         }
-        else if (type === 'tool_dispatch_done') {
+        else if (type === 'tool_result') {
           if (onTool) onTool({phase: 'done', tool_use_id: payload.tool_use_id, name: payload.name,
-                              elapsed_ms: payload.elapsed_ms, result_chars: payload.result_chars,
-                              is_error: payload.is_error});
+                              elapsed_ms: payload.elapsed_ms, result: payload.result,
+                              result_chars: payload.result_chars, is_error: payload.is_error});
         }
+        else if (type === 'usage') { if (onUsage) onUsage(payload); }
+        else if (type === 'error') { if (onDone) onDone({status: 'error', error: payload.message || 'Fehler'}); }
         else if (type === 'done') { if (onDone) onDone(payload); }
+        // thinking_start/thinking_done + Rest: keine eigene Darstellung nötig
       };
       try {
         while (true) {
@@ -521,13 +518,7 @@ class API {
             if (line.startsWith('event:')) ev = line.slice(6).trim();
             else if (line.startsWith('data:')) {
               let d = {}; try { d = JSON.parse(line.slice(5).trim()); } catch (_) {}
-              if (d && typeof d.type === 'string' && 'data' in d) {
-                // Shape (b): raw sidecar frame — type + nested data in the JSON.
-                dispatch(d.type, d.data || {});
-              } else {
-                // Shape (a): canonical frame — type came from the event: line.
-                dispatch(ev, d);
-              }
+              dispatch(ev, d);
             }
           }
         }
