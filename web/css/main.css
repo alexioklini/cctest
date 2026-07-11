@@ -1053,6 +1053,10 @@ textarea { resize: none; }
 .tc-status .tc-ask-badge { color: var(--accent-brand); font-weight: 700; cursor: pointer;
   animation: tc-pulse 1.1s infinite; }
 .tc-status .tc-ask-badge:hover { text-decoration: underline; }
+/* Spinner-Zeile am Log-Ende, solange abgekoppelte Subagenten arbeiten (der
+   eigene Turn ist da längst beendet). Klick öffnet den ✦-Hub. */
+.tc-row.tc-subspin { color: var(--git-added); cursor: pointer; }
+.tc-row.tc-subspin:hover { text-decoration: underline; }
 @keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 /* input line + slash-command autocomplete.
    The wrap is a normal block at the END of the scroll log (CLI-style), so it

@@ -881,6 +881,46 @@ function _tcSpinStop(tab) {
   if (live && live.spinRow) live.spinRow.innerHTML = '';
 }
 
+// ── Subagenten-Spinner (überlebt das Turn-Ende) ──────────────────────────────
+// Der normale Spinner hängt an `tab._live.spinRow`, die es nur WÄHREND eines
+// Turns gibt. Ein abgekoppelter Subagent läuft aber weiter, nachdem der Turn
+// beendet ist (run_background_task koppelt ab → Turn fertig, Arbeit nicht) —
+// der Chat sah dann fertig aus, obwohl noch minutenlang gearbeitet wurde.
+// Diese Zeile lebt daher am Log-Ende, unabhängig vom Turn, und wird vom
+// 3s-Poller an-/abgeschaltet.
+function _tcSubSpinRender(tab) {
+  const n = tcRunningSubagents(tab);
+  const asking = tcSubagentAsking(tab);
+  const log = tab.el && tab.el.querySelector('.tc-log');
+  if (!log) return;
+  let row = tab._subSpinRow;
+  if (!n || tab.streaming) {           // eigener Turn läuft → sein Spinner genügt
+    if (row) { row.remove(); tab._subSpinRow = null; }
+    if (tab._subSpinTimer) { clearInterval(tab._subSpinTimer); tab._subSpinTimer = null; }
+    return;
+  }
+  if (!row) {
+    row = document.createElement('div');
+    row.className = 'tc-row tc-subspin';
+    row.onclick = () => { try { _terminalActivate(_AGENT_HUB_ID); } catch (_) {} };
+    log.appendChild(row);
+    tab._subSpinRow = row;
+    tab._subSpinIdx = 0;
+  }
+  const paint = () => {
+    if (!tab._subSpinRow) return;
+    tab._subSpinIdx = (tab._subSpinIdx + 1) % _TC_SPIN.length;
+    const what = asking
+      ? `❓ Subagent wartet auf Ihre Antwort`
+      : `✦ ${n} Subagent${n === 1 ? '' : 'en'} arbeite${n === 1 ? 't' : 'n'} im Hintergrund`;
+    tab._subSpinRow.innerHTML =
+      `<span class="tc-spinner">${_TC_SPIN[tab._subSpinIdx]}</span> ${esc(what)} …`;
+  };
+  paint();
+  if (!tab._subSpinTimer) tab._subSpinTimer = setInterval(paint, 80);
+  log.scrollTop = log.scrollHeight;
+}
+
 // Laufende Subagenten DIESER Session. Der Terminal-Chat kennt sonst nur seinen
 // EIGENEN Turn (tab.streaming) — der aber endet, sobald run_background_task die
 // Aufgaben abgekoppelt hat, während die Subagenten noch minutenlang weiterlaufen.

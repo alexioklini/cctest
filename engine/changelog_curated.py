@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.8",
+        "date": "2026-07-11",
+        "title": "Der Chat zeigt, dass Subagenten noch arbeiten",
+        "body": "Startet ein Chat Subagenten, läuft der gewohnte Spinner "
+                "weiter — mit dem Hinweis „✦ 3 Subagenten · arbeitet im "
+                "Hintergrund“, im Terminal-Chat als eigene Zeile am Ende des "
+                "Verlaufs. Ein Klick darauf öffnet die Live-Karten. Bisher sah "
+                "der Chat fertig aus, obwohl im Hintergrund noch minutenlang "
+                "gearbeitet wurde.",
+        "audience": "user",
+        "versions": ["9.312.8"],
+    },
+    {
         "version": "9.312.7",
         "date": "2026-07-11",
         "title": "Jeder Chat bekommt seinen eigenen Ausgabeordner",

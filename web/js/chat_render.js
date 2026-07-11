@@ -1264,6 +1264,15 @@ function _streamRotateTick(chat) {
   if (synth) synth.textContent = w;
 }
 
+// Wie viele Subagenten DIESES Chats laufen noch? Gespeist vom 3s-Poller
+// (state.runningSubagents), der ohnehin für den Sidebar-Tree läuft.
+function chatRunningSubagents(chat) {
+  const sid = chat && chat.sessionId;
+  if (!sid) return 0;
+  const map = (typeof state !== 'undefined' && state.runningSubagents) || {};
+  return (map[sid] || []).length;
+}
+
 function renderStreamingMessage(chat) {
   const container = document.getElementById('messages-container');
   // Remove previous streaming element if any
@@ -1298,8 +1307,16 @@ function renderStreamingMessage(chat) {
     return;
   }
 
-  // Nothing to show and not streaming — don't emit an empty wrapper.
-  if (!chat.streaming && !chat.thinkingText && !chat.streamingText) return;
+  // Sub-agents of this chat that are still running. `run_background_task` detaches
+  // them and the spawning turn ENDS immediately — chat.streaming goes false and the
+  // chat looked finished while minutes of work were still happening (user report).
+  // Kept as a SEPARATE axis instead of forcing chat.streaming: that flag drives
+  // cancel / rollback / the SSE state machine, and a detached sub-agent is not
+  // "this turn is streaming".
+  const subsRunning = chatRunningSubagents(chat);
+
+  // Nothing to show, not streaming and no sub-agent working — no empty wrapper.
+  if (!chat.streaming && !subsRunning && !chat.thinkingText && !chat.streamingText) return;
 
   let html = '<div class="msg-turn msg-turn-assistant msg-streaming">';
 
@@ -1327,15 +1344,24 @@ function renderStreamingMessage(chat) {
   // elapsed) so the SSE handlers that write status text by id, plus the 100ms
   // elapsed timer, keep working without change. Seeded from chat state so a
   // re-render (renderMessages wipes + this re-appends) doesn't lose the label.
-  if (chat.streaming) {
-    const modelLbl = esc(chat._streamModel || '');
+  if (chat.streaming || subsRunning) {
+    // Sub-agents running but the turn itself is done → same spinner, but it says
+    // WHAT is working (n sub-agents) instead of the streaming model, and clicking
+    // it opens the sub-agent hub.
+    const subOnly = !chat.streaming && subsRunning > 0;
+    const modelLbl = subOnly
+      ? `✦ ${subsRunning} Subagent${subsRunning === 1 ? '' : 'en'}`
+      : esc(chat._streamModel || '');
     const synthLbl = esc(chat._streamSynth || (chat._streamSynth = _streamSynthWord()));
-    const statusLbl = esc(chat._streamLabel || '');  // empty unless a specific SSE state set it
-    const elapsedLbl = esc(chat._streamElapsed || '');
+    const statusLbl = subOnly ? 'arbeitet im Hintergrund' : esc(chat._streamLabel || '');
+    const elapsedLbl = subOnly ? '' : esc(chat._streamElapsed || '');
     // Only the WORD rotates over time (_streamRotateTick swaps #spinner-synth by
     // id every few seconds). The model name shows the historical id so the SSE
     // fallback/auto_route handlers can still update it.
-    html += `<div class="stream-status">
+    const subAttrs = subOnly
+      ? ' class="stream-status stream-status-sub" title="Subagenten arbeiten — klicken für die Live-Karten"'
+      : ' class="stream-status"';
+    html += `<div${subAttrs}>
       <div class="wave-bars"><span></span><span></span><span></span><span></span><span></span></div>
       <span class="spinner-model" id="spinner-model">${modelLbl}</span>
       <span class="spinner-synth" id="spinner-synth">${synthLbl}</span>
@@ -1347,6 +1373,20 @@ function renderStreamingMessage(chat) {
   html += '</div>';
 
   injectTarget.insertAdjacentHTML('beforeend', html);
+
+  // Sub-agent spinner → open the hub (the live cards + any pending question).
+  const _subStat = container.querySelector('.stream-status-sub');
+  if (_subStat) {
+    _subStat.addEventListener('click', async () => {
+      try {
+        if (typeof _term !== 'undefined' && !_term.open
+            && typeof terminalTogglePanel === 'function') {
+          await terminalTogglePanel(true);
+        }
+        if (typeof _terminalActivate === 'function') _terminalActivate('agent-hub');
+      } catch (_) { /* hub not available — spinner stays informational */ }
+    });
+  }
 
   // (model↔word rotation is driven by _streamRotateTick on the 100ms stream
   // timer — survives this re-render via chat._streamShowSynth.)

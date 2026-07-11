@@ -1462,8 +1462,19 @@ async function pollRunningSubagents() {
     // Spawn, kein Erlöschen beim Fertigwerden).
     if (typeof _term !== 'undefined' && _term.tabs && typeof tcRenderStatus === 'function') {
       for (const t of _term.tabs) {
-        if (t.kind === 'chat' && t.sessionId) tcRenderStatus(t);
+        if (t.kind !== 'chat' || !t.sessionId) continue;
+        tcRenderStatus(t);
+        // Spinner-Zeile am Log-Ende, solange Subagenten dieses Chats laufen.
+        if (typeof _tcSubSpinRender === 'function') _tcSubSpinRender(t);
       }
+    }
+    // Web-Chat: den Spinner der offenen Unterhaltung neu zeichnen. Ein
+    // abgekoppelter Subagent hält ihn am Leben, obwohl chat.streaming false ist —
+    // ohne dieses Repaint erschiene er erst beim nächsten Turn (bzw. verschwände
+    // nicht, wenn der letzte Subagent fertig ist).
+    if (typeof renderStreamingMessage === 'function' && state.activeChat
+        && !state.activeChat.streaming) {
+      renderStreamingMessage(state.activeChat);
     }
   } catch (_) { /* transient — nächster Tick */ }
 }
