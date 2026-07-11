@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.2",
+        "date": "2026-07-11",
+        "title": "Laufende Subagenten sind jetzt sichtbar",
+        "body": "Startet ein Chat Subagenten, sehen Sie das jetzt sofort: Der "
+                "Chat pulsiert grün und zeigt „✦ 3 Subagenten“, solange im "
+                "Hintergrund gearbeitet wird — ein Klick darauf öffnet die "
+                "Live-Karten. In der linken Chat-Liste erscheint derselbe "
+                "Hinweis wie bei einer laufenden Antwort. Bisher wirkte der "
+                "Chat nach dem Start der Subagenten still, obwohl sie noch "
+                "minutenlang arbeiteten.",
+        "audience": "user",
+        "versions": ["9.312.2"],
+    },
+    {
         "version": "9.312.1",
         "date": "2026-07-11",
         "title": "Spickzettel-Regler schaltet jetzt wirklich ab",

@@ -881,6 +881,26 @@ function _tcSpinStop(tab) {
   if (live && live.spinRow) live.spinRow.innerHTML = '';
 }
 
+// Laufende Subagenten DIESER Session. Der Terminal-Chat kennt sonst nur seinen
+// EIGENEN Turn (tab.streaming) — der aber endet, sobald run_background_task die
+// Aufgaben abgekoppelt hat, während die Subagenten noch minutenlang weiterlaufen.
+// Ohne das hier wirkt der Chat nach dem Spawn tot (User-Report: "kein
+// pulsierender grüner Punkt"), obwohl im Hintergrund gearbeitet wird.
+// Zwei Quellen, in dieser Reihenfolge: (1) die Hub-Karten — live, exakt, kennen
+// den Zustand sofort; (2) state.runningSubagents aus dem 3s-Sidebar-Poller —
+// greift auch nach einem Reload, wo es noch keine Karten gibt.
+function tcRunningSubagents(tab) {
+  const sid = tab && tab.sessionId;
+  if (!sid) return 0;
+  const hub = (typeof _agentHubTab === 'function') ? _agentHubTab() : null;
+  if (hub && hub._cards) {
+    const cards = Object.values(hub._cards).filter(c => c.sessionId === sid);
+    if (cards.length) return cards.filter(c => c.status === 'running').length;
+  }
+  const polled = (typeof state !== 'undefined' && state.runningSubagents) || {};
+  return (polled[sid] || []).length;
+}
+
 // ── Status footer ────────────────────────────────────────────────────────────
 function tcRenderStatus(tab) {
   const el = document.getElementById(tab.id + '-status');
@@ -890,9 +910,12 @@ function tcRenderStatus(tab) {
   const tin = (tab.tokensIn || 0) + (tab.streaming ? (tab._liveIn || 0) : 0);
   const tout = (tab.tokensOut || 0) + (tab.streaming ? (tab._liveOut || 0) : 0);
   // Verrechnet (real) + API-Listenpreis, wenn ein Flatrate-Modell sie trennt.
+  // `costHtml` ist FERTIGES MARKUP (der Listenpreis-Hinweis ist ein <span>) und
+  // darf daher NICHT durch esc() — sonst stehen die Tags als Text in der Zeile
+  // (User-Report). Alle Werte sind Number()/toFixed()-Zahlen, nichts Fremdes.
   const _cl = (tab.costList != null) ? Number(tab.costList) : null;
   const _cDiff = tab.cost != null && _cl != null && _cl > Number(tab.cost) * 1.01 + 0.0001;
-  const cost = (tab.cost != null)
+  const costHtml = (tab.cost != null)
     ? ('$' + Number(tab.cost).toFixed(4) + (_cDiff ? ` <span title="API-Listenpreis ohne Flatrate — Ersparnis $${(_cl - Number(tab.cost)).toFixed(4)}" style="color:var(--text-400)">(API $${_cl.toFixed(4)})</span>` : ''))
     : '—';
   // Prompt-cache hits (session total + live turn) — mirrors the main chat's
@@ -904,7 +927,15 @@ function tcRenderStatus(tab) {
   if (tab.maxContext && tab.lastApiIn) ctx = ' · ctx ' + Math.min(100, Math.round(tab.lastApiIn / tab.maxContext * 100)) + '%';
   const toolsBadge = tab.showTools ? '' : ' · tools:aus';
   const pausedBadge = (tab.streaming && tab._paused) ? '<span class="tc-paused">⏸ pausiert</span> ' : '';
-  const dot = tab.streaming ? (tab._paused ? '' : '<span class="tc-live">●</span> ') : '';
+  // Der Puls steht für "an dieser Sitzung wird gerade gearbeitet" — das ist der
+  // EIGENE Turn ODER ein abgekoppelter Subagent (der den Turn überlebt).
+  const subs = tcRunningSubagents(tab);
+  const busy = tab.streaming || subs > 0;
+  const dot = (busy && !(tab.streaming && tab._paused)) ? '<span class="tc-live">●</span> ' : '';
+  const subBadge = subs
+    ? `<span class="tc-sub-badge" title="${subs} Subagent${subs === 1 ? '' : 'en'} dieser Sitzung ${subs === 1 ? 'läuft' : 'laufen'} noch — klicken für die Live-Karten"
+        onclick="_terminalActivate('${_AGENT_HUB_ID}')">✦ ${subs} Subagent${subs === 1 ? '' : 'en'}</span> `
+    : '';
   const qn = Array.isArray(tab._queue) ? tab._queue.length : 0;
   const queueBadge = qn ? ` · <span class="tc-queue-badge">⧉ ${qn} in Warteschlange</span>` : '';
   const goalBadge = tab.goalStatus === 'active'
@@ -917,7 +948,7 @@ function tcRenderStatus(tab) {
   // the chat has rows.
   const exportBtn = `<button class="tc-st-btn" title="Chatverlauf als Markdown herunterladen"
     onclick="tcExportMarkdown('${esc(tab.id)}')">⬇ .md</button>`;
-  el.innerHTML = `<span class="tc-st-info">${dot}${pausedBadge}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok${cachedBadge} · ${esc(cost)}${ctx}${toolsBadge}${queueBadge}${goalBadge}${cancelHint}</span>${exportBtn}`;
+  el.innerHTML = `<span class="tc-st-info">${dot}${pausedBadge}${subBadge}<span class="tc-st-model">${esc(model)}</span> · think:${esc(think)} · ${tin}/${tout} tok${cachedBadge} · ${costHtml}${ctx}${toolsBadge}${queueBadge}${goalBadge}${cancelHint}</span>${exportBtn}`;
 }
 
 // Build a Markdown transcript of a terminal-chat from its in-DOM rows and

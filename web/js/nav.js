@@ -1359,9 +1359,15 @@ function renderSessionsList(container, sessions) {
     const div = document.createElement('div');
     const sid = s.id || s.session_id;
     const sagent = s.agent_id || s.agent || s.agentId || state.activeAgentId;
+    // "läuft" = an dieser Sitzung wird gearbeitet. Das ist der eigene Turn ODER
+    // ein abgekoppelter Subagent: run_background_task beendet den spawnenden Turn
+    // sofort, die Aufgaben laufen aber minutenlang weiter — ohne den zweiten Fall
+    // wirkt der Chat in der Liste tot, obwohl im Hintergrund gearbeitet wird.
     const streaming = state.streamingSessions?.has(sid);
+    const subCount = ((state.runningSubagents || {})[sid] || []).length;
+    const busy = streaming || subCount > 0;
     div.className = 'sb-session-item' + (state.activeChat?.sessionId === sid ? ' active' : '')
-      + (streaming ? ' streaming' : '');
+      + (busy ? ' streaming' : '');
     // Title primary; summary is hover-only. Falls back to summary only when
     // no title (rare — pre-first-turn rows).
     const title = s.title || s.summary || `Chat ${sid?.substring(0,6)}`;  // "Chat" identical in German
@@ -1377,7 +1383,11 @@ function renderSessionsList(container, sessions) {
       <span class="sb-sess-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
       <span class="sb-session-title"${tip}>${esc(title)}</span>
       ${goalPill}
-      ${streaming ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>' : ''}
+      ${streaming
+        ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>'
+        : (subCount
+          ? `<span class="sb-stream-pill" title="${subCount} Subagent${subCount === 1 ? '' : 'en'} ${subCount === 1 ? 'läuft' : 'laufen'} noch">✦ ${subCount}</span>`
+          : '')}
       <span class="sb-sess-actions">
         <button onclick="event.stopPropagation(); archiveSession('${sid}')" title="Archivieren">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8v13H3V8M1 3h22v5H1z"/></svg>
@@ -1432,6 +1442,15 @@ async function pollRunningSubagents() {
                && typeof loadProjectChats === 'function'
                && state._projectDetailAgent && state._projectDetailName) {
       loadProjectChats(state._projectDetailAgent, state._projectDetailName);
+    }
+    // Terminal-Chat-Statuszeilen mitziehen: ihr Puls hängt jetzt auch an den
+    // laufenden Subagenten, und ihr eigener Turn ist längst fertig — ohne dieses
+    // Repaint bliebe die Zeile im Zustand des Turn-Endes stehen (kein Puls beim
+    // Spawn, kein Erlöschen beim Fertigwerden).
+    if (typeof _term !== 'undefined' && _term.tabs && typeof tcRenderStatus === 'function') {
+      for (const t of _term.tabs) {
+        if (t.kind === 'chat' && t.sessionId) tcRenderStatus(t);
+      }
     }
   } catch (_) { /* transient — nächster Tick */ }
 }

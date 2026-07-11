@@ -1550,6 +1550,7 @@
     "tcQueueCmd": "writable",
     "tcRenderStatus": "writable",
     "tcResume": "writable",
+    "tcRunningSubagents": "writable",
     "tcSend": "writable",
     "tcShell": "writable",
     "tcSlash": "writable",

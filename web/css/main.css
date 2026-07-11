@@ -1027,6 +1027,9 @@ textarea { resize: none; }
 .tc-status .tc-st-model { color: var(--text-200); font-weight: 600; }
 .tc-status .tc-live { color: var(--git-added); animation: tc-pulse 1.1s infinite; }
 .tc-status .tc-cancel-hint { color: var(--accent-brand); }
+/* Laufende Subagenten dieser Sitzung — klickbar, öffnet den ✦-Hub-Tab. */
+.tc-status .tc-sub-badge { color: var(--git-added); font-weight: 600; cursor: pointer; }
+.tc-status .tc-sub-badge:hover { text-decoration: underline; }
 @keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 /* input line + slash-command autocomplete.
    The wrap is a normal block at the END of the scroll log (CLI-style), so it
