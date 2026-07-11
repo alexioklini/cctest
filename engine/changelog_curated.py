@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.11",
+        "date": "2026-07-11",
+        "title": "Abgebrochene Antworten sagen es jetzt",
+        "body": "Bei sehr langen Aufgaben konnte der Assistent mitten in der "
+                "Arbeit stoppen und trotzdem so aussehen, als wäre er fertig — "
+                "ein Report fehlte, ohne dass es jemand sagte. Jetzt weist eine "
+                "abgebrochene Antwort deutlich darauf hin, dass sie unvollständig "
+                "ist. Gleichzeitig darf der Assistent für aufwendige Aufgaben "
+                "deutlich länger arbeiten, und ein Chat, der Ihr Kostenlimit "
+                "überschreitet, wird sauber gestoppt statt still weiterzulaufen.",
+        "audience": "user",
+        "versions": ["9.312.11"],
+    },
+    {
         "version": "9.312.10",
         "date": "2026-07-11",
         "title": "Ergebnisse bleiben im richtigen Chat",

@@ -339,6 +339,32 @@ def run_turn(
                 engine.get_request_context().allowed_tools = new_allowed
                 return new_tools, new_allowed
 
+            # Cost brake INSIDE the turn. The pre-flight gate (in the chat worker)
+            # only decides whether a turn may START; a long agentic turn can burn
+            # far past the user's quota before it ends, and nothing used to stop
+            # it — the per-round check is the only thing that bounds an expensive
+            # runaway. Each chat round logs its own cost_log row, so re-asking
+            # QuotaManager between rounds sees the money this very turn is
+            # spending. Cheap: get_config() is cached 30s and the sum is one
+            # indexed SQL query per round (~ms next to a multi-second LLM round).
+            _budget_uid = tool_context.get("user_id") or ""
+
+            def _budget_gate() -> str | None:
+                if not _budget_uid:
+                    return None  # no user (background/eval) → no quota to enforce
+                qm = getattr(engine, "_quota_manager", None)
+                if qm is None:
+                    return None
+                decision, reason = qm.check_request(_budget_uid, model)
+                # force_local mid-turn is NOT actionable (swapping models between
+                # rounds would break the KV prefix and the tool state), so a red
+                # quota under force_local stops the turn just like hard_block —
+                # the NEXT turn then starts on the local fallback via the
+                # pre-flight gate. warn_only keeps running, by definition.
+                if decision in ("block", "force_local"):
+                    return f"Kostenlimit erreicht ({reason})"
+                return None
+
             summary = llm_loop.run_loop(
                 model=model, system_prompt=system_prompt, messages=messages,
                 tools=_tools, allowed_tools=allowed_tools,
@@ -350,7 +376,8 @@ def run_turn(
                 emit=event_callback, is_cancelled=_is_cancelled,
                 tool_use_id_setter=_set_tool_use_id,
                 pause_gate=_pause_gate, drain_injections=_drain_inj,
-                progress_cb=_progress_cb, tools_refresh=_tools_refresh)
+                progress_cb=_progress_cb, tools_refresh=_tools_refresh,
+                budget_gate=_budget_gate)
             final_text = summary.get("final_text", "") or ""
             if summary.get("stop_reason") == "cancelled":
                 cancelled = True
@@ -387,6 +414,7 @@ def run_turn(
     return {
         "reply": final_text,
         "stop_reason": summary.get("stop_reason", ""),
+        "stop_detail": summary.get("stop_detail", ""),
         "rounds": summary.get("rounds", 0),
         "tool_calls_total": summary.get("tool_calls_total", 0),
         "usage_total": summary.get("usage_total", {}) or {},
@@ -495,6 +523,7 @@ def run_turn_blocking(
     return {
         "reply": summary.get("final_text", "") or "",
         "stop_reason": summary.get("stop_reason", ""),
+        "stop_detail": summary.get("stop_detail", ""),
         "rounds": summary.get("rounds", 0),
         "tool_calls_total": summary.get("tool_calls_total", 0),
         "usage_total": summary.get("usage_total", {}) or {},

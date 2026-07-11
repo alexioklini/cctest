@@ -1338,7 +1338,11 @@ class Scheduler:
                     }
                     _max_tokens = int(sched_inf.get("max_tokens") or _brain.get_model_max_output(model))
                     _agent_cfg = target.config or {}
-                    _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
+                    # Same resolver as the chat path (v9.312.11) — defaults <
+                    # model-profile overlay < agent.json. The raw agent.json read
+                    # bypassed the profile layer and carried its own 25.
+                    _max_rounds = int(_brain._get_agent_limits(agent_id).get(
+                        "max_tool_rounds") or _brain.MAX_TOOL_ROUNDS)
                     _thinking_level = sched_inf.get("thinking_level") if sched_inf.get("thinking") is not False else None
 
                     # Bridge sidecar SSE → on_event so tool_calls + tool_log keep updating.

@@ -765,6 +765,7 @@ def run_loop(
     drain_injections: Callable[[], list[str]] | None = None,
     progress_cb: Callable[[dict], None] | None = None,
     tools_refresh: Callable[[], tuple[list[dict], list[str]] | None] | None = None,
+    budget_gate: Callable[[], str | None] | None = None,
 ) -> dict:
     """Drive one turn's rounds. `emit(type, data)` fires Brain-vocabulary events;
     `is_cancelled()` is polled between rounds and after each stream drain.
@@ -783,6 +784,13 @@ def run_loop(
       tool executing now + when it started, tools already completed, partial-text
       length) so a concurrent "btw" side-call can report what the agent is doing
       right now. Pure sink for data the loop already computes — cheap.
+    - `budget_gate()` is called at each round boundary and returns a REASON string
+      to stop, or None to continue. It is how cost enforcement reaches the loop
+      WITHOUT the loop knowing anything about quotas: the caller closes over its
+      own budget state and decides. A stop is graceful — the text produced so far
+      is kept and returned with `stop_reason="budget"` plus `stop_detail=<reason>`;
+      nothing is discarded. (An exception from the gate is swallowed: a broken
+      budget check must never kill a turn that is otherwise fine.)
     - `tools_refresh()` is called at each round boundary (after round 1). When it
       returns `(new_tools, new_allowed)` the wire tool array + dispatch whitelist
       are REPLACED for the remaining rounds — the undefer-after-discovery hook:
@@ -828,6 +836,9 @@ def run_loop(
     text_round_segments: list[dict] = []
     final_text = ""
     final_stop_reason = ""
+    # Human-readable detail for a NON-VOLUNTARY stop (budget). `stop_reason` says
+    # WHICH brake fired; this says why, in words the caller can show the user.
+    final_stop_detail = ""
     # Terminal provider-error message. Surfaced in the summary as "error" so
     # BLOCKING callers (run_turn/run_turn_blocking → their "error" field) fail
     # loud too — without this, an HTTP 402/401 on the FIRST round ended the
@@ -872,6 +883,22 @@ def run_loop(
             final_stop_reason = "cancelled"
             emit("cancelled", {"round": round_no, "phase": "round_start"})
             break
+
+        # Cost brake. Checked BEFORE the payload build so a turn that has blown its
+        # budget doesn't pay for one more round to find out. Graceful by design:
+        # we break with the text produced so far intact (the caller surfaces the
+        # reason to the user) rather than raising — a half-finished answer the user
+        # can see beats an exception that discards the work already paid for.
+        if budget_gate is not None and round_idx > 0:
+            try:
+                _stop = budget_gate()
+            except Exception:
+                _stop = None  # a broken budget check must not kill a healthy turn
+            if _stop:
+                final_stop_reason = "budget"
+                final_stop_detail = str(_stop)
+                emit("budget_stop", {"round": round_no, "reason": final_stop_detail})
+                break
 
         # --- round boundary: honour pause, then splice in any injected messages ---
         if pause_gate is not None:
@@ -1248,7 +1275,13 @@ def run_loop(
                 "role": "tool", "tool_call_id": tu["id"], "content": result_str,
             })
     else:
+        # for-else: reached ONLY when the loop ran out of rounds without breaking
+        # (a cancel/budget break skips this). The model was still working — it did
+        # not choose to stop — so this is a TRUNCATION, and the caller must say so.
         final_stop_reason = "max_rounds"
+        final_stop_detail = (
+            f"Runden-Limit erreicht ({max_rounds} Tool-Runden) — das Modell war noch "
+            f"nicht fertig, die Arbeit ist unvollständig.")
         if not final_text.strip():
             final_text = EMPTY_GIVEUP_TEXT
 
@@ -1256,6 +1289,7 @@ def run_loop(
         "final_text": final_text,
         "text_segments": text_round_segments,
         "stop_reason": final_stop_reason,
+        "stop_detail": final_stop_detail,
         "rounds": len(rounds),
         "tool_calls_total": tool_calls_total,
         "usage_total": usage_total,

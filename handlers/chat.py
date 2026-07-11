@@ -4020,7 +4020,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 }
                 _max_tokens = int(inf_params.get("max_tokens", 16000) or 16000)
                 _agent_cfg = session.agent.config or {}
-                _max_rounds = int((_agent_cfg.get("limits") or {}).get("max_tool_rounds", 25) or 25)
+                # Use the RESOLVER, not a raw agent.json read: `_get_agent_limits`
+                # is the one place that implements the documented precedence
+                # (AGENT_LIMITS_DEFAULTS < model-profile overlay < agent.json limits).
+                # Reading agent.json directly (with its own hardcoded 25) meant the
+                # profile layer was dead on the chat path AND that this default
+                # silently disagreed with AGENT_LIMITS_DEFAULTS — two numbers, one
+                # concept. Fixed in v9.312.11.
+                _max_rounds = int(engine._get_agent_limits(session.agent_id).get(
+                    "max_tool_rounds") or engine.MAX_TOOL_ROUNDS)
                 # ── Goal-Modus ─────────────────────────────────────────────
                 # While the session carries an ACTIVE goal, the turn body below
                 # runs in a loop: run the turn → persist the assistant message
@@ -4562,6 +4570,17 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         reply = _sr + f"\n\n*(Sidecar error after partial: {str(_se)[:200]})*"
                     else:
                         reply = _sr
+                    # FAIL LOUD on a non-voluntary stop (round cap / cost brake).
+                    # The loop returns whatever text it had produced when the brake
+                    # fired, which is INDISTINGUISHABLE from a finished answer — so
+                    # until v9.312.11 a truncated turn looked complete and the user
+                    # took a fragment for a result (observed: a code-mode chat wrote
+                    # the .md + 3 diagrams, hit the 25-round cap one call short of
+                    # the HTML report, and said nothing). `stop_detail` is only set
+                    # by those brakes; a model that stopped on its own leaves it "".
+                    _sd = _result.get("stop_detail") or ""
+                    if _sd and not _result.get("cancelled"):
+                        reply = (reply + "\n\n" if reply else "") + f"*(⚠️ {_sd})*"
                     if reply:
                         # Log this turn's token usage to the cost ledger. The native
                         # loop used to do this per-round; the SDK-sidecar migration

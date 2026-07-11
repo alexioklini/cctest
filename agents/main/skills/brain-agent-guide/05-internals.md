@@ -55,6 +55,30 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
   a usage object logs a loud under-count line.
 - **`AskUserQuestion`**: blocks via `_pending_answers[session_id] +
   Event`. Unblocked by `POST /v1/chat/answer`.
+- **The two non-voluntary brakes (9.312.11)** — both stop a turn the model did
+  NOT choose to end, so both FAIL LOUD: the loop returns the text produced so far
+  plus a `stop_detail` reason, and the chat worker appends it to the reply
+  (⚠️ …). A model that stops on its own leaves `stop_detail` empty.
+  - **Round cap** — `max_tool_rounds`, default **80** (`AGENT_LIMITS_DEFAULTS`).
+    It is a RUNAWAY brake, not a work budget: the real loop-guard is the tool
+    dedup (2 identical calls → `TaskCancelled`), which triggers on actual
+    misbehaviour rather than a counter. The old 15/25 truncated legitimate work
+    (a code-mode turn died one tool call short of its report — and said nothing,
+    because `stop_reason="max_rounds"` was set but read by no one).
+  - **Cost brake** — optional `budget_gate()` callback, checked at every round
+    boundary from round 2 (round 1 is the pre-flight gate's job) and BEFORE the
+    payload build. `sidecar_proxy.run_turn` wires it to
+    `QuotaManager.check_request(user_id, model)`; each chat round writes its own
+    `cost_log` row, so the check sees the money THIS turn is spending. A red
+    quota under `hard_block` OR `force_local` stops the turn (a mid-turn model
+    swap would tear the KV prefix + tool state; the next turn starts local via
+    the pre-flight gate). `warn_only` keeps running. An exception from the gate
+    is swallowed — a broken budget check must not kill a healthy turn.
+  - Limits resolve through **`_get_agent_limits()`** only:
+    `AGENT_LIMITS_DEFAULTS < model-profile overlay < agent.json limits`. No
+    profile sets `max_tool_rounds` (profiles tune cost knobs, not how many rounds
+    a job needs). Reading `agent.json` directly — as chat/scheduler used to —
+    bypasses the profile layer.
 
 ## Resumable streaming
 

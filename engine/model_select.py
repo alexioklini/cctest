@@ -59,6 +59,16 @@ _brain = _LazyBrain()
 # Model optimization profiles
 # ============================================================
 
+# NB: no profile sets `max_tool_rounds` — every profile inherits
+# `AGENT_LIMITS_DEFAULTS["max_tool_rounds"]` (80). Until v9.312.11 the profiles
+# DID carry caps (speed/balanced 15, frugal 8) that were dead code on the chat
+# path (`handlers/chat.py` read agent.json directly and never consulted
+# `_get_agent_limits`, so the profile value was silently ignored). The resolver is
+# wired up now — which means any value here would suddenly BITE. The round cap is a
+# runaway brake, not a per-profile work budget: a "frugal" model still needs as many
+# rounds to finish a job, it just costs less per round. Cost is bounded by the
+# per-round cost brake; rounds are bounded by the shared default. Set one here only
+# with a reason that is genuinely about ROUNDS, not about money.
 MODEL_PROFILES = {
     "speed": {
         "model": {
@@ -72,7 +82,6 @@ MODEL_PROFILES = {
             "compact_threshold": 0.85,       # delay compaction → keep cache warm
         },
         "limits": {
-            "max_tool_rounds": 15,
             "tool_results_total_tokens": 80000,
             "context_safety_ratio": 0.95,
         },
@@ -88,7 +97,6 @@ MODEL_PROFILES = {
             "compact_threshold": 0.70,
         },
         "limits": {
-            "max_tool_rounds": 15,
             "tool_results_total_tokens": 50000,
             "context_safety_ratio": 0.95,
         },
@@ -107,7 +115,6 @@ MODEL_PROFILES = {
             "compact_threshold": 0.50,
         },
         "limits": {
-            "max_tool_rounds": 8,
             "tool_results_total_tokens": 25000,
             "context_safety_ratio": 0.90,
         },
