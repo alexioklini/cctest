@@ -863,7 +863,26 @@ MemPalace tools (mempalace_query, save_chat_to_memory, mempalace_get_drawer,
 mempalace_list_drawers, read_document); `_resolve_artifact_dir` + execute_command/
 python_exec cwd prefer working_dir, and `_resolve_under_cwd` (file_tools.py)
 resolves RELATIVE paths in read_file/list_directory/search_files under
-working_dir (non-code-mode keeps process-cwd abspath). `BRAIN.md` at the
+working_dir (non-code-mode keeps process-cwd abspath).
+
+*Write-path steering (v9.312.3).* Because relative paths resolve against the
+PROJECT ROOT here, the write tools' stock "use a relative filename → lands in
+your artifact folder" advice (v9.153.0) points straight into the user's source
+tree — models dropped helper scripts and reports next to the code. `_filter_tools`
+(the single seam every purpose + warmup path goes through) therefore appends
+`_CODE_MODE_WRITE_HINT` to the wire description of `_CODE_MODE_WRITE_TOOLS`
+(write_file / write_document / python_exec / execute_command / render_diagram)
+whenever `_in_code_mode()` (= a `working_dir` is bound): source code stays where
+the project's code lives; anything the model GENERATES (helper/analysis scripts,
+reports, diagrams, exports) goes in a subdirectory — reuse `tools/` `scripts/`
+`analysis/` `reports/` `build/` `out/`, else create `brain/`. Same shallow-copy
+discipline as the admin `wire_description` override, so non-code turns and warmup
+keep object-identical tool dicts (KV prefix untouched). The system-prompt rule
+(code-mode extension point 6 "ABLAGE") states the same policy but is NOT
+sufficient on its own — verified: a model with the rule in its prompt still wrote
+a bare filename; the tool description sits where the path is chosen and wins.
+
+`BRAIN.md` at the
 working-dir root is the project memory — plain markdown, NEVER mined, injected
 verbatim into the system prompt (`_build_system_prompt` code-mode branch;
 cache-key folds working_dir + BRAIN.md mtime). `init` (POST

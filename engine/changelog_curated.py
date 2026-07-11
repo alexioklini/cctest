@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.3",
+        "date": "2026-07-11",
+        "title": "Code-Projekte bleiben aufgeräumt",
+        "body": "Hilfsskripte, Reports und Diagramme, die der Agent für seine "
+                "Arbeit erzeugt, landen jetzt in einem Unterverzeichnis (etwa "
+                "`brain/scripts/`) statt lose im Wurzelverzeichnis Ihres "
+                "Projekts. Passende vorhandene Ordner werden bevorzugt "
+                "wiederverwendet. Quellcode, den der Agent ändert oder "
+                "ergänzt, bleibt selbstverständlich dort, wo Ihr Code liegt.",
+        "audience": "user",
+        "versions": ["9.312.3"],
+    },
+    {
         "version": "9.312.2",
         "date": "2026-07-11",
         "title": "Laufende Subagenten sind jetzt sichtbar",

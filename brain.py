@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.312.2"
+VERSION = "9.312.3"
 VERSION_DATE = "2026-07-11"
 CHANGELOG = [
+    ("9.312.3", "2026-07-11", "fix(code-mode): erzeugte Hilfsskripte/Reports landeten im PROJEKT-WURZELVERZEICHNIS statt in einem Unterordner. USER-WUNSCH: 'wenn die Tools Hilfsprogramme schreiben oder Output generieren, dann nicht im Root des Projektes, sondern intelligent in ein Unterverzeichnis — wenn der SOURCE CODE modifiziert wird, dann natuerlich dort, wo der Source Code liegt.' BELEG: glm-5.2 schrieb im SQL-Projekt `analyze_dependencies.py` + `SQL_Abhaengigkeits_Report.html` direkt nach eval/sql/ — zwischen die Quellcode-Ordner q1/q2. URSACHE (ein invertierter Fix): die Wire-Beschreibungen der Schreib-Werkzeuge sagen seit v9.153.0 'Use a RELATIVE filename (e.g. `report.docx`) so the file lands in the session artifact folder' — das war die richtige Antwort fuer NORMALE Chats (dort ist relativ = Artefakt-Ordner). Im CODE-MODE kehrt sich das um: relative Pfade loesen gegen `working_dir` = das PROJEKT-ROOT auf (engine/tools/file_tools.py:_cwd_base), ein barer Dateiname faellt also mitten in den Quellbaum. Das Modell folgt der Tool-Beschreibung, die im Moment der Pfadwahl vor ihm steht. ZWEI EBENEN, in dieser Reihenfolge probiert: (1) PROMPT — neuer Punkt 6 'ABLAGE' in _CODE_MODE_EXTENSION_DEFAULT mit der vom Nutzer gezogenen Grenze: Quellcode-Aenderungen bleiben am Ort des bestehenden Codes (NICHT verschieben); alles SELBST Erzeugte (Hilfs-/Analyseskripte, Reports, Diagramme, Exporte, Zwischendateien) kommt in ein Unterverzeichnis — vorhandenes wiederverwenden (`tools/`, `scripts/`, `analysis/`, `reports/`, `build/`, `out/`), sonst `brain/` anlegen (`brain/scripts/`, `brain/reports/`); vorher NACHSCHAUEN was existiert, relativen Pfad entsprechend schreiben, am Ende dem Nutzer sagen wo es liegt. Live-Override mitgezogen (9.243.0-Lektion: config.json haelt eine materialisierte Kopie, ohne POST greift der Default nie; 2279→3209 Zeichen, Text aus brain.py per ast extrahiert statt dupliziert). Punkt 6 ALLEIN REICHTE NICHT — live verifiziert: der Text stand nachweislich im System-Prompt der Session (grep im persistierten last_system_prompt) und glm schrieb trotzdem `count_sp.py` ins Root. Eine Prompt-Regel, die der Tool-Beschreibung widerspricht, verliert. (2) CHOKE-POINT (der eigentliche Fix, Regel 'am Choke-Point fixen, nicht per Appell'): _filter_tools — der EINE Seam, durch den jeder Purpose- + Warmup-Pfad geht — haengt im Code-Mode einen _CODE_MODE_WRITE_HINT an die Beschreibung der SCHREIB-Werkzeuge (_CODE_MODE_WRITE_TOOLS = write_file/write_document/python_exec/execute_command/render_diagram; Lese-/Suchwerkzeuge unberuehrt). Der Zusatz sagt genau das, was dort gilt: relative Pfade → PROJEKT-ROOT, Quellcode bleibt beim Quellcode, Erzeugtes in ein Unterverzeichnis, Verzeichnis erst listen, `brain/scripts/analyse.py` statt barem Dateinamen. Gated auf `working_dir` im RequestContext (neu: _in_code_mode()) — dieselbe Shallow-Copy-Disziplin wie der Admin-wire_description-Override (_apply_code_mode_write_hint kopiert NUR die betroffenen Dicts). KV-INVARIANTE VERIFIZIERT: ohne working_dir sind write_file/read_file/python_exec OBJECT-IDENTISCH zu TOOL_DEFINITIONS → normale Chats + Warmup byte-gleich, warmer Prefix unberuehrt; nur im Code-Mode tragen die 5 Schreib-Tools den Zusatz (Lese-Tools nachweislich nicht). E2E VERIFIZIERT (identischer Prompt + Modell + Projekt, vorher/nachher): VORHER `count_sp.py` ins Root, NACHHER `brain/scripts/count_sp.py` — das Modell listete sogar erst das Verzeichnis, wie die Regel es verlangt; Root blieb sauber. py_compile OK. Server-Restart noetig (Schema-Text → Warmup re-primed). KURATIERTER Eintrag (user-sichtbar: Projekt bleibt aufgeraeumt)."),
     ("9.312.2", "2026-07-11", "fix(UI): laufende Subagenten waren nach dem Spawn UNSICHTBAR — Terminal-Chat + Sidebar wirkten tot, obwohl im Hintergrund gearbeitet wurde. USER-REPORT (nach dem 9.312.1-Fix spawnte glm-5.2 im SQL-Code-Mode-Projekt korrekt 3 Subagenten): 'der Haupt-Terminal-Chat zeigt danach keinen pulsierenden gruenen Punkt' + 'auch im linken Panel muss das sichtbar sein, genauso als ob der Chat noch streamen wuerde'. URSACHE: BEIDE Anzeigen kannten nur den EIGENEN Turn. (a) Terminal-Chat-Statuszeile (panels_termchat.js:tcRenderStatus): der gruene Puls haengt an `tab.streaming`, das _tcFinishTurn auf false setzt — run_background_task koppelt die Aufgaben ab und BEENDET damit den spawnenden Turn sofort, waehrend die Subagenten minutenlang weiterlaufen; grep runningSubagents panels_termchat.js → NULL Treffer, der Terminal-Chat wusste von Subagenten schlicht nichts. (b) Sidebar-Chatliste (nav.js:renderSessionsList): die 'laeuft'-Pille haengt allein an state.streamingSessions — dieselbe Luecke. Der ✦-Kind-Tree und der Hub-Tab zeigten die Subagenten korrekt an; nur die zwei Stellen, auf die man beim Warten SCHAUT, blieben stumm (dieselbe Klasse Luecke wie der 9.312.0-Delivery-Fix, der nur das FERTIGWERDEN sichtbar machte, nicht die Laufzeit). FIX — 'busy' = eigener Turn ODER laufender Subagent dieser Session, an beiden Stellen: (1) NEU tcRunningSubagents(tab) — Zaehler der laufenden Subagenten der Tab-Session, aus zwei Quellen in dieser Reihenfolge: die Hub-Karten (live/exakt, kennen den Zustand sofort) und, falls es noch keine gibt (Reload!), state.runningSubagents aus dem bestehenden 3s-Sidebar-Poller; keine neue Netzlast. Statuszeile: Puls bei busy (nicht nur streaming) + klickbares Badge '✦ N Subagenten' (oeffnet den ✦-Hub-Tab via _terminalActivate). (2) Sidebar: busy → dieselbe .streaming-Klasse wie ein laufender Turn (identische Optik, die User-Anforderung), Pille zeigt 'laeuft' beim eigenen Turn bzw. '✦ N' bei Subagenten. (3) pollRunningSubagents (nav.js) malt jetzt zusaetzlich die Terminal-Chat-Statuszeilen neu — ohne das bliebe die Zeile im Zustand des Turn-Endes stehen (kein Puls beim Spawn, kein Erloeschen beim Fertigwerden). MITGEFIXT (separater User-Report, gleiche Zeile): die Kosten-Anzeige rendert das Listenpreis-<span> als TEXT ('$0.3019 <span title=...>(API $0.4312)</span>' stand woertlich in der Statuszeile) — `cost` ist bewusst fertiges MARKUP, wurde aber durch esc() gejagt; in costHtml umbenannt + esc() entfernt (alle Werte sind Number()/toFixed()-Zahlen, nichts User-Kontrolliertes; die uebrigen Badges der Zeile gingen schon immer roh rein — cost war die einzige Fehlstelle). js_gate GRUEN (eslint clean, net-globals 1937→1938 [+1 tcRunningSubagents, bewusster Feature-Add, Baseline im selben Commit], smoke 5/5). KURATIERTER Eintrag (user-sichtbar)."),
     ("9.312.1", "2026-07-11", "fix(Spickzettel): `scratchpad_mode: off` war KEIN Aus-Schalter — der Tool-Floor stellte `think`+`sequential_thinking` trotzdem in JEDEN klassifikator-gegateten Prompt. USER-REPORT (Session ed68e2b92b0f, glm-5.2, SQL-Code-Mode-Projekt): 'ich habe think-Toolaufrufe — ist das der Spickzettel? Spickzettel ist deaktiviert fuer glm'. JA, war er. ZWEI ENTKOPPELTE HEBEL, nur einer hoerte auf den Modus: (a) die wire-only 'denk erst nach'-AUFFORDERUNG (handlers/chat.py) respektierte `off` korrekt; (b) `_TOOL_GATING_NEVER_STRIP_TOOLS` (v9.295.0) florte die beiden Werkzeuge NAMENS-basiert und MODUS-BLIND — der Floor fragte `scratchpad_mode` nie ab. Belegt an den Turn-Metadaten: tool_gating.excluded_groups enthaelt `thinking` (Klassifikator deferrte die Gruppe korrekt), tool_resolution.in_prompt enthaelt trotzdem `think`+`sequential_thinking` (der Floor zog sie wieder rein); `calibrate` (nicht im Floor) blieb korrekt deferred. FOLGE: ein Modell, das stark genug ist, ein sichtbares Werkzeug zu benutzen, ruft es ungefragt auf — glm rief `think` 4x auf; im dritten Aufruf argumentierte es sich aus einer bereits zweimal getroffenen Hintergrundaufgaben-Entscheidung wieder HERAUS ('I'll do this inline because … more reliable than delegating to a background LLM'), d.h. der ungewollte Spickzettel kostete nicht nur Token, er kippte eine Ausfuehrungsentscheidung. Der Floor war fuer gemma-12B gedacht (ein Denk-Werkzeug wird NIE als 'needed' klassifiziert, ein schwaches Modell tool_search't nicht danach) — die Begruendung traegt aber nur, wenn der Spickzettel fuer das Modell ueberhaupt AN ist. FIX: der Floor ist jetzt modell-abhaengig. `_TOOL_GATING_NEVER_STRIP_TOOLS` = {tool_search, ask_user} (rein STRUKTURELL, immer); neu `_SCRATCHPAD_FLOOR_TOOLS` = {think, sequential_thinking} + `tool_gating_floor(model)`, die die Scratchpad-Haelfte nur dazunimmt, wenn `model_scratchpad_mode(model) != 'off'` (neue Helper-Fn, spiegelt die Aufloesung aus handlers/chat.py inkl. der Legacy-Booleans force_think/force_sequential_thinking, damit Floor und Aufforderung sich einig sind). Beide Konsumenten umgestellt (classifier_tool_deferral + classifier_gating_decision — das Inspector-Modal meldet damit denselben Floor, den die Deferral tatsaechlich anwendet). KEIN Dead-End: bei `off` sind die Werkzeuge deferred, nicht entfernt — ein Modell, das wirklich einen Spickzettel will, erreicht ihn per tool_search. KV-STABIL: der Floor haengt an der STATISCHEN Modell-Config, nicht am Per-Turn-Signal — er ist auf jedem Turn eines Modells identisch (auch auf `auto`-Turns, die der Klassifikator mit 'off' beantwortet; nur eine Dropdown-Aenderung invalidiert den Prefix, wie jede andere Tool-Set-Aenderung auch). Warmup-Modelle erreichen den Code ohnehin nie (classifier_tool_deferral bailt fuer sie mit ([],[]) aus — der alte Kommentar 'warmup applies the same floor' beschrieb einen Pfad, den es nicht gibt; korrigiert). VERIFIZIERT gegen die echte config.json: glm-5.2 (off) + kimi-k2.6 (off) → Spickzettel DEFERRED; gemma-12B (auto) + mistral-medium-3.5 (sequential) → weiter in-prompt; strukturelle Floor-Werkzeuge in allen Faellen in-prompt. NEUE Testklasse TestScratchpadFloorFollowsMode (5 Faelle: off deferrt / simple+sequential+auto floren / Legacy-Booleans floren / struktureller Floor ueberlebt off / Modal-Floor == Deferral-Floor); tests/test_websearch_escalation_gating.py 17/17 gruen (1 Skip, vorbestehend). py_compile OK. Server-Restart noetig. KURATIERTER Eintrag (der 'Spickzettel'-Regler pro Modell wirkt jetzt wie beschriftet)."),
     ("9.312.0", "2026-07-11", "feat(Subagenten-Hub + Sidebar-Tree + Reload-Persistenz + Delivery-Sichtbarkeit): Ueberarbeitung der 9.308.0-Subagent-Panes nach erstem echten Einsatz (User-Feedback, glm-5.2-Fan-out mit 4 Tasks): (1) HUB statt N Tabs — EIN Singleton-Tab 'Subagenten' (kind agent, web/js/panels_agentpane.js neu geschrieben): pro Aufgabe eine KARTE mit Status-Punkt, Titel, ausfuehrendem MODELL (request-Event des Transcript-SSE traegt seit dieser Version row.model — der tatsaechliche Executor inkl. Fan-out-Offload/GDPR-Swap), Token-Zaehlern, Stopp-Knopf, Tail-Zeile (aktuelles Werkzeug/letzter Text) und aufklappbarem Live-Transcript; Tab-Label mit Laufend-Zaehler + Puls — das 'es arbeitet noch'-Signal, nachdem der spawnende Turn fertig ist. Einzelkarte klappt auto auf. (2) SIDEBAR-TREE — laufende Subagenten erscheinen als Kind-Zeilen unter ihrem Chat-Eintrag in der linken Liste (nav.js renderSessionsList + pollRunningSubagents, exaktes pollActiveSessions-Muster: 3s, Signatur-Vergleich, Repaint nur bei Aenderung); NEUER Endpoint GET /v1/background-tasks/running (handlers/background.py + ChatDB.list_running_background_tasks, JOIN sessions; Non-Admins nur eigene Sessions inkl. Legacy-Leer-Owner — list_sessions-Posture). (3) RELOAD-PERSISTENZ (User-Anforderung): _agentPaneReattachAll haengt jetzt auch FERTIGE Aufgaben der offenen Sessions als Karten an (neueste 12, activate:false = kein Fokus-Klau, notify:false = kein Delivery-Reload); der Stored-Replay des Transcript-Endpoints spielt dafuer die gespeicherten tool_events als tool_call/tool_result-Paare VOR dem Output aus (Result-View 4000-Zeichen-Cap wie live) — eine reloadete Karte sieht aus wie die Live-Ansicht. (4) DELIVERY-SICHTBARKEIT (User-Report 'Subagenten fertig, aber der Chat verarbeitet nichts, wirkt tot'): DB-Diagnose zeigte, die Group-Delivery LIEF (consumed=1, Delivery-User-Message da, streaming_text gesetzt) — aber der TERMINAL-Chat hat nur seinen eigenen POST-Reader und attacht extern gestartete Turns nie (der Haupt-Web-Chat hat _reattachForBackgroundDelivery, code_chat nicht). FIX: _agentHubNotifyDelivery — wird eine Karte fertig (nur live verfolgte, _notifyOnDone), laedt der offene Terminal-Chat-Tab der Spawner-Session nach 1.5s/6s via tcLoadTranscript neu, das bei streaming:true den laufenden Delivery-Turn live attacht (_tcAttachLive; der User verifizierte den Mechanismus manuell per Reload). sessionId dafuer durch beide tool_result-Hooks + Reattach gefaedelt. py_compile OK (background/db/server); js_gate GRUEN (eslint clean, net-globals 1927->1937 = +10, Baseline im selben Commit, smoke passed). VERIFIZIERT live nach Restart: /v1/background-tasks/running liefert laufende Tasks user-gefiltert; Stored-Replay eines fertigen Tasks beginnt mit request{model}+tool_call/tool_result-Paaren. Skill 01-api + 05-internals + 06-user-manual + SKILL.md (1.180.0) im selben Commit. Server-Restart noetig. KURATIERTER Eintrag (user-sichtbar)."),
@@ -1167,7 +1168,21 @@ _CODE_MODE_EXTENSION_DEFAULT = (
     "signalisiert, dass er nicht auf die Antwort wartet ('gründlich', 'nimm "
     "dir Zeit', 'ich schaue später'). Der Nutzer sieht den Fortschritt live im "
     "Subagent-Pane und der Chat bleibt frei. Nur klar kleine, direkte Aufgaben "
-    "(einzelne Symbole, gezielte Fixes, kurze Fragen) erledigst du inline."
+    "(einzelne Symbole, gezielte Fixes, kurze Fragen) erledigst du inline.\n"
+    "6. ABLAGE — verschmutze das Projekt nicht. Unterscheide zwei Fälle:\n"
+    "   • QUELLCODE des Projekts, den du änderst oder ergänzt: bleibt dort, wo "
+    "er hingehört — am Ort der bestehenden Dateien, nach den Konventionen des "
+    "Projekts. Verschiebe ihn NICHT.\n"
+    "   • ALLES, was du SELBST für deine Arbeit erzeugst — Hilfs-/Analyse-/"
+    "Auswertungsskripte, Reports, Diagramme, Exporte, Zwischen- und "
+    "Ergebnisdateien: NICHT ins Projekt-Wurzelverzeichnis, sondern in ein "
+    "eigenes Unterverzeichnis. Nutze ein bereits vorhandenes, wenn das Projekt "
+    "einen passenden Ort hat (z.B. `tools/`, `scripts/`, `analysis/`, "
+    "`reports/`, `build/`, `out/`); gibt es keinen, lege `brain/` an und "
+    "gliedere darin sinnvoll (etwa `brain/scripts/`, `brain/reports/`). "
+    "Schau NACH, was existiert, bevor du etwas Neues anlegst, und schreibe "
+    "relative Pfade entsprechend (`brain/scripts/analyse.py`, nicht "
+    "`analyse.py`). Nenne dem Nutzer am Ende, wo die erzeugten Dateien liegen."
 )
 
 # Runtime state populated by server.py at startup from
@@ -2001,6 +2016,61 @@ def _apply_wire_description_override(td: dict, is_openai: bool) -> dict:
     return {**td, "description": override}
 
 
+# Code-Mode write-path steering. The stock descriptions of the write tools say
+# "use a RELATIVE filename so the file lands in the session's artifact folder"
+# (v9.153.0 — the fix for reports landing in the repo root). In CODE MODE that
+# advice INVERTS: relative paths resolve against `working_dir` = the PROJECT ROOT
+# (engine/tools/file_tools.py:_cwd_base), so a bare filename drops a helper script
+# or report straight into the user's source tree — observed on glm-5.2, which
+# wrote analyze_dependencies.py + the HTML report into eval/sql/ next to the SQL
+# folders. The system-prompt rule alone did NOT fix it (verified live: the model
+# has the rule in its prompt and still wrote `count_sp.py`) — the tool description
+# sits right where the path is chosen and wins. So in code mode we REPLACE the
+# artifact-folder sentence with the subdirectory rule, per tool.
+_CODE_MODE_WRITE_HINT = (
+    " IN THIS PROJECT relative paths resolve against the PROJECT ROOT, not an "
+    "artifact folder. Do NOT drop generated files into the root. Source code you "
+    "change or add belongs where the project's existing code lives. Anything YOU "
+    "generate to do your work — helper/analysis scripts, reports, diagrams, "
+    "exports, intermediate files — goes in a SUBDIRECTORY: reuse a fitting "
+    "existing one (`tools/`, `scripts/`, `analysis/`, `reports/`, `build/`, "
+    "`out/`) or create `brain/` (e.g. `brain/scripts/`, `brain/reports/`). "
+    "List the directory first, then pass a path like `brain/scripts/analyse.py` "
+    "— never a bare filename."
+)
+# Only the tools that CREATE files. read/list/search are unaffected.
+_CODE_MODE_WRITE_TOOLS = {"write_file", "write_document", "python_exec",
+                          "execute_command", "render_diagram"}
+
+
+def _in_code_mode() -> bool:
+    """True when this turn runs inside a Code-Mode project (a `working_dir` is
+    bound on the request context). Warmup + plain chats have none, so their wire
+    stays byte-identical and the warm KV prefix is untouched."""
+    try:
+        wd = get_request_context().working_dir
+    except Exception:
+        return False
+    return bool(wd)
+
+
+def _apply_code_mode_write_hint(td: dict, is_openai: bool) -> dict:
+    """Append the code-mode subdirectory rule to a write tool's wire description.
+    Shallow-copies only the affected tools (same discipline as the admin override)
+    so every other tool dict stays object-identical to TOOL_DEFINITIONS."""
+    if is_openai:
+        fn = dict(td.get("function", {}) or {})
+        name = fn.get("name", "")
+    else:
+        name = td.get("name", "")
+    if name not in _CODE_MODE_WRITE_TOOLS:
+        return td
+    if is_openai:
+        fn["description"] = (fn.get("description") or "") + _CODE_MODE_WRITE_HINT
+        return {**td, "function": fn}
+    return {**td, "description": (td.get("description") or "") + _CODE_MODE_WRITE_HINT}
+
+
 def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
                   is_openai: bool = False) -> list[dict]:
     """Filter a tool definition list to only include allowed tools.
@@ -2009,7 +2079,12 @@ def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
     Applies any admin wire-description override (tool_settings.<name>.
     wire_description) — the single seam every purpose + warmup path goes through,
     so an override reaches the model identically everywhere. Only overridden
-    dicts are copied; the rest stay object-identical to TOOL_DEFINITIONS."""
+    dicts are copied; the rest stay object-identical to TOOL_DEFINITIONS.
+
+    In CODE MODE the write tools additionally carry the subdirectory rule (their
+    stock "relative → artifact folder" advice points into the project root there).
+    Gated on the request context's working_dir, so non-code turns and warmup are
+    byte-identical."""
     if allowed is None:
         filtered = list(tool_list)
     elif is_openai:
@@ -2022,7 +2097,10 @@ def _filter_tools(tool_list: list[dict], allowed: set[str] | None,
         filtered.sort(key=lambda t: t.get("function", {}).get("name", ""))
     else:
         filtered.sort(key=lambda t: t.get("name", ""))
-    return [_apply_wire_description_override(t, is_openai) for t in filtered]
+    out = [_apply_wire_description_override(t, is_openai) for t in filtered]
+    if _in_code_mode():
+        out = [_apply_code_mode_write_hint(t, is_openai) for t in out]
+    return out
 
 
 # --- Unified tool-list resolver (PROMPT_TOOLS_UNIFICATION_PLAN.md) ---
