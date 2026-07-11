@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.5",
+        "date": "2026-07-11",
+        "title": "Subagenten können jetzt zurückfragen",
+        "body": "Braucht ein Subagent eine Entscheidung von Ihnen, erscheint "
+                "seine Frage als Antwort-Box auf seiner Karte — mit den "
+                "vorgeschlagenen Optionen und einem Freitextfeld. Chat-Liste "
+                "und Statuszeile weisen mit „❓ Rückfrage“ darauf hin, damit "
+                "Sie es auch bei geschlossenem Panel bemerken. Sobald Sie "
+                "antworten, arbeitet der Subagent weiter. Bisher blieb eine "
+                "solche Frage unsichtbar und die Aufgabe lief ins Leere.",
+        "audience": "user",
+        "versions": ["9.312.4", "9.312.5"],
+    },
+    {
         "version": "9.312.3",
         "date": "2026-07-11",
         "title": "Code-Projekte bleiben aufgeräumt",

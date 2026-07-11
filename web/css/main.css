@@ -497,6 +497,10 @@ textarea { resize: none; }
 }
 @keyframes sb-stream-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 @media (prefers-reduced-motion: reduce) { .sb-stream-pill { animation: none; } }
+/* Ein Subagent dieses Chats wartet auf eine Antwort. Verdrängt die "läuft"-Pille:
+   ohne den Nutzer kommt er nicht weiter. Eigenes Glyph statt des Punktes. */
+.sb-stream-pill.sb-ask-pill { background: var(--accent-brand, #6366f1); }
+.sb-stream-pill.sb-ask-pill::before { content: none; }
 /* Pull the sidebar title off the actions so the pill sits before the hover
    buttons; the actions row already absolutely reveals on hover. */
 .sb-session-item .sb-session-title { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
@@ -975,6 +979,20 @@ textarea { resize: none; }
 .agenthub .ap-card-log { max-height: 340px; overflow-y: auto; padding: 8px 12px;
   border-top: 1px solid var(--border-200); flex: 0 0 auto; }
 @keyframes ap-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* Rückfrage eines blockierten Subagenten (ask_user). Er kommt ohne Antwort nicht
+   weiter, deshalb visuell hervorgehoben statt beiläufig. */
+.ap-ask { border-top: 1px solid var(--border-200); padding: 9px 12px 11px;
+  background: color-mix(in srgb, var(--accent-brand) 7%, transparent); }
+.ap-ask-q { font-size: 12.5px; font-weight: 600; color: var(--text-100); margin-bottom: 3px; }
+.ap-ask-ctx { font-size: 11.5px; color: var(--text-400); margin-bottom: 6px; }
+.ap-ask-opts { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.ap-ask-opts:empty { display: none; }
+.ap-ask-opt { font-size: 11.5px; padding: 3px 10px; }
+.ap-ask-free { display: flex; gap: 6px; margin-top: 6px; }
+.ap-ask-input { flex: 1 1 auto; min-width: 0; font-size: 12px; padding: 4px 8px;
+  border: 1px solid var(--border-200); border-radius: 5px;
+  background: var(--bg-100); color: var(--text-100); }
+.ap-ask-send { font-size: 11.5px; padding: 3px 12px; flex: 0 0 auto; }
 .terminal-tab.ap-tab-err .tt-name { color: var(--git-deleted); }
 /* Sidebar-Subagenten-Tree unter dem Chat-Eintrag (nav.js) */
 .sb-subagent-row { display: flex; align-items: center; gap: 6px; cursor: pointer;
@@ -1030,6 +1048,11 @@ textarea { resize: none; }
 /* Laufende Subagenten dieser Sitzung — klickbar, öffnet den ✦-Hub-Tab. */
 .tc-status .tc-sub-badge { color: var(--git-added); font-weight: 600; cursor: pointer; }
 .tc-status .tc-sub-badge:hover { text-decoration: underline; }
+/* Ein Subagent wartet auf eine Antwort — dringlicher als "läuft": ohne den
+   Nutzer kommt er nicht weiter und läuft in seinen Timeout. */
+.tc-status .tc-ask-badge { color: var(--accent-brand); font-weight: 700; cursor: pointer;
+  animation: tc-pulse 1.1s infinite; }
+.tc-status .tc-ask-badge:hover { text-decoration: underline; }
 @keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 /* input line + slash-command autocomplete.
    The wrap is a normal block at the END of the scroll log (CLI-style), so it

@@ -661,7 +661,13 @@ write/exec tool is deliberately excluded.
 ## User interaction
 
 - `ask_user(question)` — pause turn, wait for user reply (blocks via
-  `/v1/chat/answer`)
+  `/v1/chat/answer`). Works from a detached BACKGROUND task too (v9.312.5):
+  there is no live SSE channel there (the spawning turn is long over), so the
+  question is keyed on the TASK id (not the session — several sub-agents may
+  block at once) and PERSISTED to `background_tasks.pending_question`. The 3s
+  running-tasks poller carries it to the UI, which renders an answer box on the
+  sub-agent's card; the answer comes back via `POST /v1/chat/answer {task_id}`.
+  The row is cleared on every exit (answered / timed out / errored).
 - `ask_user_for_file(prompt)` — same, file upload
 - `ask_llm(prompt, model?)` — sub-LLM call (workflow building block)
 - `agent_step(instruction, plan?, files?, model?, max_rounds?, expected_output?)`

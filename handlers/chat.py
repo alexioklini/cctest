@@ -7326,6 +7326,12 @@ class ChatHandlerMixin:
         Body shapes:
           {session_id, answer: "..."}                             # single question
           {session_id, answers: {"<question>": "<answer>", ...}}  # batch
+          {task_id, answer|answers}                               # background sub-agent
+
+        A detached background task (sub-agent) registers its pending slot under its
+        TASK id, not the session id — several sub-agents can block at once, and none
+        of them may hijack the spawning chat's own ask_user slot. Access is still
+        checked against the task's SESSION (v9.312.4).
         """
         try:
             body = self._read_json()
@@ -7333,26 +7339,43 @@ class ChatHandlerMixin:
             self._send_json({"error": "invalid JSON body"}, 400)
             return
         session_id = (body.get("session_id") or "").strip()
+        task_id = (body.get("task_id") or "").strip()
         answer = body.get("answer")
         answers = body.get("answers")
-        if not session_id or (answer is None and not isinstance(answers, dict)):
-            self._send_json({"error": "session_id and answer/answers are required"}, 400)
+        if answer is None and not isinstance(answers, dict):
+            self._send_json({"error": "answer or answers is required"}, 400)
             return
-        if self._session_access_check(session_id) is None:
+        if task_id:
+            # Resolve the owning session and access-check against IT — the task id
+            # itself carries no ACL.
+            from server_lib.db import ChatDB as _CDB
+            task = _CDB.get_background_task(task_id)
+            if not task:
+                self._send_json({"error": "unknown task"}, 404)
+                return
+            if self._session_access_check(task.get("session_id") or "") is None:
+                return
+            key = task_id
+        elif session_id:
+            if self._session_access_check(session_id) is None:
+                return
+            key = session_id
+        else:
+            self._send_json({"error": "session_id or task_id is required"}, 400)
             return
         # Normalize answers dict values to strings
         if isinstance(answers, dict):
             answers = {str(k): str(v) for k, v in answers.items() if v is not None}
         from brain import deliver_ask_user_answer
         ok = deliver_ask_user_answer(
-            session_id,
+            key,
             answer=str(answer) if answer is not None else None,
             answers=answers if isinstance(answers, dict) and answers else None,
         )
         if not ok:
             self._send_json({"error": "no pending question for this session"}, 404)
             return
-        self._send_json({"delivered": True, "session_id": session_id})
+        self._send_json({"delivered": True, "session_id": session_id, "task_id": task_id})
 
     def _handle_chat_plan_review(self):
         """POST /v1/chat/plan-review — deliver the reviewer's decision for a

@@ -38,6 +38,8 @@
 
 from __future__ import annotations
 
+import time
+
 from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
 
@@ -474,7 +476,8 @@ def tool_worker_ask_user(args: dict) -> str:
 def tool_ask_user(args: dict) -> str:
     """Ask the user one or more questions from the main chat loop (not inside a worker)."""
     import brain as _brain
-    session_id = get_request_context().current_session_id
+    _ctx = get_request_context()
+    session_id = _ctx.current_session_id
     if not session_id:
         return _err("ask_user requires an active session")
     questions, is_batch = _normalize_ask_questions(args)
@@ -483,30 +486,54 @@ def tool_ask_user(args: dict) -> str:
     context_summary = args.get("context_summary", "")
     timeout = int(args.get("timeout_seconds", 300))
 
-    cb = get_request_context().event_callback
-    if cb:
+    # A DETACHED background task (sub-agent) has no live SSE channel — the turn
+    # that spawned it is long finished, so `event_callback` emits into nothing and
+    # the question was invisible while the sub-agent blocked to its timeout
+    # (user-reported: "einer der Subagenten hat ask_user aufgerufen, das geht
+    # komplett unter"). Two changes for that path:
+    #   * key the pending slot on the TASK id, not the session id — several
+    #     sub-agents can block at once, and none of them may hijack the spawning
+    #     chat's own ask_user slot;
+    #   * PERSIST the question on the task row, so the 3s subagent poller the UI
+    #     already runs can surface it and route an answer back by task id.
+    task_id = (_ctx.current_bg_task_id or "") if _ctx.current_bg_task else ""
+    key = task_id or session_id
+
+    payload = {
+        "session_id": session_id,
+        "questions": questions,
+        "context_summary": context_summary,
+        "timeout_seconds": timeout,
+    }
+    if not is_batch:
+        # Keep legacy fields for single-question consumers
+        payload["question"] = questions[0]["question"]
+        payload["options"] = questions[0]["options"]
+
+    # The live channel exists only for an interactive turn; a background task's
+    # `event_callback` is None (nothing is listening any more).
+    cb = None if task_id else _ctx.event_callback
+    if task_id:
+        payload["task_id"] = task_id
+        payload["asked_at"] = time.time()
         try:
-            payload = {
-                "session_id": session_id,
-                "questions": questions,
-                "context_summary": context_summary,
-                "timeout_seconds": timeout,
-            }
-            if not is_batch:
-                # Keep legacy fields for single-question consumers
-                payload["question"] = questions[0]["question"]
-                payload["options"] = questions[0]["options"]
+            from server_lib.db import ChatDB
+            ChatDB.set_background_task_question(task_id, payload)
+        except Exception:
+            pass  # best-effort: still block + honour a direct answer
+    elif cb:
+        try:
             cb("user_input_needed", payload)
         except Exception:
             pass
 
-    event = _brain._ask_user_register(session_id)
+    event = _brain._ask_user_register(key)
     try:
         got = event.wait(timeout=timeout)
         if not got:
             return _err("No answer received (timed out)")
         with _brain._ask_user_lock:
-            slot = _brain._ask_user_pending.get(session_id) or {}
+            slot = _brain._ask_user_pending.get(key) or {}
             answers_map = slot.get("answers")
             answer_str = slot.get("answer")
         if is_batch:
@@ -530,4 +557,12 @@ def tool_ask_user(args: dict) -> str:
                 pass
         return _ok({"answer": answer_str})
     finally:
-        _brain._ask_user_clear(session_id)
+        _brain._ask_user_clear(key)
+        if task_id:
+            # Clear the persisted question on EVERY exit — answered, timed out or
+            # errored — so a dead question can't linger as a card in the UI.
+            try:
+                from server_lib.db import ChatDB
+                ChatDB.set_background_task_question(task_id, None)
+            except Exception:
+                pass

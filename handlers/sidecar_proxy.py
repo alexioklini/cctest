@@ -142,6 +142,10 @@ def _apply_bg_context(ctx: dict) -> None:
     tl.session_id = tl.current_session_id
     tl.current_turn_id = ctx.get("turn_id") or ""
     tl.current_bg_task = bool(ctx.get("bg_task", False))
+    # The task's own id — ask_user keys its pending-answer slot on it (a detached
+    # sub-agent must not hijack the spawning chat's slot, and several sub-agents
+    # may block at once).
+    tl.current_bg_task_id = ctx.get("bg_task_id") or ""
     # Dispatch whitelist for tool_search (same list the loop enforces).
     tl.allowed_tools = ctx.get("allowed_tools") or None
     tl.current_user_id = ctx.get("user_id") or ""
@@ -519,6 +523,7 @@ def background_call(
     provider_resolver=None,
     turn_id: str | None = None,
     bg_task: bool = False,
+    bg_task_id: str = "",
     account_cost: bool = True,
     cost_purpose: str | None = None,
     forced_tool: dict | None = None,
@@ -583,6 +588,7 @@ def background_call(
         "caveman_system": 0,
         "trace_id": "",
         "bg_task": bool(bg_task),
+        "bg_task_id": bg_task_id or "",
     }
     sampling = {
         # Explicit `temperature` arg overrides the model's configured value —

@@ -887,9 +887,14 @@ class ChatDB:
                 "CREATE INDEX IF NOT EXISTS idx_bgtask_session ON background_tasks(session_id, created_at)")
             # Additive migrations for the fan-out columns (existing DBs) — MUST run
             # before the group index, which references group_id.
+            # `pending_question`: JSON of an ask_user call the sub-agent is
+            # BLOCKED on (questions + context_summary + asked_at). The background
+            # run has no live SSE channel — the spawning turn is long over — so
+            # the question is PERSISTED here and the UI polls for it. Cleared when
+            # answered/timed out.
             for _col, _decl in (("group_id", "TEXT"), ("follow_up", "TEXT"),
                                 ("group_done_at", "REAL"), ("parent_task_id", "TEXT"),
-                                ("tool_events", "TEXT")):
+                                ("tool_events", "TEXT"), ("pending_question", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE background_tasks ADD COLUMN {_col} {_decl}")
                 except sqlite3.OperationalError:
@@ -2188,10 +2193,15 @@ class ChatDB:
         """All RUNNING background tasks across sessions (sidebar subagent
         tree, v9.312.0). `user_id`: when set (non-admin caller), only tasks of
         sessions owned by that user (legacy empty-owner sessions included, the
-        list_sessions posture). Light rows — no output/prompt blobs."""
+        list_sessions posture). Light rows — no output/prompt blobs.
+
+        Carries `pending_question` (v9.312.4) so the 3s poller that already runs
+        for the subagent tree also surfaces a blocked sub-agent's question — no
+        extra endpoint, no extra traffic."""
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
-            q = ("SELECT bt.id, bt.session_id, bt.title, bt.model, bt.created_at "
+            q = ("SELECT bt.id, bt.session_id, bt.title, bt.model, bt.created_at, "
+                 "bt.pending_question "
                  "FROM background_tasks bt JOIN sessions s ON s.id = bt.session_id "
                  "WHERE bt.status='running'")
             args = []
@@ -2199,7 +2209,31 @@ class ChatDB:
                 q += " AND (s.user_id = ? OR s.user_id = '' OR s.user_id IS NULL)"
                 args.append(user_id)
             q += " ORDER BY bt.created_at ASC"
-            return [dict(r) for r in conn.execute(q, args).fetchall()]
+            out = []
+            for r in conn.execute(q, args).fetchall():
+                d = dict(r)
+                pq = d.get("pending_question")
+                if pq:
+                    try:
+                        d["pending_question"] = json.loads(pq)
+                    except (ValueError, TypeError):
+                        d["pending_question"] = None
+                else:
+                    d["pending_question"] = None
+                out.append(d)
+            return out
+
+    @staticmethod
+    @_db_safe(default=False)
+    def set_background_task_question(task_id, payload):
+        """Store (payload=dict) or clear (payload=None) the ask_user question a
+        background task is blocked on. Persisted because the run has no live SSE
+        channel — the UI polls it via list_running_background_tasks."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE background_tasks SET pending_question=? WHERE id=?",
+                         (json.dumps(payload) if payload else None, task_id))
+            conn.commit()
+        return True
 
     @staticmethod
     @_db_safe(default=list)

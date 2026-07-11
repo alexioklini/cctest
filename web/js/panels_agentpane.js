@@ -93,6 +93,7 @@ function _agentHubAddCard(tab, taskId, title, sessionId) {
       <button class="ap-x" title="Karte entfernen (stoppt NICHT)" style="display:none">✕</button>
     </div>
     <div class="ap-tail">wartet auf Ereignisse …</div>
+    <div class="ap-ask" style="display:none"></div>
     <div class="ap-card-log tc-log" style="display:none"></div>`;
   host.prepend(el);  // neueste oben
   const card = {
@@ -100,6 +101,8 @@ function _agentHubAddCard(tab, taskId, title, sessionId) {
     tokensIn: 0, tokensOut: 0, model: '',
     logEl: el.querySelector('.ap-card-log'),
     tailEl: el.querySelector('.ap-tail'),
+    askEl: el.querySelector('.ap-ask'),
+    _askSig: '',
     _live: null, _ctrl: null,
   };
   tab._cards[taskId] = card;
@@ -149,6 +152,76 @@ function _agentCardRow(card, cls, html) {
 
 function _agentCardTail(card, text) {
   card.tailEl.textContent = text;
+}
+
+// ── Rückfrage eines Subagenten (ask_user) ────────────────────────────────────
+// Ein abgekoppelter Subagent hat KEINEN Live-SSE-Kanal (der spawnende Turn ist
+// längst beendet) — seine Frage emittierte bisher in einen toten event_callback
+// und blockierte unsichtbar bis zum Timeout (User-Report: "einer der Subagenten
+// hat ask_user aufgerufen, das geht komplett unter"). Die Frage wird deshalb
+// server-seitig auf der Task-Zeile PERSISTIERT und vom bestehenden 3s-Poller
+// mitgeliefert; hier wird sie als Antwort-Box in die Karte gerendert.
+// `pq` = null → Box weg (beantwortet/abgelaufen).
+function _agentCardRenderAsk(card, pq) {
+  if (!card || !card.askEl) return;
+  const sig = pq ? JSON.stringify(pq.questions || pq.question || '') : '';
+  if (sig === card._askSig) return;      // unverändert → kein Repaint (tippt der Nutzer gerade)
+  card._askSig = sig;
+  if (!pq) { card.askEl.style.display = 'none'; card.askEl.innerHTML = ''; return; }
+
+  const qs = Array.isArray(pq.questions) && pq.questions.length
+    ? pq.questions
+    : [{ question: pq.question || '', options: pq.options || [] }];
+  const q = qs[0];                        // Subagenten stellen praktisch immer EINE Frage
+  const opts = Array.isArray(q.options) ? q.options.filter(Boolean) : [];
+  card.askEl.innerHTML = `
+    <div class="ap-ask-q">❓ ${esc(q.question || 'Der Subagent hat eine Rückfrage.')}</div>
+    ${pq.context_summary ? `<div class="ap-ask-ctx">${esc(pq.context_summary)}</div>` : ''}
+    <div class="ap-ask-opts">
+      ${opts.map((o, i) => `<button class="ap-ask-opt btn-secondary" data-i="${i}">${esc(o)}</button>`).join('')}
+    </div>
+    <div class="ap-ask-free">
+      <input type="text" class="ap-ask-input" placeholder="Antwort eingeben …">
+      <button class="ap-ask-send btn-secondary">Senden</button>
+    </div>`;
+  card.askEl.style.display = 'block';
+  const _tab = _agentHubTab();
+  if (_tab) _agentCardToggle(_tab, card, true);  // aufklappen — sonst übersieht man die Frage
+
+  const send = async (text) => {
+    const t = (text || '').trim();
+    if (!t) return;
+    card.askEl.querySelectorAll('button, input').forEach(e => { e.disabled = true; });
+    try {
+      await API.answerBackgroundTask(card.taskId, t);
+      card._askSig = '';                  // erlaubt eine spätere ZWEITE Frage
+      card.askEl.style.display = 'none';
+      card.askEl.innerHTML = '';
+      _agentCardTail(card, 'Antwort gesendet — Subagent läuft weiter …');
+    } catch (_) {
+      card.askEl.querySelectorAll('button, input').forEach(e => { e.disabled = false; });
+    }
+  };
+  card.askEl.querySelectorAll('.ap-ask-opt').forEach(b => {
+    b.addEventListener('click', () => send(opts[Number(b.dataset.i)]));
+  });
+  const inp = card.askEl.querySelector('.ap-ask-input');
+  card.askEl.querySelector('.ap-ask-send').addEventListener('click', () => send(inp.value));
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(inp.value); });
+  inp.focus();
+}
+
+// Vom Poller (nav.js) gerufen: verteilt die offenen Fragen aus
+// /v1/background-tasks/running auf die Hub-Karten.
+function agentHubApplyPendingQuestions(tasks) {
+  const tab = _agentHubTab();
+  if (!tab || !tab._cards) return;
+  const byId = {};
+  for (const t of (tasks || [])) byId[t.id] = t.pending_question || null;
+  for (const [taskId, card] of Object.entries(tab._cards)) {
+    if (card.status !== 'running') { _agentCardRenderAsk(card, null); continue; }
+    _agentCardRenderAsk(card, byId[taskId] || null);
+  }
 }
 
 function _agentCardMeta(card) {

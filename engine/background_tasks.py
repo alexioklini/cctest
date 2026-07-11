@@ -316,6 +316,7 @@ class BackgroundTaskRunner:
                 current_agent=_brain.AgentConfig(snap["agent_id"]),
                 current_user_id=snap["user_id"],
                 current_bg_task=True,  # nesting guard: run_background_task refuses here
+                current_bg_task_id=task_id,  # ask_user keys its pending slot on this
                 cost_purpose="background_task",  # cost-ledger use-case bucket
             ):
                 # Rebuild the session's DOMAIN context on this fresh thread —
@@ -373,6 +374,7 @@ class BackgroundTaskRunner:
                     timeout_s=_TIMEOUT_S,
                     turn_id=turn_id,
                     bg_task=True,  # nesting guard: this run can't spawn bg-tasks
+                    bg_task_id=task_id,  # ask_user keys its pending slot on this
                     emit=_emit,    # live transcript tap (subagent pane / panel)
                 )
             output = res.get("reply") or ""

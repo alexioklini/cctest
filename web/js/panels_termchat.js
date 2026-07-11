@@ -901,6 +901,16 @@ function tcRunningSubagents(tab) {
   return (polled[sid] || []).length;
 }
 
+// Wartet ein Subagent dieser Sitzung auf eine ANTWORT? Das ist dringlicher als
+// "läuft" — der Subagent kommt ohne den Nutzer nicht weiter und läuft sonst in
+// seinen Timeout. Quelle ist der 3s-Poller (state.runningSubagents).
+function tcSubagentAsking(tab) {
+  const sid = tab && tab.sessionId;
+  if (!sid) return false;
+  const polled = (typeof state !== 'undefined' && state.runningSubagents) || {};
+  return (polled[sid] || []).some(t => t.pending_question);
+}
+
 // ── Status footer ────────────────────────────────────────────────────────────
 function tcRenderStatus(tab) {
   const el = document.getElementById(tab.id + '-status');
@@ -930,12 +940,16 @@ function tcRenderStatus(tab) {
   // Der Puls steht für "an dieser Sitzung wird gerade gearbeitet" — das ist der
   // EIGENE Turn ODER ein abgekoppelter Subagent (der den Turn überlebt).
   const subs = tcRunningSubagents(tab);
+  const asking = tcSubagentAsking(tab);
   const busy = tab.streaming || subs > 0;
   const dot = (busy && !(tab.streaming && tab._paused)) ? '<span class="tc-live">●</span> ' : '';
-  const subBadge = subs
-    ? `<span class="tc-sub-badge" title="${subs} Subagent${subs === 1 ? '' : 'en'} dieser Sitzung ${subs === 1 ? 'läuft' : 'laufen'} noch — klicken für die Live-Karten"
-        onclick="_terminalActivate('${_AGENT_HUB_ID}')">✦ ${subs} Subagent${subs === 1 ? '' : 'en'}</span> `
-    : '';
+  const subBadge = asking
+    ? `<span class="tc-ask-badge" title="Ein Subagent wartet auf Ihre Antwort — klicken, um sie zu beantworten"
+        onclick="_terminalActivate('${_AGENT_HUB_ID}')">❓ Rückfrage</span> `
+    : (subs
+      ? `<span class="tc-sub-badge" title="${subs} Subagent${subs === 1 ? '' : 'en'} dieser Sitzung ${subs === 1 ? 'läuft' : 'laufen'} noch — klicken für die Live-Karten"
+          onclick="_terminalActivate('${_AGENT_HUB_ID}')">✦ ${subs} Subagent${subs === 1 ? '' : 'en'}</span> `
+      : '');
   const qn = Array.isArray(tab._queue) ? tab._queue.length : 0;
   const queueBadge = qn ? ` · <span class="tc-queue-badge">⧉ ${qn} in Warteschlange</span>` : '';
   const goalBadge = tab.goalStatus === 'active'

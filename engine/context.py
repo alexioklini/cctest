@@ -138,6 +138,11 @@ class RequestContext:
     # ._run). run_background_task reads it to refuse nested spawns (no fan-out
     # regress). Never set on a normal chat/scheduler/warmup turn.
     current_bg_task: bool = False
+    # The background task's own id, set alongside current_bg_task. `ask_user` keys
+    # its pending-answer slot on THIS (not the chat session id) so several
+    # sub-agents can have a question open at once without overwriting each other
+    # — or the spawning chat's own ask_user slot.
+    current_bg_task_id: str = ""
     # --- exec ---
     execution_overrides: object = None
     _intent_action_recovery_count: object = None

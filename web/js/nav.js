@@ -1364,7 +1364,9 @@ function renderSessionsList(container, sessions) {
     // sofort, die Aufgaben laufen aber minutenlang weiter — ohne den zweiten Fall
     // wirkt der Chat in der Liste tot, obwohl im Hintergrund gearbeitet wird.
     const streaming = state.streamingSessions?.has(sid);
-    const subCount = ((state.runningSubagents || {})[sid] || []).length;
+    const subRows = (state.runningSubagents || {})[sid] || [];
+    const subCount = subRows.length;
+    const subAsking = subRows.some(t => t.pending_question);
     const busy = streaming || subCount > 0;
     div.className = 'sb-session-item' + (state.activeChat?.sessionId === sid ? ' active' : '')
       + (busy ? ' streaming' : '');
@@ -1383,11 +1385,13 @@ function renderSessionsList(container, sessions) {
       <span class="sb-sess-icon"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg></span>
       <span class="sb-session-title"${tip}>${esc(title)}</span>
       ${goalPill}
-      ${streaming
-        ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>'
-        : (subCount
-          ? `<span class="sb-stream-pill" title="${subCount} Subagent${subCount === 1 ? '' : 'en'} ${subCount === 1 ? 'läuft' : 'laufen'} noch">✦ ${subCount}</span>`
-          : '')}
+      ${subAsking
+        ? '<span class="sb-stream-pill sb-ask-pill" title="Ein Subagent wartet auf Ihre Antwort">❓ Rückfrage</span>'
+        : (streaming
+          ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>'
+          : (subCount
+            ? `<span class="sb-stream-pill" title="${subCount} Subagent${subCount === 1 ? '' : 'en'} ${subCount === 1 ? 'läuft' : 'laufen'} noch">✦ ${subCount}</span>`
+            : ''))}
       <span class="sb-sess-actions">
         <button onclick="event.stopPropagation(); archiveSession('${sid}')" title="Archivieren">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 8v13H3V8M1 3h22v5H1z"/></svg>
@@ -1402,14 +1406,14 @@ function renderSessionsList(container, sessions) {
     // Subagenten-Tree: laufende Hintergrundaufgaben dieses Chats als
     // Kind-Zeilen unter dem Eintrag (✦ + pulsierender Punkt + Titel + Modell).
     // Gespeist vom pollRunningSubagents-Poller (state.runningSubagents).
-    const subs = (state.runningSubagents && state.runningSubagents[sid]) || [];
-    for (const t of subs) {
+    for (const t of subRows) {
       const row = document.createElement('div');
       row.className = 'sb-subagent-row';
       const mdl = (typeof modelShortName === 'function' && t.model)
         ? modelShortName(t.model, false) : (t.model || '');
+      const asks = !!t.pending_question;
       row.innerHTML = `<span class="sb-sub-dot"></span>
-        <span class="sb-sub-title" title="${esc(t.title || '')}${mdl ? ' · ' + esc(mdl) : ''}">✦ ${esc(t.title || 'Subagent')}</span>`;
+        <span class="sb-sub-title" title="${asks ? 'Wartet auf Ihre Antwort — ' : ''}${esc(t.title || '')}${mdl ? ' · ' + esc(mdl) : ''}">${asks ? '❓' : '✦'} ${esc(t.title || 'Subagent')}</span>`;
       row.onclick = (e) => { e.stopPropagation(); openSession(sid, sagent); };
       container.appendChild(row);
     }
@@ -1431,10 +1435,16 @@ async function pollRunningSubagents() {
     for (const t of tasks) {
       (map[t.session_id] = map[t.session_id] || []).push(t);
     }
-    const sig = tasks.map(t => t.id).sort().join(',');
+    // Signatur enthält die offene-Frage-Kennung mit: eine NEUE Rückfrage muss ein
+    // Repaint auslösen, auch wenn sich die Task-Menge nicht geändert hat.
+    const sig = tasks.map(t => t.id + (t.pending_question ? '?' : '')).sort().join(',');
     if (sig === _subagentSig) return;   // keine Änderung → kein Repaint
     _subagentSig = sig;
     state.runningSubagents = map;
+    // Rückfragen blockierter Subagenten in die Hub-Karten spielen (Antwort-Box).
+    if (typeof agentHubApplyPendingQuestions === 'function') {
+      agentHubApplyPendingQuestions(tasks);
+    }
     if (typeof renderRecentChats === 'function') renderRecentChats();
     if (state.currentView === 'chats' && typeof loadChatsList === 'function') {
       loadChatsList();

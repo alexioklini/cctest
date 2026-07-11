@@ -203,7 +203,13 @@ streaming call, per-USER history, fixed read-only tool set. See
   (= iteration boundary: client closes the current assistant bubble). The
   single terminal `done` carries `goal {status, iteration, max, reasoning}`.
   `fulfilled` auto-ends the loop (badge ✓ until the goal is cleared/replaced).
-- `POST /v1/chat/answer` — `{session_id, answer}` unblocks `AskUserQuestion`
+- `POST /v1/chat/answer` — `{session_id, answer}` unblocks `AskUserQuestion`.
+  Also accepts `{task_id, answer}` (v9.312.5) to answer a BACKGROUND sub-agent
+  blocked on `ask_user`: the pending slot is keyed on the task (not the session),
+  so several sub-agents can ask at once without colliding with each other or with
+  the chat's own question. ACL is still checked against the task's session. The
+  open question itself is exposed on `GET /v1/background-tasks/running` as
+  `pending_question` (the poller the subagent tree already uses).
 - `POST /v1/chat/plan-review` — `{session_id, action: approve|clarify, plan?,
   executor?, message?}` resolves a pending MoA delegate-plan review (9.285.0;
   fired only on `body.interactive=true` turns; SSE `moa_plan_review` /
