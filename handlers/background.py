@@ -32,6 +32,16 @@ class BackgroundTasksHandlerMixin:
             return
         self._send_json({"tasks": ChatDB.list_background_tasks(session_id)})
 
+    def _handle_background_tasks_running(self):
+        """GET /v1/background-tasks/running — all RUNNING tasks across sessions
+        (left-sidebar subagent tree). Non-admins see only tasks of their own
+        sessions (legacy empty-owner sessions included — the list_sessions
+        posture)."""
+        user = getattr(self, "_auth_user", None) or {}
+        is_admin = user.get("role") == "admin" or user.get("id") == "__system__"
+        uid = None if is_admin else (user.get("id") or "")
+        self._send_json({"tasks": ChatDB.list_running_background_tasks(user_id=uid)})
+
     def _handle_background_task_cancel(self):
         """POST /v1/background-tasks/cancel {task_id}"""
         from engine.background_tasks import background_task_runner
@@ -128,8 +138,11 @@ class BackgroundTasksHandlerMixin:
 
         # Always lead with the request that started this task, so the transcript
         # shows the ANFRAGE (prompt + title), not just the run's result — for
-        # both the live and the stored-replay path below.
-        emit("request", {"title": row.get("title") or "", "prompt": row.get("prompt") or ""})
+        # both the live and the stored-replay path below. `model` = the ACTUAL
+        # executing model (fan-out offload / GDPR swap already applied at spawn)
+        # so the Subagenten-Hub can label each card.
+        emit("request", {"title": row.get("title") or "", "prompt": row.get("prompt") or "",
+                         "model": row.get("model") or ""})
 
         from engine.background_tasks import background_task_runner
         stream = background_task_runner.get_stream(task_id)
@@ -162,8 +175,28 @@ class BackgroundTasksHandlerMixin:
             # unreachable — every path above returns; kept for clarity
         # No live stream (finished, or Brain restarted mid-run) → stored replay.
 
-        # Finished (or no live stream available): replay the stored output.
+        # Finished (or no live stream available): replay the stored run —
+        # tool events first (9.312.0: so a reloaded Subagenten-Karte shows the
+        # same tool rows as the live view; the DB row carries them since
+        # v9.51.6), then the output text, then the terminal `done`.
         full = ChatDB.get_background_task(task_id) or row
+        for tev in (full.get("tool_events") or []):
+            if not isinstance(tev, dict):
+                continue
+            tuid = tev.get("tool_use_id") or ""
+            if not emit("tool_call", {"name": tev.get("name", ""),
+                                      "args": tev.get("args") or {},
+                                      "tool_use_id": tuid,
+                                      "tool_round": tev.get("tool_round")}):
+                return
+            res = tev.get("result") or ""
+            if not emit("tool_result", {"name": tev.get("name", ""),
+                                        "tool_use_id": tuid,
+                                        "result": res[:4000] + (" … [gekürzt]" if len(res) > 4000 else ""),
+                                        "result_chars": len(res),
+                                        "elapsed_ms": tev.get("elapsed_ms"),
+                                        "is_error": bool(tev.get("is_error"))}):
+                return
         text = full.get("output") or ""
         if text:
             emit("text_delta", {"text": text})

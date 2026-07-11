@@ -742,7 +742,8 @@ function buildStreamCallbacks(chat, isActive) {
           // Panes) gilt pro Turn, nicht pro Session.
           terminalMaybeOpenAgentPane(d.name, d.result,
             (call && call.args && call.args.title) || '',
-            chat.sessionId + '-t' + chat.messages.filter(m => m.role === 'user').length);
+            chat.sessionId + '-t' + chat.messages.filter(m => m.role === 'user').length,
+            chat.sessionId);
         }
         // d.references is pre-extracted server-side; attach to the message so
         // extractReferencesFromToolResult reads from it directly (no re-parsing).

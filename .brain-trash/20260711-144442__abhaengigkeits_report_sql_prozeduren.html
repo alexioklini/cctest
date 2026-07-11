@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Abhängigkeits-Report: SQL-Prozeduren</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --font-display: 'Charter', 'Iowan Old Style', 'Palatino Linotype', Georgia, serif;
+  --font-body: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --bg: #fbf9f4; --bg-surface: #ffffff; --bg-surface-alt: #f1ede4;
+  --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.16);
+  --text: #1a1817; --text-dim: #5a5651; --text-muted: #8a8580;
+  --accent: #b8543a; --accent-light: #d97a5e; --accent-bg: rgba(184,84,58,0.06);
+  --gold: #c9952e; --gold-bg: rgba(201,149,46,0.09);
+  --aurora-a: rgba(184,84,58,0.10); --aurora-b: rgba(201,149,46,0.08); --aurora-c: rgba(64,98,128,0.07);
+  --radius: 12px; --shadow-sm: 0 1px 3px rgba(0,0,0,0.05); --shadow-md: 0 4px 24px rgba(0,0,0,0.07);
+  --max-w: 760px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131214; --bg-surface: #1c1a1e; --bg-surface-alt: #25232a;
+    --border: rgba(255,255,255,0.07); --border-strong: rgba(255,255,255,0.16);
+    --text: #ece8e2; --text-dim: #a8a39c; --text-muted: #6f6b66;
+    --accent: #e88f73; --accent-light: #f4ad95; --accent-bg: rgba(232,143,115,0.09);
+    --gold: #e8c05a; --gold-bg: rgba(232,192,90,0.09);
+    --aurora-a: rgba(232,143,115,0.13); --aurora-b: rgba(232,192,90,0.09); --aurora-c: rgba(125,180,224,0.10);
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4); --shadow-md: 0 4px 28px rgba(0,0,0,0.55);
+  }
+}
+html { scroll-behavior: smooth; scroll-padding-top: 4rem; }
+body {
+  font-family: var(--font-body); background: var(--bg); color: var(--text);
+  line-height: 1.75; font-size: 17px; -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility; position: relative; min-height: 100vh;
+}
+/* Aurora background — slowly drifting accent blobs behind the content. */
+body::before {
+  content: ''; position: fixed; inset: -20vh -20vw; z-index: -2;
+  background:
+    radial-gradient(40vw 50vh at 18% 22%, var(--aurora-a) 0%, transparent 60%),
+    radial-gradient(45vw 55vh at 82% 12%, var(--aurora-b) 0%, transparent 65%),
+    radial-gradient(55vw 60vh at 50% 88%, var(--aurora-c) 0%, transparent 70%);
+  filter: blur(20px); animation: aurora-drift 28s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+/* SVG film-grain so it doesn't read as flat CSS. */
+body::after {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.32 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+  opacity: 0.045; mix-blend-mode: overlay;
+}
+@keyframes aurora-drift {
+  0% { transform: translate3d(0,0,0) scale(1); }
+  50% { transform: translate3d(2vw,-1vh,0) scale(1.04); }
+  100% { transform: translate3d(-1vw,1.5vh,0) scale(1.02); }
+}
+@media (prefers-reduced-motion: reduce) { body::before { animation: none; } }
+
+/* Toolbar */
+.toolbar { position: fixed; top: 1rem; right: 1rem; z-index: 100; display: flex; gap: 0.4rem; opacity: 0.7; transition: opacity 0.2s; }
+.toolbar:hover { opacity: 1; }
+.toolbar button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 6px 14px;
+  border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-surface);
+  color: var(--text); font-family: inherit; font-size: 0.78rem; font-weight: 500;
+  cursor: pointer; box-shadow: var(--shadow-sm); transition: background 0.15s; position: relative;
+}
+.toolbar button:hover { background: var(--bg-surface-alt); }
+.toolbar .toast {
+  position: absolute; top: calc(100% + 6px); right: 0; background: var(--text); color: var(--bg);
+  padding: 4px 10px; border-radius: 6px; font-size: 0.72rem; white-space: nowrap;
+  opacity: 0; transition: opacity 0.15s; pointer-events: none;
+}
+.toolbar .toast.show { opacity: 1; }
+
+/* Hero */
+.hero { position: relative; padding: 5.5rem 2rem 2.5rem; text-align: center; overflow: hidden; }
+.hero::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse 70% 60% at 50% 40%, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 70%);
+}
+.hero::after {
+  content: ''; position: absolute; left: 50%; bottom: 0; width: min(60%, 320px); height: 1px;
+  transform: translateX(-50%); background: linear-gradient(90deg, transparent, var(--border-strong), transparent);
+}
+.hero-label {
+  position: relative; text-transform: uppercase; letter-spacing: 0.28em; font-size: 0.68rem;
+  font-weight: 600; color: var(--accent); opacity: 0.85; margin-bottom: 1.4rem;
+}
+.hero h1 {
+  position: relative; font-family: var(--font-display); font-size: clamp(2rem, 4.5vw, 3rem);
+  font-weight: 600; line-height: 1.15; max-width: 720px; margin: 0 auto;
+  letter-spacing: -0.02em; color: var(--text);
+}
+
+/* Stats strip */
+.stats {
+  display: flex; justify-content: center; gap: 1.5rem; flex-wrap: wrap;
+  padding: 0.9rem 2rem; background: var(--bg-surface); border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border); font-size: 0.82rem; color: var(--text-dim);
+}
+.stat { display: flex; align-items: center; gap: 0.35rem; }
+.stat-value { font-weight: 600; color: var(--text); }
+
+/* Layout: TOC sidebar + content */
+.layout { display: grid; grid-template-columns: 200px 1fr; max-width: calc(var(--max-w) + 260px); margin: 0 auto; }
+/* Narrow (incl. the in-app artifact panel): collapse the sidebar into a sticky,
+   horizontally-scrolling strip at the top of the content instead of hiding it —
+   the TOC stays reachable even when there's no room for a gutter. */
+@media (max-width: 860px) {
+  .layout { display: block; }
+  .toc-sidebar {
+    position: sticky; top: 0; z-index: 20; height: auto; max-height: none;
+    display: block; overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+    padding: 0.55rem 0.8rem; border-right: none; border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+  }
+  .toc-sidebar nav { display: inline-flex; gap: 0.2rem; }
+  .toc-sidebar nav a { display: inline-block; margin: 0; padding: 0.3rem 0.6rem; }
+  .toc-sidebar nav a::before { display: none; }
+  .toc-sidebar nav a.depth-3 { padding-left: 0.6rem; }
+}
+
+.toc-sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 3.2rem 0.8rem 2rem 1.4rem; border-right: 1px solid var(--border); font-size: 0.78rem; }
+.toc-sidebar nav a {
+  position: relative; display: block; color: var(--text-dim); text-decoration: none;
+  padding: 0.42rem 0.7rem 0.42rem 0.85rem; margin: 1px 0; border-radius: 6px; line-height: 1.4;
+  transition: color 0.18s ease, background 0.18s ease, padding-left 0.18s ease;
+}
+.toc-sidebar nav a::before {
+  content: ''; position: absolute; left: 0; top: 50%; width: 2px; height: 0;
+  background: var(--accent); transform: translateY(-50%); border-radius: 1px;
+  transition: height 0.18s ease, opacity 0.18s ease; opacity: 0;
+}
+.toc-sidebar nav a:hover { color: var(--text); background: var(--accent-bg); padding-left: 1rem; }
+.toc-sidebar nav a:hover::before { height: 60%; opacity: 1; }
+.toc-sidebar nav a.active { color: var(--accent); font-weight: 600; background: var(--accent-bg); }
+.toc-sidebar nav a.active::before { height: 80%; opacity: 1; }
+.toc-sidebar nav a.depth-3 { padding-left: 1.3rem; font-size: 0.72rem; color: var(--text-muted); }
+.toc-sidebar nav a.depth-3:hover { padding-left: 1.45rem; }
+
+/* Content */
+.content { max-width: var(--max-w); padding: 3rem 2.5rem 4rem; }
+.content h2 {
+  font-family: var(--font-display); font-size: clamp(1.55rem, 2.4vw, 1.85rem); font-weight: 600;
+  margin: 3rem 0 1rem; padding-bottom: 0.55rem; border-bottom: 1px solid transparent;
+  border-image: linear-gradient(90deg, var(--accent) 0%, transparent 65%) 1;
+  letter-spacing: -0.022em; line-height: 1.2; color: var(--text);
+}
+.content h2:first-child { margin-top: 0; }
+.content h3 { font-family: var(--font-display); font-size: 1.22rem; font-weight: 600; margin: 2.2rem 0 0.6rem; letter-spacing: -0.015em; color: var(--text); }
+.content h4 { font-family: var(--font-body); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: var(--text-dim); margin: 1.6rem 0 0.5rem; }
+.content p { margin-bottom: 1.1rem; }
+/* Editorial drop cap on the opening paragraph. */
+.content > p:first-of-type::first-letter,
+.content > h2:first-child + p::first-letter {
+  font-family: var(--font-display); font-weight: 700; font-size: 3.6em; line-height: 0.85;
+  float: left; margin: 0.15em 0.12em 0 -0.04em; color: var(--accent);
+}
+.content a { color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); text-decoration-thickness: 1.5px; text-underline-offset: 3px; transition: text-decoration-color 0.15s, color 0.15s; }
+.content a:hover { text-decoration-color: var(--accent); color: var(--accent-light); }
+.content ul, .content ol { margin: 0 0 1.1rem 1.6rem; }
+.content li > ul, .content li > ol { margin: 0.3rem 0 0.3rem 1.4rem; }
+.content li { margin-bottom: 0.4rem; }
+.content li::marker { color: var(--accent); }
+.content blockquote {
+  position: relative; border-left: 3px solid var(--gold); background: var(--gold-bg);
+  padding: 1.1rem 1.4rem 1.1rem 2.6rem; margin: 1.5rem 0; border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--text); font-family: var(--font-display); font-style: italic; font-size: 1.05rem; line-height: 1.55;
+}
+.content blockquote::before { content: '\201C'; position: absolute; left: 0.5rem; top: 0.3rem; font-family: var(--font-display); font-size: 3rem; font-style: normal; color: var(--gold); opacity: 0.5; line-height: 1; }
+.content hr { border: none; height: 1px; background: linear-gradient(90deg, transparent, var(--border-strong), transparent); margin: 2rem 0; }
+.content del { color: var(--text-muted); text-decoration-color: var(--accent); }
+.content code { font-family: var(--font-mono); font-size: 0.86em; background: var(--bg-surface-alt); padding: 0.15em 0.4em; border-radius: 4px; }
+.content pre { background: var(--bg-surface-alt); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; overflow-x: auto; margin: 1.25rem 0; font-size: 0.86rem; line-height: 1.6; }
+.content pre code { background: none; padding: 0; }
+.content table { width: 100%; border-collapse: collapse; margin: 1.25rem 0; font-size: 0.9rem; border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow-sm); }
+.content th { text-align: left; padding: 0.7rem 1rem; background: var(--accent-bg); font-weight: 600; border-bottom: 2px solid var(--border-strong); }
+.content td { padding: 0.6rem 1rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.content tr:last-child td { border-bottom: none; }
+.content tr:hover td { background: var(--accent-bg); }
+
+/* Embedded graphics — mermaid diagrams, data charts, source images */
+.report-figure { margin: 1.75rem 0; text-align: center; }
+.report-figure svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+.report-diagram svg, .report-chart svg {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 1rem; box-shadow: var(--shadow-sm);
+}
+.report-figure img {
+  max-width: 100%; height: auto; border-radius: var(--radius);
+  border: 1px solid var(--border); box-shadow: var(--shadow-sm);
+}
+.report-figure figcaption { margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-muted); font-style: italic; }
+/* ::kpi stat strip — coloured headline-metric boxes. */
+.kpi-strip { display: flex; flex-wrap: wrap; gap: 0.9rem; margin: 1.75rem 0; }
+.kpi-box {
+  flex: 1 1 140px; min-width: 120px; text-align: center; padding: 1.1rem 1rem;
+  border-radius: var(--radius); background: var(--kpi-bg); border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 0.3rem;
+}
+.kpi-box .kpi-value { font-family: var(--font-display); font-size: 1.7rem; font-weight: 700; line-height: 1.05; color: var(--kpi-fg); }
+.kpi-box .kpi-label { font-size: 0.68rem; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-dim); }
+@media (prefers-color-scheme: dark) { .kpi-box { filter: saturate(1.15) brightness(0.92); } }
+/* Hero image — sits below the headline, full content width. */
+.hero-image { max-width: var(--max-w); margin: 0 auto 1rem; padding: 0 2rem; }
+.hero-image img {
+  width: 100%; height: clamp(180px, 28vh, 320px); object-fit: cover;
+  border-radius: var(--radius); border: 1px solid var(--border); box-shadow: var(--shadow-md);
+}
+
+/* Sources */
+.sources-panel { margin-top: 3rem; border-top: 2px solid var(--border); padding-top: 1.5rem; }
+.sources-panel summary { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--text); padding: 0.5rem 0; list-style: none; user-select: none; }
+.sources-panel summary::-webkit-details-marker { display: none; }
+.sources-panel summary::before { content: '\25B6'; font-size: 0.65em; color: var(--text-muted); transition: transform 0.2s; }
+.sources-panel details[open] summary::before { transform: rotate(90deg); }
+.sources-list { padding: 0.5rem 0 0 0.25rem; }
+.sources-list a { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.35rem 0; font-size: 0.85rem; color: var(--text); text-decoration: none; transition: color 0.15s; }
+.sources-list a:hover { color: var(--accent); }
+.sources-list .snum { color: var(--text-muted); font-size: 0.75rem; min-width: 1.5rem; text-align: right; flex-shrink: 0; }
+.sources-list .sdomain { color: var(--text-muted); font-size: 0.75rem; margin-left: auto; flex-shrink: 0; }
+
+/* Inline citation chips + the 'Belege' legend. The chip is a compact superscript
+   [n] that jumps to the matching legend row; the row shows source + verbatim quote. */
+.cite-chip { text-decoration: none; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.cite-chip sup { font-size: 0.7em; padding: 0 0.05em; }
+.cite-chip:hover { color: var(--accent-light); }
+.citations-panel { margin-top: 3rem; border-top: 2px solid var(--border); padding-top: 1.5rem; }
+.citations-panel summary { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; font-size: 1rem; font-weight: 600; color: var(--text); padding: 0.5rem 0; list-style: none; user-select: none; }
+.citations-panel summary::-webkit-details-marker { display: none; }
+.citations-panel summary::before { content: '\25B6'; font-size: 0.65em; color: var(--text-muted); transition: transform 0.2s; }
+.citations-panel details[open] summary::before { transform: rotate(90deg); }
+.citations-list { list-style: none; padding: 0.5rem 0 0 0; margin: 0; counter-reset: none; }
+.citations-list li { padding: 0.45rem 0; font-size: 0.85rem; line-height: 1.5; border-bottom: 1px solid var(--border); scroll-margin-top: 4rem; }
+.citations-list li:last-child { border-bottom: none; }
+.citations-list li:target { background: var(--accent-bg); border-radius: 6px; padding-left: 0.5rem; padding-right: 0.5rem; }
+.citations-list .cite-n { color: var(--accent); font-weight: 600; margin-right: 0.4rem; }
+.citations-list .cite-src { color: var(--text-dim); font-weight: 600; }
+.citations-list .cite-quote { display: block; margin-top: 0.2rem; color: var(--text); font-family: var(--font-display); font-style: italic; }
+
+.report-footer { text-align: center; padding: 2rem; font-size: 0.75rem; color: var(--text-muted); border-top: 1px solid var(--border); margin-top: 2rem; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .content h2, .content h3, .content p, .content ul, .content ol, .content blockquote, .content table, .content pre {
+    animation: fadeUp 0.4s ease both;
+  }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+}
+@media print {
+  .toc-sidebar, .toolbar { display: none !important; }
+  .layout { grid-template-columns: 1fr; }
+  body::before, body::after { display: none; }
+  body { font-size: 11pt; }
+  a { color: var(--text); }
+}
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button id="copy-btn" title="Link kopieren">Link kopieren<span class="toast">Kopiert</span></button>
+  <button onclick="window.print()" title="Drucken oder als PDF speichern">Drucken / PDF</button>
+</div>
+<header class="hero">
+  <div class="hero-label">Recherchebericht</div>
+  <h1>Abhängigkeits-Report: SQL-Prozeduren</h1>
+</header>
+<div class="hero-image hero-banner"><img src="data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%27http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%27%20viewBox%3D%270%200%201200%20300%27%20preserveAspectRatio%3D%27xMidYMid%20slice%27%3E%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%271%27%20y2%3D%271%27%3E%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23b8543a%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23c9952e%27%2F%3E%3C%2FlinearGradient%3E%3CradialGradient%20id%3D%27v%27%20cx%3D%270.5%27%20cy%3D%270.35%27%20r%3D%270.75%27%3E%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23ffffff%27%20stop-opacity%3D%270.16%27%2F%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23000000%27%20stop-opacity%3D%270.18%27%2F%3E%3C%2FradialGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%271200%27%20height%3D%27300%27%20fill%3D%27url%28%23g%29%27%2F%3E%3Cg%20fill%3D%27none%27%20stroke%3D%27%23ffffff%27%20stroke-opacity%3D%270.14%27%20stroke-width%3D%272%27%3E%3Ccircle%20cx%3D%2780%27%20cy%3D%27120%27%20r%3D%27128%27%2F%3E%3Ccircle%20cx%3D%27876%27%20cy%3D%27210%27%20r%3D%27168%27%2F%3E%3Ccircle%20cx%3D%27980%27%20cy%3D%2790%27%20r%3D%27150%27%2F%3E%3C%2Fg%3E%3Cg%20fill%3D%27%23ffffff%27%20fill-opacity%3D%270.10%27%3E%3Ccircle%20cx%3D%27876%27%20cy%3D%27210%27%20r%3D%2784%27%2F%3E%3Ccircle%20cx%3D%27140%27%20cy%3D%2760%27%20r%3D%2740%27%2F%3E%3C%2Fg%3E%3Crect%20width%3D%271200%27%20height%3D%27300%27%20fill%3D%27url%28%23v%29%27%2F%3E%3C%2Fsvg%3E" alt=""></div>
+
+<div class="layout">
+  <aside class="toc-sidebar"><nav aria-label="Inhalt"><a href="#executive-summary" class="depth-2">Executive Summary</a><a href="#1-umfang-und-methode" class="depth-2">1. Umfang und Methode</a><a href="#2-abhängigkeitsbild" class="depth-2">2. Abhängigkeitsbild</a><a href="#21-direkte-technische-kopplungen" class="depth-3">2.1 Direkte technische Kopplungen</a><a href="#22-interpretierter-abhängigkeitsfluss" class="depth-3">2.2 Interpretierter Abhängigkeitsfluss</a><a href="#23-prozedur-zu-prozedur-abhängigkeiten" class="depth-3">2.3 Prozedur-zu-Prozedur-Abhängigkeiten</a><a href="#3-größte-und-damit-besonders-kritische-prozeduren" class="depth-2">3. Größte und damit besonders kritische Prozeduren</a><a href="#4-risikobewertung" class="depth-2">4. Risikobewertung</a><a href="#hoch" class="depth-3">Hoch</a><a href="#erhöht" class="depth-3">Erhöht</a><a href="#mittel" class="depth-3">Mittel</a><a href="#5-priorisierte-maßnahmen" class="depth-2">5. Priorisierte Maßnahmen</a><a href="#6-nachvollziehbarkeit-und-artefakte" class="depth-2">6. Nachvollziehbarkeit und Artefakte</a><a href="#7-fazit" class="depth-2">7. Fazit</a></nav></aside>
+  <main>
+    <article class="content">
+      <p><strong>Projekt:</strong> sql und showcase <strong>Analysebestand:</strong> <code>q1/Queries/Procedures</code> <strong>Erstellt:</strong> 11.07.2026 <strong>Quelle:</strong> Projektanalyse mit <code>procedure_analysis.py</code> und vorhandener Metadatenextraktion</p>
+<h2 id="executive-summary">Executive Summary</h2>
+<div class="kpi-strip"><div class="kpi-box" style="--kpi-fg:#bf8f00;--kpi-bg:#fff2cc"><span class="kpi-value">227</span><span class="kpi-label">ANALYSIERTE PROZEDUREN</span></div><div class="kpi-box" style="--kpi-fg:#c00000;--kpi-bg:#f8d7da"><span class="kpi-value">210 (92,5 %)</span><span class="kpi-label">REMOTE-/LINKED-SERVER-ERKENNUNG</span></div><div class="kpi-box" style="--kpi-fg:#c00000;--kpi-bg:#f8d7da"><span class="kpi-value">170 (74,9 %)</span><span class="kpi-label">ERKANNTE DYNAMISCHE SQL-NUTZUNG</span></div><div class="kpi-box" style="--kpi-fg:#c00000;--kpi-bg:#f8d7da"><span class="kpi-value">202 (89,0 %)</span><span class="kpi-label">PROZEDUREN MIT SENSITIVEN DATEN</span></div></div>
+<p>Im Projekt wurden 227 SQL-Prozedurdateien ohne Parse-/Dateifehler analysiert. Die Prozeduren sind stark an externe bzw. remote Datenquellen gekoppelt. Zusätzlich werden dynamisches SQL, Cursor und kunden-, konto- oder transaktionsbezogene Daten häufig verwendet. Damit bestehen erhöhte Anforderungen an Impact-Analyse, Berechtigungen, Laufzeitüberwachung und Änderungsmanagement.</p>
+<h2 id="1-umfang-und-methode">1. Umfang und Methode</h2>
+<p>Die Auswertung liest die SQL-Dateien im Verzeichnis <code>q1/Queries/Procedures</code> und extrahiert:</p>
+<ul><li>Prozedurname und Dateipfad</li><li>Tabellen-/Objektreferenzen aus <code>FROM</code>, <code>JOIN</code>, <code>INTO</code>, <code>UPDATE</code>, <code>DELETE</code> und qualifizierten Namen</li><li>Hinweise auf <code>EXEC</code>/dynamisches SQL</li><li>Cursor-Nutzung</li><li>Remote-Zugriffe wie <code>OPENQUERY</code>, <code>OPENROWSET</code> und Linked-Server-Muster</li><li>DML-Muster, Fehlerbehandlung, sensible Daten und Compliance-Schlüsselwörter</li><li>Größen- und Header-Metadaten</li></ul>
+<p><strong>Wichtige Einschränkung:</strong> Der bestehende Analyzer ist überwiegend regex-basiert. Der Report weist daher erkannte Referenzen und Muster aus, ist aber kein vollständiger SQL-Compiler-/Dependency-Graph. Synonyme, verschachtelte dynamische SQL-Strings, indirekte Abhängigkeiten, Job-Schedules und Datenbankdefinitionen außerhalb der Dateien können fehlen.</p>
+<h2 id="2-abhängigkeitsbild">2. Abhängigkeitsbild</h2>
+<h3 id="21-direkte-technische-kopplungen">2.1 Direkte technische Kopplungen</h3>
+<table><thead><tr><th>Abhängigkeitstyp</th><th>Anzahl</th><th>Anteil</th><th>Bewertung</th></tr></thead><tbody><tr><td>Remote-/Linked-Server-Zugriffe</td><td>210</td><td>92,5 %</td><td>hoch</td></tr><tr><td>Sensitive Datenmuster</td><td>202</td><td>89,0 %</td><td>hoch</td></tr><tr><td>Erkannte DML-Muster</td><td>201</td><td>88,5 %</td><td>hoch</td></tr><tr><td>Dynamisches SQL</td><td>170</td><td>74,9 %</td><td>hoch</td></tr><tr><td>Cursor</td><td>109</td><td>48,0 %</td><td>mittel</td></tr><tr><td>Compliance-relevante Schlüsselwörter</td><td>92</td><td>40,5 %</td><td>erhöht</td></tr></tbody></table>
+<h3 id="22-interpretierter-abhängigkeitsfluss">2.2 Interpretierter Abhängigkeitsfluss</h3>
+<pre><code>SQL-Prozeduren
+    ├── lokale Tabellen / Views / temporäre Objekte
+    ├── dynamisch erzeugte SQL-Anweisungen
+    ├── Remote-/Linked-Server und externe Datenquellen
+    ├── kunden-, konto-, depot- und transaktionsbezogene Daten
+    ├── DML-Ziele und Ergebnis-/Exporttabellen
+    └── nachgelagerte ShowCase-, Kontroll-, Compliance- und Reporting-Auswertungen</code></pre>
+<p>Die hohe Remote-Quote ist der dominierende gemeinsame Kopplungspunkt. Änderungen an Remote-Schemas, Berechtigungen, Netzwerkpfaden oder Verbindungsnamen können daher viele Prozeduren gleichzeitig beeinflussen.</p>
+<h3 id="23-prozedur-zu-prozedur-abhängigkeiten">2.3 Prozedur-zu-Prozedur-Abhängigkeiten</h3>
+<p>Im vorliegenden Analyzer werden Tabellen und externe Quellen ermittelt, aber keine belastbare Kante <code>Prozedur A ruft Prozedur B auf</code> aufgebaut. Die Datenbasis erlaubt deshalb derzeit keine vollständige transitive Call-Chain. Für eine belastbare Prozedurabhängigkeitsmatrix sollten zusätzlich folgende Konstrukte geparst werden:</p>
+<ul><li><code>EXEC dbo.&lt;prozedur&gt;</code> und <code>EXECUTE AS</code></li><li><code>sp_executesql</code> inklusive String-Inhalt</li><li>Synonyme und Views</li><li>SQL-Agent-Jobs, SSIS-/ETL-Pakete und ShowCase-Aufrufer</li><li>Datenbankübergreifende und serverübergreifende Objektbezeichner</li></ul>
+<h2 id="3-größte-und-damit-besonders-kritische-prozeduren">3. Größte und damit besonders kritische Prozeduren</h2>
+<table><thead><tr><th>Prozedur</th><th>Zeilen</th><th>Abhängigkeits-/Risikohinweis</th></tr></thead><tbody><tr><td><code>sp_Create_Best_Execution</code></td><td>1.435</td><td>größter Wartungs- und Testumfang; Compliance-/Produktbezug</td></tr><tr><td><code>sp_Create_SRD_2_Interface</code></td><td>1.019</td><td>Schnittstellencharakter; hohe Auswirkungsbreite</td></tr><tr><td><code>sp_EvidenzVerwaltung</code></td><td>1.008</td><td>Evidenz-/Compliance-Bezug und sensitive Daten</td></tr><tr><td><code>sp_Create_CRS_Review</code></td><td>861</td><td>regulatorische Auswertung; hohe fachliche Kritikalität</td></tr><tr><td><code>sp_Write_Kunden_Salden</code></td><td>854</td><td>schreibt bzw. erzeugt kundenbezogene Salden-/Ergebnisdaten</td></tr><tr><td><code>sp_Create_Kest_Befreiung_Test</code></td><td>833</td><td>Test-/Produktionsnähe bei steuerrelevanter Logik</td></tr><tr><td><code>sp_Create_Kest_Befreiung</code></td><td>830</td><td>steuerrelevante Logik und Ergebnisabhängigkeiten</td></tr><tr><td><code>sp_Create_FinMgr_MasterDaten</code></td><td>806</td><td>zentrale Stammdaten-/Schnittstellenfunktion</td></tr><tr><td><code>sp_Create_WP_Trans_Historie</code></td><td>781</td><td>historische Transaktionsdaten</td></tr><tr><td><code>sp_ZVK_Taeglich</code></td><td>771</td><td>tägliche Verarbeitung mit Compliance-/Backoffice-Bezug</td></tr></tbody></table>
+<p>Die zehn größten Prozeduren sollten als erste Kandidaten für modulare Zerlegung, Regressionstests und Abhängigkeitsdokumentation behandelt werden.</p>
+<h2 id="4-risikobewertung">4. Risikobewertung</h2>
+<h3 id="hoch">Hoch</h3>
+<ul><li><strong>Remote-Kopplung:</strong> 210 Prozeduren greifen laut Mustererkennung auf remote Quellen zu. Ausfälle oder Schemaänderungen können flächig wirken.</li><li><strong>Dynamisches SQL:</strong> 170 Prozeduren erschweren statische Abhängigkeitsanalyse, Berechtigungsprüfung und SQL-Injection-Prüfung.</li><li><strong>Sensitive Daten:</strong> 202 Prozeduren enthalten Schlüsselwörter zu Kunden, Konten, Depots, Personen, Adressen, Beträgen oder Transaktionen.</li><li><strong>DML-/Schreibwirkung:</strong> 201 Prozeduren enthalten erkannte DML-Muster. Vor Änderungen sind Zielobjekte, Transaktionsgrenzen und Wiederanlaufverhalten zu prüfen.</li></ul>
+<h3 id="erhöht">Erhöht</h3>
+<ul><li><strong>Compliance-Bezug:</strong> 92 Prozeduren enthalten Schlüsselwörter wie CRS, AML, FATCA, MIFIR, Risiko, Sanktionen, PEP, QI oder KYC.</li><li><strong>Große Prozeduren:</strong> Die größten Routinen liegen zwischen 771 und 1.435 Zeilen und konzentrieren fachliche, technische und regulatorische Logik.</li></ul>
+<h3 id="mittel">Mittel</h3>
+<ul><li><strong>Cursor:</strong> 109 Prozeduren verwenden Cursor-Muster. Diese können bei großen Datenmengen Laufzeit-, Sperr- und Parallelitätsprobleme verursachen.</li><li><strong>Metadatenqualität:</strong> Uneinheitliche oder fehlerhaft erkannte Headerfelder erschweren Ownership, fachliche Einordnung und Change-Impact-Analysen.</li></ul>
+<h2 id="5-priorisierte-maßnahmen">5. Priorisierte Maßnahmen</h2>
+<ol><li><strong>Abhängigkeitsinventar vervollständigen:</strong> Prozeduraufrufe, Tabellen, Views, Synonyme, Jobs und externe Quellen in einem versionierten Graphen erfassen.</li><li><strong>Remote-Zugriffe katalogisieren:</strong> Je Linked Server Verbindungsname, Besitzer, Berechtigungen, SLA, Fallback und betroffene Prozeduren dokumentieren.</li><li><strong>Dynamisches SQL absichern:</strong> Eingaben parametrisieren, erlaubte Objekt-/Spaltennamen whitelisten und dynamisch erzeugte Statements protokollierbar machen.</li><li><strong>Schreibende Prozeduren klassifizieren:</strong> DML-Ziele und fachliche Kritikalität markieren; Transaktionen, Idempotenz und Rollback-Verhalten testen.</li><li><strong>Regulatorische Routinen schützen:</strong> Für CRS, KEST, AML, FATCA, MIFIR, Sanktionen und Risk-Review feste Owner, Vier-Augen-Review und Regressionstests einführen.</li><li><strong>Größte Routinen zerlegen:</strong> Verantwortlichkeiten in Datenzugriff, Transformation, Validierung und Export trennen.</li><li><strong>Cursor abbauen:</strong> Cursor durch set-basierte Verarbeitung ersetzen, sofern Semantik und Sperrverhalten dies zulassen.</li><li><strong>ShowCase-Abhängigkeiten erfassen:</strong> Identifizieren, welche Auswertungen, Exporte oder Dashboards konkrete Prozedurergebnisse konsumieren.</li><li><strong>Test-/Produktionsvarianten markieren:</strong> Besonders <code>*_Test</code>-Routinen gegen produktive Tabellen, Exportpfade und Berechtigungen prüfen.</li><li><strong>Analyzer erweitern:</strong> SQL-Parser statt ausschließlich Regex einsetzen und die Analyse um <code>EXEC</code>, <code>sp_executesql</code>, Views, Synonyme und Jobs ergänzen.</li></ol>
+<h2 id="6-nachvollziehbarkeit-und-artefakte">6. Nachvollziehbarkeit und Artefakte</h2>
+<p>Die vollständige technische Detailauswertung liegt im Projekt unter:</p>
+<ul><li><code>Stored_Procedures_Deep_Dive_Analysis.md</code></li><li><code>procedures_metadata.json</code></li><li>Analyseprogramm: <code>procedure_analysis.py</code></li></ul>
+<p>Der vorhandene Detailreport listet alle 227 Prozeduren sowie Größen-, Compliance-, Sensitive-Data-, Dynamic-SQL-, Cursor-, DML- und Remote-Kennzeichen. Die JSON-Datei ist die geeignete Grundlage für eine nachgelagerte Dependency-Matrix oder ein Netzwerkdiagramm.</p>
+<h2 id="7-fazit">7. Fazit</h2>
+<p>Das Projekt weist ein stark gekoppeltes Stored-Procedure-Portfolio auf. Die größte Abhängigkeit ist nicht eine einzelne Prozedur, sondern die Kombination aus Remote-Datenzugriff, dynamischem SQL, sensitiven Daten und schreibenden Operationen. Eine belastbare Impact-Analyse sollte daher zuerst den technischen Objektgraphen vervollständigen und anschließend die regulatorisch kritischen und größten Routinen mit automatisierten Regressionstests absichern.</p>
+<p><strong>Bewertung des Gesamtzustands: hoch.</strong></p>
+<p>Die Bewertung bedeutet nicht, dass jede Prozedur fehlerhaft ist; sie beschreibt die potenzielle Änderungs- und Betriebswirkung aufgrund der erkannten Kopplungen.</p>
+    </article>
+    
+    
+    
+  </main>
+</div>
+<script>
+(function(){
+  var btn=document.getElementById('copy-btn');
+  if(btn){btn.addEventListener('click',function(){
+    navigator.clipboard&&navigator.clipboard.writeText(location.href);
+    var t=btn.querySelector('.toast'); if(t){t.classList.add('show');
+      setTimeout(function(){t.classList.remove('show');},1400);}
+  });}
+  var links=[].slice.call(document.querySelectorAll('.toc-sidebar nav a'));
+  if(!links.length||!('IntersectionObserver' in window))return;
+  var map={}; links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a;});
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(a){a.classList.remove('active');});
+        var a=map[e.target.id]; if(a)a.classList.add('active');
+      }
+    });
+  },{rootMargin:'-10% 0px -80% 0px'});
+  document.querySelectorAll('.content h2[id],.content h3[id]').forEach(function(h){io.observe(h);});
+})();
+</script>
+</body>
+</html>

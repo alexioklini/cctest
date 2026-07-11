@@ -1389,7 +1389,56 @@ function renderSessionsList(container, sessions) {
     `;
     div.onclick = () => openSession(sid, sagent);
     container.appendChild(div);
+    // Subagenten-Tree: laufende Hintergrundaufgaben dieses Chats als
+    // Kind-Zeilen unter dem Eintrag (✦ + pulsierender Punkt + Titel + Modell).
+    // Gespeist vom pollRunningSubagents-Poller (state.runningSubagents).
+    const subs = (state.runningSubagents && state.runningSubagents[sid]) || [];
+    for (const t of subs) {
+      const row = document.createElement('div');
+      row.className = 'sb-subagent-row';
+      const mdl = (typeof modelShortName === 'function' && t.model)
+        ? modelShortName(t.model, false) : (t.model || '');
+      row.innerHTML = `<span class="sb-sub-dot"></span>
+        <span class="sb-sub-title" title="${esc(t.title || '')}${mdl ? ' · ' + esc(mdl) : ''}">✦ ${esc(t.title || 'Subagent')}</span>`;
+      row.onclick = (e) => { e.stopPropagation(); openSession(sid, sagent); };
+      container.appendChild(row);
+    }
   }
+}
+
+// ── Sidebar-Subagenten-Poller ────────────────────────────────────────────────
+// Spiegel des pollActiveSessions-Musters: alle 3s die LAUFENDEN Hintergrund-
+// aufgaben aller Sessions holen (leichte Zeilen), bei Änderung die sichtbaren
+// Chat-Listen neu malen, damit der ✦-Tree unter den Chat-Einträgen live
+// erscheint/verschwindet. Läuft dauerhaft mit (billig; Signatur-Vergleich).
+let _subagentPollTimer = null;
+let _subagentSig = '';
+async function pollRunningSubagents() {
+  try {
+    const res = await API.getRunningBackgroundTasks();
+    const tasks = Array.isArray(res?.tasks) ? res.tasks : [];
+    const map = {};
+    for (const t of tasks) {
+      (map[t.session_id] = map[t.session_id] || []).push(t);
+    }
+    const sig = tasks.map(t => t.id).sort().join(',');
+    if (sig === _subagentSig) return;   // keine Änderung → kein Repaint
+    _subagentSig = sig;
+    state.runningSubagents = map;
+    if (typeof renderRecentChats === 'function') renderRecentChats();
+    if (state.currentView === 'chats' && typeof loadChatsList === 'function') {
+      loadChatsList();
+    } else if (state.currentView === 'project-detail'
+               && typeof loadProjectChats === 'function'
+               && state._projectDetailAgent && state._projectDetailName) {
+      loadProjectChats(state._projectDetailAgent, state._projectDetailName);
+    }
+  } catch (_) { /* transient — nächster Tick */ }
+}
+function startRunningSubagentsPoll() {
+  if (_subagentPollTimer) return;
+  pollRunningSubagents();
+  _subagentPollTimer = setInterval(pollRunningSubagents, 3000);
 }
 
 // Poll the set of currently-streaming session IDs and, when it changes, repaint

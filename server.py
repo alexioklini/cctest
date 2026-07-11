@@ -1924,6 +1924,8 @@ class BrainAgentHandler(
             self._handle_share_get()
         elif path == "/v1/background-tasks":
             self._handle_background_tasks_list()
+        elif path == "/v1/background-tasks/running":
+            self._handle_background_tasks_running()
         elif path.startswith("/v1/background-tasks/") and path.endswith("/transcript"):
             self._handle_background_task_transcript(path)
         elif path == "/v1/artifacts":

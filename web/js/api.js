@@ -457,6 +457,8 @@ class API {
 
   // Background tasks (Hintergrundaufgaben)
   static getBackgroundTasks(sessionId) { return this.get(`/v1/background-tasks?session_id=${encodeURIComponent(sessionId)}`); }
+  // Alle LAUFENDEN Aufgaben über alle Sessions (Sidebar-Subagenten-Tree).
+  static getRunningBackgroundTasks() { return this.get('/v1/background-tasks/running'); }
   static cancelBackgroundTask(taskId) { return this.post('/v1/background-tasks/cancel', {task_id: taskId}); }
   // Cancel ONE in-flight tool call of a running task (task keeps going).
   static cancelBackgroundTool(taskId, toolUseId) { return this.post('/v1/background-tasks/cancel-tool', {task_id: taskId, tool_use_id: toolUseId}); }

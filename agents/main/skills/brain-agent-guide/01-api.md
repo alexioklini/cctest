@@ -878,6 +878,9 @@ Auto-generated pages (chat/Studio/task/workflow) carry `source`+`source_ref`; th
 Detached, same-agent runs spawned by the `run_background_task` tool. Any
 logged-in user (not admin-gated).
 
+- `GET /v1/background-tasks/running` — all RUNNING tasks across sessions
+  (`{tasks: [{id, session_id, title, model, created_at}]}`; non-admins see
+  only their own sessions'). Feeds the left-sidebar subagent tree (9.312.0).
 - `GET /v1/background-tasks?session_id=` — list this session's tasks
   (`{tasks: [{id,title,status,turn_id,usage_in,usage_out,tool_calls,
   created_at,finished_at,consumed_at,output_len}]}`; status =
@@ -898,7 +901,11 @@ logged-in user (not admin-gated).
   `thinking_start/delta/done`, `tool_call`, `tool_result` — result VIEW capped
   at 4000 chars, `result_chars` carries the true length —, `usage`) up to the
   terminal `done {status,error,usage,tool_calls}`. Finished (or Brain restarted
-  mid-run) → one `text_delta` replay of the stored output + `done`. (Before
+  mid-run) → stored replay: the persisted `tool_events` as
+  `tool_call`/`tool_result` pairs (result view capped at 4000 chars like
+  live), then one `text_delta` of the output + `done` — so a reloaded
+  Subagenten-Karte renders like the live view (9.312.0). The leading
+  `request` event also carries `model` (the actual executing model). (Before
   9.308.0 the live branch proxied the deleted sidecar and silently degraded to
   the stored replay.)
 

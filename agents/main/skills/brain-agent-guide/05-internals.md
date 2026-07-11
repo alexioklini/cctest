@@ -1047,17 +1047,28 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
 - **Panel**: the "Hintergrundaufgaben" right-panel tab + top-bar pill
   (`web/js/panels_background.js`) poll `GET /v1/background-tasks` every 2s while
   ≥1 task runs, plus one transcript-SSE per running task for the live timeline.
-- **Subagent-Panes (Code-Mode, 9.308.0)**: in a code-mode project the bottom
-  workspace grows a fourth tab kind `agent` (`web/js/panels_agentpane.js`):
-  when a chat turn's `run_background_task` tool_result carries a task_id, the
-  tool_result callbacks (termchat `_tcCallbacks` + main-chat
-  `buildStreamCallbacks`) call `terminalMaybeOpenAgentPane` — gated on
-  `terminalAvailable()`, opens the panel if needed, max 4 auto-panes per turn.
-  The pane is a read-only termchat-styled view of the transcript SSE (request
-  line, markdown text, dimmed thinking, tool rows) with a status dot + Stopp
-  button (`POST /v1/background-tasks/cancel`); closing the TAB never cancels.
-  Panes are ephemeral (not in `bottom_workspace`); `_terminalLoadSessions`
-  re-attaches running tasks via `_agentPaneReattachAll`.
+- **Subagenten-HUB (Code-Mode, 9.308.0, reworked 9.312.0)**: ONE singleton
+  bottom-workspace tab of kind `agent` (`web/js/panels_agentpane.js`) hosts a
+  CARD per background task: status dot, title, executing MODEL (from the
+  transcript `request` event), token counters, Stopp button, a one-line live
+  tail, and a collapsible full transcript (termchat-styled). Tab label carries
+  a running-count + pulse — the "still working" signal after the spawning turn
+  finished. Auto-open: the tool_result callbacks (termchat `_tcCallbacks` +
+  main-chat `buildStreamCallbacks`) call `terminalMaybeOpenAgentPane(name,
+  result, title, turnKey, sessionId)` — gated on `terminalAvailable()`, max 4
+  auto-cards per turn. Closing card/tab never cancels; the Stopp button does.
+  RELOAD: `_agentPaneReattachAll` re-opens the newest 12 tasks (running AND
+  finished) of the open sessions — finished ones render from the stored
+  replay (tool_events + output), `{activate:false, notify:false}`.
+  DELIVERY visibility: when a live-followed card completes,
+  `_agentHubNotifyDelivery` reloads the spawning session's open terminal-chat
+  tab (tcLoadTranscript → `_tcAttachLive` when streaming) so the server's
+  auto-delivery turn becomes visible — the terminal-chat only has its own
+  POST reader and never attaches externally-started turns by itself.
+- **Sidebar subagent tree (9.312.0)**: running tasks appear as child rows
+  under their chat entry in the left list (`nav.js renderSessionsList` +
+  `pollRunningSubagents`, the pollActiveSessions pattern: 3s, signature
+  compare) fed by `GET /v1/background-tasks/running`.
 - **Boot reconcile**: a `running` row whose thread died on shutdown is set to
   `error` at startup so the panel never shows a zombie.
 

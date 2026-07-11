@@ -1600,15 +1600,20 @@ Aufgabe lange läuft und viel Ausgabe erzeugt, startet es sie im Hintergrund und
 antwortet sofort mit „läuft im Hintergrund". Der Chat bleibt frei.
 
 **Subagenten live zusehen (Code-Projekte):** In einem Code-Projekt öffnet sich
-beim Start einer Hintergrundaufgabe automatisch ein eigener **✦-Tab im unteren
-Bereich** — ein Live-Fenster auf den Subagenten: oben die Anfrage, darunter in
-Echtzeit sein Antworttext, sein (gedimmtes) Nachdenken und seine Tool-Aufrufe
-mit ✓/✗-Status; in der Kopfzeile ein Status-Punkt (grün pulsierend = läuft) und
-ein **Stopp**-Knopf. Das **Schließen des Tabs stoppt die Aufgabe nicht** — nur
-der Stopp-Knopf tut das. Startet ein Zug mehrere Aufgaben auf einmal, öffnen
-sich maximal vier Panes automatisch (der Rest läuft ganz normal sichtbar im
-Hintergrundaufgaben-Tab rechts weiter). Beim erneuten Öffnen des unteren
-Bereichs verbinden sich Panes laufender Aufgaben automatisch wieder.
+beim Start von Hintergrundaufgaben automatisch der **✦-Tab „Subagenten"** im
+unteren Bereich — EIN Tab für alle: pro Aufgabe eine **Karte** mit Status-Punkt
+(grün pulsierend = läuft), Titel, **ausführendem Modell**, Token-Zählern und
+**Stopp**-Knopf. Die Karte zeigt eine kompakte Live-Zeile (aktuelles Werkzeug
+bzw. letzter Text); ein Klick auf den Kopf klappt das **volle Live-Transcript**
+auf (Anfrage, Antworttext, gedimmtes Nachdenken, Tool-Aufrufe mit ✓/✗). Der
+Tab-Titel trägt einen **Zähler** und pulsiert, solange etwas läuft — so sehen
+Sie auf einen Blick, dass noch gearbeitet wird, auch wenn der Chat selbst
+schon geantwortet hat. Das **Schließen einer Karte oder des Tabs stoppt nichts**
+— nur der Stopp-Knopf. Nach einem **Seiten-Reload** kommen die Karten wieder
+(laufende live, fertige aus dem gespeicherten Verlauf). Zusätzlich erscheinen
+laufende Subagenten in der **linken Chat-Liste als ✦-Zeilen unter ihrem Chat**.
+Ist die Aufgabe fertig, verarbeitet der Chat das Ergebnis automatisch in einem
+Folge-Turn — ein offener Terminal-Chat springt dafür von selbst an.
 
 Die Aufgabe läuft als **derselbe Agent** (gleiche Werkzeuge) in einem eigenen
 Lauf. Das **ausführende Modell** ist standardmäßig das Chat-Modell, kann aber ein

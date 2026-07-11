@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.0",
+        "date": "2026-07-11",
+        "title": "Subagenten übersichtlich: ein Hub statt vieler Tabs",
+        "body": "Die Subagenten-Ansicht im Code-Modus ist jetzt ein einziger "
+                "✦-Tab mit einer Karte pro Aufgabe — mit Status, ausführendem "
+                "Modell, Live-Zeile und aufklappbarem Verlauf; der Tab zählt "
+                "und pulsiert, solange gearbeitet wird. Laufende Subagenten "
+                "erscheinen zusätzlich in der linken Chat-Liste unter ihrem "
+                "Chat, Karten überleben einen Seiten-Reload, und sobald eine "
+                "Aufgabe fertig ist, zeigt der Chat die Verarbeitung des "
+                "Ergebnisses von selbst an.",
+        "audience": "user",
+        "versions": ["9.312.0"],
+    },
+    {
         "version": "9.311.0",
         "date": "2026-07-11",
         "title": "Code-Modus: sicherer bauen, gezielter suchen",

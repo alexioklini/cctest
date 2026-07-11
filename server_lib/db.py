@@ -2184,6 +2184,25 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=list)
+    def list_running_background_tasks(user_id=None):
+        """All RUNNING background tasks across sessions (sidebar subagent
+        tree, v9.312.0). `user_id`: when set (non-admin caller), only tasks of
+        sessions owned by that user (legacy empty-owner sessions included, the
+        list_sessions posture). Light rows — no output/prompt blobs."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            q = ("SELECT bt.id, bt.session_id, bt.title, bt.model, bt.created_at "
+                 "FROM background_tasks bt JOIN sessions s ON s.id = bt.session_id "
+                 "WHERE bt.status='running'")
+            args = []
+            if user_id:
+                q += " AND (s.user_id = ? OR s.user_id = '' OR s.user_id IS NULL)"
+                args.append(user_id)
+            q += " ORDER BY bt.created_at ASC"
+            return [dict(r) for r in conn.execute(q, args).fetchall()]
+
+    @staticmethod
+    @_db_safe(default=list)
     def list_background_tasks(session_id):
         """All tasks for a session (panel display), newest first. Excludes the
         full `output`/`prompt` blobs to keep the list light."""

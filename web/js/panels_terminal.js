@@ -1015,9 +1015,11 @@ async function terminalCloseTab(id, ev) {
     if (tab._spinTimer) { try { clearInterval(tab._spinTimer); } catch (_) {} }
     tab.el.remove();
   } else if (tab.kind === 'agent') {
-    // Closing the VIEW never cancels the background task (the Stopp button
-    // does) — just detach the transcript stream and drop the DOM.
-    if (tab._ctrl) { try { tab._ctrl.abort(); } catch (_) {} }
+    // Closing the HUB never cancels background tasks (the per-card Stopp
+    // does) — just detach every card's transcript stream and drop the DOM.
+    for (const c of Object.values(tab._cards || {})) {
+      if (c._ctrl) { try { c._ctrl.abort(); } catch (_) {} }
+    }
     tab.el.remove();
   } else {
     if (tab.abort) { try { tab.abort.abort(); } catch (_) {} }
@@ -1142,11 +1144,12 @@ function _terminalRenderTabs() {
         label = '◈ ' + esc(t.name || 'Chat');
         if (t.streaming) cls = ' tc-tab-live';
       } else if (t.kind === 'agent') {
-        // ✦ subagent pane (live transcript of a background task); pulse while
-        // the task runs, ✗-tint once it errored.
-        label = '✦ ' + esc(t.name || 'Subagent');
-        if (t.status === 'running') cls = ' tc-tab-live';
-        else if (t.status === 'error') cls = ' ap-tab-err';
+        // ✦ Subagenten-HUB (Singleton): Zähler + Puls, solange Aufgaben laufen;
+        // Fehler-Tint, wenn eine Karte im Fehlerzustand endete.
+        const running = (typeof agentHubRunningCount === 'function') ? agentHubRunningCount(t) : 0;
+        label = '✦ ' + esc(t.name || 'Subagenten') + (running ? ` (${running})` : '');
+        if (running) cls = ' tc-tab-live';
+        else if (Object.values(t._cards || {}).some(c => c.status === 'error')) cls = ' ap-tab-err';
       } else {
         label = 'Terminal ' + (termNum.get(t.id) || '');
       }

@@ -1,91 +1,143 @@
-// panels_agentpane.js — Subagent-Panes im Code-Mode-Bottom-Panel.
+// panels_agentpane.js — Subagenten-Hub im Code-Mode-Bottom-Panel.
 //
-// Ein vierter Tab-KIND ('agent') im Bottom-Workspace (panels_terminal.js):
-// startet ein Code-Mode-Chat-Turn eine Hintergrundaufgabe (run_background_task),
-// öffnet automatisch ein Pane, das den Live-Transcript des Subagenten streamt —
-// Text, Thinking, Tool-Aufrufe, Token-Verbrauch — inspiriert von der
-// tmux-Multiplexer-Integration in oh-my-opencode-slim. Read-only (kein Composer);
-// Stopp-Knopf → POST /v1/background-tasks/cancel.
+// v9.312.0: EIN ✦-Tab „Subagenten" (kind 'agent', Singleton) statt eines Tabs
+// pro Hintergrundaufgabe (v9.308.0 — User-Feedback: N Einzel-Tabs sind bei
+// Fan-out unübersichtlich). Im Hub liegt pro Aufgabe eine KARTE: Status-Punkt,
+// Titel, ausführendes MODELL, Token-Zähler, Stopp-Knopf und eine Tail-Zeile
+// (aktuelles Werkzeug / letzter Text) — Klick auf den Kopf klappt das volle
+// Live-Transcript auf. Der Tab-Titel trägt einen Zähler und pulsiert, solange
+// mindestens eine Aufgabe läuft — das ist das „es arbeitet noch"-Signal,
+// nachdem der spawnende Chat-Turn selbst längst fertig ist.
 //
-// Datenquelle: GET /v1/background-tasks/<id>/transcript (SSE, LiveStream
-// replay+follow, Brain-Event-Vokabular) via API.streamBackgroundTranscript.
-// Dieselbe Quelle wie das rechte Hintergrundaufgaben-Panel — hier nur als
-// Bottom-Panel-Ansicht. Panes sind EPHEMER (nicht in bottom_workspace
-// persistiert): laufende Aufgaben werden beim Panel-Laden re-attacht.
+// Datenquelle unverändert: GET /v1/background-tasks/<id>/transcript (SSE,
+// LiveStream replay+follow) via API.streamBackgroundTranscript; das führende
+// request-Event trägt seit 9.312.0 auch das ausführende Modell. Karten sind
+// EPHEMER (nicht in bottom_workspace persistiert); laufende Aufgaben werden
+// beim Panel-Laden re-attacht. Stopp = POST /v1/background-tasks/cancel;
+// Karte/Tab schließen stoppt NIE.
 //
 // Globals only, fixed load order (nach panels_termchat.js, vor init.js).
 // Reuses esc(), renderMarkdown(), _term, API, terminalAvailable().
 
-// ── Tab object shape (kind:'agent') ──────────────────────────────────────────
-//   { id:'agent-'+taskId, kind:'agent', taskId, name, el, pane,
-//     status:'running'|'done'|'error'|'cancelled', _ctrl:AbortController,
-//     _live:{...render state}, tokensIn, tokensOut }
-
-// Auto-Open-Deckel pro Turn: eine Fan-out-Gruppe mit N Aufgaben soll das
-// Panel nicht mit N Panes fluten — die ersten 4 öffnen, der Rest läuft im
-// Hintergrundaufgaben-Panel weiter sichtbar.
+// Auto-Open-Deckel pro Turn: eine Fan-out-Gruppe mit N Aufgaben soll nicht
+// unbegrenzt Karten aufmachen — ab der fünften läuft der Rest nur im rechten
+// Hintergrundaufgaben-Panel weiter (dort vollständig sichtbar).
 const _AGENT_PANE_AUTO_MAX = 4;
 let _agentPaneAutoCount = 0;
 let _agentPaneAutoTurnKey = '';
 
-function _agentPaneTab(taskId) {
-  return (typeof _term !== 'undefined' ? _term.tabs : [])
-    .find(t => t.kind === 'agent' && t.taskId === taskId);
+const _AGENT_HUB_ID = 'agent-hub';
+
+function _agentHubTab() {
+  return (typeof _term !== 'undefined' ? _term.tabs : []).find(t => t.kind === 'agent');
 }
 
-// Öffnet (oder aktiviert) das Subagent-Pane für eine Hintergrundaufgabe.
-function terminalOpenAgentPane(taskId, title, paneId) {
+// Anzahl laufender Karten — von _terminalRenderTabs fürs Tab-Label gelesen.
+function agentHubRunningCount(tab) {
+  const cards = (tab && tab._cards) || {};
+  return Object.values(cards).filter(c => c.status === 'running').length;
+}
+
+// Öffnet das Hub (erstellt es bei Bedarf) und stellt sicher, dass die Aufgabe
+// eine Karte hat. Aktiviert den Tab.
+function terminalOpenAgentPane(taskId, title, sessionId, opts) {
+  // opts: {activate: true, notify: true} — Reattach von FERTIGEN Karten setzt
+  // beides false (kein Fokus-Klau beim Panel-Load, kein Delivery-Reload für
+  // laengst zugestellte Ergebnisse).
+  opts = opts || {};
+  const _activate = opts.activate !== false;
   if (typeof _term === 'undefined' || !_term.open) return null;
-  const exist = _agentPaneTab(taskId);
-  if (exist) { _terminalActivate(exist.id); return exist; }
-  const id = 'agent-' + taskId;
-  const target = paneId || _terminalDefaultPane('chat');
-  const pane = _terminalGetPane(target) || _terminalActivePane() || _term.panes[0];
-  const el = document.createElement('div');
-  el.style.display = 'none';
-  (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
-  const tab = {
-    id, kind: 'agent', taskId, name: title || 'Subagent', el,
-    status: 'running', _ctrl: null, _live: null,
-    tokensIn: 0, tokensOut: 0,
-    pane: pane ? pane.id : 'pane-a',
-  };
-  _term.tabs.push(tab);
-  _agentPaneBuildBody(tab);
-  _terminalRenderTabs();
-  _terminalActivate(id);
-  _agentPaneAttach(tab);
+  let tab = _agentHubTab();
+  if (!tab) {
+    const target = opts.paneId || _terminalDefaultPane('chat');
+    const pane = _terminalGetPane(target) || _terminalActivePane() || _term.panes[0];
+    const el = document.createElement('div');
+    el.style.display = 'none';
+    (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
+    tab = {
+      id: _AGENT_HUB_ID, kind: 'agent', name: 'Subagenten', el,
+      _cards: {}, pane: pane ? pane.id : 'pane-a',
+    };
+    _term.tabs.push(tab);
+    el.className = 'termchat agenthub';
+    el.innerHTML = `<div class="ap-cards" id="${_AGENT_HUB_ID}-cards"></div>
+      <div class="ap-empty" id="${_AGENT_HUB_ID}-empty">Keine Subagenten in dieser Sitzung.</div>`;
+    _terminalRenderTabs();
+  }
+  if (taskId && !tab._cards[taskId]) {
+    const c = _agentHubAddCard(tab, taskId, title || '', sessionId || '');
+    if (c) c._notifyOnDone = opts.notify !== false;
+  }
+  if (_activate) _terminalActivate(tab.id);
   return tab;
 }
 
-// Baut das Pane-DOM: Kopfzeile (Status + Stopp), Log (termchat-CSS wiederver-
-// wendet), Status-Footer. Kein Composer — der Subagent ist read-only.
-function _agentPaneBuildBody(tab) {
-  const el = tab.el;
-  el.className = 'termchat agentpane';
-  el.innerHTML = `
-    <div class="ap-head" id="${esc(tab.id)}-head">
-      <span class="ap-dot running"></span>
-      <span class="ap-title">${esc(tab.name)}</span>
-      <span style="flex:1"></span>
-      <button class="ap-stop btn-secondary" title="Aufgabe stoppen">Stopp</button>
-    </div>
-    <div class="tc-log" id="${esc(tab.id)}-log"></div>
-    <div class="tc-status" id="${esc(tab.id)}-status"></div>`;
-  const stopBtn = el.querySelector('.ap-stop');
-  stopBtn.addEventListener('click', async () => {
-    stopBtn.disabled = true;
-    try { await API.cancelBackgroundTask(tab.taskId); }
-    catch (_) { stopBtn.disabled = false; }
-  });
-  _agentPaneStatus(tab, 'läuft…');
+function _agentHubEmptyState(tab) {
+  const empty = document.getElementById(_AGENT_HUB_ID + '-empty');
+  if (empty) empty.style.display = Object.keys(tab._cards).length ? 'none' : 'block';
 }
 
-function _agentPaneLog(tab) { return document.getElementById(tab.id + '-log'); }
+// ── Karte ────────────────────────────────────────────────────────────────────
+function _agentHubAddCard(tab, taskId, title, sessionId) {
+  const host = document.getElementById(_AGENT_HUB_ID + '-cards');
+  if (!host) return null;
+  const el = document.createElement('div');
+  el.className = 'ap-card';
+  el.innerHTML = `
+    <div class="ap-card-head">
+      <span class="ap-dot running"></span>
+      <span class="ap-title">${esc(title || 'Subagent')}</span>
+      <span class="ap-model"></span>
+      <span class="ap-meta"></span>
+      <button class="ap-stop btn-secondary" title="Aufgabe stoppen">Stopp</button>
+      <button class="ap-x" title="Karte entfernen (stoppt NICHT)" style="display:none">✕</button>
+    </div>
+    <div class="ap-tail">wartet auf Ereignisse …</div>
+    <div class="ap-card-log tc-log" style="display:none"></div>`;
+  host.prepend(el);  // neueste oben
+  const card = {
+    taskId, sessionId: sessionId || '', el, status: 'running', expanded: false,
+    tokensIn: 0, tokensOut: 0, model: '',
+    logEl: el.querySelector('.ap-card-log'),
+    tailEl: el.querySelector('.ap-tail'),
+    _live: null, _ctrl: null,
+  };
+  tab._cards[taskId] = card;
+  // Nur eine Karte → direkt aufklappen (Einzelfall = volle Sicht).
+  if (Object.keys(tab._cards).length === 1) _agentCardToggle(tab, card, true);
+  el.querySelector('.ap-card-head').addEventListener('click', (e) => {
+    if (e.target.closest('.ap-stop') || e.target.closest('.ap-x')) return;
+    _agentCardToggle(tab, card);
+  });
+  el.querySelector('.ap-stop').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    e.target.disabled = true;
+    try { await API.cancelBackgroundTask(taskId); }
+    catch (_) { e.target.disabled = false; }
+  });
+  el.querySelector('.ap-x').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (card._ctrl) { try { card._ctrl.abort(); } catch (_) {} }
+    el.remove();
+    delete tab._cards[taskId];
+    _agentHubEmptyState(tab);
+    _terminalRenderTabs();
+  });
+  _agentHubEmptyState(tab);
+  _agentCardAttach(tab, card);
+  _terminalRenderTabs();
+  return card;
+}
 
-function _agentPaneRow(tab, cls, html) {
-  const log = _agentPaneLog(tab);
-  if (!log) return null;
+function _agentCardToggle(tab, card, force) {
+  card.expanded = (force !== undefined) ? force : !card.expanded;
+  card.logEl.style.display = card.expanded ? 'block' : 'none';
+  card.tailEl.style.display = card.expanded ? 'none' : 'block';
+  if (card.expanded) card.logEl.scrollTop = card.logEl.scrollHeight;
+}
+
+function _agentCardRow(card, cls, html) {
+  const log = card.logEl;
   const stick = (log.scrollHeight - log.scrollTop - log.clientHeight) <= 40;
   const div = document.createElement('div');
   div.className = 'tc-row ' + cls;
@@ -95,80 +147,88 @@ function _agentPaneRow(tab, cls, html) {
   return div;
 }
 
-function _agentPaneStatus(tab, text) {
-  const s = document.getElementById(tab.id + '-status');
-  if (!s) return;
-  const tok = (tab.tokensIn || tab.tokensOut)
-    ? ` · ${tab.tokensIn}↑ ${tab.tokensOut}↓` : '';
-  s.textContent = `Subagent · ${text}${tok}`;
+function _agentCardTail(card, text) {
+  card.tailEl.textContent = text;
 }
 
-function _agentPaneSetState(tab, status) {
-  tab.status = status;
-  const head = document.getElementById(tab.id + '-head');
-  if (head) {
-    const dot = head.querySelector('.ap-dot');
-    if (dot) dot.className = 'ap-dot ' + status;
-    const btn = head.querySelector('.ap-stop');
-    if (btn && status !== 'running') btn.style.display = 'none';
+function _agentCardMeta(card) {
+  const m = card.el.querySelector('.ap-meta');
+  if (!m) return;
+  const tok = (card.tokensIn || card.tokensOut) ? `${card.tokensIn}↑ ${card.tokensOut}↓` : '';
+  const label = { running: '', done: 'fertig', error: 'Fehler', cancelled: 'gestoppt' }[card.status] || card.status;
+  m.textContent = [label, tok].filter(Boolean).join(' · ');
+}
+
+function _agentCardSetState(tab, card, status) {
+  card.status = status;
+  const dot = card.el.querySelector('.ap-dot');
+  if (dot) dot.className = 'ap-dot ' + status;
+  const stop = card.el.querySelector('.ap-stop');
+  const x = card.el.querySelector('.ap-x');
+  if (status !== 'running') {
+    if (stop) stop.style.display = 'none';
+    if (x) x.style.display = '';
   }
-  _terminalRenderTabs();
+  _agentCardMeta(card);
+  _terminalRenderTabs();  // Zähler/Puls im Tab-Label aktualisieren
 }
 
-// Attach an den Transcript-SSE (replay + live). Rendert das Brain-Event-
-// Vokabular in termchat-artige Zeilen; Reihenfolge Text↔Tool bleibt
-// chronologisch (gleiche Segmentlogik wie _tcCallbacks).
-function _agentPaneAttach(tab) {
+// Attach an den Transcript-SSE; rendert ins Karten-Log + pflegt die Tail-Zeile.
+function _agentCardAttach(tab, card) {
   const live = { curTextRow: null, curSegText: '', lastWasTool: false,
                  toolById: {}, thinkRow: null, think: '' };
-  tab._live = live;
-  tab._ctrl = API.streamBackgroundTranscript(
-    tab.taskId,
+  card._live = live;
+  card._ctrl = API.streamBackgroundTranscript(
+    card.taskId,
     /* onText */ (chunk) => {
       if (!live.curTextRow || live.lastWasTool) {
-        live.curTextRow = _agentPaneRow(tab, 'tc-asst', '');
+        live.curTextRow = _agentCardRow(card, 'tc-asst', '');
         live.curSegText = '';
         live.lastWasTool = false;
       }
       live.curSegText += chunk;
       if (live.curTextRow) live.curTextRow.innerHTML = renderMarkdown(live.curSegText);
-      _agentPaneStatus(tab, 'antwortet…');
+      const t = live.curSegText.trim();
+      _agentCardTail(card, '… ' + t.slice(-120));
     },
     /* onDone */ (d) => {
       const st = (d && d.status) || (d && d.error ? 'error' : 'done');
-      _agentPaneSetState(tab, st === 'running' ? 'done' : st);
-      if (d && d.error) _agentPaneRow(tab, 'tc-err', esc(String(d.error)));
+      if (d && d.error) _agentCardRow(card, 'tc-err', esc(String(d.error)));
       if (d && d.usage) {
-        if (typeof d.usage.input === 'number') tab.tokensIn = d.usage.input;
-        if (typeof d.usage.output === 'number') tab.tokensOut = d.usage.output;
+        if (typeof d.usage.input === 'number') card.tokensIn = d.usage.input;
+        if (typeof d.usage.output === 'number') card.tokensOut = d.usage.output;
       }
-      const label = { done: 'fertig', error: 'Fehler', cancelled: 'gestoppt' }[tab.status] || tab.status;
-      _agentPaneStatus(tab, label);
+      _agentCardSetState(tab, card, st === 'running' ? 'done' : st);
+      _agentCardTail(card, { done: '✓ fertig', error: '✗ Fehler', cancelled: '⏹ gestoppt' }[card.status] || card.status);
+      if (card._notifyOnDone) _agentHubNotifyDelivery(card.sessionId);
     },
     /* onRequest */ (d) => {
-      if (d && d.title && (!tab.name || tab.name === 'Subagent')) {
-        tab.name = d.title; _terminalRenderTabs();
-        const head = document.getElementById(tab.id + '-head');
-        const tEl = head && head.querySelector('.ap-title');
+      if (d && d.title) {
+        const tEl = card.el.querySelector('.ap-title');
         if (tEl) tEl.textContent = d.title;
       }
+      if (d && d.model) {
+        card.model = d.model;
+        const mEl = card.el.querySelector('.ap-model');
+        if (mEl) mEl.textContent = (typeof modelShortName === 'function')
+          ? modelShortName(d.model, false) : d.model;
+      }
       if (d && d.prompt) {
-        _agentPaneRow(tab, 'tc-user',
-          `<span class="tc-uprompt">›</span> ${esc(d.prompt)}`);
+        _agentCardRow(card, 'tc-user', `<span class="tc-uprompt">›</span> ${esc(d.prompt)}`);
       }
     },
     /* onTool */ (ev) => {
       if (!ev) return;
       if (ev.phase === 'start') {
         const arg = (typeof _tcToolArg === 'function') ? _tcToolArg(ev.args) : '';
-        const row = _agentPaneRow(tab, 'tc-tool',
+        const row = _agentCardRow(card, 'tc-tool',
           `<span class="tc-tool-dot">●</span> <span class="tc-tool-name">${esc(ev.name || '')}</span>` +
           (arg ? ` <span class="tc-tool-arg">${esc(arg)}</span>` : '') +
           ` <span class="tc-tool-state">…</span>`);
         if (row && ev.tool_use_id) live.toolById[ev.tool_use_id] = row;
         live.lastWasTool = true;
         live.curTextRow = null;
-        _agentPaneStatus(tab, 'Werkzeug: ' + (ev.name || ''));
+        _agentCardTail(card, '● ' + (ev.name || '') + (arg ? ' ' + arg : ''));
       } else if (ev.phase === 'done') {
         const row = live.toolById[ev.tool_use_id];
         if (row) {
@@ -179,27 +239,49 @@ function _agentPaneAttach(tab) {
     },
     /* onThinking */ (chunk) => {
       if (!live.thinkRow || !live.thinkRow.parentNode) {
-        live.thinkRow = _agentPaneRow(tab, 'tc-think', '');
+        live.thinkRow = _agentCardRow(card, 'tc-think', '');
         live.think = '';
         live.curTextRow = null;
       }
       live.think += chunk;
       live.thinkRow.textContent = '⠿ ' + live.think;
-      _agentPaneStatus(tab, 'denkt nach…');
+      _agentCardTail(card, '⠿ denkt nach …');
     },
     /* onUsage */ (d) => {
-      if (d && typeof d.tokens_in === 'number') tab.tokensIn = d.tokens_in;
-      if (d && typeof d.tokens_out === 'number') tab.tokensOut = d.tokens_out;
-      _agentPaneStatus(tab, 'läuft…');
+      if (d && typeof d.tokens_in === 'number') card.tokensIn = d.tokens_in;
+      if (d && typeof d.tokens_out === 'number') card.tokensOut = d.tokens_out;
+      _agentCardMeta(card);
     },
   );
 }
 
+// Ergebnis-Zustellung sichtbar machen: wenn eine Aufgabe fertig wird, startet
+// der Server (idle vorausgesetzt) einen DELIVERY-Turn in der SPAWNENDEN
+// Session. Der Terminal-Chat hat aber nur seinen eigenen POST-Reader — extern
+// gestartete Turns attacht er nie (User-Report: 'main chat verarbeitet die
+// Ergebnisse nicht, wirkt tot'). Fix: offenen Terminal-Chat-Tab der Session
+// per tcLoadTranscript neu laden — der rendert die Delivery-Nachricht UND
+// attacht den laufenden Turn live (d.streaming → _tcAttachLive). Zwei
+// verzögerte Versuche, weil die Delivery erst nach dem Group-Claim startet.
+function _agentHubNotifyDelivery(sessionId) {
+  if (!sessionId || typeof _term === 'undefined') return;
+  const check = () => {
+    const t = (_term.tabs || []).find(
+      x => x.kind === 'chat' && x.sessionId === sessionId);
+    if (!t || t.streaming) return;  // eigener Reader läuft → nichts zu tun
+    if (typeof tcLoadTranscript === 'function') {
+      try { tcLoadTranscript(t); } catch (_) {}
+    }
+  };
+  setTimeout(check, 1500);
+  setTimeout(check, 6000);
+}
+
 // Hook aus den Chat-tool_result-Callbacks (Terminal-Chat + Haupt-Chat):
-// öffnet das Pane, sobald run_background_task eine task_id zurückgibt.
+// legt die Karte an, sobald run_background_task eine task_id liefert.
 // Nur im Code-Mode (Bottom-Panel verfügbar) — sonst still no-op; das rechte
 // Hintergrundaufgaben-Panel deckt den Nicht-Code-Fall unverändert ab.
-function terminalMaybeOpenAgentPane(toolName, resultStr, title, turnKey) {
+function terminalMaybeOpenAgentPane(toolName, resultStr, title, turnKey, sessionId) {
   if (toolName !== 'run_background_task') return;
   if (typeof terminalAvailable !== 'function' || !terminalAvailable()) return;
   let taskId = '';
@@ -208,8 +290,6 @@ function terminalMaybeOpenAgentPane(toolName, resultStr, title, turnKey) {
     taskId = r.task_id || '';
     if (!taskId || r.error) return;
   } catch (_) { return; }
-  // Panel bei Bedarf öffnen — der Spawn IST das Signal, dass unten etwas
-  // Sichtbares passiert (Kern der Subagent-Pane-Idee).
   if (typeof _term !== 'undefined' && !_term.open && typeof terminalTogglePanel === 'function') {
     try { terminalTogglePanel(true); } catch (_) { return; }
   }
@@ -217,13 +297,17 @@ function terminalMaybeOpenAgentPane(toolName, resultStr, title, turnKey) {
   if (key !== _agentPaneAutoTurnKey) { _agentPaneAutoTurnKey = key; _agentPaneAutoCount = 0; }
   if (_agentPaneAutoCount >= _AGENT_PANE_AUTO_MAX) return;
   _agentPaneAutoCount += 1;
-  // Panel-Öffnung baut Panes async auf — Pane-Erzeugung leicht verzögern.
-  setTimeout(() => { try { terminalOpenAgentPane(taskId, title || ''); } catch (_) {} }, 250);
+  // Panel-Öffnung baut Panes async auf — Karten-Erzeugung leicht verzögern.
+  setTimeout(() => { try { terminalOpenAgentPane(taskId, title || '', sessionId || ''); } catch (_) {} }, 250);
 }
 
-// Re-Attach beim Laden des Bottom-Panels: laufende Hintergrundaufgaben der
-// offenen Chat-Sessions (Terminal-Chats + aktiver Haupt-Chat) wieder als
-// Panes öffnen. Beendete Aufgaben werden NICHT reopened (ephemer).
+// Re-Attach beim Laden des Bottom-Panels: die Hintergrundaufgaben der offenen
+// Chat-Sessions (Terminal-Chats + aktiver Haupt-Chat) als Karten wiederholen —
+// LAUFENDE live (Replay+Follow) UND FERTIGE aus dem Stored-Replay (der seit
+// 9.312.0 auch die gespeicherten Tool-Events ausspielt), damit ein Seiten-
+// Reload die Subagenten-Ansicht nicht verliert (User-Anforderung). Gecappt
+// auf die neuesten 12 je Ladevorgang, damit alte Sessions das Hub nicht fluten.
+const _AGENT_HUB_REATTACH_MAX = 12;
 async function _agentPaneReattachAll() {
   if (typeof _term === 'undefined' || !_term.open) return;
   const sids = new Set();
@@ -234,16 +318,23 @@ async function _agentPaneReattachAll() {
     const cur = (typeof state !== 'undefined' && state.activeChat && state.activeChat.sessionId);
     if (cur) sids.add(cur);
   } catch (_) {}
+  let all = [];
   for (const sid of sids) {
-    let tasks = [];
     try {
       const d = await API.getBackgroundTasks(sid);
-      tasks = (d && d.tasks) || [];
-    } catch (_) { continue; }
-    for (const t of tasks) {
-      if (t.status === 'running' && !_agentPaneTab(t.id)) {
-        terminalOpenAgentPane(t.id, t.title || '');
+      for (const t of ((d && d.tasks) || [])) {
+        t._sid = sid;
+        all.push(t);
       }
-    }
+    } catch (_) { /* Session ohne Tasks / transient */ }
+  }
+  // Neueste zuerst behalten, dann ÄLTESTE zuerst anlegen (prepend → neueste oben).
+  all.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  all = all.slice(0, _AGENT_HUB_REATTACH_MAX).reverse();
+  for (const t of all) {
+    const hub = _agentHubTab();
+    if (hub && hub._cards[t.id]) continue;
+    terminalOpenAgentPane(t.id, t.title || '', t.session_id || t._sid,
+      { activate: false, notify: t.status === 'running' });
   }
 }

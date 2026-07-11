@@ -623,7 +623,7 @@ function _tcCallbacks(tab, live) {
       if (d.name === 'run_background_task' && typeof terminalMaybeOpenAgentPane === 'function') {
         live._apKey = live._apKey || (tab.id + '-' + Date.now());
         terminalMaybeOpenAgentPane(d.name, d.result,
-          (live._bgSpawn || {})[d.tool_use_id] || '', live._apKey);
+          (live._bgSpawn || {})[d.tool_use_id] || '', live._apKey, tab.sessionId);
       }
       if (!tab.showTools) return;
       const row = live.toolById[d.tool_use_id];

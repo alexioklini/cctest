@@ -1356,6 +1356,8 @@ async function init() {
   QuotaMonitor.start();
   // Poll which sessions are streaming → "läuft gerade" pills in the chat lists.
   if (typeof startActiveSessionsPoll === 'function') startActiveSessionsPoll();
+  // Poll laufende Hintergrundaufgaben → ✦-Subagenten-Tree unter den Chat-Einträgen.
+  if (typeof startRunningSubagentsPoll === 'function') startRunningSubagentsPoll();
 }
 
 async function renderPromptCards() {
