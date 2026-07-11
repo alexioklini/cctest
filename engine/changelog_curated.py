@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.9",
+        "date": "2026-07-11",
+        "title": "Erzeugte Dateien erscheinen im Artefakte-Tab",
+        "body": "In Code-Projekten war das Artefakte-Tab bisher leer, obwohl der "
+                "Agent Reports und Skripte erzeugt hat — Sie mussten die Dateien "
+                "im Dateibaum suchen. Jetzt erscheint dort alles, was in einem "
+                "Chat entsteht, auch das, was Subagenten oder ausgeführte "
+                "Skripte schreiben. Ihr Quellcode bleibt davon unberührt und "
+                "taucht nicht als Artefakt auf.",
+        "audience": "user",
+        "versions": ["9.312.9"],
+    },
+    {
         "version": "9.312.8",
         "date": "2026-07-11",
         "title": "Der Chat zeigt, dass Subagenten noch arbeiten",

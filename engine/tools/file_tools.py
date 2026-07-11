@@ -3822,15 +3822,10 @@ def tool_execute_command(args: dict) -> str:
         _pre_files: dict[str, tuple[float, int]] = {}
         _session_id = get_request_context().current_session_id
         _agent = get_request_context().current_agent or _brain._current_agent
-        if cwd and _session_id and _agent:
-            # Ask the resolver instead of rebuilding the path here: a sub-agent's
-            # write root carries a `subagents/<task_id>/` suffix (v9.312.7), and a
-            # hand-built `<date>_<sid>` would no longer match → the produced files
-            # would silently stop being registered as artifacts.
-            _expected, _ = _resolve_artifact_dir()
-            if _expected and os.path.realpath(cwd) == os.path.realpath(_expected):
-                _artifact_cwd = _expected
-                _pre_files = _snapshot_dir(_artifact_cwd)
+        _watch = _artifact_watch_dir(cwd)
+        if _watch and _session_id and _agent:
+            _artifact_cwd = _watch
+            _pre_files = _snapshot_dir(_artifact_cwd)
 
         # Use streaming version if event_callback is available
         ecb = get_request_context().event_callback
@@ -3910,20 +3905,73 @@ def tool_execute_command(args: dict) -> str:
         return _err(f"execute_command: {e}")
 
 
+def _artifact_watch_dir(cwd: str | None) -> str | None:
+    """The directory to snapshot before/after a python_exec / execute_command run,
+    so files the SCRIPT writes (not the write tools) still become artifacts.
+
+    Two cases:
+      • Normal chat: the artifact folder — but only when cwd actually IS it, so a
+        command run elsewhere doesn't pollute the panel.
+      • CODE MODE: cwd is the PROJECT ROOT (the model's shell reads source with
+        relative paths, so it must be), yet output belongs in this chat's /
+        sub-agent's folder. Watch THAT folder regardless of cwd — otherwise a
+        script's `open(...,'w')` produced a file no one ever registered and the
+        Artifacts panel stayed empty (a sub-agent's report did exactly that).
+    """
+    _ctx = get_request_context()
+    _wd = _ctx.working_dir
+    if _wd and os.path.isdir(_wd):
+        # Watch the whole `chats/` tree, not just this run's own subfolder: a
+        # generated script may hard-code the CHAT folder (it is named in the
+        # preamble) even when running as a sub-agent, and its report would then
+        # land one level up and go unregistered. `chats/` only ever holds agent
+        # output, so nothing of the user's can be mistaken for an artifact.
+        try:
+            base = _code_mode_write_base(_wd)   # creates this run's folder
+            os.makedirs(base, exist_ok=True)
+            root = os.path.join(_wd, "chats")
+            os.makedirs(root, exist_ok=True)
+            return root
+        except OSError:
+            return None
+    if not cwd:
+        return None
+    expected, _ = _resolve_artifact_dir()
+    if expected and os.path.realpath(cwd) == os.path.realpath(expected):
+        return expected
+    return None
+
+
+_SNAPSHOT_MAX_FILES = 5000   # guard: never walk an unbounded tree
+
+
 def _snapshot_dir(dir_path: str) -> dict[str, tuple[float, int]]:
-    """Map each file in dir_path to (mtime, size). Used to detect files that a
-    python_exec script / execute_command run created OR overwrote in place — a
-    plain name-set diff would miss in-place rewrites of pre-existing artifacts."""
+    """Map each file under dir_path to (mtime, size), keyed by its path RELATIVE
+    to dir_path. Used to detect files a python_exec script / execute_command run
+    created OR overwrote in place — a plain name-set diff would miss in-place
+    rewrites of pre-existing artifacts.
+
+    RECURSIVE (v9.312.9): the code-mode watch dir is the `chats/` tree, whose
+    output lives in `<chat>/reports/…` and `<chat>/subagents/<id>/…` — a flat
+    scandir saw none of it, so script-written reports never registered. For the
+    flat artifact folder the keys are unchanged (bare filenames), so existing
+    callers behave exactly as before. Hidden dirs are skipped and the walk is
+    capped, so a stray huge tree can't stall a tool call."""
     snap: dict[str, tuple[float, int]] = {}
     try:
-        with os.scandir(dir_path) as it:
-            for e in it:
+        for root, dirs, files in os.walk(dir_path):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for fn in files:
+                if fn.startswith("."):
+                    continue
+                fp = os.path.join(root, fn)
                 try:
-                    if e.is_file():
-                        st = e.stat()
-                        snap[e.name] = (st.st_mtime, st.st_size)
+                    st = os.stat(fp)
                 except OSError:
                     continue
+                snap[os.path.relpath(fp, dir_path)] = (st.st_mtime, st.st_size)
+                if len(snap) >= _SNAPSHOT_MAX_FILES:
+                    return snap
     except OSError:
         pass
     return snap
@@ -4244,7 +4292,13 @@ def tool_python_exec(args: dict) -> str:
     # OVERWROTE in place, not only freshly-created ones. (A re-run that rewrites
     # an already-existing artifact, e.g. swapping image URLs in a prior .html,
     # must register as a new version, not vanish from the Artifacts panel.)
-    pre_files = _snapshot_dir(work_dir)
+    #
+    # In CODE MODE `work_dir` is the PROJECT ROOT — snapshotting that would be
+    # expensive AND would report the user's own source files as artifacts. Watch
+    # this chat's / sub-agent's output folder instead (that is where generated
+    # files belong, and where a script's `open(...,'w')` should land).
+    watch_dir = _artifact_watch_dir(work_dir) or work_dir
+    pre_files = _snapshot_dir(watch_dir)
 
     # Save script as a numbered artifact (persisted for reuse)
     counter = 1
@@ -4359,11 +4413,11 @@ def tool_python_exec(args: dict) -> str:
         # _changed_files compares the post-exec snapshot against pre_files by
         # (mtime, size), so a re-run that rewrites an existing artifact bumps
         # its version instead of being skipped (the script itself is excluded).
-        changed = _changed_files(work_dir, pre_files, exclude={script_name})
+        changed = _changed_files(watch_dir, pre_files, exclude={script_name})
         if changed and agent:
             created = []
             for fname, was_new in changed:
-                fpath = os.path.join(work_dir, fname)
+                fpath = os.path.join(watch_dir, fname)
                 if os.path.isfile(fpath):
                     _brain._after_file_write(
                         fpath, "created" if was_new else "modified", agent_id)
@@ -4374,10 +4428,10 @@ def tool_python_exec(args: dict) -> str:
         # Always save stdout as an artifact when the script didn't write any files
         if output and proc.returncode == 0 and not changed and agent:
             try:
-                artifact_path = os.path.join(work_dir, "output.txt")
+                artifact_path = os.path.join(watch_dir, "output.txt")
                 counter = 1
                 while os.path.exists(artifact_path):
-                    artifact_path = os.path.join(work_dir, f"output_{counter}.txt")
+                    artifact_path = os.path.join(watch_dir, f"output_{counter}.txt")
                     counter += 1
                 with open(artifact_path, "w") as af:
                     af.write(output)
