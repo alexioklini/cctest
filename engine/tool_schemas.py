@@ -1834,6 +1834,58 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "ast_grep_search",
+        "description": (
+            "Structural (AST-aware) code search: find code by SYNTAX PATTERN, not text. "
+            "Use this when grep/search_files would drown in false positives — the pattern "
+            "matches the parse tree, so formatting/whitespace/argument names don't matter. "
+            "Pattern syntax: literal code with metavariables — $A matches ONE node "
+            "(expression/identifier), $$$ matches any number of nodes. Examples: "
+            "'str($A)' = every call to str with one argument; 'def $F($$$): $$$' = every "
+            "function definition; 'if $C: return $R' = guard clauses; "
+            "'$OBJ.get($K, $D)' = dict.get with default. "
+            "You should: (1) state the pattern as REAL code of the target language, "
+            "(2) pass lang when the root mixes languages (python, javascript, typescript, "
+            "rust, go, java, …), (3) narrow root to a subdirectory for large repos. "
+            "Root defaults to the code-mode project's working directory."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Structural pattern (real code with $METAVARS, $$$ for any-number)"},
+                "root": {"type": "string", "description": "Directory or file to search (default: project working dir)"},
+                "lang": {"type": "string", "description": "Language hint, e.g. python/javascript/typescript/go/rust"},
+                "max_results": {"type": "integer", "description": "Max matches returned (default 50)"},
+            },
+            "required": ["pattern"],
+        },
+    },
+    {
+        "name": "ast_grep_replace",
+        "description": (
+            "Structural (AST-aware) refactoring: rewrite every match of a syntax pattern. "
+            "SAFE BY DEFAULT — without apply=true this is a DRY-RUN that returns a preview "
+            "(file, line, old text, replacement) and changes NOTHING. Workflow you should "
+            "follow: (1) call without apply → inspect the preview, (2) if and ONLY if the "
+            "preview is exactly what you want, repeat the SAME call with apply=true. "
+            "The rewrite may reuse the pattern's metavariables: pattern='str($A)' with "
+            "rewrite='repr($A)' turns str(x) into repr(x) everywhere. Mass rewrites over "
+            "500 matches are refused — narrow the pattern or root. Modified files are "
+            "tracked (code index updates automatically)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string", "description": "Structural pattern (real code with $METAVARS)"},
+                "rewrite": {"type": "string", "description": "Replacement code; may reference the pattern's $METAVARS"},
+                "root": {"type": "string", "description": "Directory or file to rewrite (default: project working dir)"},
+                "lang": {"type": "string", "description": "Language hint, e.g. python/javascript/typescript/go/rust"},
+                "apply": {"type": "boolean", "description": "false (default) = dry-run preview; true = write the changes"},
+            },
+            "required": ["pattern", "rewrite"],
+        },
+    },
+    {
         "name": "git_command",
         "description": (
             "Execute git operations with structured output. Actions:\n"

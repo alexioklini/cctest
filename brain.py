@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.309.0"
+VERSION = "9.310.0"
 VERSION_DATE = "2026-07-11"
 CHANGELOG = [
+    ("9.310.0", "2026-07-11", "feat(ast-grep: strukturelle Code-Suche + Refactoring als Agent-Tools): Idee 3/4 aus der oh-my-opencode-slim-Analyse. ZWEI neue Tools in der code_graph-Gruppe (engine/tools/ast_grep_tools.py, 4-Site-registriert + Icon/Label-Maps, Dispatch-Identitaet verifiziert): (1) ast_grep_search(pattern, root?, lang?, max_results?) — AST-Pattern-Suche ('str($A)' = jeder Ein-Arg-str()-Call, $$$ = beliebig viele Nodes) statt Text-grep; READ-ONLY (in READONLY_TOOLS fuer Plan-Mode). (2) ast_grep_replace(pattern, rewrite, root?, lang?, apply?) — strukturelles Rewrite, rewrite darf die Metavariablen des Patterns nutzen; SAFE BY DEFAULT: ohne apply=true ein DRY-RUN mit Preview (file/line/text/replacement), >500 Treffer werden verweigert (Mass-Rewrite-Guard), geaenderte Dateien laufen durch _after_file_write (Code-Index bleibt frisch). MECHANIK: ast-grep-Binary (0.44.1, brew install ast-grep) als HOST-DEPENDENCY wie yt-dlp/crawl4ai — _ast_grep_bin() PATH+/opt/homebrew-Fallback, fehlend → klare deutsche Fehlermeldung; jeder Aufruf ein Subprozess mit hartem 60s-Timeout (einzig killbare Einheit, PDF-Haenger-Lektion); --json=stream geparst (range.start.line 0-basiert → +1). root default = working_dir aus dem RequestContext (Code-Mode), sonst expliziter Param, sonst Fehler. GATING wie code_search (v9.210.0-Muster): tool_settings interactive=deferred (per-Maschinen-Config, nach Restart via POST /v1/tools/settings geseedet — KV-Prefix normaler Chats byte-stabil, tool_search-discoverable), apply_domain_context undefert beide im Code-Mode in-prompt. Schema-Beschreibungen voll prozedural (Beschreibungs-Falle v9.295.0): Pattern-Syntax + Beispiele + Dry-Run-Workflow ('erst Preview pruefen, DANN denselben Aufruf mit apply=true'). FUNKTIONAL verifiziert (in-process, request_context): search 2 Treffer korrekt, dry-run Preview mit replacement, apply schreibt + meldet files_changed, kein-root-Fehler; lenientes ast-grep-Verhalten bei kaputtem Pattern = 0 Treffer statt Fehler (dokumentiert). py_compile OK (brain/tool_schemas/ast_grep_tools). Skill 02-tools (+ Gruppen-Tabelle) im selben Commit. Server-Restart noetig. KEIN kuratierter Eintrag hier (gebuendelt in 9.311.0)."),
     ("9.309.0", "2026-07-11", "feat(edit_file-Rescue: tolerantes Matching fuer fast-richtige old_strings): Idee 2/4 aus der oh-my-opencode-slim-Analyse (deren apply_patch-Rescue), am Choke-Point in engine/tools/file_tools.py:tool_edit_file — wirkt damit fuer JEDEN Edit-Aufrufer (Chat, Scheduler, Background, MoA-Executor). ANLASS: lokale Modelle (gemma & Co.) produzieren haeufig fast-richtige old_strings — typografische Drift (curly quotes/en-dash/nbsp aus gerendertem Kontext) oder Whitespace-/Einrueckungs-Drift — und der exakte content.count()-Match schlug hart fehl → Retry-Schleifen. NEU zwei Rescue-Paesse, NUR wenn der Exakt-Match 0 Treffer hat (Bestandsverhalten byte-identisch): (1) _edit_rescue_unicode — Normalisierung typografischer Look-alikes (_EDIT_NORM_MAP: nbsp/curly quotes/dashes/zero-width/BOM) MIT Index-Map zurueck auf Original-Bytes (_edit_normalize_with_map, zero-width droppt → nicht 1:1); ersetzt wird die ORIGINAL-Region der Datei, new_string bleibt verbatim. (2) _edit_rescue_lines — Ganzzeilen-Match mit rstrip-Toleranz + UNIFORMEM Einrueckungs-Delta ueber alle nicht-leeren Zeilen; _edit_apply_line_regions indented new_string um dasselbe Delta um (der Fix landet auf der ECHTEN Datei-Einrueckung, nicht der gedrifteten des Modells); Leerzeile in old_string matcht nur Leerzeile. KONTRAKT: eindeutiger toleranter Treffer → angewendet, Result traegt rescued:'unicode-normalized'|'whitespace-indent' + Hinweis-Note; MEHRDEUTIG (ohne replace_all) → harter Fehler mit Trefferzahl (nie raten); Fragmente <6 Zeichen (_EDIT_RESCUE_MIN_CHARS) nie gerettet (zu riskant). replace_all wendet Rescue auf ALLE gefundenen Regionen an (rueckwaerts gespliced). TOOL_DEFINITIONS-Schema BEWUSST unveraendert (Rescue = stilles Sicherheitsnetz; Schema-Text-Aenderung wuerde alle warmen KV-Prefixe invalidieren). Unit-Tests tests/test_edit_rescue.py (13 Faelle: beidseitige Typo-Drift, uniform/non-uniform Delta, negatives Delta, Ambiguitaet, Blank-Line-Kontrakt, Splice-Umgebung) — alle gruen, bare interpreter. py_compile OK. Skill 02-tools im selben Commit. Server-Restart noetig. KEIN kuratierter Eintrag hier (gebuendelt in 9.311.0)."),
     ("9.308.0", "2026-07-11", "feat(Subagent-Panes im Code-Mode-Bottom-Panel + Live-Transcript-Fix): ANLASS (User): Analyse von oh-my-opencode-slim — deren Multiplexer-Integration (jeder Background-Spezialist bekommt eine eigene tmux-Pane, man sieht Subagenten LIVE arbeiten) als sichtbarstes adoptierbares Muster fuer unsere Code-Mode-Projekte. LATENTER BUG ZUERST (Choke-Point, [[feedback_single_fix_point]]): der Live-Zweig von GET /v1/background-tasks/<id>/transcript proxied noch _sp.sidecar_url() — der Sidecar ist seit v9.247.0 GELOESCHT, d.h. 'Transkript anzeigen' im Hintergrundaufgaben-Panel degradierte seit Monaten still zum Stored-Replay (kein Live-Text, keine Live-Tools; bei laufender Task riss der SSE mit AttributeError ab, nur urllib-Fehler waren gefangen). FIX am Runner: BackgroundTaskRunner haelt jetzt pro Task einen LiveStream (server.LiveStream via sys.modules-Seam wie delegation_tools, None-tolerant fuer Tests) und reicht einen emit-Tap in background_call (der bestehende Workflow-agent_step-Seam, run_turn_blocking emit=) — Brain-Vokabular (text_delta/thinking_*/tool_call/tool_result/usage) landet im per-Task-Replay-Log; tool_result-VIEW auf 4000 Zeichen gekappt (result_chars traegt die echte Laenge; das Modell sieht weiter alles). Terminal-done-Event NACH dem DB-Write, VOR dem _live-Pop (Late-Attach faellt sauber auf Stored-Replay). handlers/background.py: Live-Zweig = stream.attach() Replay+Follow mit 5s-Keepalive-Kommentaren, Sidecar-Proxy-Code + urllib-Imports GELOESCHT. api.js streamBackgroundTranscript: normalisiert das neue Vokabular (+ optionale onThinking/onUsage-Callbacks), toter Sidecar-Shape-Parser entfernt — das rechte Hintergrundaufgaben-Panel bekommt damit seine Live-Ansicht ZURUECK, unveraendert (gleiche onTool-Shapes). NEU SUBAGENT-PANES (web/js/panels_agentpane.js, vierter Tab-KIND 'agent' im Bottom-Workspace): startet ein Code-Mode-Chat-Turn run_background_task, oeffnet automatisch ein read-only Pane mit dem Live-Transcript des Subagenten (Anfrage-Zeile, Markdown-Text, Thinking gedimmt, Tool-Zeilen mit Status wie im Terminal-Chat — termchat-CSS wiederverwendet), Kopfzeile mit Status-Punkt (laeuft/fertig/gestoppt/Fehler) + Stopp-Knopf (POST /v1/background-tasks/cancel; Tab-SCHLIESSEN cancelt NIE — nur der Knopf). Auto-Open-Hooks in BEIDEN tool_result-Callbacks (panels_termchat._tcCallbacks + chat_send.buildStreamCallbacks), gated auf terminalAvailable() (Nicht-Code-Mode = no-op, rechtes Panel deckt das ab), Panel oeffnet sich bei Bedarf selbst; Deckel 4 Auto-Panes pro Turn (Fan-out-Gruppen fluten nicht; Rest laeuft sichtbar im rechten Panel). Panes sind EPHEMER (nicht in bottom_workspace persistiert); _terminalLoadSessions re-attacht laufende Tasks der offenen Sessions via _agentPaneReattachAll. Tab-Label '<sparkle> Titel' mit Live-Puls (tc-tab-live) bzw. Fehler-Tint. py_compile OK (background_tasks/background); js_gate GRUEN (eslint clean, net-globals 1914->1927 = +13 [panels_agentpane], Baseline im selben Commit, smoke passed nach flaky-retry des vorbestehenden Settings-Specs). VERIFIZIERT live nach Restart: echter Code-Mode-Turn spawnt run_background_task -> Transcript-SSE liefert request/text_delta/tool_call/tool_result/usage/done live (curl-Probe), Hintergrundaufgaben-Panel zeigt Live-Text wieder. Skill 01-api + 05-internals + 06-user-manual + SKILL.md im selben Commit. Server-Restart noetig. KURATIERTER Eintrag (user-sichtbar)."),
     ("9.307.0", "2026-07-10", "feat(web_fetch: YouTube- und Audio-URLs werden Transkripte): ANLASS (User): Open-Notebook-Analyse — dort sind Audio/Video/YouTube Erstklasse-Quelltypen (auto-transkribiert); bei uns lieferte eine MP3-URL Byte-Garbage über den Text-Decode und eine YouTube-URL nutzloses Watch-Page-HTML. NEU in engine/tools/misc_tools.py, am web_fetch-Choke-Point (wirkt damit automatisch in Chat-Fetches, Websuche-Basket-Prefetch UND dem Projekt-web_urls-Miner): (1) Audio-Branch — _audio_ext_for (audio/*-Content-Type-Map zuerst, dann eindeutige URL-Extension; .webm NUR via Content-Type, als Extension ist es ambig Video-Container) VOR _binary_ext_for; Bytes → Tempfile → _transcript_result_from_file → server_lib/translate/media.transcribe_and_translate(target_lang='') — der GETEILTE STT-Pfad (derselbe Resolver + Kosten-Logging purpose='transcribe' wie Übersetzen-Tab/transcribe_audio-Tool; Default lokal Whisper = $0). content = '[Audio-Transkript · m:ss · Sprache]' + Transkript, fetch_method 'audio-transcript' (Chat-Badge). (2) YouTube-Branch (GET/no-body, VOR dem urlopen — die Watch-Page selbst ist wertlos): _YT_URL_RE (watch/shorts/live/youtu.be) → _fetch_youtube_transcript: yt-dlp (Host-Dependency /opt/homebrew, klare Fehlermeldung wenn fehlend; NICHT in requirements — bewusst wie crawl4ai ein externes Werkzeug) mit --no-playlist -f bestaudio[ext=m4a]/bestaudio --max-filesize 80m (~80 min Audio) --print '%(title)s' --no-simulate, 300s-Timeout, tmpdir immer aufgeräumt → derselbe STT-Pfad, Titel als H1, fetch_method 'youtube-transcript'. Beide Branches cachen im _web_cache (Transkripte sind teuer zu wiederholen; force_fresh respektiert wie immer) und geben etag/last_modified fürs Miner-Conditional-GET mit (Audio-Branch). Fehlerpfade degradieren sauber (_err mit deutscher Meldung bzw. Fallback auf den bestehenden Pfad). py_compile OK. VERIFIZIERT live (laufender Server, echter Turn): Websuche-Turn mit YouTube-URL (jNQXAC9IVRw 'Me at the zoo', 19s) → metadata.web_sources enthält das echte Transkript ('[Audio-Transkript · 0:19 min]…elephants…'), Antwort referenziert den Videoinhalt korrekt; Kostenzeile purpose='transcribe' geloggt (auf dieser Maschine resolvte der konfigurierte STT-Default zu voxtral-mini-latest, flat-plan $0 — der Resolver ist derselbe wie im Übersetzen-Tab, whisper-lokal wäre es bei Default-Config). Skill 02-tools (web_fetch-Beschreibung) + 06-user-manual (Websuche-Hinweis) + SKILL.md (1.175.0) im selben Commit. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar)."),
@@ -897,6 +898,7 @@ READONLY_TOOLS = frozenset({
     "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
     "read_document",
     "code_search", "code_trace", "code_query", "code_snippet",
+    "ast_grep_search",   # search only — ast_grep_replace writes files
 })
 
 PLAN_MODE_PROMPT = (
@@ -1356,7 +1358,8 @@ TOOL_GROUPS = {
     "ocr": {"ocr_inspect", "ocr_extract", "ocr_region", "ocr_fields", "ocr_tables"},
     "delegation": {"delegate_task", "task_status", "task_cancel"},
     "background": {"run_background_task"},
-    "code_graph": {"code_search", "code_trace", "code_query", "code_snippet"},
+    "code_graph": {"code_search", "code_trace", "code_query", "code_snippet",
+                   "ast_grep_search", "ast_grep_replace"},
     "git": {"git_command", "github_command"},
     "scheduler": {"schedule_list", "schedule_history"},
     "mcp": {"mcp_connect", "mcp_disconnect", "mcp_servers"},
@@ -7345,7 +7348,8 @@ def apply_domain_context(*, agent_id: str, project: str = "",
             _cbm_cache = os.path.join(_pdir, ".cbm-cache")
             ctx.code_graph_db = _cbm_cache
             ctx.undefer_tools = list((ctx.undefer_tools or []) + [
-                "code_search", "code_trace", "code_query", "code_snippet"])
+                "code_search", "code_trace", "code_query", "code_snippet",
+                "ast_grep_search", "ast_grep_replace"])
             # Build the index on first code-mode entry (idempotent + fast,
             # incremental). Repos may not be git, so we don't rely on cbm's
             # git-watcher — index explicitly. Best-effort; failure must not break
@@ -9118,6 +9122,12 @@ from engine.tools.codebase_memory import (  # noqa: E402
     tool_code_trace,
     tool_code_query,
     tool_code_snippet,
+)
+# Structural (AST-aware) search/rewrite via the ast-grep host binary — see
+# engine/tools/ast_grep_tools.py (v9.310.0).
+from engine.tools.ast_grep_tools import (  # noqa: E402
+    tool_ast_grep_search,
+    tool_ast_grep_replace,
 )
 # SQL-corpus analysis (regex-based, dialect-tolerant; sqlglot optional) for the
 # code-mode workspace — distinct from cbm's tree-sitter index (which doesn't model
@@ -13643,6 +13653,7 @@ TOOL_ICONS = {
     "ocr_inspect": "D", "ocr_extract": "D", "ocr_region": "D", "ocr_fields": "D",
     "ocr_tables": "D",
     "code_search": "G", "code_trace": "G", "code_query": "G", "code_snippet": "G",
+    "ast_grep_search": "G", "ast_grep_replace": "G",
     "git_command": "g", "github_command": "g",
 }
 
@@ -13669,6 +13680,7 @@ TOOL_VERBS = {
     "ocr_region": "Reading Region (OCR)", "ocr_fields": "Extracting Fields (OCR)",
     "ocr_tables": "Extracting Table (OCR)",
     "code_search": "Searching Code", "code_trace": "Tracing Calls", "code_query": "Querying Code", "code_snippet": "Reading Code",
+    "ast_grep_search": "AST Search", "ast_grep_replace": "AST Rewrite",
     "git_command": "Git", "github_command": "GitHub",
 }
 
@@ -14363,6 +14375,8 @@ TOOL_DISPATCH = {
     "code_trace": tool_code_trace,
     "code_query": tool_code_query,
     "code_snippet": tool_code_snippet,
+    "ast_grep_search": tool_ast_grep_search,
+    "ast_grep_replace": tool_ast_grep_replace,
     "git_command": tool_git_command,
     "github_command": tool_github_command,
     "tool_search": lambda args: _tool_search(args),

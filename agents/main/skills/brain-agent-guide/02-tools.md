@@ -565,6 +565,16 @@ replacing the old in-tree tree-sitter CodeGraph. Four tools:
 - `code_query(cypher)` — read-only Cypher for complex/multi-hop structural
   questions.
 - `code_snippet(qualified_name)` — read the source of a symbol.
+- `ast_grep_search(pattern, root?, lang?, max_results?)` — **structural (AST)
+  search** (9.310.0): find code by SYNTAX pattern, not text — `str($A)` = every
+  one-arg str() call, `$$$` = any number of nodes. Backed by the `ast-grep`
+  host binary (brew install ast-grep; missing → clear error). Root defaults to
+  the code-mode working dir. Read-only (plan-mode allowed).
+- `ast_grep_replace(pattern, rewrite, root?, lang?, apply?)` — **structural
+  refactor** (9.310.0): rewrite every match; rewrite may reuse the pattern's
+  metavariables (`str($A)` → `repr($A)`). SAFE BY DEFAULT: without `apply=true`
+  it's a dry-run preview. >500 matches refused; changed files feed the code
+  index via `_after_file_write`.
 
 Per-tenant: each **code-mode project** gets its own index under its project dir
 (`.cbm-cache`, indexed from its working directory); the shared brain-source
@@ -812,7 +822,7 @@ web           web_fetch exa_search searxng_search
 email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply
 delegation    delegate_task task_status task_cancel
 background     run_background_task
-code_graph    code_search code_trace code_query code_snippet
+code_graph    code_search code_trace code_query code_snippet ast_grep_search ast_grep_replace
 git           git_command github_command
 scheduler     schedule_list schedule_history
 mcp           mcp_connect mcp_disconnect mcp_servers
