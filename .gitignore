@@ -112,3 +112,4 @@ test-results/
 
 # Official-leaderboard benchmark cache (engine/bench_official.py, 24h TTL)
 agents/main/bench_official_cache.json
+.brain-trash/
