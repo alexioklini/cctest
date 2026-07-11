@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.10",
+        "date": "2026-07-11",
+        "title": "Ergebnisse bleiben im richtigen Chat",
+        "body": "Wenn mehrere Chats gleichzeitig Hintergrundaufgaben starteten, "
+                "konnten die Ergebnisse eines fremden Chats im falschen Chat "
+                "landen — samt dessen Arbeitsanweisungen, die der Agent dann "
+                "befolgte. Hintergrundaufgaben sind jetzt strikt an ihren Chat "
+                "gebunden: Sie sehen nur noch die Ergebnisse Ihrer eigenen "
+                "Aufgaben.",
+        "audience": "user",
+        "versions": ["9.312.10"],
+    },
+    {
         "version": "9.312.9",
         "date": "2026-07-11",
         "title": "Erzeugte Dateien erscheinen im Artefakte-Tab",

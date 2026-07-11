@@ -1693,7 +1693,7 @@ def deliver_background_group(session_id: str, group_id: str, members: list) -> b
         # We own the turn — commit the group to THIS delivery (mark consumed) so
         # the next-turn injection floor never re-delivers it, even if the turn
         # below errors mid-flight.
-        ChatDB.mark_group_consumed(group_id)
+        ChatDB.mark_group_consumed(session_id, group_id)
         try:
             ChatDB.set_streaming_text(session.id, "")
         except Exception:

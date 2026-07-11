@@ -337,7 +337,17 @@ created_at REAL, finished_at REAL, consumed_at REAL
 Index `idx_bgtask_session(session_id, created_at)`. Rows are written by
 `engine/background_tasks.py` (the detached runner). `consumed_at` is set when
 the finished `output` has been folded into a chat turn (wire-only) — guarantees
-each result reaches the model exactly once and never re-enters history. At boot,
+each result reaches the model exactly once and never re-enters history.
+
+**`group_id` is chat-local, NOT globally unique** (v9.312.10). It is a short
+string the MODEL picks (the `run_background_task` schema literally suggests
+`'g1'`), so the same name recurs across chats constantly. The identity of a
+fan-out group is therefore the PAIR `(session_id, group_id)` — every group query
+(`claim_background_group`, `mark_group_consumed`, `sweep_stalled_groups`,
+`pop_undelivered_groups`) must filter on BOTH. Matching on `group_id` alone let
+one chat's finishing task claim another chat's identically-named group and
+deliver its outputs — and its `follow_up` instruction — into the wrong
+conversation. At boot,
 any leftover `running` row is reconciled to `error` ("Server restart — task
 lost") so the panel shows no zombie. See `05-internals.md` → Background tasks.
 

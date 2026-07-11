@@ -184,7 +184,7 @@ class BackgroundTaskRunner:
             except Exception:
                 pass
             try:
-                members = ChatDB.claim_background_group(gid)
+                members = ChatDB.claim_background_group(session_id, gid)
                 if members:
                     from handlers.chat import deliver_background_group
                     deliver_background_group(session_id, gid, members)
@@ -465,7 +465,7 @@ class BackgroundTaskRunner:
             try:
                 gid = snap.get("group_id")
                 if gid:
-                    members = ChatDB.claim_background_group(gid)
+                    members = ChatDB.claim_background_group(snap["session_id"], gid)
                     if members:  # we are the last finisher — deliver the group
                         from handlers.chat import deliver_background_group
                         deliver_background_group(snap["session_id"], gid, members)

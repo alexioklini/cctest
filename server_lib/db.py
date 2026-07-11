@@ -2309,7 +2309,7 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def claim_background_group(group_id):
+    def claim_background_group(session_id, group_id):
         """ATOMIC join + single-flight. Returns the group's member rows (for
         delivery) IFF: the group exists, EVERY member is terminal
         (done|cancelled|error), and no one has claimed it yet — and in the SAME
@@ -2322,8 +2322,18 @@ class ChatDB:
 
         NOTE: a single task spawned without an explicit group is a group-of-one
         (the runner assigns every task a group_id at spawn — see background_tasks).
-        """
-        if not group_id:
+
+        A GROUP IS SCOPED TO ITS SESSION. `group_id` is a short string the MODEL
+        picks ("a short string you pick, e.g. 'g1'" — engine/tool_schemas.py), so
+        it collides across chats constantly: 'g1' was used by 3 sessions, and
+        'cloud_security_comparison' by 12. Matching on group_id ALONE let a chat's
+        finishing task claim the members of every OTHER chat that happened to pick
+        the same name, and `_build_group_preamble` then fed those foreign outputs —
+        and their `follow_up` instructions — into the wrong conversation (observed:
+        a 2026-07-11 code-mode chat was handed a stale foreign follow_up telling it
+        to write into `brain/`, a folder removed in v9.312.7, and obeyed it). The
+        session_id is the tenant key; every group query must carry it."""
+        if not session_id or not group_id:
             return None
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
@@ -2333,17 +2343,19 @@ class ChatDB:
             # gets rowcount==1.
             cur = conn.execute(
                 "UPDATE background_tasks SET group_done_at=strftime('%s','now') "
-                "WHERE group_id=? AND group_done_at IS NULL "
+                "WHERE session_id=? AND group_id=? AND group_done_at IS NULL "
                 "AND NOT EXISTS (SELECT 1 FROM background_tasks b2 "
-                "                WHERE b2.group_id=? AND b2.status='running')",
-                (group_id, group_id))
+                "                WHERE b2.session_id=? AND b2.group_id=? "
+                "                AND b2.status='running')",
+                (session_id, group_id, session_id, group_id))
             if cur.rowcount == 0:
                 conn.rollback()
                 return None  # still running, or someone else already claimed it
             rows = conn.execute(
                 "SELECT id, session_id, title, status, output, error, follow_up "
-                "FROM background_tasks WHERE group_id=? ORDER BY created_at",
-                (group_id,)).fetchall()
+                "FROM background_tasks WHERE session_id=? AND group_id=? "
+                "ORDER BY created_at",
+                (session_id, group_id)).fetchall()
             conn.commit()
             return [dict(r) for r in rows]
 
@@ -2379,7 +2391,11 @@ class ChatDB:
 
         Returns the affected [(session_id, group_id)] so the caller can claim +
         deliver each. Idempotent: a group already fully terminal isn't touched
-        (no running members to mark)."""
+        (no running members to mark).
+
+        Every match is (session_id, group_id) — a bare group_id join made the
+        straggler-kill cross sessions: chat A's timeout swept chat B's still-running
+        task to status='error' just because both named their group 'g1'."""
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             # Groups with ≥1 terminal member AND ≥1 running member older than the
@@ -2387,9 +2403,11 @@ class ChatDB:
             stalled = conn.execute(
                 "SELECT DISTINCT g.session_id, g.group_id FROM background_tasks g "
                 "WHERE g.group_id IS NOT NULL AND g.group_done_at IS NULL "
-                "AND EXISTS (SELECT 1 FROM background_tasks t WHERE t.group_id=g.group_id "
+                "AND EXISTS (SELECT 1 FROM background_tasks t "
+                "            WHERE t.session_id=g.session_id AND t.group_id=g.group_id "
                 "            AND t.status IN ('done','cancelled','error')) "
-                "AND EXISTS (SELECT 1 FROM background_tasks r WHERE r.group_id=g.group_id "
+                "AND EXISTS (SELECT 1 FROM background_tasks r "
+                "            WHERE r.session_id=g.session_id AND r.group_id=g.group_id "
                 "            AND r.status='running' "
                 "            AND r.created_at < strftime('%s','now') - ?)",
                 (int(deadline_secs),)).fetchall()
@@ -2399,23 +2417,29 @@ class ChatDB:
                     "UPDATE background_tasks SET status='error', "
                     "error='Gruppen-Timeout — Teilergebnis geliefert', "
                     "finished_at=strftime('%s','now') "
-                    "WHERE group_id=? AND status='running'", (gid,))
+                    "WHERE session_id=? AND group_id=? AND status='running'",
+                    (_sid, gid))
             if affected:
                 conn.commit()
             return affected
 
     @staticmethod
     @_db_safe(default=None)
-    def mark_group_consumed(group_id):
+    def mark_group_consumed(session_id, group_id):
         """Stamp consumed_at on every member of a delivered group, so the
         next-turn injection floor (pop_undelivered_groups) won't re-deliver it.
-        Called after a successful proactive group delivery."""
-        if not group_id:
+        Called after a successful proactive group delivery.
+
+        Session-scoped for the same reason as claim_background_group: on a bare
+        group_id match this silently marked ANOTHER chat's identically-named group
+        consumed, so that chat's results were dropped instead of delivered."""
+        if not session_id or not group_id:
             return
         with _db_conn() as conn:
             conn.execute(
                 "UPDATE background_tasks SET consumed_at=strftime('%s','now') "
-                "WHERE group_id=? AND consumed_at IS NULL", (group_id,))
+                "WHERE session_id=? AND group_id=? AND consumed_at IS NULL",
+                (session_id, group_id))
             conn.commit()
 
     @staticmethod
