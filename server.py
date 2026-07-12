@@ -1308,6 +1308,7 @@ class BrainAgentHandler(
         "/v1/services",
         "/v1/quotas/config",
         "/v1/quotas/admin/users",
+        "/v1/costs/rates",
         "/v1/searxng/status",
         "/v1/searxng/engines",
         "/v1/crawl4ai/status",
@@ -1320,6 +1321,7 @@ class BrainAgentHandler(
         "/v1/auth/users",
         "/v1/auth/migrate",
         "/v1/auth/permissions",
+        "/v1/costs/rates",
         "/v1/translate/tts/voices",
         "/v1/restart",
         "/v1/providers",
@@ -1714,6 +1716,8 @@ class BrainAgentHandler(
             self._handle_costs_daily()
         elif path == "/v1/costs/breakdown":
             self._handle_costs_breakdown()
+        elif path == "/v1/costs/rates":
+            self._handle_cost_rates_get()
         elif path == "/v1/plans/usage":
             self._handle_plans_usage()
         elif path == "/v1/quotas/me":
@@ -2191,6 +2195,8 @@ class BrainAgentHandler(
             self._handle_kg_reextract()
         elif path == "/v1/quotas/config":
             self._handle_quota_config_save()
+        elif path == "/v1/costs/rates":
+            self._handle_cost_rates_save()
         elif path == "/v1/plans/calibrate":
             self._handle_plans_calibrate()
         elif path == "/v1/plans/save":

@@ -388,6 +388,9 @@ class API {
   static getCostBreakdown(window) {
     return this.get(`/v1/costs/breakdown?window=${encodeURIComponent(window||'30d')}`);
   }
+  // Editable cost-rate table (admin): {rates, builtin, unpriced}.
+  static getCostRates() { return this.get('/v1/costs/rates'); }
+  static saveCostRates(rates) { return this.post('/v1/costs/rates', { rates }); }
 
   // Schedule
   static getSchedule() { return this.get('/v1/schedule'); }

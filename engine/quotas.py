@@ -162,8 +162,17 @@ _cost_rates: dict[str, dict[str, float]] = {
 
 
 def _get_cost_rate(model: str) -> dict[str, float]:
-    """Look up cost rate for a model. Checks _models_config first, then defaults.
+    """Look up cost rate for a model. Checks _models_config first, then the
+    editable config table, then the built-in defaults.
     Config values of 0 are treated as unset — auto-discovery writes 0 for all models.
+
+    Resolution order (first hit wins):
+      1. `models.<id>.cost_input/cost_output` — the per-model fields (Models grid)
+      2. `config.json → cost_rates` — the ADMIN-EDITABLE rate table (exact id,
+         then longest-prefix match). GUI: Settings → Kosten.
+      3. `_cost_rates` — the built-in seed table (code default, never edited)
+      4. `{0,0,0}` — no price known. Cloud models landing here are surfaced as
+         "Preis fehlt" by `unpriced_models()`, NOT silently swallowed.
 
     Returns `{input, output, cache_read}` per 1M tokens. `cache_read` is the price
     of a prompt-cache HIT (provider-served prefix). It's distinct from `input`
@@ -183,18 +192,115 @@ def _get_cost_rate(model: str) -> dict[str, float]:
         inp = float(ci)
         return {"input": inp, "output": float(co),
                 "cache_read": float(ccr) if (ccr is not None and float(ccr) > 0) else inp * 0.1}
-    # Check built-in rates
-    if model in _cost_rates:
-        r = _cost_rates[model]
-        return {"input": r["input"], "output": r["output"],
-                "cache_read": r.get("cache_read", r["input"] * 0.1)}
-    # Try prefix matching (e.g. "claude-opus-4-6" matches "claude-opus-4-6-20260101")
-    ml = model.lower()
-    for pattern, rate in _cost_rates.items():
-        if ml.startswith(pattern.lower()) or pattern.lower() in ml:
-            return {"input": rate["input"], "output": rate["output"],
-                    "cache_read": rate.get("cache_read", rate["input"] * 0.1)}
+    # Editable rate table (config.json → cost_rates) BEFORE the code defaults, so
+    # an admin edit always wins over the built-in seed without touching code.
+    hit = _match_rate_table(model, get_config_cost_rates())
+    if hit is None:
+        hit = _match_rate_table(model, _cost_rates)
+    if hit is not None:
+        return {"input": hit["input"], "output": hit["output"],
+                "cache_read": hit.get("cache_read", hit["input"] * 0.1)}
     return {"input": 0.0, "output": 0.0, "cache_read": 0.0}
+
+
+def _match_rate_table(model: str, table: dict) -> dict | None:
+    """Resolve `model` against a rate table: exact id first, then the LONGEST
+    matching prefix/substring pattern.
+
+    Longest-match matters: with both "gpt-4.1" and "gpt-4.1-mini" in the table,
+    a dict-order scan would let whichever comes first win — so "gpt-4.1-mini"
+    could be priced as the (4× pricier) "gpt-4.1". Sorting by pattern length
+    makes the most specific entry win regardless of insertion order."""
+    if not table:
+        return None
+    r = table.get(model)
+    if isinstance(r, dict) and r.get("input") is not None:
+        return r
+    ml = model.lower()
+    best, best_len = None, -1
+    for pattern, rate in table.items():
+        if not isinstance(rate, dict) or rate.get("input") is None:
+            continue
+        pl = pattern.lower()
+        if (ml.startswith(pl) or pl in ml) and len(pl) > best_len:
+            best, best_len = rate, len(pl)
+    return best
+
+
+_config_rates_cache = {"mtime": 0.0, "rates": {}}
+
+
+def get_config_cost_rates() -> dict:
+    """The admin-editable rate table (config.json → cost_rates), mtime-cached.
+
+    Read from DISK, not from `server_config` — the rate editor writes config.json
+    directly and server_config only mirrors selected keys. Same pattern (and same
+    reason) as `brain.get_coding_plans`: edits go live without a restart while the
+    per-call lookup stays cheap."""
+    try:
+        mt = os.path.getmtime(_CONFIG_PATH)
+        if mt != _config_rates_cache["mtime"]:
+            with open(_CONFIG_PATH) as f:
+                raw = json.load(f).get("cost_rates") or {}
+            clean = {}
+            for mid, r in raw.items():
+                if not isinstance(r, dict):
+                    continue
+                try:
+                    entry = {"input": float(r.get("input") or 0.0),
+                             "output": float(r.get("output") or 0.0)}
+                except (TypeError, ValueError):
+                    continue
+                if r.get("cache_read") not in (None, ""):
+                    try:
+                        entry["cache_read"] = float(r["cache_read"])
+                    except (TypeError, ValueError):
+                        pass
+                clean[mid] = entry
+            _config_rates_cache["rates"] = clean
+            _config_rates_cache["mtime"] = mt
+    except Exception:
+        pass
+    return _config_rates_cache["rates"]
+
+
+def unpriced_models() -> list[dict]:
+    """Cloud models that resolve to a $0 rate — i.e. their calls are billed as
+    free because NO price is known anywhere in the resolution chain.
+
+    This is the visibility half of the silent-$0 problem: `_get_cost_rate`
+    still returns 0 (nothing breaks, no call is blocked), but these models are
+    surfaced in the GUI so a missing price is a thing you SEE instead of a
+    thing that quietly under-reports your spend.
+
+    Local models are excluded — $0 is the correct, real price there. Flat-plan
+    models are NOT excluded: they bill $0 by design, but their list price is
+    what the breakdown's 'ohne Flatrate' estimate is built from, so a missing
+    one is still a gap worth showing."""
+    import brain as _brain
+    out = []
+    for mid, cfg in (_brain._models_config or {}).items():
+        if cfg.get("is_local"):
+            continue
+        try:
+            if _brain.is_model_local(mid):
+                continue
+        except Exception:
+            pass
+        rate = _get_cost_rate(mid)
+        if rate["input"] > 0 or rate["output"] > 0:
+            continue
+        # Unit-billed services (OCR/TTS/STT) price per page/char/minute, not per
+        # token — a zero TOKEN rate is expected and correct for them.
+        if any(cfg.get(f) for f in ("cost_per_page_usd", "cost_per_1k_chars_usd",
+                                    "cost_per_minute_usd")):
+            continue
+        out.append({"id": mid,
+                    "provider": cfg.get("provider") or "",
+                    "display_name": cfg.get("display_name") or mid,
+                    "enabled": bool(cfg.get("enabled"))})
+    out.sort(key=lambda m: (not m["enabled"], m["provider"], m["id"]))
+    return out
 
 
 def _compute_cost(model: str, tokens_in: int, tokens_out: int,

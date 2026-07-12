@@ -153,6 +153,9 @@ class ProvidersHandlerMixin:
                 "use_sdk": p.get("use_sdk", True),
                 "is_local": bool(p.get("is_local", False)),
                 "wire_api": (p.get("wire_api") or "openai").lower(),
+                # Billing-account default for every model of this provider that
+                # has no own link (see brain.resolve_model_plan_id).
+                "coding_plan": p.get("coding_plan", ""),
                 "models": all_models,
                 "model_count": len(all_models),
                 "enabled_count": len(enabled_models),

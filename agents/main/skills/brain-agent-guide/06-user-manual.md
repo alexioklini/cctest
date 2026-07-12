@@ -115,14 +115,42 @@ Nutzungs-Ledger **geschätzt** (die Anbieter haben keine Quota-API) — Admins
 kalibrieren per %-Feld gegen das echte Anbieter-Dashboard (das Limit wird
 daraus neu berechnet) bzw. setzen bei Credit-Konten nach einer Aufladung das
 neue Guthaben. **„+ Plan"** legt ein Konto an (Typ Flat oder Credit, Preis,
-Fenster-Limits bzw. Guthaben); ✎/× bearbeiten/löschen. Die **Verknüpfung
-Modell ↔ Plan** geschieht unter Einstellungen → Modelle im Dropdown
-**„Coding-Plan / Konto"** — nur verknüpfte Pläne erscheinen im Dashboard.
+Fenster-Limits bzw. Guthaben); ✎/× bearbeiten/löschen.
+
+Die **Verknüpfung Modell ↔ Konto** hat seit 9.313.0 **zwei Ebenen**, weil die
+Plan-Zugehörigkeit meist eine Eigenschaft des *Kontos* ist, nicht des einzelnen
+Modells:
+- **Einstellungen → Provider → Einstellungen → „Coding-Plan / Konto (Vorgabe)"**
+  gilt für **alle** Modelle dieses Anbieters. Das ist der Normalfall — Mistral
+  hängt so mit einer einzigen Zeile an seinem Abo statt mit 63 Einzeleinträgen.
+- **Einstellungen → Modelle → „Coding-Plan / Konto"** sticht die Vorgabe für ein
+  einzelnes Modell. „Vorgabe des Providers" = erben (Standard); „— kein Plan
+  (Vorgabe ignorieren) —" nimmt ein Modell bewusst aus dem Konto heraus.
+
+Nur Konten mit mindestens einem so verknüpften Modell erscheinen im Dashboard.
 Über das Auswahlmenü oben rechts wählt man den **Zeitraum** (Heute, Diese Woche,
 letzte 7/30/180/365 Tage, seit Jahresbeginn, aktueller/letzter Abrechnungszeitraum,
 Gesamt). Hinweis: lokale Modelle sind kostenlos und erscheinen mit 0 $ (aber echten
 Tokens); Aufrufe von vor der Einführung dieser Funktion erscheinen als
 *Unbekannt (Altdaten)*.
+
+**Preistabelle (Einstellungen → Kosten, nur Admins, 9.313.0).** Unter der
+Kostenübersicht liegen zwei Sektionen:
+- **Preistabelle** — hier pflegt man Modellpreise in **$ pro 1 Mio. Token**
+  (ein · aus · optional *cached*; leer ⇒ automatisch 0,1× vom Eingangspreis).
+  Der Schlüssel darf eine exakte Modell-ID **oder ein Präfix** sein
+  (`claude-opus` trifft `claude-opus-4-6-…`); bei mehreren Treffern gewinnt der
+  längste. Sie greift für Modelle, die im Modelle-Grid **keinen** eigenen Preis
+  gesetzt haben. Änderungen wirken sofort, ohne Neustart.
+- **„Ohne hinterlegten Preis"** — alle Cloud-Modelle, für die *nirgends* ein
+  Preis existiert. Diese Aufrufe werden mit **0 $ verbucht** und fehlen dadurch
+  in Statistik *und* Kontingent, ohne dass es auffällt. Ein Klick auf ein Modell
+  übernimmt es oben in die Tabelle. Aktive Modelle sind mit ● hervorgehoben.
+  Lokale Modelle stehen bewusst nicht in dieser Liste (0 $ ist dort korrekt),
+  ebenso OCR/TTS/Transkription, die pro Seite/Zeichen/Minute abgerechnet werden.
+
+Die vollständige Reihenfolge, in der ein Preis gesucht wird: **Modelle-Grid →
+Preistabelle → eingebaute Standardpreise → 0 $**.
 
 Am **rechten Rand der Statusleiste** liegen Aktionsknöpfe für den aktuellen
 Chat:

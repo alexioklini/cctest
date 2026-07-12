@@ -360,9 +360,10 @@ async function _genTab_models(C) {
                   out += mdlInput('mdl-cost-per-page','Kosten OCR ($/Seite)',cfg.cost_per_page_usd,{step:'0.0001',min:0,ph:'0'});
                 return out;
               })()}
-              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Abrechnungskonto dieses Modells. Ein Flat-Plan (Abo: Z.ai/Kimi Coding Plan, Mistral Vibe) verbucht jeden Aufruf mit 0 $ realen Kosten — die Kostenfelder links behalten den API-Listenpreis für die „ohne Flatrate"-Schätzung. Ein Credit-Konto (API-Guthaben, z. B. Kilo) rechnet weiter real nach Token gegen das hinterlegte Kontingent. Pläne verwalten: Plan-Nutzung-Popover in der Statusleiste.">Coding-Plan / Konto</label>
+              <div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px" title="Abrechnungskonto dieses Modells. Ein Flat-Plan (Abo: Z.ai/Kimi Coding Plan, Mistral Vibe) verbucht jeden Aufruf mit 0 $ realen Kosten — die Kostenfelder links behalten den API-Listenpreis für die „ohne Flatrate"-Schätzung. Ein Credit-Konto (API-Guthaben, z. B. Kilo, OpenRouter) rechnet weiter real nach Token gegen das hinterlegte Kontingent. „Vorgabe des Providers" übernimmt das Konto, das im Provider-Tab für diesen Anbieter hinterlegt ist — das ist der Normalfall. Pläne verwalten: Plan-Nutzung-Popover in der Statusleiste.">Coding-Plan / Konto</label>
                 <select class="mdl-coding-plan" style="width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200)">
-                  <option value="">— keiner —</option>
+                  <option value="">Vorgabe des Providers</option>
+                  <option value="none"${cfg.coding_plan === 'none' ? ' selected' : ''}>— kein Plan (Vorgabe ignorieren) —</option>
                   <option value="__flat__"${cfg.flat_plan === true && !cfg.coding_plan ? ' selected' : ''}>Flatrate (ohne Plan-Objekt)</option>
                   ${(state.modelsConfig?.coding_plans || []).map(p => `<option value="${esc(p.id)}"${cfg.coding_plan === p.id ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
                 </select>
@@ -686,6 +687,11 @@ async function _genTab_providers(C) {
               <div><label class="form-label">Standardmodell</label><input class="form-input" id="${pid}-model" value="${esc(p.default_model||'')}"></div>
               <div><label class="form-label">Wire-API${helpIcon('Protokoll für die Requests an diesen Provider. „OpenAI" (Standard) = /chat/completions. „Anthropic" = /v1/messages (Messages-API) — nötig z. B. für den Kimi-Coding-Plan, dessen OpenAI-Endpunkt Thinking-Aus mit Tools ablehnt, während der Anthropic-Endpunkt beides kann.')}</label><select class="form-input" id="${pid}-wire-api"><option value="openai"${(p.wire_api||'openai')!=='anthropic'?' selected':''}>OpenAI (/chat/completions)</option><option value="anthropic"${(p.wire_api||'openai')==='anthropic'?' selected':''}>Anthropic (/v1/messages)</option></select></div>
               <div><label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-200);cursor:pointer"><input type="checkbox" id="${pid}-is-local"${p.is_local?' checked':''}> Lokaler Provider${helpIcon('Markiert diesen Provider als „läuft auf diesem Gerät". Lokale Modelle umgehen den harten PII-/DSGVO-Block und die Kostenkontingente (es entstehen keine Cloud-Kosten und die Daten verlassen das Gerät nicht).')}</label></div>
+              <div><label class="form-label">Coding-Plan / Konto (Vorgabe)${helpIcon('Abrechnungskonto für ALLE Modelle dieses Providers — die Plan-Zugehörigkeit ist meist eine Eigenschaft des KONTOS, nicht des einzelnen Modells. Ein im Modelle-Grid gesetzter Plan sticht diese Vorgabe. Ein einzelnes Modell davon ausnehmen: dort „— kein Plan (Vorgabe ignorieren) —" wählen.')}</label>
+                <select class="form-input" id="${pid}-coding-plan">
+                  <option value="">— keine Vorgabe —</option>
+                  ${(state.modelsConfig?.coding_plans || []).map(pl => `<option value="${esc(pl.id)}"${(p.coding_plan||'') === pl.id ? ' selected' : ''}>${esc(pl.name)}</option>`).join('')}
+                </select></div>
               <div><button class="btn-primary" style="font-size:12px" onclick="saveProviderEdit('${esc(p.name)}','${pid}')">Einstellungen speichern</button></div>
             </div>
           </div>
@@ -941,8 +947,137 @@ async function _genTab_costs(C) {
         </div>`;
       }
       if (!(daily.daily||[]).length) html += '<div style="padding:20px;text-align:center;color:var(--text-400)">Keine Kostendaten</div>';
+      // Preis-Verwaltung nur für Admins (die Tabelle legt die gesamte Kostenstruktur offen).
+      if (state.authUser && state.authUser.role === 'admin') {
+        html += `<div id="cost-rates-section" style="margin-top:8px"><div style="padding:20px;text-align:center;color:var(--text-400)">Preise werden geladen …</div></div>`;
+      }
       C.innerHTML = P(html + '</div>');
+      if (state.authUser && state.authUser.role === 'admin') loadCostRatesSection();
     } catch(e) { C.innerHTML = P('<div style="color:var(--text-400)">Kostendaten nicht verfügbar</div>'); }
+}
+
+// --- Preistabelle (admin) -----------------------------------------------
+// Die Raten-Auflösung hat drei Stufen: Modell-Feld (Modelle-Grid) → diese
+// editierbare Tabelle (config.json → cost_rates) → die eingebaute Code-Tabelle.
+// Modelle, bei denen ALLE drei leer bleiben, buchen $0 — die listen wir als
+// "Preis fehlt", damit ein fehlender Preis sichtbar ist statt still zu wirken.
+async function loadCostRatesSection() {
+  const host = document.getElementById('cost-rates-section');
+  if (!host) return;
+  try {
+    state._costRates = await API.getCostRates();
+    renderCostRatesSection();
+  } catch (e) {
+    host.innerHTML = `<div style="padding:16px;color:var(--text-400)">Preistabelle nicht verfügbar: ${esc(String(e.message||e))}</div>`;
+  }
+}
+
+function renderCostRatesSection() {
+  const host = document.getElementById('cost-rates-section');
+  const d = state._costRates;
+  if (!host || !d) return;
+  const rates = d.rates || {};
+  const unpriced = d.unpriced || [];
+  const ids = Object.keys(rates).sort();
+
+  const rowHtml = (id, r) => `
+    <div class="cost-rate-row" data-id="${esc(id)}" style="${ROW}">
+      <input class="cr-id" value="${esc(id)}" placeholder="Modell-ID oder Präfix"
+             style="flex:1;min-width:180px;font-family:var(--font-mono);font-size:12px;padding:5px 8px;background:var(--bg-100);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100)">
+      <input class="cr-in" type="number" step="0.001" min="0" value="${r.input ?? ''}" placeholder="ein"
+             style="width:84px;font-size:12px;padding:5px 8px;background:var(--bg-100);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100)">
+      <input class="cr-out" type="number" step="0.001" min="0" value="${r.output ?? ''}" placeholder="aus"
+             style="width:84px;font-size:12px;padding:5px 8px;background:var(--bg-100);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100)">
+      <input class="cr-ccr" type="number" step="0.0001" min="0" value="${r.cache_read ?? ''}" placeholder="cached (auto 0,1×)"
+             style="width:120px;font-size:12px;padding:5px 8px;background:var(--bg-100);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100)">
+      <button onclick="this.closest('.cost-rate-row').remove()" title="Entfernen"
+              style="background:none;border:none;color:var(--text-400);cursor:pointer;padding:2px 6px;font-size:15px">×</button>
+    </div>`;
+
+  host.innerHTML = `
+    ${SEC('Preistabelle (Modelle ohne eigenen Preis)')}
+    <div style="font-size:12px;color:var(--text-400);margin:-4px 0 10px">
+      Preise in <strong>$ pro 1 Mio. Token</strong>. Greift für Modelle, bei denen im Modelle-Grid kein eigener Preis
+      hinterlegt ist. Der Schlüssel darf eine exakte Modell-ID <em>oder ein Präfix</em> sein
+      (<code>claude-opus</code> trifft <code>claude-opus-4-6-…</code>) — bei mehreren Treffern gewinnt der längste.
+      <em>Cached</em> leer lassen ⇒ automatisch 0,1× vom Eingangspreis.
+    </div>
+    <div id="cost-rates-rows">${ids.map(id => rowHtml(id, rates[id])).join('') || ''}</div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+      <button onclick="addCostRateRow()" style="font-size:12px;padding:5px 10px;background:var(--bg-200);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100);cursor:pointer">+ Preis</button>
+      <button onclick="saveCostRates()" style="font-size:12px;padding:5px 12px;background:var(--accent-brand);border:none;border-radius:5px;color:#fff;cursor:pointer">Speichern</button>
+      <span id="cost-rates-status" style="font-size:12px;color:var(--text-400)"></span>
+    </div>
+
+    ${SEC(`Ohne hinterlegten Preis (${unpriced.length})`)}
+    <div style="font-size:12px;color:var(--text-400);margin:-4px 0 10px">
+      Diese Cloud-Modelle werden aktuell mit <strong>$0 verbucht</strong>, weil nirgends ein Preis hinterlegt ist —
+      ihre Nutzung taucht in Statistik und Kontingent nicht auf. Lokale Modelle fehlen hier bewusst ($0 ist dort korrekt).
+      Klick auf ein Modell übernimmt es oben in die Tabelle.
+    </div>
+    ${unpriced.length ? `<div style="display:flex;flex-wrap:wrap;gap:6px">${unpriced.map(m => `
+        <button onclick="addCostRateRow('${esc(m.id)}')" title="${esc(m.provider)} — in die Preistabelle übernehmen"
+                style="font-size:11px;font-family:var(--font-mono);padding:4px 8px;border-radius:5px;cursor:pointer;
+                       background:var(--bg-200);color:${m.enabled ? 'var(--text-100)' : 'var(--text-400)'};
+                       border:1px solid ${m.enabled ? 'var(--accent-brand)' : 'var(--border-300)'}">
+          ${m.enabled ? '● ' : ''}${esc(m.id)}
+        </button>`).join('')}</div>`
+      : '<div style="padding:12px;color:var(--text-400);font-size:13px">Alle Cloud-Modelle haben einen Preis. ✓</div>'}
+    <div style="font-size:11px;color:var(--text-400);margin-top:8px">● = aktiviertes Modell (wird real genutzt) · ${Object.keys(d.builtin||{}).length} weitere Preise kommen aus der eingebauten Tabelle</div>`;
+}
+
+function addCostRateRow(modelId) {
+  const rows = document.getElementById('cost-rates-rows');
+  if (!rows) return;
+  const div = document.createElement('div');
+  div.innerHTML = `
+    <div class="cost-rate-row" style="${ROW}">
+      <input class="cr-id" value="${esc(modelId||'')}" placeholder="Modell-ID oder Präfix"
+             style="flex:1;min-width:180px;font-family:var(--font-mono);font-size:12px;padding:5px 8px;background:var(--bg-100);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100)">
+      <input class="cr-in" type="number" step="0.001" min="0" placeholder="ein"
+             style="width:84px;font-size:12px;padding:5px 8px;background:var(--bg-100);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100)">
+      <input class="cr-out" type="number" step="0.001" min="0" placeholder="aus"
+             style="width:84px;font-size:12px;padding:5px 8px;background:var(--bg-100);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100)">
+      <input class="cr-ccr" type="number" step="0.0001" min="0" placeholder="cached (auto 0,1×)"
+             style="width:120px;font-size:12px;padding:5px 8px;background:var(--bg-100);border:1px solid var(--border-300);border-radius:5px;color:var(--text-100)">
+      <button onclick="this.closest('.cost-rate-row').remove()" title="Entfernen"
+              style="background:none;border:none;color:var(--text-400);cursor:pointer;padding:2px 6px;font-size:15px">×</button>
+    </div>`;
+  const row = div.firstElementChild;
+  rows.appendChild(row);
+  const inp = row.querySelector(modelId ? '.cr-in' : '.cr-id');
+  if (inp) inp.focus();
+}
+
+async function saveCostRates() {
+  const st = document.getElementById('cost-rates-status');
+  const rates = {};
+  for (const row of document.querySelectorAll('#cost-rates-rows .cost-rate-row')) {
+    const id = (row.querySelector('.cr-id')?.value || '').trim();
+    if (!id) continue;
+    const inp = parseFloat(row.querySelector('.cr-in')?.value);
+    const out = parseFloat(row.querySelector('.cr-out')?.value);
+    if (!Number.isFinite(inp) || !Number.isFinite(out)) {
+      if (st) { st.textContent = `„${id}“: Ein- und Ausgangspreis sind Pflicht.`; st.style.color = 'var(--danger)'; }
+      return;
+    }
+    const e = { input: inp, output: out };
+    const ccr = parseFloat(row.querySelector('.cr-ccr')?.value);
+    if (Number.isFinite(ccr)) e.cache_read = ccr;
+    rates[id] = e;
+  }
+  if (st) { st.textContent = 'Speichern …'; st.style.color = 'var(--text-400)'; }
+  try {
+    const r = await API.saveCostRates(rates);
+    if (r.error) throw new Error(r.error);
+    state._costRates = { ...(state._costRates || {}), rates, unpriced: r.unpriced || [] };
+    renderCostRatesSection();
+    const st2 = document.getElementById('cost-rates-status');
+    if (st2) { st2.textContent = `${r.count} Preise gespeichert — sofort aktiv.`; st2.style.color = 'var(--success, var(--accent-brand))'; }
+  } catch (e) {
+    const st2 = document.getElementById('cost-rates-status');
+    if (st2) { st2.textContent = String(e.message || e); st2.style.color = 'var(--danger)'; }
+  }
 }
 
 async function _genTab_quotas(C) {

@@ -340,12 +340,17 @@ class AdminCostsHandlers:
 
     @staticmethod
     def _plan_models(plan: dict) -> list[str]:
-        """Resolve a plan's model set: every model whose `coding_plan` field
-        names this plan's id (the linkage lives ON THE MODEL, not the plan —
-        so the dashboard only shows plans that are actually wired up)."""
+        """Resolve a plan's model set: every model that BILLS against this plan —
+        via its own `coding_plan` link or its provider's default (the linkage
+        lives on the MODEL/PROVIDER, not the plan, so the dashboard only shows
+        plans that are actually wired up).
+
+        Goes through `engine.resolve_model_plan_id` — the same seam the billing
+        decision (`model_is_flat_plan`) uses, so a model can never bill against
+        one plan while being displayed under another."""
         pid = plan.get("id") or ""
-        return [mid for mid, mc in (getattr(engine, "_models_config", None) or {}).items()
-                if (mc.get("coding_plan") or "") == pid]
+        return [mid for mid in (getattr(engine, "_models_config", None) or {})
+                if engine.resolve_model_plan_id(mid) == pid]
 
     @staticmethod
     def _utc_to_local_hm(iso_utc: str) -> str:
@@ -610,7 +615,9 @@ class AdminCostsHandlers:
 
     def _handle_plans_delete(self):
         """POST /v1/plans/delete {plan_id} — admin: remove a plan object AND
-        detach it from every model that referenced it."""
+        detach it from every model AND provider that referenced it (a dangling
+        provider default would silently keep billing models against a plan that
+        no longer exists)."""
         user = self._require_auth()
         if not user:
             return
@@ -632,13 +639,21 @@ class AdminCostsHandlers:
                 if (mc.get("coding_plan") or "") == pid:
                     mc.pop("coding_plan", None)
                     detached += 1
+            detached_provs = 0
+            for pname, pc in (config.get("providers") or {}).items():
+                if isinstance(pc, dict) and (pc.get("coding_plan") or "") == pid:
+                    pc.pop("coding_plan", None)
+                    detached_provs += 1
             with open(cfg_path, "w") as f:
                 json.dump(config, f, indent=2, ensure_ascii=False)
             # In-Memory-Modelle nachziehen (Verknüpfung wirkt in der Abrechnung).
+            # Provider brauchen das nicht: engine.get_provider_configs liest sie
+            # mtime-gecacht von der Platte, die wir gerade geschrieben haben.
             for mid, mc in (getattr(engine, "_models_config", None) or {}).items():
                 if (mc.get("coding_plan") or "") == pid:
                     mc.pop("coding_plan", None)
-            self._send_json({"ok": True, "detached_models": detached})
+            self._send_json({"ok": True, "detached_models": detached,
+                             "detached_providers": detached_provs})
         except Exception as e:
             self._send_json({"error": f"Löschen fehlgeschlagen: {e}"}, 500)
 
@@ -719,6 +734,92 @@ class AdminCostsHandlers:
                              "used_est": int(used)})
         except Exception as e:
             self._send_json({"error": f"Kalibrierung fehlgeschlagen: {e}"}, 500)
+
+    # --- Editable cost-rate table ---
+
+    def _handle_cost_rates_get(self):
+        """GET /v1/costs/rates — the editable rate table + what it resolves to.
+
+        Three blocks:
+          `rates`     — config.json → cost_rates (what the admin owns)
+          `builtin`   — engine._cost_rates (the code seed, read-only, shown so
+                        an admin can see WHY a model already has a price)
+          `unpriced`  — cloud models resolving to $0: the silent-$0 gap made
+                        visible. These bill as free today.
+        """
+        user = self._require_auth()
+        if not user:
+            return
+        if user.get("role") != "admin" and user.get("id") != "__system__":
+            self._send_json({"error": "admin only"}, 403)
+            return
+        try:
+            self._send_json({
+                "rates": engine.get_config_cost_rates(),
+                "builtin": {k: dict(v) for k, v in (engine._cost_rates or {}).items()},
+                "unpriced": engine.unpriced_models(),
+            })
+        except Exception as e:
+            self._send_json({"error": f"Raten lesen fehlgeschlagen: {e}"}, 500)
+
+    def _handle_cost_rates_save(self):
+        """POST /v1/costs/rates {rates:{<model-or-prefix>: {input, output,
+        cache_read?}}} — admin: replace the editable rate table (config.json →
+        cost_rates). USD per 1M tokens.
+
+        Full replace, not merge: the client sends the table it just edited, so a
+        merge would make deletion impossible. Keys may be an exact model id OR a
+        prefix (`claude-opus` matches `claude-opus-4-6-…`); `_match_rate_table`
+        resolves the LONGEST match, so a prefix never shadows a more specific id."""
+        user = self._require_auth()
+        if not user:
+            return
+        if user.get("role") != "admin" and user.get("id") != "__system__":
+            self._send_json({"error": "admin only"}, 403)
+            return
+        raw = (self._read_json().get("rates") or {})
+        if not isinstance(raw, dict):
+            self._send_json({"error": "rates muss ein Objekt sein"}, 400)
+            return
+        clean = {}
+        for mid, r in raw.items():
+            mid = (mid or "").strip()
+            if not mid or not isinstance(r, dict):
+                continue
+            try:
+                inp = float(r.get("input") or 0.0)
+                out = float(r.get("output") or 0.0)
+            except (TypeError, ValueError):
+                self._send_json({"error": f"Ungültige Zahl bei '{mid}'"}, 400)
+                return
+            if inp < 0 or out < 0:
+                self._send_json({"error": f"Negativer Preis bei '{mid}'"}, 400)
+                return
+            entry = {"input": inp, "output": out}
+            if r.get("cache_read") not in (None, ""):
+                try:
+                    ccr = float(r["cache_read"])
+                except (TypeError, ValueError):
+                    self._send_json({"error": f"Ungültiger Cache-Preis bei '{mid}'"}, 400)
+                    return
+                if ccr < 0:
+                    self._send_json({"error": f"Negativer Cache-Preis bei '{mid}'"}, 400)
+                    return
+                entry["cache_read"] = ccr
+            clean[mid] = entry
+        cfg_path = self._plan_config_path()
+        try:
+            with open(cfg_path) as f:
+                config = json.load(f)
+            config["cost_rates"] = clean
+            with open(cfg_path, "w") as f:
+                json.dump(config, f, indent=2, ensure_ascii=False)
+            # engine.get_config_cost_rates is mtime-cached on config.json — the
+            # write above makes the new table live; no restart, no cache bust.
+            self._send_json({"ok": True, "count": len(clean),
+                             "unpriced": engine.unpriced_models()})
+        except Exception as e:
+            self._send_json({"error": f"Speichern fehlgeschlagen: {e}"}, 500)
 
     # --- Per-user cost quotas ---
 

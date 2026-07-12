@@ -388,9 +388,11 @@ async function saveModelsConfig() {
       if (cpk !== undefined) mc[mid].cost_per_1k_chars_usd = cpk; else delete mc[mid].cost_per_1k_chars_usd;
       const cpp = readNum(row, 'mdl-cost-per-page');
       if (cpp !== undefined) mc[mid].cost_per_page_usd = cpp; else delete mc[mid].cost_per_page_usd;
-      // Abrechnungskonto: '' = keins, '__flat__' = generische Flatrate
-      // (flat_plan:true), sonst Plan-Id (coding_plan). Flat-Pläne buchen $0;
-      // Credit-Konten bleiben echte Token-Abrechnung (Typ steht am Plan).
+      // Abrechnungskonto: '' = Feld weg ⇒ ERBT die Provider-Vorgabe;
+      // 'none' = Sentinel, der die Provider-Vorgabe bewusst ignoriert (kein Plan);
+      // '__flat__' = generische Flatrate (flat_plan:true); sonst Plan-Id.
+      // Flat-Pläne buchen $0; Credit-Konten bleiben echte Token-Abrechnung
+      // (Typ steht am Plan). Auflösung: brain.resolve_model_plan_id.
       const planSel = row.querySelector('.mdl-coding-plan')?.value;
       if (planSel === '__flat__') { mc[mid].flat_plan = true; delete mc[mid].coding_plan; }
       else if (planSel) { mc[mid].coding_plan = planSel; delete mc[mid].flat_plan; }
@@ -541,7 +543,11 @@ async function saveProviderEdit(name, pid) {
   const default_model = document.getElementById(`${pid}-model`).value;
   const is_local = !!document.getElementById(`${pid}-is-local`)?.checked;
   const wire_api = document.getElementById(`${pid}-wire-api`)?.value || 'openai';
-  const provider = { base_url, default_model, is_local, wire_api };
+  // Coding-Plan-Vorgabe: gilt für alle Modelle dieses Providers, die keinen
+  // eigenen Plan gesetzt haben (Modell sticht Provider — resolve_model_plan_id).
+  // Leer = keine Vorgabe (der Resolver liest '' als "nicht gesetzt").
+  const coding_plan = document.getElementById(`${pid}-coding-plan`)?.value || '';
+  const provider = { base_url, default_model, is_local, wire_api, coding_plan };
   try {
     await API.post('/v1/providers', { action: 'add', name, provider });
     showToast('Provider aktualisiert');

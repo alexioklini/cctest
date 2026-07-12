@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.313.0",
+        "date": "2026-07-12",
+        "title": "Preise und Abrechnungskonten vollständig im Griff",
+        "body": "Modellpreise lassen sich jetzt direkt in den Einstellungen unter "
+                "„Kosten“ pflegen — bisher steckten sie im Programmcode. Der Reiter "
+                "zeigt Ihnen außerdem, welche Modelle noch gar keinen Preis haben: "
+                "deren Nutzung wurde bislang stillschweigend mit 0 $ verbucht und "
+                "tauchte weder in der Statistik noch im Kontingent auf. Zusätzlich "
+                "hinterlegen Sie ein Abrechnungskonto nun einmal pro Anbieter, statt "
+                "es an jedem einzelnen Modell zu wiederholen; einzelne Modelle können "
+                "Sie weiterhin abweichend zuordnen. Ihr OpenRouter-Guthaben erscheint "
+                "ab sofort neben den übrigen Konten in der Plan-Übersicht.",
+        "audience": "admin",
+        "versions": ["9.313.0"],
+    },
+    {
         "version": "9.312.12",
         "date": "2026-07-12",
         "title": "Ihr Quellcode-Ordner bleibt sauber",
