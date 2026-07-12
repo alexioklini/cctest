@@ -29,6 +29,18 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.312.12",
+        "date": "2026-07-12",
+        "title": "Ihr Quellcode-Ordner bleibt sauber",
+        "body": "In Code-Projekten legten ausgeführte Hilfsskripte ihre Dateien "
+                "teils direkt zwischen Ihrem Quellcode ab. Alles, was der Assistent "
+                "erzeugt — Skripte, Zwischendateien, Reports —, landet jetzt "
+                "zuverlässig im Ausgabeordner des jeweiligen Chats bzw. "
+                "Subagenten. Ihr Projekt bleibt unberührt.",
+        "audience": "user",
+        "versions": ["9.312.12"],
+    },
+    {
         "version": "9.312.11",
         "date": "2026-07-11",
         "title": "Abgebrochene Antworten sagen es jetzt",

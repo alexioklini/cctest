@@ -4127,18 +4127,30 @@ def _path_within(child: str, parent: str) -> bool:
 
 
 def _inject_out_dir_env(env: dict) -> dict:
-    """In code mode, export `BRAIN_OUT` = the ABSOLUTE output folder of this chat
-    (or of this sub-agent) into a subprocess env.
+    """In code mode, export the two anchors a subprocess needs:
 
-    `python_exec` / `execute_command` run with cwd = the PROJECT root — they must,
-    because the model's shell commands read source with relative paths
-    (`q1/Queries/…`). But that means a script writing `open('report.html','w')`
-    lands in the source tree, bypassing the write-tool enforcement entirely
-    (observed: a sub-agent's generated script hard-coded the CHAT folder from the
-    preamble and wrote its report there, not into its own sub-agent folder).
-    Handing the correct directory to the script as an env var closes that hole
-    without moving cwd. The folder is created so a script can write into it
-    immediately.
+      BRAIN_OUT  — this chat's / this sub-agent's ABSOLUTE output folder
+      BRAIN_ROOT — the project root (where the SOURCE lives)
+
+    Which of the two is the process's cwd differs per tool, and that is the whole
+    point:
+
+    • `execute_command` keeps cwd = BRAIN_ROOT. Shell commands are overwhelmingly
+      READS over the source tree (`grep -r … q1/Queries/`), and moving their cwd
+      would break every relative path the model writes. It gets BRAIN_OUT to write
+      into.
+    • `python_exec` runs with cwd = BRAIN_OUT (v9.312.12). A generated script's
+      dominant side effect is WRITING its results, and `open('report.html','w')` —
+      the shape a model reaches for by default — silently landed in the user's
+      source tree. Env vars only close that hole if the model USES them, which is
+      a prompt dependency that demonstrably fails (the same lesson as v9.312.7:
+      sub-agents were told their folder and still wrote elsewhere). cwd is the
+      choke point: with it pointed at the output folder, a bare relative write is
+      correct BY CONSTRUCTION. Relative READS of the source keep working because
+      python_exec injects a prologue that chdir-independently resolves them (see
+      `_PYEXEC_PROLOGUE`), and BRAIN_ROOT is there for explicit paths.
+
+    Both folders are created so a script can write immediately.
     """
     _wd = get_request_context().working_dir
     if not (_wd and os.path.isdir(_wd)):
@@ -4147,9 +4159,77 @@ def _inject_out_dir_env(env: dict) -> dict:
         base = _code_mode_write_base(_wd)
         os.makedirs(base, exist_ok=True)
         env["BRAIN_OUT"] = base
+        env["BRAIN_ROOT"] = _wd
     except OSError:
         pass
     return env
+
+
+# Names of the source-tree entries symlinked into a code-mode output folder, so a
+# script running with cwd=<output folder> can still reach the project with the
+# SAME relative paths the model would use anywhere else (`q1/Queries/x.sql`).
+#
+# Why symlinks and not a monkeypatch prologue: the obvious alternative — wrap
+# open()/glob/os.walk/Path so a relative READ falls back to the project root —
+# means patching stdlib internals whose call graphs shift between Python versions
+# (3.14's glob.glob delegates to iglob; Path.write_text calls self.open(mode=…) by
+# keyword). Every one of those was a live bug in the first draft. Symlinks need no
+# interception at all: the paths are simply REAL, so every idiom — open, glob,
+# pathlib, os.walk, pandas.read_csv, subprocess, a library we've never heard of —
+# works unmodified. Reads resolve through the link into the source; writes with a
+# bare relative name land in the output folder, because that IS the cwd.
+_CODE_MODE_LINK_SKIP = {"chats", ".git", ".brain-extracted", ".worktrees"}
+
+
+def _link_project_into(out_dir: str, project_root: str) -> None:
+    """Symlink each top-level project entry into `out_dir` (idempotent, best-effort).
+
+    Skips our own generated trees (`chats/` above all — linking it into itself
+    would nest) and never overwrites a REAL file the script wrote: a stale link is
+    refreshed, anything else is left alone.
+    """
+    try:
+        entries = os.listdir(project_root)
+    except OSError:
+        return
+    for name in entries:
+        if name in _CODE_MODE_LINK_SKIP:
+            continue
+        src = os.path.join(project_root, name)
+        dst = os.path.join(out_dir, name)
+        try:
+            if os.path.islink(dst):
+                if os.path.realpath(dst) == os.path.realpath(src):
+                    continue          # already correct
+                os.unlink(dst)        # stale → refresh
+            elif os.path.exists(dst):
+                continue              # a real file the script made — never clobber
+            os.symlink(src, dst)
+        except OSError:
+            pass                      # best-effort: a missing link only costs a read
+
+
+def _unlink_project_links(out_dir: str) -> None:
+    """Remove the source symlinks again (idempotent, best-effort).
+
+    Only ever unlinks a SYMLINK that resolves outside `out_dir` — a real file the
+    script produced is never touched, so a script that writes `q1.csv` keeps it
+    even though `q1` was a linked source directory.
+    """
+    try:
+        entries = os.listdir(out_dir)
+    except OSError:
+        return
+    for name in entries:
+        dst = os.path.join(out_dir, name)
+        try:
+            if not os.path.islink(dst):
+                continue
+            if _path_within(os.path.realpath(dst), os.path.realpath(out_dir)):
+                continue              # a link the SCRIPT made inside its own folder
+            os.unlink(dst)
+        except OSError:
+            pass
 
 
 def _brain_code_mode_chat_prefix() -> str:
@@ -4300,12 +4380,37 @@ def tool_python_exec(args: dict) -> str:
     watch_dir = _artifact_watch_dir(work_dir) or work_dir
     pre_files = _snapshot_dir(watch_dir)
 
+    # THIS RUN'S OUTPUT FOLDER — the chat's, or a detached sub-agent's own. In code
+    # mode `work_dir` is the PROJECT ROOT, so it is the wrong home for anything the
+    # agent GENERATES: script_1..8.py landed straight in the user's source tree,
+    # and the stdout fallback dropped output_N.txt loose into `chats/`. Everything
+    # this tool creates — the script, its stdout artifact, and (via cwd below) any
+    # file the script writes with a relative path — goes HERE instead. Outside code
+    # mode this IS the artifact folder, so nothing changes there.
+    _wd_cm = get_request_context().working_dir
+    script_dir = _code_mode_write_base(_wd_cm) if _wd_cm else work_dir
+    os.makedirs(script_dir, exist_ok=True)
+
+    # THE CHOKE POINT (v9.312.12): run the script with cwd = the output folder, so a
+    # bare `open('report.html','w')` is correct BY CONSTRUCTION. Previously cwd was
+    # the project root and correctness depended on the model voluntarily writing to
+    # $BRAIN_OUT — a prompt dependency that demonstrably fails (the v9.312.7 lesson:
+    # sub-agents were TOLD their folder and wrote elsewhere anyway). Relative READS
+    # of the source keep working because the project's top-level entries are
+    # symlinked into this folder, so `q1/Queries/x.sql` is a real path here too.
+    # `execute_command` is NOT changed — its commands are overwhelmingly reads over
+    # the source tree, so it keeps cwd = project root and writes via $BRAIN_OUT.
+    exec_cwd = work_dir
+    if _wd_cm:
+        exec_cwd = script_dir
+        _link_project_into(script_dir, _wd_cm)
+
     # Save script as a numbered artifact (persisted for reuse)
     counter = 1
-    while os.path.exists(os.path.join(work_dir, f"script_{counter}.py")):
+    while os.path.exists(os.path.join(script_dir, f"script_{counter}.py")):
         counter += 1
     script_name = f"script_{counter}.py"
-    script_path = os.path.join(work_dir, script_name)
+    script_path = os.path.join(script_dir, script_name)
     with open(script_path, "w") as f:
         f.write(code)
     # `agent` and `session_id` were both referenced later in this function but
@@ -4334,7 +4439,7 @@ def tool_python_exec(args: dict) -> str:
         proc = subprocess.Popen(
             [sys.executable, script_path],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL, cwd=work_dir, env=env,
+            stdin=subprocess.DEVNULL, cwd=exec_cwd, env=env,
             start_new_session=True,
         )
         # Register for per-tool kill: a cancel SIGKILLs this process group and
@@ -4413,7 +4518,28 @@ def tool_python_exec(args: dict) -> str:
         # _changed_files compares the post-exec snapshot against pre_files by
         # (mtime, size), so a re-run that rewrites an existing artifact bumps
         # its version instead of being skipped (the script itself is excluded).
-        changed = _changed_files(watch_dir, pre_files, exclude={script_name})
+        #
+        # The exclude key must be the script's path RELATIVE TO watch_dir, not its
+        # bare name: `_snapshot_dir` keys on relative paths, and in code mode the
+        # script now lives INSIDE the watched `chats/` tree (at
+        # `<chat>/subagents/<id>/script_N.py`), so a bare-name exclude would miss
+        # it and the script would register itself a second time — it is already
+        # registered above via _after_file_write. Outside code mode the script sits
+        # flat in watch_dir, so the relative path IS the bare name (unchanged).
+        #
+        # The source symlinks come down FIRST, before anything walks this folder:
+        # they exist only for the duration of the run. Left in place they would make
+        # `_snapshot_dir` descend through them and report the user's entire source
+        # tree as freshly-created artifacts — and leave the output folder shadowing
+        # the project for good.
+        if _wd_cm:
+            _unlink_project_links(script_dir)
+        try:
+            _script_key = os.path.relpath(script_path, watch_dir)
+        except ValueError:            # different drive (Windows) — cannot be inside
+            _script_key = script_name
+        changed = _changed_files(watch_dir, pre_files,
+                                 exclude={script_name, _script_key})
         if changed and agent:
             created = []
             for fname, was_new in changed:
@@ -4425,13 +4551,19 @@ def tool_python_exec(args: dict) -> str:
             if created:
                 result["artifacts"] = created
 
-        # Always save stdout as an artifact when the script didn't write any files
+        # Always save stdout as an artifact when the script didn't write any files.
+        # Writes into `script_dir` (this run's OUTPUT folder), NOT `watch_dir`:
+        # those are different concepts and conflating them is what dropped
+        # `output_1..5.txt` loose into `chats/`. watch_dir is what we OBSERVE — in
+        # code mode deliberately the whole `chats/` TREE, so a sub-agent's files
+        # are seen no matter which subfolder it wrote them to. It is not a place
+        # to write. script_dir is this chat's / this sub-agent's own folder.
         if output and proc.returncode == 0 and not changed and agent:
             try:
-                artifact_path = os.path.join(watch_dir, "output.txt")
+                artifact_path = os.path.join(script_dir, "output.txt")
                 counter = 1
                 while os.path.exists(artifact_path):
-                    artifact_path = os.path.join(watch_dir, f"output_{counter}.txt")
+                    artifact_path = os.path.join(script_dir, f"output_{counter}.txt")
                     counter += 1
                 with open(artifact_path, "w") as af:
                     af.write(output)
@@ -4453,3 +4585,11 @@ def tool_python_exec(args: dict) -> str:
         return _ok(result)
     except Exception as e:
         return _err(f"python_exec: {e}")
+    finally:
+        # The source symlinks live only for the duration of the run. This MUST be a
+        # finally: the success path removes them before the artifact diff, but a
+        # timeout and a user-cancel both `return` early, and leaving the links
+        # behind would permanently shadow the project inside the output folder.
+        # Idempotent, so running twice is harmless.
+        if _wd_cm:
+            _unlink_project_links(script_dir)

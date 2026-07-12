@@ -515,6 +515,17 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
 - `python_exec(code, timeout?)` — subprocess (`sys.executable`).
   Working dir = session's artifact folder. State persists across calls
   within a session. Files written auto-register as artifacts.
+  **In a code-mode project** (v9.312.12) the cwd is this chat's — or this
+  sub-agent's — output folder (`chats/<title>_<date>_<id>/[subagents/<task>/]`),
+  NOT the project root. So a plain relative write (`open('report.html','w')`)
+  lands in the output folder by construction, and generated files can no longer
+  fall into the user's source tree. Relative *reads* of the source
+  (`open('q1/x.sql')`, `Path('q1').rglob(…)`, `glob`, `os.walk`) still work: the
+  project's top-level entries are symlinked into the folder for the duration of
+  the run and removed afterwards. `$BRAIN_OUT` (output folder) and `$BRAIN_ROOT`
+  (project root) hold the absolute paths.
+  **`execute_command` is different**: it keeps cwd = project root (its commands
+  are mostly reads across the source tree), so it must write via `$BRAIN_OUT`.
 
 ## Delegation / workers
 
