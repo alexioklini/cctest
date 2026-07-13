@@ -2075,6 +2075,8 @@ class BrainAgentHandler(
             self._handle_chat_btw()
         elif path == "/v1/background-tasks/cancel":
             self._handle_background_task_cancel()
+        elif path == "/v1/background-tasks/cancel-session":
+            self._handle_background_tasks_cancel_session()
         elif path == "/v1/background-tasks/cancel-tool":
             self._handle_background_task_cancel_tool()
         elif path == "/v1/helpdesk":

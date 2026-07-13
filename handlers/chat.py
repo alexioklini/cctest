@@ -1452,16 +1452,12 @@ def _build_background_task_preamble(session_id: str) -> str:
     parts = []
     if tasks:
         blocks = []
+        fail_classes: set = set()
         for t in tasks:
-            title = t.get("title") or "Hintergrundaufgabe"
-            if t.get("status") == "cancelled":
-                head = f"### Hintergrundaufgabe „{title}“ (abgebrochen — Teilergebnis)"
-            else:
-                head = f"### Ergebnis der Hintergrundaufgabe „{title}“"
-            body = (t.get("output") or "").strip()
-            if not body and t.get("error"):
-                body = f"(Kein Ergebnis — Fehler: {t.get('error')})"
-            blocks.append(f"{head}\n\n{body}")
+            block, fail = _bg_member_block(t)
+            blocks.append(block)
+            if fail:
+                fail_classes.add(fail)
         intro = (
             "[Eine oder mehrere von dir gestartete Hintergrundaufgaben sind fertig. "
             "Ihr vollständiges Ergebnis steht dir HIER für diese Antwort zur "
@@ -1469,7 +1465,8 @@ def _build_background_task_preamble(session_id: str) -> str:
             "Dieser Block erscheint nur dieses eine Mal und ist danach nicht mehr im "
             "Verlauf.]"
         )
-        parts.append(intro + "\n\n" + "\n\n".join(blocks))
+        parts.append(intro + "\n\n" + "\n\n".join(blocks)
+                     + _bg_decision_tail(fail_classes))
     # Fan-out group FLOOR: any completed group whose proactive delivery didn't
     # fire (user was mid-turn) is delivered here on the next turn.
     grp = _undelivered_groups_preamble(session_id)
@@ -1617,30 +1614,127 @@ def deliver_background_results(session_id: str) -> bool:
             _bg_delivery_inflight.discard(session_id)
 
 
+def _bg_member_block(m: dict) -> tuple[str, str]:
+    """One delivered member as (block_text, failure_class). failure_class is
+    '' for a clean result, else one of 'error'|'timeout'|'empty'|'cancelled' —
+    the classes drive the decision instructions appended by the callers."""
+    title = m.get("title") or "Hintergrundaufgabe"
+    st = m.get("status")
+    tid = m.get("id") or ""
+    fail = ""
+    if st == "cancelled":
+        head = (f"### Hintergrundaufgabe „{title}“ "
+                f"(VOM NUTZER ABGEBROCHEN — Teilergebnis; task_id: {tid})")
+        fail = "cancelled"
+    elif st == "timeout":
+        head = (f"### Hintergrundaufgabe „{title}“ "
+                f"(Zeitlimit überschritten — Teilergebnis; task_id: {tid})")
+        fail = "timeout"
+    elif st == "empty":
+        head = f"### Hintergrundaufgabe „{title}“ (leere Antwort; task_id: {tid})"
+        fail = "empty"
+    elif st == "error":
+        head = f"### Hintergrundaufgabe „{title}“ (fehlgeschlagen; task_id: {tid})"
+        fail = "error"
+    else:
+        head = f"### Ergebnis der Hintergrundaufgabe „{title}“"
+    body = (m.get("output") or "").strip()
+    if m.get("error"):
+        err_line = f"(Fehler: {m.get('error')})"
+        body = f"{err_line}\n\n{body}" if body else err_line
+    if not body:
+        body = "(Kein Ergebnis)"
+    return f"{head}\n\n{body}", fail
+
+
+def _bg_decision_tail(fail_classes: set) -> str:
+    """Decision instructions for the model, keyed by which failure classes are
+    present in the delivered set. Errors/timeouts/empty answers are retryable
+    (once, server-enforced) or may be done inline; a USER cancel is a deliberate
+    decision and must never be re-run unasked."""
+    parts = []
+    if fail_classes & {"error", "timeout", "empty"}:
+        parts.append(
+            "[Mindestens eine Aufgabe ist fehlgeschlagen (Fehler/Zeitlimit/leere "
+            "Antwort). Entscheide selbst, was am sinnvollsten ist: (a) starte sie "
+            "GENAU EINMAL neu mit retry_background_task(task_id=…) — bei modell- "
+            "oder providerbedingtem Scheitern (Refusal, leere Antwort, wiederholte "
+            "API-Fehler) mit dem model-Parameter auf einem anderen Modell; (b) "
+            "erledige die Teilaufgabe direkt selbst in dieser Antwort, wenn sie "
+            "klein genug ist; oder (c) berichte den Ausfall transparent und "
+            "arbeite mit den vorhandenen Ergebnissen. Pro Aufgabe ist nur EIN "
+            "Neustart erlaubt (der Server erzwingt das) — schlägt auch der fehl, "
+            "nicht erneut versuchen, sondern (b) oder (c).]"
+        )
+    if "cancelled" in fail_classes:
+        parts.append(
+            "[Mindestens eine Aufgabe wurde VOM NUTZER abgebrochen — das war eine "
+            "bewusste Entscheidung: starte sie NICHT neu und erledige die Arbeit "
+            "auch nicht ungefragt selbst. Nutze das Teilergebnis, soweit "
+            "vorhanden. Ist das fehlende Ergebnis für die Gesamtaufgabe zwingend "
+            "nötig, sage das klar und frage den Nutzer, wie du verfahren sollst.]"
+        )
+    return ("\n\n" + "\n\n".join(parts)) if parts else ""
+
+
+def _bg_original_group_blocks(session_id: str, members: list) -> list:
+    """When a delivered group contains RETRY tasks (retry_of set), the original
+    group's successful sibling outputs were already consumed by the earlier
+    delivery turn — wire-only, so they're gone from context. Re-attach them here
+    from the DB so the combine step sees the full set again."""
+    from server_lib.db import ChatDB  # explicit: callable outside server-injected globals
+    blocks = []
+    seen_groups = set()
+    member_ids = {m.get("id") for m in members}
+    for m in members:
+        orig_id = (m.get("retry_of") or "").strip() if isinstance(m.get("retry_of"), str) else (m.get("retry_of") or "")
+        if not orig_id:
+            continue
+        orig = ChatDB.get_background_task(orig_id)
+        if not orig or orig.get("session_id") != session_id:
+            continue
+        gid = orig.get("group_id")
+        if not gid or gid in seen_groups:
+            continue
+        seen_groups.add(gid)
+        for sib in (ChatDB.list_group_members(session_id, gid) or []):
+            # The failed original itself is superseded by the retry; anything
+            # already part of THIS delivery must not appear twice.
+            if sib.get("id") == orig_id or sib.get("id") in member_ids:
+                continue
+            if sib.get("status") != "done":
+                continue
+            title = sib.get("title") or "Hintergrundaufgabe"
+            body = (sib.get("output") or "").strip() or "(Kein Ergebnis)"
+            blocks.append(
+                f"### Bereits geliefertes Ergebnis aus dem ursprünglichen "
+                f"Lauf: „{title}“\n\n{body}")
+    return blocks
+
+
 def _build_group_preamble(members: list) -> str:
     """Wire-only preamble for a finished fan-out GROUP. `members` are the rows
     returned by ChatDB.claim_background_group (already single-flight-claimed, so
     no consume/pop here). Includes each member's output-or-error (deliver-with-
-    failures) plus the group's follow_up (the recombine instruction)."""
+    failures) plus the group's follow_up (the recombine instruction), per-class
+    decision instructions for failed members, and — for retry groups — the
+    original group's sibling results re-attached from the DB."""
     if not members:
         return ""
     follow_up = ""
     blocks = []
+    fail_classes: set = set()
     for m in members:
-        title = m.get("title") or "Hintergrundaufgabe"
-        st = m.get("status")
-        if st == "cancelled":
-            head = f"### Hintergrundaufgabe „{title}“ (abgebrochen — Teilergebnis)"
-        elif st == "error":
-            head = f"### Hintergrundaufgabe „{title}“ (fehlgeschlagen)"
-        else:
-            head = f"### Ergebnis der Hintergrundaufgabe „{title}“"
-        body = (m.get("output") or "").strip()
-        if not body and m.get("error"):
-            body = f"(Kein Ergebnis — Fehler: {m.get('error')})"
-        blocks.append(f"{head}\n\n{body}")
+        block, fail = _bg_member_block(m)
+        blocks.append(block)
+        if fail:
+            fail_classes.add(fail)
         if not follow_up and (m.get("follow_up") or "").strip():
             follow_up = m["follow_up"].strip()
+    # Retry join: re-attach the original group's already-consumed siblings.
+    session_id = (members[0].get("session_id") or "") if members else ""
+    if session_id:
+        blocks.extend(_bg_original_group_blocks(session_id, members))
     intro = (
         "[Alle von dir parallel gestarteten Hintergrundaufgaben sind fertig. "
         "Ihre vollständigen Ergebnisse stehen dir HIER für diese Antwort zur "
@@ -1651,7 +1745,7 @@ def _build_group_preamble(members: list) -> str:
         f"\n\n[Aufgabe zum Zusammenführen: {follow_up}]" if follow_up
         else "\n\n[Bitte fasse die Ergebnisse für den Nutzer zusammen bzw. arbeite damit weiter.]"
     )
-    return intro + "\n\n" + "\n\n".join(blocks) + tail
+    return intro + "\n\n" + "\n\n".join(blocks) + tail + _bg_decision_tail(fail_classes)
 
 
 def deliver_background_group(session_id: str, group_id: str, members: list) -> bool:
@@ -6030,7 +6124,22 @@ class ChatHandlerMixin:
             self._send_json({"error": "Session not found"}, 404)
             return
         session.cancel_token.cancel()
-        self._send_json({"status": "cancelled"})
+        # Stopp-cascade: also cancel the background subagents THIS turn spawned
+        # (spawn_turn_id match). Earlier turns' detached tasks keep running —
+        # they have their own Stopp in the panel/hub/sidebar. Best-effort: the
+        # turn cancel above must never fail on a cascade error.
+        subagents_cancelled = 0
+        try:
+            from engine.background_tasks import background_task_runner
+            active_turn = ChatDB.get_active_turn_id(sid)
+            if active_turn:
+                subagents_cancelled = background_task_runner.cancel_session_tasks(
+                    sid, spawn_turn_id=active_turn)
+        except Exception as e:
+            print(f"[chat-cancel] subagent cascade failed for {sid[:8]}: {e}",
+                  flush=True)
+        self._send_json({"status": "cancelled",
+                         "subagents_cancelled": subagents_cancelled})
 
     def _handle_chat_pause(self):
         """POST /v1/chat/pause — soft-pause the running turn at the next round

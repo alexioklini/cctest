@@ -6,8 +6,6 @@
 #   - ask_user_for_file — pause for a file upload; blocks on the workflow/
 #                         session pending-file slot, delivered by the upload
 #                         endpoint.
-#   - worker_ask_user   — ask from within a worker subagent (routes through the
-#                         worker registry).
 #   - ask_llm           — one-shot LLM text-in/text-out via the sidecar (no
 #                         loop, no tools).
 #   - agent_step        — ONE bounded agentic turn (background_call with the
@@ -42,6 +40,50 @@ import time
 
 from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
+
+
+def _ask_turn_cancelled() -> bool:
+    """True when the turn this blocking tool runs in was cancelled — the user's
+    Stopp must unblock a waiting ask_user immediately, not after its timeout.
+    Two cancel channels, mirroring the loop's own is_cancelled sources:
+    background (blocking) turns register a per-turn Event in sidecar_proxy;
+    interactive turns carry the session's CancelToken."""
+    ctx = get_request_context()
+    turn_id = getattr(ctx, "current_turn_id", "") or ""
+    if turn_id:
+        try:
+            from handlers.sidecar_proxy import is_turn_cancelled
+            if is_turn_cancelled(turn_id):
+                return True
+        except Exception:
+            pass
+    sid = ctx.current_session_id or ""
+    if sid:
+        try:
+            import sys as _sys
+            _srv = _sys.modules.get("__main__") or _sys.modules.get("server")
+            _sessions = getattr(_srv, "sessions", None) if _srv else None
+            s = _sessions.peek(sid) if _sessions is not None else None
+            tok = getattr(s, "cancel_token", None) if s is not None else None
+            if tok is not None and getattr(tok, "cancelled", False):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _wait_answer_or_cancel(event, timeout: float) -> tuple[bool, bool]:
+    """Block on the pending-answer Event, polling the turn's cancel state ~1×/s.
+    Returns (answered, cancelled) — (False, False) means a plain timeout."""
+    deadline = time.time() + max(1.0, float(timeout))
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return False, False
+        if event.wait(timeout=min(1.0, remaining)):
+            return True, False
+        if _ask_turn_cancelled():
+            return False, True
 
 
 def _normalize_ask_questions(args: dict):
@@ -430,7 +472,9 @@ def tool_ask_user_for_file(args: dict) -> str:
 
     event = _brain._workflow_file_register(key)
     try:
-        got = event.wait(timeout=timeout)
+        got, was_cancelled = _wait_answer_or_cancel(event, timeout)
+        if was_cancelled:
+            return _err("ask_user_for_file: turn was cancelled while waiting")
         if not got:
             return _err("ask_user_for_file: timed out waiting for upload")
         with _brain._workflow_file_lock:
@@ -445,32 +489,6 @@ def tool_ask_user_for_file(args: dict) -> str:
         })
     finally:
         _brain._workflow_file_clear(key)
-
-
-def tool_worker_ask_user(args: dict) -> str:
-    """Ask the user a question from within a worker subagent.
-
-    Accepts single-question (`question` str) or a 1-item `questions` array.
-    Multi-question batches are not supported inside workers — call once per question.
-    """
-    from execution import get_worker_registry
-    worker_id = get_request_context().current_worker_id
-    if not worker_id:
-        return _err("worker_ask_user can only be called from within a worker subagent")
-    questions, _ = _normalize_ask_questions(args)
-    if not questions:
-        return _err("question or questions is required")
-    if len(questions) > 1:
-        return _err("worker_ask_user does not support question batches yet — call once per question")
-    q0 = questions[0]
-    context_summary = args.get("context_summary", "")
-    timeout = args.get("timeout_seconds", 300)
-    answer = get_worker_registry().ask_user(
-        worker_id, q0["question"], q0.get("options"), context_summary, timeout
-    )
-    if answer is None:
-        return _err("No answer received (timed out or worker was aborted)")
-    return _ok({"answer": answer})
 
 
 def tool_ask_user(args: dict) -> str:
@@ -529,7 +547,9 @@ def tool_ask_user(args: dict) -> str:
 
     event = _brain._ask_user_register(key)
     try:
-        got = event.wait(timeout=timeout)
+        got, was_cancelled = _wait_answer_or_cancel(event, timeout)
+        if was_cancelled:
+            return _err("ask_user: turn was cancelled while waiting for an answer")
         if not got:
             return _err("No answer received (timed out)")
         with _brain._ask_user_lock:

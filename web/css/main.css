@@ -970,6 +970,7 @@ textarea { resize: none; }
 .ap-dot.done { background: var(--text-400); }
 .ap-dot.cancelled { background: var(--accent-brand); }
 .ap-dot.error { background: var(--git-deleted); }
+.ap-dot.timeout, .ap-dot.empty { background: var(--git-deleted); }
 .ap-stop { font-size: 11px; padding: 1px 8px; flex: 0 0 auto; }
 .ap-x { background: none; border: none; color: var(--text-400); cursor: pointer;
   font-size: 12px; padding: 0 4px; flex: 0 0 auto; }
@@ -1000,7 +1001,12 @@ textarea { resize: none; }
 .sb-subagent-row:hover { color: var(--text-100); }
 .sb-sub-dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
   background: var(--git-added); animation: ap-pulse 1.4s ease-in-out infinite; }
-.sb-sub-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-sub-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }
+/* Stopp pro Subagent-Zeile — erst beim Hover der Zeile sichtbar */
+.sb-sub-stop { display: none; flex: 0 0 auto; background: none; border: none;
+  color: var(--text-400); cursor: pointer; padding: 0 2px; line-height: 0; }
+.sb-subagent-row:hover .sb-sub-stop { display: inline-flex; }
+.sb-sub-stop:hover { color: var(--git-deleted); }
 /* turn-control rows: btw side-answer, injected clarification, queue ack.
    Uses the terminal's own accent (--accent-brand = terracotta inside .termchat)
    so it matches the CLI look instead of introducing an off-palette colour. */
@@ -1055,8 +1061,13 @@ textarea { resize: none; }
 .tc-status .tc-ask-badge:hover { text-decoration: underline; }
 /* Spinner-Zeile am Log-Ende, solange abgekoppelte Subagenten arbeiten (der
    eigene Turn ist da längst beendet). Klick öffnet den ✦-Hub. */
-.tc-row.tc-subspin { color: var(--git-added); cursor: pointer; }
-.tc-row.tc-subspin:hover { text-decoration: underline; }
+.tc-row.tc-subspin { color: var(--git-added); cursor: pointer;
+  display: flex; align-items: center; gap: 10px; }
+.tc-row.tc-subspin:hover .tc-subspin-txt { text-decoration: underline; }
+.tc-subspin-stop { display: inline-flex; align-items: center; gap: 4px;
+  background: none; border: 1px solid var(--border-200); border-radius: 4px;
+  color: var(--text-400); cursor: pointer; font-size: 10.5px; padding: 1px 6px; }
+.tc-subspin-stop:hover { color: var(--git-deleted); border-color: var(--git-deleted); }
 @keyframes tc-pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
 /* input line + slash-command autocomplete.
    The wrap is a normal block at the END of the scroll log (CLI-style), so it

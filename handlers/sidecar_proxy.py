@@ -22,6 +22,7 @@ persistence, the citation validator, and the cost ledger are untouched.
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 from typing import Any, Callable
 
@@ -66,6 +67,17 @@ def cancel_turn(turn_id: str) -> bool:
         ev.set()
         return True
     return False
+
+
+def is_turn_cancelled(turn_id: str) -> bool:
+    """True if cancel_turn() was tripped for this in-flight turn. Lets blocking
+    tools (ask_user) poll the cancel state instead of sleeping through their
+    full timeout after the user hit Stopp."""
+    if not turn_id:
+        return False
+    with _TURN_CANCELS_LOCK:
+        ev = _TURN_CANCELS.get(turn_id)
+    return bool(ev is not None and ev.is_set())
 
 
 def cancel_tool(turn_id: str, tool_use_id: str) -> bool:
@@ -501,6 +513,18 @@ def run_turn_blocking(
     # cancel_turn(turn_id) (the in-process replacement for the sidecar cancel).
     _cancel_ev = _register_turn_cancel(turn_id)
 
+    # Wall-clock deadline — `timeout_s` was accepted-but-dead for the in-process
+    # loop (the loop itself has no turn-level timeout; only per-request socket
+    # timeouts bound it). Enforced via the loop's own cancel poll: past the
+    # deadline `is_cancelled()` flips, the round watcher closes the stream
+    # socket, and the loop stops gracefully with the partial kept. The result
+    # then carries `timed_out=True` + a loud `error` so no background caller
+    # can mistake a timed-out partial for a clean success.
+    _deadline = (time.time() + float(timeout_s)) if timeout_s and timeout_s > 0 else None
+
+    def _cancelled_or_deadline() -> bool:
+        return _cancel_ev.is_set() or (_deadline is not None and time.time() > _deadline)
+
     summary: dict[str, Any] = {}
     error_msg: str | None = None
     try:
@@ -514,11 +538,16 @@ def run_turn_blocking(
                 disable_parallel_tool_use=False,
                 prompt_cache_key=(prompt_cache_key or ""),
                 forced_tool=forced_tool, api_key=api_key, base_url=base_url,
-                emit=_emit, is_cancelled=_cancel_ev.is_set)
+                emit=_emit, is_cancelled=_cancelled_or_deadline)
     except Exception as e:
         error_msg = f"inprocess loop {type(e).__name__}: {e}"
     finally:
         _unregister_turn_cancel(turn_id)
+
+    timed_out = bool(_deadline is not None and time.time() > _deadline
+                     and not _cancel_ev.is_set())
+    if timed_out and not error_msg:
+        error_msg = f"timeout: turn exceeded {int(timeout_s)}s wall-clock limit"
 
     return {
         "reply": summary.get("final_text", "") or "",
@@ -529,7 +558,8 @@ def run_turn_blocking(
         "usage_total": summary.get("usage_total", {}) or {},
         "tool_events": summary.get("tool_events", []) or [],
         "forced_tool_input": summary.get("forced_tool_input"),
-        "cancelled": False,
+        "cancelled": bool(_cancel_ev.is_set()),
+        "timed_out": timed_out,
         "error": error_msg or summary.get("error"),
         "turn_id": turn_id,
     }

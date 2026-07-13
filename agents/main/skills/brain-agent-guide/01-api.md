@@ -173,7 +173,10 @@ streaming call, per-USER history, fixed read-only tool set. See
   Response: SSE events (`text_delta`, `thinking`, `tool_use`, `tool_result`,
   `done`, `error`, …).
 - `GET /v1/chat/stream?session_id=<sid>` — re-attach to a live turn (SSE)
-- `POST /v1/chat/cancel` — `{session_id}` cancels the active turn
+- `POST /v1/chat/cancel` — `{session_id}` cancels the active turn AND (Stopp-
+  cascade, 2026-07-13) every background subagent THAT turn spawned
+  (`spawn_turn_id` match; earlier turns' detached tasks keep running — they
+  have their own Stopp). Returns `{status, subagents_cancelled}`.
 - `POST /v1/chat/pause` — `{session_id}` soft-pause the running turn at the next
   round boundary (current round + in-flight tool finish first). Emits `paused`.
 - `POST /v1/chat/resume` — `{session_id}` resume a paused turn. Emits `resumed`.
@@ -893,10 +896,16 @@ logged-in user (not admin-gated).
   only their own sessions'). Feeds the left-sidebar subagent tree (9.312.0).
 - `GET /v1/background-tasks?session_id=` — list this session's tasks
   (`{tasks: [{id,title,status,turn_id,usage_in,usage_out,tool_calls,
-  created_at,finished_at,consumed_at,output_len}]}`; status =
-  running|done|cancelled|error). Output body is NOT in the list.
+  created_at,finished_at,consumed_at,spawn_turn_id,retry_of,output_len}]}`;
+  status = running|done|cancelled|error|timeout|empty — `timeout` = the
+  enforced 1h wall-clock limit fired (partial kept), `empty` = finished
+  without error but with no output; both retryable via the
+  `retry_background_task` tool). Output body is NOT in the list.
 - `POST /v1/background-tasks/cancel` — `{task_id}`. Cancels a running task;
   the partial output is kept and the row goes `cancelled`.
+- `POST /v1/background-tasks/cancel-session` — `{session_id}`. Cancels ALL
+  running background tasks of one chat (Termchat-Spinner „alle stoppen").
+  Returns `{cancelled: n}`.
 - `POST /v1/background-tasks/cancel-tool` — `{task_id, tool_use_id}`. Cancels
   ONE in-flight tool call of a running task (the task keeps going). For
   subprocess-backed tools (`python_exec`/`execute_command`) the process group is

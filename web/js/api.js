@@ -463,6 +463,8 @@ class API {
   // Alle LAUFENDEN Aufgaben über alle Sessions (Sidebar-Subagenten-Tree).
   static getRunningBackgroundTasks() { return this.get('/v1/background-tasks/running'); }
   static cancelBackgroundTask(taskId) { return this.post('/v1/background-tasks/cancel', {task_id: taskId}); }
+  // Alle laufenden Subagenten EINES Chats stoppen (Termchat-Spinner „alle stoppen").
+  static cancelSessionBackgroundTasks(sessionId) { return this.post('/v1/background-tasks/cancel-session', {session_id: sessionId}); }
   // Answer an ask_user a BACKGROUND task is blocked on. Keyed by task_id (not
   // session_id) — several sub-agents can have a question open at once.
   static answerBackgroundTask(taskId, answer) { return this.post('/v1/chat/answer', {task_id: taskId, answer}); }

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.319.0"
+VERSION = "9.320.0"
 VERSION_DATE = "2026-07-13"
 CHANGELOG = [
+    ("9.320.0", "2026-07-13", "feat(Fan-out/Subagenten-Härtung: Fehler/Abbruch/Timeout end-to-end): ANLASS (User-Analyse-Auftrag): wie geht der Orchestrator mit Fehlern/Cancels/Timeouts seiner Fan-out-/Subagent-Läufe um — Befund: (a) _TIMEOUT_S=3600 wurde NIRGENDS durchgesetzt (run_turn_blocking nahm timeout_s an, nutzte es nicht; nur urlopen-Socket-Timeouts + Gruppen-Sweep), (b) das Join-Preamble lieferte Fehler ohne Handlungsanweisung und ohne task_id, (c) Respawn war nur auf demselben Modell möglich (kein model-Param), (d) leere Antworten galten als 'done', (e) User-Abbruch war vom API-Fehler nicht unterscheidbar, (f) ask_user-blockierte Subagenten schliefen bei Stopp bis zum ask-Timeout weiter, (g) delegate_task-Cancel war ein Soft-Flag (der laufende LLM-Call lief weiter) + wait=True>300s galt als Fehler obwohl der Delegate weiterarbeitete, (h) die worker_*-Tools operierten auf einer Registry ohne Writer (tot seit Native-Loop-Löschung). UMSETZUNG (User: '1: alles härten, 2: mit cap, 3: turn+subagenten'): (1) TIMEOUT ECHT: run_turn_blocking erzwingt timeout_s als Wanduhr über den is_cancelled-Poll (Deadline ∨ Cancel-Event; der Socket-Watcher bricht auch mid-stream) → Result trägt timed_out=True + LAUTEN error (kein Background-Caller kann einen Timeout-Partial für Erfolg halten); bg-Task-Status neu 'timeout' (Teilergebnis behalten), Gruppen-Sweep markiert Straggler jetzt ebenfalls 'timeout' statt 'error'. Leerer Output ohne Fehler → Status 'empty'. Beide Klassen überall nachgezogen (DB-Queries done/cancelled-Listen, Panel/Hub/Sidebar-Labels + Dots, count/pop/claim/sweep). (2) RETRY MIT SERVER-CAP: neues Tool retry_background_task(task_id, model?) (4-Site + background-Gruppe + Code-Mode-undefer neben run_background_task) — klont Titel/Prompt/follow_up aus der DB-Row, optionales model validiert gegen enabled models (Override schlägt background_task_model — Sinn ist ja, dem gescheiterten Modell zu entkommen; thinking smart-match), läuft als eigene auto-Gruppe des Delivery-Turns; CAP server-seitig via retry_of-Spalte: ein Retry ist nie retrybar, ein bereits retrytes Original auch nicht (background_task_retry_exists, fail-closed), User-cancelled wird VERWEIGERT mit Nutzer-Entscheid-Hinweis, Nesting-Guard gilt. Beim Join eines Retrys hängt _bg_original_group_blocks die BEREITS KONSUMIERTEN done-Geschwister der Originalgruppe aus der DB wieder an (ihre wire-only-Delivery ist verbraucht — sonst fehlt dem Combine-Step die halbe Gruppe). (3) PREAMBLE MIT FEHLERKLASSEN + ENTSCHEIDUNGSREGELN (_bg_member_block/_bg_decision_tail, Gruppen- UND Standalone-Pfad): jeder gescheiterte Member trägt Klasse (fehlgeschlagen/Zeitlimit/leere Antwort/VOM NUTZER ABGEBROCHEN) + task_id; error/timeout/empty → Anweisung 'entscheide: GENAU EIN retry_background_task (ggf. anderes Modell) ODER selbst inline erledigen ODER transparent berichten'; cancelled → 'NICHT neu starten, Teilergebnis nutzen, bei zwingendem Bedarf den Nutzer fragen'. (4) STOPP = TURN+SUBAGENTEN: neue Spalte spawn_turn_id (Tool reicht ctx.current_turn_id durch); POST /v1/chat/cancel cancelt zusätzlich die vom AKTIVEN Turn gespawnten laufenden Tasks (active_turns-Lookup + BackgroundTaskRunner.cancel_session_tasks(spawn_turn_id=…)); Tasks früherer Turns laufen weiter (haben eigene Stopps). (5) CANCEL-RESPONSIVENESS: ask_user/ask_user_for_file warten in 1s-Schleife und prüfen Turn-Cancel (neu sidecar_proxy.is_turn_cancelled für bg-Turns; Session-CancelToken für interaktive) → Stopp entblockt in ~1s statt nach bis zu 300/600s. (6) DELEGATE_TASK: TaskRunner mintet turn_id vorab, cancel() tripst zusätzlich cancel_turn (Call stoppt WIRKLICH); wait=True nach 300s-Join-Cap liefert status:'running' + task_status-Hinweis statt Fehler; timed_out-Result → status error mit Teilergebnis-Markierung. (7) WORKER-TOOLS ENTFERNT (worker_status/abort/pause/resume/send/worker_ask_user aus TOOL_DEFINITIONS/GROUPS/DISPATCH/Impls; execution.py bleibt — route_tool_execution lebt, Registry-No-ops harmlos). (8) UI: Stopp-SVG auf den Sidebar-✦-Zeilen (hover), Termchat-Subagenten-Spinner mit 'alle stoppen' (neuer Endpoint POST /v1/background-tasks/cancel-session; Stopp-Knopf statisch neben dem 80ms-repainteten Text-Span — sonst frisst der Ticker den Handler), neue Status-Labels/Dots (Zeitlimit/leere Antwort) in Panel+Hub, toolDescribe für retry. GOTCHA: ChatDB ist in handlers/chat.py server-injiziert — _bg_original_group_blocks importiert explizit aus server_lib.db ([[feedback_brain_reexport_chatdb_authdb]]), sonst NameError außerhalb des Servers (vom neuen Test gefangen). Tests: tests/test_bgtask_failure_handling.py NEU (14 — Retry-Cap-Gates inkl. Tool-Refusals, Preamble-Klassen + Geschwister-Reattach, Wanduhr-Timeout mit Fake-Loop, Kaskaden-Scoping); 2 Sweep-Assertions in test_bgtask_group_claim auf 'timeout' aktualisiert; Gesamtsuite 406 GRÜN. js_gate GRÜN (net-globals 1974 UNVERÄNDERT, smoke 4/5+flaky-retry). Skill 01/02/03/05/06 + SKILL.md 1.190.0 im selben Commit. Schema-Änderung (neues Tool) → Warmup-KV-Prefix primt einmal neu. Server-Restart nötig. KURATIERTER Eintrag (user-sichtbar: Subagenten überall stoppbar + selbstheilende Fan-outs)."),
     ("9.319.0", "2026-07-13", "feat/refine(Code-Mode-UI, 4 User-Nachschärfungen zu 9.318.0): (1) Ein-Fenster-Modus FINAL: die Pane-Sperre aus 9.318.0 ist RAUS ('drag/drop layouting muss wieder möglich sein') — _terminalNormalizeSlots kollabiert nicht mehr auf Slot 'a', Splits/Dropzonen wieder aktiv; der Modus beschränkt NUR die Tab-Anzahl (max. ein Tab je _SW_SLOT: Editor=editor+diff, Terminal, Chat=chat+Hub; Öffnen ersetzt den Slot-Tab), Layout frei. (2) Terminal-Chat scrollt beim Öffnen ans ENDE: tcLoadTranscript scrollte zwar, aber bei VERDECKTEN Tabs (display:none → scrollHeight 0) verpuffte das — ein frisch geöffneter Chat zeigte den ANFANG; Fix im chat-Zweig von _terminalActivate (nur wenn tab._stick !== false — Hochscrollen zum Lesen wird nie unterbrochen). (3) Chat-Tab-Kontextmenü 'Alles Chat-Fremde schließen' (terminalCloseUnrelated): schließt andere Chats, Terminals und Editor/Diff-Tabs außerhalb des Chat-Ordners; 'gehört zum Chat' = Pfad in chats/<slug>_<datum>_<sid>/ (_terminalChatSidFromPath, Suffix-Regel wie die Terminal-Chats-Liste), Subagenten-Hub bleibt (folgt dem aktiven Chat). (4) AUTO-CLOSE-Modus (⚡-Toggle in der Baum-Leiste, bottom_workspace.auto_close): beim AUSWÄHLEN eines Chats (tcOpenHistory, beide Zweige) oder Öffnen einer CHAT-DATEI (terminalOpenFile leitet die sid aus dem Pfad ab) werden chat-fremde Tabs automatisch geschlossen — Terminals dabei DETACHT statt geschlossen (Auto-Verhalten darf keine Shells killen; die explizite Menü-Aktion schließt echt). net-globals 1969→1974."),
     ("9.318.0", "2026-07-13", "feat(Daten-Diff + UI): (1) GRID-PIPELINE v5 — .json/.jsonl/.ndjson/.xml laden in dieselbe Grid-Pipeline wie xlsx/csv (engine/tools/xlsx_tools.py:_load_grids → _grids_from_json/_grids_from_xml): JSON-Record-Arrays = Tabellen (ein Grid pro Array-Key, nested Objekte flatten zu a.b-Spalten, Lookup-Dicts {id:{...}} kriegen _key-Spalte, Scalar-Reste → <stem>_meta statt Drop), XML: jedes wiederholte Element (≥2 Geschwister) = Record-Tabelle (Attribute+Leaf-Kinder, XML-Text CSV-koerziert, JSON bleibt nativ typisiert). Damit sind xlsx_inspect/query/create(source)/diff format-agnostisch inkl. CROSS-FORMAT (alte CSV vs neuer JSON-Export in einem xlsx_diff; JSON→gestyltes Workbook in einem xlsx_create). compare='formulas'/'formats' verweigert Nicht-XLSX jetzt sauber (crashte vorher auf CSV in _sig_matrices). (2) NEUES TOOL text_diff (documents, engine/tools/diff_tools.py, 4-Site): deterministischer unified Diff beliebiger Textdateien (difflib, Zähler +/-/Hunks/Ähnlichkeit, Binär-Guard mit xlsx_diff-Hinweis, 10MB-Kappe) + mode='json' STRUKTURELLER Vergleich (Pfad→Wert, Key-Reihenfolge egal, Array-Position zählt) + out='diff.html' (HtmlDiff side-by-side) / .txt|.diff (roher Patch). (3) DIFF-TAB im Code-Mode-Bottom-Panel: kind:'diff' via CodeMirror MergeView (merge-Addon + klassisches diff_match_patch 20121119 — die npm-Builds definieren die erwarteten Globals NICHT), Endpoint GET /v1/files/file-diff (path_a/path_b ODER path+git=head via git show HEAD:<rel>, 5MB/Binär-Guards); Einstieg Datei-Baum-Kontextmenü: 'Diff gegen HEAD' (nur git-modifizierte Rows) + 'Zum Vergleich markieren'/'Vergleichen mit …' (Zwei-Dateien-Diff). (4) EIN-FENSTER-MODUS ersetzt den Ein-Editor-Modus (dreifach vom User nachgeschärft: 'nur 1 Fenster' → 'nur 1 Tab' → final 'max. 3 Tabs, einer je Typ'): Toggle erzwingt EIN Pane (Normalize-Choke-Point _terminalNormalizeSlots retagt alles auf Slot 'a' → volle Fläche, Splits/Split-Dropzonen inert) UND max. 3 Tabs über die Slot-Map _SW_SLOT (Editor-Slot = editor+diff, Terminal-Slot, Chat-Slot = chat+Subagenten-Hub) — jede Tab-Erzeugung läuft durch _terminalSingleWindowClear(kind) (ersetzt den Slot-Tab statt zu ergänzen; Terminals werden DETACHT, nicht geschlossen — PTY überlebt serverseitig; dirty-Editor-Confirm bricht das Öffnen ab; passiver Hub-Reattach verdrängt NIE den Chat-Tab, er wird unterdrückt); Toggle-ON kollabiert jeden Slot sofort auf den aktiven Tab; persistiert als single_window (legacy single_editor wird gelesen). net-globals 1965→1968 (terminalOpenDiff, _terminalSingleWindowClear, _wdDiffMark). 58+7 Unit-Tests (test_xlsx_tools TestV5JsonXmlGrids, test_text_diff), js_gate PASS. Schema-Texte erweitert → Warmup-KV-Prefix primt einmal neu."),
     ("9.317.1", "2026-07-13", "fix(UI): Composer-Footer bricht nicht mehr um (User-Report mit mistral-ocr-latest: Modellwahl+Senden rutschten bei schmalerem Fenster auf eine zweite Zeile). URSACHE: flex-wrap entscheidet anhand der BASIS-Größen, BEVOR flex-shrink greift — die 9.317.0-Wrap-Lösung konnte also nie einzeilig schrumpfen. FIX: Desktop-Footer ohne Wrap; stattdessen schrumpfen Chip-Label, .model-name (Kappe 200px, min 24px) und .model-tier (Provider-Suffix gibt zuerst nach, flex-shrink 2) per Ellipsis IN der Zeile; Send/Stop-Buttons flex:0 0 auto. Das ≤768px-Mobile-Media-Block wickelt weiterhin. Vorschlag Icon-statt-Pille kam auf, User entschied: Pille bleibt ('schaut gut aus'). VERIFIZIERT: E2E gleiche-Zeile+kein-Overflow über 4 Szenarien (1280/1024/800px, mistral-ocr-latest + Langname im Projekt-Composer), js_gate PASS. Reines Frontend (nur main.css)."),
@@ -1410,7 +1411,7 @@ TOOL_GROUPS = {
                   "text_diff"},
     "ocr": {"ocr_inspect", "ocr_extract", "ocr_region", "ocr_fields", "ocr_tables"},
     "delegation": {"delegate_task", "task_status", "task_cancel"},
-    "background": {"run_background_task"},
+    "background": {"run_background_task", "retry_background_task"},
     "code_graph": {"code_search", "code_trace", "code_query", "code_snippet",
                    "ast_grep_search", "ast_grep_replace"},
     "git": {"git_command", "github_command", "git_worktree"},
@@ -1426,9 +1427,10 @@ TOOL_GROUPS = {
     "translation": {"translate_text", "translate_document", "detect_language",
                     "list_glossaries", "get_glossary"},
     "workflows": {"ask_user_for_file", "ask_llm", "agent_step"},
-    "workers": {"get_artifact_detail", "worker_status", "worker_abort",
-                "worker_pause", "worker_resume", "worker_send",
-                "worker_ask_user"},
+    # The worker_* control tools were removed 2026-07-13: their registry
+    # (execution.run_worker_subagent) lost its last caller when the native
+    # loop died — worker_abort & co. could never affect anything.
+    "workers": {"get_artifact_detail"},
     "image_gen": {"generate_image"},
 }
 
@@ -7534,7 +7536,8 @@ def apply_domain_context(*, agent_id: str, project: str = "",
             # exactly where detaching long work is wanted (panes visualize it).
             ctx.undefer_tools = list((ctx.undefer_tools or []) + [
                 "code_search", "code_trace", "code_query", "code_snippet",
-                "ast_grep_search", "ast_grep_replace", "run_background_task"])
+                "ast_grep_search", "ast_grep_replace", "run_background_task",
+                "retry_background_task"])
             # Build the index on first code-mode entry (idempotent + fast,
             # incremental). Repos may not be git, so we don't rely on cbm's
             # git-watcher — index explicitly. Best-effort; failure must not break
@@ -7857,6 +7860,13 @@ class TaskRunner:
         caller_user_id = get_request_context().current_user_id or ""
         caller_team_ids = list(get_request_context().current_team_ids or [])
 
+        # Pre-minted turn id for the delegate's LLM call: cancel() trips the
+        # loop's per-turn cancel Event via sidecar_proxy.cancel_turn, so a
+        # cancel actually STOPS the running call instead of merely flagging
+        # the row (the pre-hardening soft-cancel only checked the flag before/
+        # after the call).
+        turn_id = _uuid.uuid4().hex
+
         with self._lock:
             self._tasks[task_id] = {
                 "id": task_id,
@@ -7868,12 +7878,14 @@ class TaskRunner:
                 "error": None,
                 "submitted_at": datetime.datetime.now().isoformat(),
                 "finished_at": None,
+                "turn_id": turn_id,
             }
             self._cancel_flags[task_id] = cancel_flag
 
         thread = threading.Thread(
             target=self._run_task,
-            args=(task_id, agent_id, task, model, cancel_flag, caller_user_id, caller_team_ids),
+            args=(task_id, agent_id, task, model, cancel_flag, caller_user_id,
+                  caller_team_ids, turn_id),
             daemon=True)
         self._threads[task_id] = thread
         thread.start()
@@ -7896,7 +7908,16 @@ class TaskRunner:
             self._cancel_flags[task_id].set()
             self._tasks[task_id]["status"] = "cancelled"
             self._tasks[task_id]["finished_at"] = datetime.datetime.now().isoformat()
-            return True
+            turn_id = self._tasks[task_id].get("turn_id") or ""
+        # Actually stop the in-flight LLM call (not just flag the row): trip the
+        # per-turn cancel Event the delegate's background_call registered.
+        if turn_id:
+            try:
+                from handlers import sidecar_proxy as _sp
+                _sp.cancel_turn(turn_id)
+            except Exception:
+                pass
+        return True
 
     def get_result(self, task_id: str) -> dict | None:
         """Get result, blocking until complete if still running. Timeout 0.1s poll."""
@@ -7909,7 +7930,8 @@ class TaskRunner:
     def _run_task(self, task_id: str, agent_id: str, task: str,
                   model: str | None, cancel_flag: threading.Event,
                   caller_user_id: str = "",
-                  caller_team_ids: list | None = None):
+                  caller_team_ids: list | None = None,
+                  turn_id: str = ""):
         caller_team_ids = caller_team_ids or []
         """Execute a task in a background thread."""
         target = AgentConfig(agent_id)
@@ -8015,10 +8037,15 @@ class TaskRunner:
                             messages=_wire_messages, model=model, system_prompt=_wire_system,
                             agent_id=agent_id, cost_purpose="delegate_task",
                             max_tokens=int(delegate_inf.get("max_tokens") or 0) or None,
+                            turn_id=turn_id or None,
                         )
                         result_text = _del_deanon(_res.get("reply") or "")
-                        if cancel_flag.is_set():
+                        if cancel_flag.is_set() or _res.get("cancelled"):
                             status = "cancelled"
+                        elif _res.get("timed_out"):
+                            result_text = (result_text
+                                           + "\n\n(Delegate timeout — Teilergebnis)").strip()
+                            status = "error"
                         elif _res.get("error"):
                             result_text = f"Delegate error: {_res['error']}"
                             status = "error"
@@ -14235,16 +14262,9 @@ def _display_tool_result(name: str, result_str: str) -> None:
         _update_tool_counter()
 
 
-# --- Worker Subagent Tool Handlers (v8.0.0) ---
-
-# tool_get_artifact_detail moved to engine/tools/misc_tools.py and the worker
-# control tools (worker_status / worker_abort / worker_pause / worker_resume /
-# worker_send) moved to engine/tools/delegation_tools.py (refactor E4);
-# all re-exported below near TOOL_DISPATCH.
-
-
-# tool_worker_ask_user moved to engine/tools/ask_tools.py (refactor E4);
-# re-exported below near TOOL_DISPATCH.
+# tool_get_artifact_detail moved to engine/tools/misc_tools.py (refactor E4);
+# re-exported below near TOOL_DISPATCH. The worker_* control tools were
+# REMOVED 2026-07-13 (dead registry — no writer since the native loop died).
 
 
 # --- Native-loop ask_user: session-scoped pending-answer registry ---
@@ -14559,11 +14579,7 @@ from engine.tools.delegation_tools import (  # noqa: E402
     tool_task_status,
     tool_task_cancel,
     tool_run_background_task,
-    tool_worker_status,
-    tool_worker_abort,
-    tool_worker_pause,
-    tool_worker_resume,
-    tool_worker_send,
+    tool_retry_background_task,
 )
 from engine.tools.misc_tools import (  # noqa: E402
     tool_use_skill,
@@ -14593,7 +14609,6 @@ from engine.tools.ask_tools import (  # noqa: E402
     tool_ask_llm,
     tool_ask_user,
     tool_ask_user_for_file,
-    tool_worker_ask_user,
 )
 TOOL_DISPATCH = {
     "read_file": tool_read_file,
@@ -14642,6 +14657,7 @@ TOOL_DISPATCH = {
     "task_status": tool_task_status,
     "task_cancel": tool_task_cancel,
     "run_background_task": tool_run_background_task,
+    "retry_background_task": tool_retry_background_task,
     "use_skill": tool_use_skill,
     "find_skills": tool_find_skills,
     "helpdesk_session_info": tool_helpdesk_session_info,
@@ -14685,12 +14701,6 @@ TOOL_DISPATCH = {
     "git_worktree": tool_git_worktree,
     "tool_search": lambda args: _tool_search(args),
     "get_artifact_detail": tool_get_artifact_detail,
-    "worker_status": tool_worker_status,
-    "worker_abort": tool_worker_abort,
-    "worker_pause": tool_worker_pause,
-    "worker_resume": tool_worker_resume,
-    "worker_send": tool_worker_send,
-    "worker_ask_user": tool_worker_ask_user,
     "ask_user": tool_ask_user,
     "generate_image": tool_generate_image,
     "render_diagram": tool_render_diagram,

@@ -1099,7 +1099,34 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
     and drops out of context after that turn — like a tool result.
   Either path consumes the task exactly once.
 - **Cancel = partial kept**: Stopp trips a flag + cancels the in-flight turn; the
-  worker stores whatever output it had and marks the row `cancelled`.
+  worker stores whatever output it had and marks the row `cancelled`. Stopp
+  surfaces: right-panel task card, Subagenten-Hub card, sidebar ✦ row (hover
+  → stop icon), Termchat spinner line („alle stoppen" →
+  `POST /v1/background-tasks/cancel-session`). A subagent blocked in
+  `ask_user` unblocks within ~1s of a cancel (the pending-answer wait polls
+  the turn's cancel Event — before the hardening it slept through its full
+  ask timeout).
+- **Stopp-cascade (2026-07-13)**: `POST /v1/chat/cancel` also cancels the
+  background tasks the CANCELLED turn spawned (`spawn_turn_id` column matched
+  against the session's `active_turns` row). Detached tasks from earlier turns
+  keep running.
+- **Failure classes + model reaction (2026-07-13 hardening)**: a task ends
+  `done|cancelled|error|timeout|empty`. `timeout`: `run_turn_blocking` now
+  ENFORCES its `timeout_s` wall-clock (the parameter was dead before — the
+  loop had no turn-level timeout; `_TIMEOUT_S`=1h was decorative) via the
+  is_cancelled poll + socket watcher; the result carries `timed_out=True` and
+  a loud `error` so no background caller mistakes a timed-out partial for
+  success. `empty`: finished without error but zero output. The delivery
+  preamble (`_bg_member_block`/`_bg_decision_tail` in handlers/chat.py) labels
+  every failed member with its class + `task_id` and appends decision rules:
+  error/timeout/empty → the model may retry ONCE via `retry_background_task`
+  (optionally on another model), do the work inline, or report; `cancelled`
+  (user Stopp) → never restart unasked, use the partial, ask the user if the
+  result is essential. The retry cap is enforced server-side (`retry_of`
+  column: a retry can't be retried, one retry per task). A retry runs in its
+  own group; at its join the ORIGINAL group's successful sibling outputs are
+  re-attached from the DB (`_bg_original_group_blocks`) because their one-time
+  wire delivery was already spent.
 - **Live transcript (9.308.0)**: the runner holds a per-task `LiveStream`
   (`server.LiveStream` resolved via the sys.modules seam; None-tolerant) and
   passes an `emit` tap into `background_call` (the same seam the workflow

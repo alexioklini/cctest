@@ -551,11 +551,17 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
 
 ## Delegation / workers
 
-- `delegate_task(agent, prompt)` — fire-and-forget subagent
+- `delegate_task(agent, prompt, model?, wait?)` — delegate to ANOTHER agent.
+  With `wait=true` it blocks up to 300s; if the delegate is still working then,
+  the tool returns `status: "running"` (NOT an error) — poll `task_status`.
+  Errors come back as tool errors in the SAME turn, so the calling model can
+  retry, pick a different `model`, or do the work itself. `task_cancel` now
+  actually stops the delegate's in-flight LLM call (not just the status row).
 - `task_status(task_id)` / `task_cancel(task_id)`
-- `worker_status(id)` / `worker_abort` / `worker_pause` / `worker_resume` /
-  `worker_send(id, msg)` / `worker_ask_user(id, q)`
 - `get_artifact_detail(id)` — artifact metadata
+- The `worker_*` control tools (worker_status/abort/pause/resume/send/ask_user)
+  were REMOVED 2026-07-13 — their registry had no writer since the native loop
+  was deleted, so they could never affect anything.
 
 ## Background tasks (group `background`)
 
@@ -575,6 +581,22 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   — do NOT create a separate summary task. Calls made in the same turn are
   grouped automatically even without an explicit `group_id`. A background task
   may NOT itself start background tasks (no nesting).
+- `retry_background_task(task_id, model?)` — retry ONE failed background task
+  (status `error`/`timeout`/`empty`), allowed EXACTLY ONCE per task —
+  server-enforced via the `retry_of` column (a retry can't be retried, and a
+  task with an existing retry is refused). `model` reruns on a different
+  (enabled) model — for model-related failures (refusal, empty answer,
+  provider errors). USER-cancelled tasks are refused: a deliberate Stopp is
+  the user's decision. The retry joins as its own group; the delivery turn
+  re-attaches the ORIGINAL group's successful sibling outputs from the DB so
+  the combine step sees the full set again.
+- **Failure semantics (2026-07-13 hardening):** every task ends in one of
+  `done | cancelled | error | timeout | empty`. `timeout` = the enforced 1h
+  wall-clock limit fired (partial kept); `empty` = finished without error but
+  produced no output. The delivery preamble labels each failed member with its
+  class + `task_id` and instructs the model: error/timeout/empty → retry once
+  / do it inline / report; user-cancel → never restart unasked, use the
+  partial, ask the user if the result is essential.
 
 ## Scheduler (admin-side from chat)
 
@@ -891,7 +913,7 @@ web           web_fetch exa_search searxng_search
               science_search dev_search image_search news_search
 email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply
 delegation    delegate_task task_status task_cancel
-background     run_background_task
+background     run_background_task retry_background_task
 code_graph    code_search code_trace code_query code_snippet ast_grep_search ast_grep_replace
 git           git_command github_command git_worktree
 scheduler     schedule_list schedule_history
@@ -904,8 +926,7 @@ audio         transcribe_audio generate_audio_overview
 translation   translate_text translate_document detect_language
               list_glossaries get_glossary
 workflows     ask_user_for_file ask_llm agent_step
-workers       get_artifact_detail worker_status worker_abort worker_pause
-              worker_resume worker_send worker_ask_user
+workers       get_artifact_detail   (worker_* control tools removed 2026-07-13)
 image_gen     generate_image
 ```
 

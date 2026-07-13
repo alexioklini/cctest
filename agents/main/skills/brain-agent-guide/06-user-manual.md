@@ -1702,9 +1702,19 @@ Sie auf einen Blick, dass noch gearbeitet wird, auch wenn der Chat selbst
 schon geantwortet hat. Das **Schließen einer Karte oder des Tabs stoppt nichts**
 — nur der Stopp-Knopf. Nach einem **Seiten-Reload** kommen die Karten wieder
 (laufende live, fertige aus dem gespeicherten Verlauf). Zusätzlich erscheinen
-laufende Subagenten in der **linken Chat-Liste als ✦-Zeilen unter ihrem Chat**.
+laufende Subagenten in der **linken Chat-Liste als ✦-Zeilen unter ihrem Chat** —
+beim Überfahren einer ✦-Zeile erscheint dort ein **Stopp-Symbol**, mit dem Sie
+den einzelnen Subagenten direkt aus der Liste stoppen (das Teilergebnis bleibt
+erhalten). Im Terminal-Chat zeigt die grüne Subagenten-Zeile am Log-Ende
+zusätzlich **„alle stoppen"** — ein Klick bricht sämtliche laufenden
+Subagenten dieses Chats auf einmal ab.
 Ist die Aufgabe fertig, verarbeitet der Chat das Ergebnis automatisch in einem
 Folge-Turn — ein offener Terminal-Chat springt dafür von selbst an.
+
+**Stopp gilt für Turn + Subagenten:** Bricht man eine **laufende Antwort** ab
+(Stopp-Knopf im Composer bzw. Esc im Terminal-Chat), werden die Subagenten, die
+**genau diese Antwort** gestartet hat, mitgestoppt. Subagenten aus früheren
+Antworten laufen weiter — sie haben ihre eigenen Stopp-Knöpfe.
 
 Die Aufgabe läuft als **derselbe Agent** (gleiche Werkzeuge) in einem eigenen
 Lauf. Das **ausführende Modell** ist standardmäßig das Chat-Modell, kann aber ein
@@ -1756,6 +1766,17 @@ eine neue Antwort, die das Ergebnis zusammenfasst/damit weiterarbeitet — du mu
 nichts tun. (Schreibst du gerade selbst eine Nachricht, während die Aufgabe fertig
 wird, fließt das Ergebnis in genau diese Antwort ein.) Das Ergebnis wird genau
 einmal verwendet. **Stopp** behält das bis dahin erzeugte Teilergebnis.
+
+**Wenn etwas schiefgeht, reagiert der Assistent selbst:** Scheitert eine
+Teilaufgabe (API-Fehler, Zeitlimit — jede Aufgabe wird nach spätestens 1 Stunde
+beendet —, oder eine leere Antwort), entscheidet das Modell bei der Auslieferung,
+was sinnvoll ist: die Teilaufgabe **genau einmal neu starten** (bei Bedarf auf
+einem anderen Modell), sie **direkt selbst erledigen** oder den Ausfall
+transparent berichten und mit den vorhandenen Ergebnissen weiterarbeiten. Mehr
+als ein Neustart pro Aufgabe ist technisch nicht möglich — Endlosschleifen sind
+ausgeschlossen. Eine Aufgabe, die **Sie selbst gestoppt** haben, startet der
+Assistent dagegen nie ungefragt neu: Er nutzt das Teilergebnis und fragt nach,
+wenn das fehlende Ergebnis zwingend gebraucht wird.
 
 Die Aufgaben einer Sitzung bleiben erhalten: nach einem Browser-Reload zeigt die
 Uhren-Pille sie wieder an, und im Panel stehen die fertigen unter „Fertig", bis

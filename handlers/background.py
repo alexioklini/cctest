@@ -3,6 +3,8 @@
 Routes (registered in server.py):
   GET    /v1/background-tasks?session_id=X      → list tasks for a session
   POST   /v1/background-tasks/cancel {task_id}   → request cancel (partial kept)
+  POST   /v1/background-tasks/cancel-session {session_id}
+                                                 → cancel ALL running tasks of a chat
   DELETE /v1/background-tasks {task_id}          → remove a finished/aborted row
   GET    /v1/background-tasks/<id>/transcript    → SSE: live Brain-vocabulary
                                                    events while running (LiveStream
@@ -69,6 +71,21 @@ class BackgroundTasksHandlerMixin:
                              "status": row.get("status")})
             return
         self._send_json({"task_id": task_id, "cancelled": True})
+
+    def _handle_background_tasks_cancel_session(self):
+        """POST /v1/background-tasks/cancel-session {session_id} — cancel ALL
+        running background tasks of one chat ('alle Subagenten stoppen', used
+        by the Termchat spinner line and as a bulk affordance). Partial outputs
+        are kept, statuses become 'cancelled' (same semantics as per-task
+        Stopp)."""
+        from engine.background_tasks import background_task_runner
+        body = self._read_json()
+        session_id = (body.get("session_id") or "").strip()
+        if not session_id:
+            self._send_json({"error": "session_id required"}, 400)
+            return
+        n = background_task_runner.cancel_session_tasks(session_id)
+        self._send_json({"session_id": session_id, "cancelled": n})
 
     def _handle_background_task_cancel_tool(self):
         """POST /v1/background-tasks/cancel-tool {task_id, tool_use_id} — cancel

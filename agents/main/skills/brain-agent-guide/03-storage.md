@@ -325,15 +325,25 @@ context-filtered replay (see `05-internals.md` → Brainy).
 ### chats.db → background_tasks (Hintergrundaufgaben)
 ```
 id TEXT PK, session_id TEXT, agent_id TEXT, model TEXT, title TEXT,
-prompt TEXT, status TEXT (running|done|cancelled|error), turn_id TEXT,
-output TEXT (full final text — incl. partial on cancel), error TEXT,
+prompt TEXT, status TEXT (running|done|cancelled|error|timeout|empty), turn_id TEXT,
+output TEXT (full final text — incl. partial on cancel/timeout), error TEXT,
 usage_in INTEGER, usage_out INTEGER, tool_calls INTEGER (count),
 tool_events TEXT (JSON per-tool list [{name,args,tool_use_id,result,is_error,elapsed_ms}]
                   — assistant.metadata.tools[] shape; drives the panel's tool cards
                   live AND after reload),
 group_id TEXT, follow_up TEXT, group_done_at REAL, parent_task_id TEXT (fan-out/join),
+spawn_turn_id TEXT (the chat turn that spawned the task — chat-cancel Stopp-cascade),
+retry_of TEXT (set on a retry_background_task clone; doubles as the server-side
+               1-retry cap: a retry can't be retried, an already-retried task
+               can't be retried again),
 created_at REAL, finished_at REAL, consumed_at REAL
 ```
+Failure classes (2026-07-13 hardening): `timeout` = the enforced per-task
+wall-clock limit (`_TIMEOUT_S`, 1h — actually enforced in `run_turn_blocking`
+since the hardening; before that the constant was decorative) fired, partial
+kept; `empty` = finished without error but produced no output. Both are
+delivered to the model as retryable failure classes; `cancelled` (user Stopp)
+is delivered with an explicit do-NOT-restart instruction.
 Index `idx_bgtask_session(session_id, created_at)`. Rows are written by
 `engine/background_tasks.py` (the detached runner). `consumed_at` is set when
 the finished `output` has been folded into a chat turn (wire-only) — guarantees

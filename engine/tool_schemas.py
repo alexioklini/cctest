@@ -1481,6 +1481,31 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "retry_background_task",
+        "description": (
+            "Retry ONE failed background task — allowed EXACTLY ONCE per task "
+            "(server-enforced) and only for tasks that failed on their own "
+            "(status error, timeout or empty). Use it when a delivered "
+            "background result reports an API error, a timeout or an empty "
+            "answer and the work is still needed. Pass `model` to rerun on a "
+            "DIFFERENT model when the failure looks model-related (refusal, "
+            "empty answer, repeated API errors on that provider); omit it to "
+            "rerun on the same model for transient errors. NOT for tasks the "
+            "USER cancelled — a deliberate stop is the user's decision: use "
+            "the partial result or ask the user. If the retry is refused or "
+            "has already been used, do the work directly in this turn or "
+            "report the failure — never loop."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The id of the failed task, as given in the delivered result block."},
+                "model": {"type": "string", "description": "Optional: run the retry on this model instead (exact model id). Use when the failure looks model-related."},
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
         "name": "use_skill",
         "description": (
             "Load a skill's instructions into context. Skills provide specialized knowledge "
@@ -2119,99 +2144,6 @@ TOOL_DEFINITIONS = [
                 "limit": {"type": "integer", "description": "Maximum characters to return (default: 16384)"},
             },
             "required": ["artifact_id"],
-        },
-    },
-    {
-        "name": "worker_status",
-        "description": "Get current state of running or completed worker subagents. Use this to inform the user what a background task is doing.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "worker_id": {"type": "string", "description": "Specific worker ID. Omit for all workers in this session."},
-            },
-        },
-    },
-    {
-        "name": "worker_abort",
-        "description": "Abort a running worker subagent. Idempotent — aborting an already-aborted worker returns success.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "worker_id": {"type": "string", "description": "Worker ID to abort"},
-                "reason": {"type": "string", "description": "Reason for aborting (logged and shown to user)"},
-            },
-            "required": ["worker_id"],
-        },
-    },
-    {
-        "name": "worker_pause",
-        "description": "Pause a running worker at its next safepoint without terminating it.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "worker_id": {"type": "string", "description": "Worker ID to pause"},
-                "reason": {"type": "string", "description": "Reason for pausing"},
-            },
-            "required": ["worker_id"],
-        },
-    },
-    {
-        "name": "worker_resume",
-        "description": "Resume a paused worker without adding input.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "worker_id": {"type": "string", "description": "Worker ID to resume"},
-            },
-            "required": ["worker_id"],
-        },
-    },
-    {
-        "name": "worker_send",
-        "description": "Send additional context or instructions to a running or paused worker. If paused, also resumes the worker.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "worker_id": {"type": "string", "description": "Worker ID to send to"},
-                "message": {"type": "string", "description": "Message content to inject into the worker's context"},
-                "role": {"type": "string", "enum": ["user", "system"], "description": "Message role (default: user)"},
-            },
-            "required": ["worker_id", "message"],
-        },
-    },
-    {
-        "name": "worker_ask_user",
-        "description": (
-            "Ask the user one or more questions that cannot be decided from available context. "
-            "The worker will pause until answered. Only available inside a worker subagent. "
-            "Use sparingly — prefer making reasonable decisions autonomously. "
-            "When the user explicitly asks you to pose questions to them (e.g. \"ask me 5 questions\", "
-            "\"interview me\", \"quiz me\"), pass them all in the `questions` array in a single call — "
-            "this renders one interactive answer card in the UI with all questions at once. "
-            "For a single clarifying question, either pass `question` (string) or a 1-item `questions` array."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "questions": {
-                    "type": "array",
-                    "description": "Batch of 1-8 questions to ask the user. Each item: {question: str, options?: [str]}. Use this to ask multiple questions in one UI card.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "question": {"type": "string", "description": "The question text"},
-                            "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options for this question"},
-                        },
-                        "required": ["question"],
-                    },
-                    "minItems": 1,
-                    "maxItems": 8,
-                },
-                "question": {"type": "string", "description": "Single question text (alternative to `questions`). Use `questions` for multi-question batches."},
-                "options": {"type": "array", "items": {"type": "string"}, "description": "Optional multiple-choice options (only used with single `question`)"},
-                "context_summary": {"type": "string", "description": "Brief context so the user understands why these questions are being asked"},
-                "timeout_seconds": {"type": "integer", "description": "Seconds to wait for an answer before aborting (default: 300)"},
-            },
         },
     },
     {

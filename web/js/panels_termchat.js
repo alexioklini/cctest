@@ -900,9 +900,26 @@ function _tcSubSpinRender(tab) {
     return;
   }
   if (!row) {
+    // Zwei Teile: der TEXT-Span wird vom 80ms-Ticker neu gemalt, der
+    // Stopp-Knopf ist STATISCH (ein innerHTML-Repaint der ganzen Zeile würde
+    // seinen Click-Handler alle 80ms wegwerfen). Zeile → Hub; Stopp → alle
+    // Subagenten dieser Session abbrechen (Teilergebnisse bleiben).
     row = document.createElement('div');
     row.className = 'tc-row tc-subspin';
     row.onclick = () => { try { _terminalActivate(_AGENT_HUB_ID); } catch (_) {} };
+    const txt = document.createElement('span');
+    txt.className = 'tc-subspin-txt';
+    const stop = document.createElement('button');
+    stop.className = 'tc-subspin-stop';
+    stop.title = 'Alle Subagenten dieses Chats stoppen (Teilergebnisse bleiben erhalten)';
+    stop.innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> alle stoppen';
+    stop.onclick = async (e) => {
+      e.stopPropagation();
+      try { await API.cancelSessionBackgroundTasks(tab.sessionId); } catch (_) {}
+      try { pollRunningSubagents(); } catch (_) {}
+    };
+    row.appendChild(txt);
+    row.appendChild(stop);
     log.appendChild(row);
     tab._subSpinRow = row;
     tab._subSpinIdx = 0;
@@ -913,7 +930,8 @@ function _tcSubSpinRender(tab) {
     const what = asking
       ? `❓ Subagent wartet auf Ihre Antwort`
       : `✦ ${n} Subagent${n === 1 ? '' : 'en'} arbeite${n === 1 ? 't' : 'n'} im Hintergrund`;
-    tab._subSpinRow.innerHTML =
+    const txt = tab._subSpinRow.querySelector('.tc-subspin-txt');
+    if (txt) txt.innerHTML =
       `<span class="tc-spinner">${_TC_SPIN[tab._subSpinIdx]}</span> ${esc(what)} …`;
   };
   paint();

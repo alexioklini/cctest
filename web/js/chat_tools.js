@@ -156,6 +156,7 @@ function toolDescribe(name, args) {
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     run_background_task: () => a.title ? `Hintergrundaufgabe: ${a.title}` : 'Hintergrundaufgabe starten',
+    retry_background_task: () => `Hintergrundaufgabe erneut starten${a.model ? ' auf ' + (typeof modelShortName === 'function' ? modelShortName(a.model, false) : a.model) : ''}`,
     gmail_inbox: () => 'Posteingang prüfen',
     gmail_read: () => `E-Mail lesen${a.id ? ' #' + a.id : ''}`,
     gmail_search: () => `E-Mails suchen: „${a.query || '...'}"`,

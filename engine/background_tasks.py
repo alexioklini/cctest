@@ -75,7 +75,8 @@ class BackgroundTaskRunner:
     # ---- public API -------------------------------------------------------
 
     def spawn(self, *, session, title: str, prompt: str,
-              group_id=None, follow_up=None, parent_task_id=None) -> str:
+              group_id=None, follow_up=None, parent_task_id=None,
+              spawn_turn_id="", retry_of=None, model_override="") -> str:
         """Insert a running row + launch the worker thread. Returns task_id
         immediately. `session` is the live Session the tool was called from —
         we snapshot the fields we need under its lock, never hand the object to
@@ -84,7 +85,12 @@ class BackgroundTaskRunner:
         Fan-out: group_id links calls the model emitted together; follow_up is
         the recombine instruction carried out once the whole group is done.
         parent_task_id is set when spawned from inside a background run (the
-        tool refuses this — nesting guard — so it's belt-and-suspenders)."""
+        tool refuses this — nesting guard — so it's belt-and-suspenders).
+        spawn_turn_id links the task to the spawning chat turn (Stopp-cascade).
+        retry_of + model_override come from retry_background_task: the retry
+        clone may run on an explicitly chosen model — an explicit override wins
+        over the per-model background_task_model offload (the whole point is to
+        escape the model that just failed)."""
         task_id = uuid.uuid4().hex
         with session.lock:
             snapshot = {
@@ -110,11 +116,19 @@ class BackgroundTaskRunner:
         # model; only the leaf runs swap. Empty/unset → leaf stays on chat model.
         # background_task_model == "auto" → classify THIS sub-task's prompt and
         # pick the best-fitting leaf model (same dispatcher as composer Auto).
-        snapshot["model"] = self._resolve_fanout_model(snapshot["model"], snapshot, prompt)
+        if model_override:
+            import brain as _brain
+            snapshot["model"] = model_override
+            snapshot["thinking_level"] = self._match_thinking_level(
+                snapshot.get("thinking_level"), model_override,
+                (_brain._models_config or {}).get(model_override) or {})
+        else:
+            snapshot["model"] = self._resolve_fanout_model(snapshot["model"], snapshot, prompt)
         ChatDB.create_background_task(
             task_id, snapshot["session_id"], snapshot["agent_id"],
             snapshot["model"], title, prompt,
-            group_id=group_id, follow_up=follow_up, parent_task_id=parent_task_id)
+            group_id=group_id, follow_up=follow_up, parent_task_id=parent_task_id,
+            spawn_turn_id=spawn_turn_id or "", retry_of=retry_of)
         cancel_ev = threading.Event()
         with self._lock:
             self._live[task_id] = {"turn_id": "", "cancel": cancel_ev,
@@ -139,6 +153,26 @@ class BackgroundTaskRunner:
         if turn_id:
             sidecar_proxy.cancel_turn(turn_id)
         return True
+
+    def cancel_session_tasks(self, session_id: str, spawn_turn_id: str = "") -> int:
+        """Cancel every RUNNING background task of a session (optionally only
+        those spawned by one chat turn — the Stopp-cascade case). Returns the
+        number of cancel requests issued. DB rows are the source of truth for
+        which tasks exist; self.cancel() no-ops for tasks whose thread already
+        finished."""
+        cancelled = 0
+        try:
+            rows = ChatDB.list_background_tasks(session_id) or []
+        except Exception:
+            rows = []
+        for r in rows:
+            if r.get("status") != "running":
+                continue
+            if spawn_turn_id and (r.get("spawn_turn_id") or "") != spawn_turn_id:
+                continue
+            if self.cancel(r.get("id")):
+                cancelled += 1
+        return cancelled
 
     def cancel_tool(self, task_id: str, tool_use_id: str) -> bool:
         """Cancel ONE in-flight tool call of a running task. Resolve the task's
@@ -419,13 +453,25 @@ class BackgroundTaskRunner:
             # swaps are already applied to `model` — and tagged 'background_task'
             # via the request_context cost_purpose set in this worker). No
             # explicit _log_call_cost here, or it would double-count.
-            if cancel_ev.is_set():
+            if res.get("timed_out"):
+                # Wall-clock limit (run_turn_blocking enforces _TIMEOUT_S now).
+                # Distinct from user-cancel: the delivery preamble tells the
+                # model a RETRY is legitimate here, unlike a deliberate Stopp.
+                status = "timeout"
+                error = (f"Zeitlimit überschritten ({int(_TIMEOUT_S // 60)} min) "
+                         f"— Teilergebnis behalten")
+            elif cancel_ev.is_set():
                 status = "cancelled"
             elif res.get("error"):
                 status = "error"
                 error = str(res.get("error"))
             elif res.get("cancelled"):
                 status = "cancelled"
+            elif not output.strip():
+                # Finished "cleanly" but produced nothing — an insufficient
+                # response the join must surface as retryable, not as success.
+                status = "empty"
+                error = "Leere Antwort — der Lauf lieferte kein Ergebnis"
         except _Cancelled:
             status = "cancelled"
         except _brain.GDPRSkipError as se:
@@ -441,7 +487,9 @@ class BackgroundTaskRunner:
             error = f"{type(e).__name__}: {e}"
         finally:
             # If cancel tripped after a partial reply, keep the partial text.
-            if cancel_ev.is_set() and status != "error":
+            # (timeout keeps its own status — the classes drive different
+            # retry guidance in the delivery preamble.)
+            if cancel_ev.is_set() and status not in ("error", "timeout"):
                 status = "cancelled"
             ChatDB.finish_background_task(
                 task_id, status, output=output, error=error,

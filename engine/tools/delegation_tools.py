@@ -1,20 +1,17 @@
-# Delegation + worker-subagent tool bodies (extracted from brain.py, E4).
+# Delegation tool bodies (extracted from brain.py, E4).
 #
-# Two related clusters in one module:
 #   - delegate_task / task_status / task_cancel — TaskRunner-backed agent
 #     delegation (the `_task_runner` singleton stays in brain).
-#   - worker_status / worker_send / worker_pause / worker_resume /
-#     worker_abort — thin wrappers around `execution.get_worker_registry()`.
+#   - run_background_task / retry_background_task — detached same-agent runs
+#     (BackgroundTaskRunner in engine/background_tasks.py).
 #
-# Pure relocation: JSON envelopes + error strings byte-identical to pre-E4.
-# (worker_ask_user is grouped with the other AskUser tools in
-#  engine/tools/ask_tools.py — it shares the AskUser blocking machinery.)
+# (The worker_* control tools that used to live here were removed 2026-07-13 —
+#  their registry lost its last writer when the native loop died, so
+#  worker_abort & co. could never affect anything.)
 #
 # Seams:
 #   - `_ok` / `_err` from engine.tool_exec.
-#   - `_thread_local` from engine.context.
-#   - `execution.get_worker_registry` imported lazily inside each worker tool
-#     (matches the pre-E4 in-function import — `execution` lives at repo root).
+#   - request state via `get_request_context()` (engine.context).
 #   - brain runtime symbols (`list_agents`, `_get_delegation_scope`,
 #     `_task_runner`, `_current_agent`) reached lazily via `import brain as
 #     _brain`. NO top-level `import brain` (cycle).
@@ -56,7 +53,7 @@ def tool_delegate_task(args: dict) -> str:
     task_id = _brain._task_runner.submit(agent_id, task, args.get("model"))
 
     if wait:
-        # Synchronous: wait for result
+        # Synchronous: wait for result (get_result joins with a 300s cap).
         result = _brain._task_runner.get_result(task_id)
         if result and result.get("status") == "completed":
             return _ok({
@@ -64,6 +61,19 @@ def tool_delegate_task(args: dict) -> str:
                 "agent": agent_id,
                 "task": task,
                 "response": result.get("result", ""),
+            })
+        elif result and result.get("status") == "running":
+            # Join cap hit but the delegate is STILL WORKING — not a failure.
+            # (Pre-hardening this surfaced as an error and the task's later
+            # result was silently lost to the caller.)
+            return _ok({
+                "task_id": task_id,
+                "agent": agent_id,
+                "status": "running",
+                "message": ("Delegate still running after 300s — NOT failed. "
+                            f"Poll task_status(task_id='{task_id}') to fetch "
+                            "the result later in this turn, or tell the user "
+                            "it is still working."),
             })
         elif result:
             return _err(f"delegate_task: {result.get('status')} — {result.get('error', '')}")
@@ -164,7 +174,8 @@ def tool_run_background_task(args: dict) -> str:
 
     task_id = background_task_runner.spawn(
         session=session, title=title, prompt=prompt,
-        group_id=group_id, follow_up=follow_up)
+        group_id=group_id, follow_up=follow_up,
+        spawn_turn_id=getattr(ctx, "current_turn_id", "") or "")
     return _ok({
         "task_id": task_id,
         "status": "running",
@@ -177,66 +188,94 @@ def tool_run_background_task(args: dict) -> str:
     })
 
 
-def tool_worker_status(args: dict) -> str:
-    """Get current state of worker subagents."""
-    from execution import get_worker_registry
-    registry = get_worker_registry()
-    worker_id = args.get("worker_id")
-    if worker_id:
-        w = registry.get(worker_id)
-        if not w:
-            return _err(f"Worker '{worker_id}' not found")
-        return _ok({"workers": [registry.to_status_dict(w)]})
-    session_id = get_request_context().current_session_id or ""
-    workers = registry.list_session(session_id)
-    return _ok({"workers": [registry.to_status_dict(w) for w in workers]})
+def tool_retry_background_task(args: dict) -> str:
+    """Retry ONE failed background task (status error/timeout/empty) exactly
+    once, optionally on a different model. Server-enforced cap: a task that is
+    itself a retry, or that already has a retry pointing at it, is refused —
+    the model cannot loop. User-cancelled tasks are refused too (a deliberate
+    Stopp is the user's decision; ask them instead of re-running)."""
+    import sys as _sys
+    import brain as _brain
+    from server_lib.db import ChatDB
+    from engine.background_tasks import background_task_runner
 
+    task_id = (args.get("task_id") or "").strip()
+    if not task_id:
+        return _err("retry_background_task: task_id is required")
 
-def tool_worker_abort(args: dict) -> str:
-    """Abort a running worker."""
-    from execution import get_worker_registry
-    worker_id = args.get("worker_id", "")
-    reason = args.get("reason", "user requested abort")
-    if not worker_id:
-        return _err("worker_id is required")
-    ok = get_worker_registry().cancel(worker_id, reason)
-    return _ok({"aborted": ok, "worker_id": worker_id})
+    ctx = get_request_context()
+    if getattr(ctx, "current_bg_task", False):
+        return _err("retry_background_task: cannot retry from inside a "
+                    "background task.")
+    session_id = ctx.current_session_id or ""
+    if not session_id:
+        return _err("retry_background_task: no active session")
 
+    row = ChatDB.get_background_task(task_id)
+    if not row or row.get("session_id") != session_id:
+        return _err(f"retry_background_task: task '{task_id}' not found in this chat")
+    status = row.get("status") or ""
+    if status == "running":
+        return _err("retry_background_task: task is still running")
+    if status == "cancelled":
+        return _err("retry_background_task: this task was cancelled BY THE USER "
+                    "— do not restart it. Use the partial result; if the result "
+                    "is essential, ask the user how to proceed.")
+    if status not in ("error", "timeout", "empty"):
+        return _err(f"retry_background_task: task finished with status "
+                    f"'{status}' — only error/timeout/empty tasks can be retried")
+    # Server-side 1-retry cap: never retry a retry, never retry twice.
+    if row.get("retry_of"):
+        return _err("retry_background_task: this task is already a retry — no "
+                    "second retry allowed. Do the work directly here or report "
+                    "the failure.")
+    if ChatDB.background_task_retry_exists(session_id, task_id):
+        return _err("retry_background_task: this task was already retried once "
+                    "— no second retry allowed. Do the work directly here or "
+                    "report the failure.")
 
-def tool_worker_pause(args: dict) -> str:
-    """Pause a running worker."""
-    from execution import get_worker_registry
-    worker_id = args.get("worker_id", "")
-    reason = args.get("reason", "")
-    if not worker_id:
-        return _err("worker_id is required")
-    ok = get_worker_registry().pause(worker_id, reason)
-    if not ok:
-        return _err(f"Cannot pause worker '{worker_id}' (not running or not found)")
-    return _ok({"paused": True, "worker_id": worker_id})
+    model_override = (args.get("model") or "").strip()
+    if model_override:
+        mcfg = (_brain._models_config or {}).get(model_override)
+        if not mcfg or not mcfg.get("enabled", True):
+            enabled = sorted(m for m, c in (_brain._models_config or {}).items()
+                             if (c or {}).get("enabled", True))
+            return _err(f"retry_background_task: model '{model_override}' not "
+                        f"available. Enabled models: {', '.join(enabled[:30])}")
 
+    # Same session-resolution seam as tool_run_background_task.
+    _srv = _sys.modules.get("__main__") or _sys.modules.get("server")
+    _sessions = getattr(_srv, "sessions", None) if _srv else None
+    if _sessions is None:
+        return _err("retry_background_task: session manager unavailable")
+    session = _sessions.peek(session_id) or _sessions.get(session_id)
+    if session is None:
+        return _err("retry_background_task: session not loaded")
 
-def tool_worker_resume(args: dict) -> str:
-    """Resume a paused worker."""
-    from execution import get_worker_registry
-    worker_id = args.get("worker_id", "")
-    if not worker_id:
-        return _err("worker_id is required")
-    ok = get_worker_registry().resume(worker_id)
-    if not ok:
-        return _err(f"Cannot resume worker '{worker_id}' (not paused or not found)")
-    return _ok({"resumed": True, "worker_id": worker_id})
+    # The retry runs in a NEW group keyed to THIS turn (multiple retries issued
+    # in one delivery turn join together). The original group's successful
+    # sibling outputs are re-attached at join time via retry_of (see
+    # _build_group_preamble) — their one-time delivery is already spent.
+    turn_id = getattr(ctx, "current_turn_id", "") or ""
+    group_id = f"auto-{turn_id}" if turn_id else (
+        f"auto-{session_id}-retry-{__import__('uuid').uuid4().hex[:8]}")
 
-
-def tool_worker_send(args: dict) -> str:
-    """Send input to a running or paused worker."""
-    from execution import get_worker_registry
-    worker_id = args.get("worker_id", "")
-    message = args.get("message", "")
-    role = args.get("role", "user")
-    if not worker_id or not message:
-        return _err("worker_id and message are required")
-    ok = get_worker_registry().send(worker_id, message, role)
-    if not ok:
-        return _err(f"Cannot send to worker '{worker_id}' (terminal state or not found)")
-    return _ok({"sent": True, "worker_id": worker_id})
+    new_id = background_task_runner.spawn(
+        session=session,
+        title=(row.get("title") or "Hintergrundaufgabe"),
+        prompt=(row.get("prompt") or ""),
+        group_id=group_id,
+        follow_up=(row.get("follow_up") or None),
+        spawn_turn_id=turn_id,
+        retry_of=task_id,
+        model_override=model_override,
+    )
+    return _ok({
+        "task_id": new_id,
+        "retry_of": task_id,
+        "status": "running",
+        "model": model_override or row.get("model") or "",
+        "note": ("Retry started (the one allowed retry for this task). The "
+                 "result arrives automatically once finished — do NOT wait for "
+                 "it; finish this turn now."),
+    })

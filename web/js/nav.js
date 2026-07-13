@@ -1413,8 +1413,19 @@ function renderSessionsList(container, sessions) {
         ? modelShortName(t.model, false) : (t.model || '');
       const asks = !!t.pending_question;
       row.innerHTML = `<span class="sb-sub-dot"></span>
-        <span class="sb-sub-title" title="${asks ? 'Wartet auf Ihre Antwort — ' : ''}${esc(t.title || '')}${mdl ? ' · ' + esc(mdl) : ''}">${asks ? '❓' : '✦'} ${esc(t.title || 'Subagent')}</span>`;
+        <span class="sb-sub-title" title="${asks ? 'Wartet auf Ihre Antwort — ' : ''}${esc(t.title || '')}${mdl ? ' · ' + esc(mdl) : ''}">${asks ? '❓' : '✦'} ${esc(t.title || 'Subagent')}</span>
+        <button class="sb-sub-stop" title="Subagent stoppen (Teilergebnis bleibt erhalten)">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>`;
       row.onclick = (e) => { e.stopPropagation(); openSession(sid, sagent); };
+      const stopBtn = row.querySelector('.sb-sub-stop');
+      if (stopBtn) {
+        stopBtn.onclick = async (e) => {
+          e.stopPropagation();
+          try { await API.cancelBackgroundTask(t.id); } catch (_) {}
+          pollRunningSubagents();
+        };
+      }
       container.appendChild(row);
     }
   }

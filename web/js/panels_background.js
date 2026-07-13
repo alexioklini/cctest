@@ -93,7 +93,8 @@ function backgroundTasksActiveCount() {
   const sid = state.activeChat?.sessionId;
   if (!sid) return 0;
   return _bgTasksFor(sid).filter(t =>
-    t.status === 'running' || (t.consumed_at == null && (t.status === 'done' || t.status === 'cancelled'))
+    t.status === 'running' || (t.consumed_at == null && (t.status === 'done'
+      || t.status === 'cancelled' || t.status === 'timeout' || t.status === 'empty'))
   ).length;
 }
 
@@ -240,10 +241,12 @@ function refreshBackgroundTasksPill() {
 }
 
 const _BG_STATUS = {
-  running:   { label: 'läuft',         cls: 'bg-st-running' },
-  done:      { label: 'Abgeschlossen', cls: 'bg-st-done' },
-  cancelled: { label: 'Abgebrochen',   cls: 'bg-st-cancelled' },
-  error:     { label: 'Fehler',        cls: 'bg-st-error' },
+  running:   { label: 'läuft',                    cls: 'bg-st-running' },
+  done:      { label: 'Abgeschlossen',            cls: 'bg-st-done' },
+  cancelled: { label: 'Abgebrochen',              cls: 'bg-st-cancelled' },
+  error:     { label: 'Fehler',                   cls: 'bg-st-error' },
+  timeout:   { label: 'Zeitlimit überschritten',  cls: 'bg-st-error' },
+  empty:     { label: 'Leere Antwort',            cls: 'bg-st-error' },
 };
 
 function _bgDuration(t) {
@@ -269,7 +272,8 @@ const _BG_TASK_TIMEOUT_S = 3600;
 // Returns the dot CSS class.
 function _bgDotClass(t) {
   const status = t.status;
-  if (status === 'cancelled' || status === 'error') return 'bg-st-error';
+  if (status === 'cancelled' || status === 'error'
+      || status === 'timeout' || status === 'empty') return 'bg-st-error';
   if (status === 'done') return 'bg-st-done';
   if (status === 'running') {
     const start = t.created_at;
@@ -320,7 +324,8 @@ function _bgCard(t, inGroup) {
     actions.push(`<button class="bgtask-action bgtask-action-del" onclick="event.stopPropagation();deleteBgTask('${t.id}')">Löschen</button>`);
   }
   actions.push(`<button class="bgtask-action bgtask-link" onclick="event.stopPropagation();openBgTranscript('${t.id}')">Transkript anzeigen</button>`);
-  const errLine = (t.status === 'error' && t.error)
+  const errLine = ((t.status === 'error' || t.status === 'timeout'
+                    || t.status === 'empty') && t.error)
     ? `<div class="bgtask-error">${escapeHtml(t.error)}</div>` : '';
   const dotCls = _bgDotClass(t);
   // Request shown IMMEDIATELY (no transcript expand needed) — the prompt that
@@ -720,7 +725,8 @@ function _bgGroupCard(e) {
   const members = e.members || [];
   const total = members.length;
   const done = members.filter(m => m.status !== 'running').length;
-  const failed = members.filter(m => m.status === 'error' || m.status === 'cancelled').length;
+  const failed = members.filter(m => m.status === 'error' || m.status === 'cancelled'
+    || m.status === 'timeout' || m.status === 'empty').length;
   const running = total - done;
   const st = running ? _BG_STATUS.running : _BG_STATUS.done;
   const followUp = (members.find(m => m.follow_up) || {}).follow_up || '';

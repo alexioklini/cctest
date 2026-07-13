@@ -318,7 +318,8 @@ function _agentCardMeta(card) {
   const m = card.el.querySelector('.ap-meta');
   if (!m) return;
   const tok = (card.tokensIn || card.tokensOut) ? `${card.tokensIn}↑ ${card.tokensOut}↓` : '';
-  const label = { running: '', done: 'fertig', error: 'Fehler', cancelled: 'gestoppt' }[card.status] || card.status;
+  const label = { running: '', done: 'fertig', error: 'Fehler', cancelled: 'gestoppt',
+    timeout: 'Zeitlimit', empty: 'leere Antwort' }[card.status] || card.status;
   m.textContent = [label, _agentCardTimeText(card), tok].filter(Boolean).join(' · ');
 }
 
@@ -417,7 +418,8 @@ function _agentCardAttach(tab, card) {
         card.finishedAt = (Date.now() / 1000) - (_agentHubClockSkew || 0);
       }
       _agentCardSetState(tab, card, st === 'running' ? 'done' : st);
-      _agentCardTail(card, { done: '✓ fertig', error: '✗ Fehler', cancelled: '⏹ gestoppt' }[card.status] || card.status);
+      _agentCardTail(card, { done: '✓ fertig', error: '✗ Fehler', cancelled: '⏹ gestoppt',
+        timeout: '⏱ Zeitlimit', empty: '∅ leere Antwort' }[card.status] || card.status);
       if (card._notifyOnDone) _agentHubNotifyDelivery(card.sessionId);
     },
     /* onRequest */ (d) => {

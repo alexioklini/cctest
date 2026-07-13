@@ -29,6 +29,30 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.320.0",
+        "date": "2026-07-13",
+        "title": "Subagenten: überall stoppbar, robust bei Fehlern",
+        "body": "Hintergrund-Subagenten lassen sich jetzt an jeder Stelle "
+                "stoppen, an der Sie sie sehen: direkt in der linken "
+                "Chat-Liste (Stopp-Symbol an der ✦-Zeile), im Terminal-Chat "
+                "(„alle stoppen“ an der Subagenten-Zeile) und wie bisher im "
+                "Hintergrundaufgaben-Panel und im Subagenten-Hub — das "
+                "Teilergebnis bleibt dabei immer erhalten. Der Stopp-Knopf "
+                "einer laufenden Antwort bricht jetzt auch die Subagenten ab, "
+                "die genau diese Antwort gestartet hat. Zudem heilen sich "
+                "parallele Recherchen selbst: Scheitert eine Teilaufgabe "
+                "(Fehler, leere Antwort oder das jetzt verlässlich greifende "
+                "1-Stunden-Zeitlimit), startet der Assistent sie einmal neu — "
+                "bei Bedarf auf einem anderen Modell —, erledigt sie selbst "
+                "oder berichtet den Ausfall transparent; Endlosschleifen sind "
+                "technisch ausgeschlossen. Eine von Ihnen gestoppte Aufgabe "
+                "wird dagegen nie ungefragt neu gestartet. Wartende "
+                "Rückfragen von Subagenten reagieren auf ein Stopp jetzt "
+                "sofort statt erst nach Minuten.",
+        "audience": "user",
+        "versions": ["9.320.0"],
+    },
+    {
         "version": "9.318.0",
         "date": "2026-07-13",
         "title": "Dateien vergleichen — Daten, Code, JSON/XML",

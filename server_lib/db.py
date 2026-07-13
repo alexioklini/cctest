@@ -846,7 +846,9 @@ class ChatDB:
             # the run_background_task tool. The full `output` lives here only; it
             # is injected wire-only into the spawning session's NEXT turn (then
             # marked consumed_at) so it never enters chat history / the wire on
-            # later turns. status: running|done|cancelled|error.
+            # later turns. status: running|done|cancelled|error|timeout|empty
+            # (timeout = wall-clock limit hit, empty = finished without error
+            # but produced no output — both retryable via retry_background_task).
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS background_tasks (
                     id           TEXT PRIMARY KEY,
@@ -892,9 +894,17 @@ class ChatDB:
             # run has no live SSE channel — the spawning turn is long over — so
             # the question is PERSISTED here and the UI polls for it. Cleared when
             # answered/timed out.
+            # `spawn_turn_id`: the chat turn that spawned the task — lets a
+            # user's Stopp on the ORCHESTRATOR turn cascade to exactly the
+            # subagents that turn started (and no earlier ones).
+            # `retry_of`: set when this task is a retry_background_task clone of
+            # a failed task; doubles as the server-side retry cap (a task with
+            # retry_of set can't be retried again, and a task that already has
+            # a retry pointing at it can't either).
             for _col, _decl in (("group_id", "TEXT"), ("follow_up", "TEXT"),
                                 ("group_done_at", "REAL"), ("parent_task_id", "TEXT"),
-                                ("tool_events", "TEXT"), ("pending_question", "TEXT")):
+                                ("tool_events", "TEXT"), ("pending_question", "TEXT"),
+                                ("spawn_turn_id", "TEXT"), ("retry_of", "TEXT")):
                 try:
                     conn.execute(f"ALTER TABLE background_tasks ADD COLUMN {_col} {_decl}")
                 except sqlite3.OperationalError:
@@ -2144,18 +2154,22 @@ class ChatDB:
     @staticmethod
     @_db_safe(default=None)
     def create_background_task(task_id, session_id, agent_id, model, title, prompt,
-                               group_id=None, follow_up=None, parent_task_id=None):
+                               group_id=None, follow_up=None, parent_task_id=None,
+                               spawn_turn_id="", retry_of=None):
         """Insert a running task. group_id/follow_up are the fan-out fields
         (NULL = standalone). parent_task_id is set when spawned from inside a
-        background run (nesting guard — caller refuses to spawn at depth>0)."""
+        background run (nesting guard — caller refuses to spawn at depth>0).
+        spawn_turn_id links the task to the chat turn that spawned it (Stopp-
+        cascade); retry_of marks a retry clone (server-side retry cap)."""
         with _db_conn() as conn:
             conn.execute(
                 "INSERT INTO background_tasks "
                 "(id, session_id, agent_id, model, title, prompt, status, "
-                " group_id, follow_up, parent_task_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)",
+                " group_id, follow_up, parent_task_id, spawn_turn_id, retry_of) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)",
                 (task_id, session_id, agent_id, model, title, prompt,
-                 group_id or None, follow_up or None, parent_task_id or None))
+                 group_id or None, follow_up or None, parent_task_id or None,
+                 spawn_turn_id or "", retry_of or None))
             conn.commit()
 
     @staticmethod
@@ -2245,7 +2259,8 @@ class ChatDB:
             rows = conn.execute(
                 "SELECT id, session_id, agent_id, model, title, status, turn_id, error, "
                 "usage_in, usage_out, tool_calls, created_at, finished_at, consumed_at, "
-                "group_id, follow_up, prompt, tool_events, length(output) AS output_len "
+                "group_id, follow_up, prompt, tool_events, spawn_turn_id, retry_of, "
+                "length(output) AS output_len "
                 "FROM background_tasks WHERE session_id=? ORDER BY created_at DESC",
                 (session_id,)).fetchall()
             out = []
@@ -2281,10 +2296,11 @@ class ChatDB:
     @staticmethod
     @_db_safe(default=list)
     def pop_unconsumed_background_tasks(session_id):
-        """Return finished (done|cancelled) tasks not yet folded into a turn, and
+        """Return finished terminal tasks not yet folded into a turn, and
         mark them consumed in the same transaction. The caller injects their
         `output` wire-only into the next turn; consumed_at guarantees each task's
-        output reaches the model exactly once."""
+        output reaches the model exactly once. Deliver-with-failures: timeout/
+        empty/error rows are included so the model can decide how to react."""
         # group_id IS NULL → standalone tasks only. Grouped (fan-out) tasks are
         # delivered via the group path (claim_background_group + the
         # pop_undelivered_groups injection floor), never here — prevents double
@@ -2292,9 +2308,11 @@ class ChatDB:
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT id, title, status, output, error FROM background_tasks "
+                "SELECT id, title, status, output, error, retry_of "
+                "FROM background_tasks "
                 "WHERE session_id=? AND group_id IS NULL "
-                "AND status IN ('done','cancelled') AND consumed_at IS NULL "
+                "AND status IN ('done','cancelled','timeout','empty') "
+                "AND consumed_at IS NULL "
                 "ORDER BY finished_at",
                 (session_id,)).fetchall()
             tasks = [dict(r) for r in rows]
@@ -2302,7 +2320,8 @@ class ChatDB:
                 conn.execute(
                     "UPDATE background_tasks SET consumed_at=strftime('%s','now') "
                     "WHERE session_id=? AND group_id IS NULL "
-                    "AND status IN ('done','cancelled') AND consumed_at IS NULL",
+                    "AND status IN ('done','cancelled','timeout','empty') "
+                    "AND consumed_at IS NULL",
                     (session_id,))
                 conn.commit()
             return tasks
@@ -2352,12 +2371,43 @@ class ChatDB:
                 conn.rollback()
                 return None  # still running, or someone else already claimed it
             rows = conn.execute(
-                "SELECT id, session_id, title, status, output, error, follow_up "
+                "SELECT id, session_id, title, status, output, error, follow_up, "
+                "retry_of "
                 "FROM background_tasks WHERE session_id=? AND group_id=? "
                 "ORDER BY created_at",
                 (session_id, group_id)).fetchall()
             conn.commit()
             return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=list)
+    def list_group_members(session_id, group_id):
+        """Read-only member rows of a group (incl. output) — used to re-deliver
+        the ORIGINAL group's successful sibling results when a retried member's
+        new group joins (the retry runs in its own group; without this the
+        siblings' one-time wire delivery would already be spent)."""
+        if not session_id or not group_id:
+            return []
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, title, status, output, error, follow_up, retry_of "
+                "FROM background_tasks WHERE session_id=? AND group_id=? "
+                "ORDER BY created_at",
+                (session_id, group_id)).fetchall()
+            return [dict(r) for r in rows]
+
+    @staticmethod
+    @_db_safe(default=True)
+    def background_task_retry_exists(session_id, task_id):
+        """True if a retry clone already points at task_id — the server-side
+        1-retry cap (fail-closed: DB error counts as 'exists')."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM background_tasks "
+                "WHERE session_id=? AND retry_of=? LIMIT 1",
+                (session_id, task_id)).fetchone()
+            return row is not None
 
     @staticmethod
     @_db_safe(default=list)
@@ -2371,7 +2421,8 @@ class ChatDB:
                 "SELECT group_id, COUNT(*) AS total, "
                 "SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running, "
                 "SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done, "
-                "SUM(CASE WHEN status IN ('error','cancelled') THEN 1 ELSE 0 END) AS failed, "
+                "SUM(CASE WHEN status IN ('error','cancelled','timeout','empty') "
+                "THEN 1 ELSE 0 END) AS failed, "
                 "MIN(created_at) AS created_at, MAX(follow_up) AS follow_up "
                 "FROM background_tasks WHERE session_id=? AND group_id IS NOT NULL "
                 "GROUP BY group_id ORDER BY created_at DESC",
@@ -2385,7 +2436,7 @@ class ChatDB:
         absolute worst case, but a group shouldn't wait an hour on one straggler
         once its other members are done. This finds groups that are PARTIALLY done
         (≥1 member terminal) AND still have a running member whose run started more
-        than `deadline_secs` ago, and force-marks those stragglers status='error'
+        than `deadline_secs` ago, and force-marks those stragglers status='timeout'
         (error='Gruppen-Timeout — Teilergebnis geliefert') so the group becomes
         fully terminal and the normal claim path can deliver it as a partial.
 
@@ -2405,7 +2456,7 @@ class ChatDB:
                 "WHERE g.group_id IS NOT NULL AND g.group_done_at IS NULL "
                 "AND EXISTS (SELECT 1 FROM background_tasks t "
                 "            WHERE t.session_id=g.session_id AND t.group_id=g.group_id "
-                "            AND t.status IN ('done','cancelled','error')) "
+                "            AND t.status IN ('done','cancelled','error','timeout','empty')) "
                 "AND EXISTS (SELECT 1 FROM background_tasks r "
                 "            WHERE r.session_id=g.session_id AND r.group_id=g.group_id "
                 "            AND r.status='running' "
@@ -2414,7 +2465,7 @@ class ChatDB:
             affected = [(r["session_id"], r["group_id"]) for r in stalled]
             for _sid, gid in affected:
                 conn.execute(
-                    "UPDATE background_tasks SET status='error', "
+                    "UPDATE background_tasks SET status='timeout', "
                     "error='Gruppen-Timeout — Teilergebnis geliefert', "
                     "finished_at=strftime('%s','now') "
                     "WHERE session_id=? AND group_id=? AND status='running'",
@@ -2454,7 +2505,8 @@ class ChatDB:
         with _db_conn() as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
-                "SELECT id, group_id, title, status, output, error, follow_up "
+                "SELECT id, session_id, group_id, title, status, output, error, "
+                "follow_up, retry_of "
                 "FROM background_tasks "
                 "WHERE session_id=? AND group_id IS NOT NULL "
                 "AND group_done_at IS NOT NULL AND consumed_at IS NULL "
@@ -2481,7 +2533,8 @@ class ChatDB:
         with _db_conn() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM background_tasks WHERE session_id=? AND "
-                "group_id IS NULL AND status IN ('done','cancelled') AND consumed_at IS NULL",
+                "group_id IS NULL AND status IN ('done','cancelled','timeout','empty') "
+                "AND consumed_at IS NULL",
                 (session_id,)).fetchone()
             return row[0] if row else 0
 
@@ -2492,7 +2545,8 @@ class ChatDB:
         with _db_conn() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) FROM background_tasks WHERE session_id=? AND "
-                "(status='running' OR (status IN ('done','cancelled') AND consumed_at IS NULL))",
+                "(status='running' OR (status IN ('done','cancelled','timeout','empty') "
+                "AND consumed_at IS NULL))",
                 (session_id,)).fetchone()
             return row[0] if row else 0
 
@@ -2864,6 +2918,17 @@ class ChatDB:
                 conn.execute("DELETE FROM active_turns WHERE session_id = ?",
                              (session_id,))
             conn.commit()
+
+    @staticmethod
+    @_db_safe(default="")
+    def get_active_turn_id(session_id):
+        """The in-flight turn_id for a session, or ''. Used by the chat-cancel
+        Stopp-cascade to scope 'also cancel the subagents THIS turn spawned'."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT turn_id FROM active_turns WHERE session_id=?",
+                (session_id,)).fetchone()
+            return (row[0] or "") if row else ""
 
     @staticmethod
     @_db_safe(default=list)

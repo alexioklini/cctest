@@ -171,7 +171,7 @@ class TestGroupClaim(unittest.TestCase):
             self.assertIn((self.SID, "gx"), affected)
             self.assertNotIn((OTHER, "gx"), affected)
 
-            self.assertEqual(ChatDB.get_background_task("a-hang")["status"], "error")
+            self.assertEqual(ChatDB.get_background_task("a-hang")["status"], "timeout")
             self.assertEqual(ChatDB.get_background_task("b-run")["status"], "running",
                              "another session's running task was swept")
         finally:
@@ -256,12 +256,14 @@ class TestGroupClaim(unittest.TestCase):
         # deadline 600s → the straggler is past it
         affected = ChatDB.sweep_stalled_groups(600)
         self.assertIn((self.SID, "gs"), affected)
-        # straggler now error, group fully terminal → claimable
+        # straggler now 'timeout' (own failure class since the fan-out
+        # hardening — drives distinct retry guidance in the delivery
+        # preamble), group fully terminal → claimable
         members = ChatDB.claim_background_group(self.SID, "gs")
         self.assertEqual(len(members), 2)
         statuses = sorted(m["status"] for m in members)
-        self.assertEqual(statuses, ["done", "error"])
-        timed = next(m for m in members if m["status"] == "error")
+        self.assertEqual(statuses, ["done", "timeout"])
+        timed = next(m for m in members if m["status"] == "timeout")
         self.assertIn("Timeout", timed["error"])
 
     def test_sweep_ignores_fresh_and_complete_groups(self):
