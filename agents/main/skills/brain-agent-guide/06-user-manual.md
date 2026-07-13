@@ -1912,6 +1912,15 @@ schreibt oder löscht nie etwas.
 
 - Auf die Blase klicken öffnet einen Mini-Chat. Antworten kommen auf
   Deutsch und sind auf die aktuelle Ansicht zugeschnitten.
+- **Modell-Beratung (9.314.0):** Brainy beantwortet Fragen zur Modellwahl
+  aus der echten Live-Konfiguration — z. B. „Welches Modell fürs
+  Programmieren?", „Was kostet mich Modell X?", „Welches ist am
+  schnellsten?", „Geht das auch lokal, ohne Cloud?". Er vergleicht dafür
+  die Fähigkeits-Bewertungen je Aufgabentyp, die gemessene Geschwindigkeit
+  (Tokens/Sek.), die Preise und sagt dazu, ob ein Modell lokal läuft
+  (kostenlos, Daten bleiben auf dem Gerät) oder ob ein Abo es bereits
+  abdeckt. Auch Fragen zu Abrechnungskonten, eigenen Kostenlimits und
+  dazu, welches Modell eine Hintergrund-Aufgabe nutzt, kann er belegen.
 - Der Verlauf ist **pro Nutzer** (nicht pro Chat) und bleibt erhalten.
   Nachrichten werden zu Frage-Antwort-Paaren mit Zeitstempel gruppiert;
   bei mehr als ~10 Paaren greift adaptive Altersgruppierung (Heute /
@@ -1919,7 +1928,10 @@ schreibt oder löscht nie etwas.
   „Ältere laden". Einzelne Paare oder ganze Gruppen lassen sich löschen.
 - Admins konfigurieren Brainy unter **Einstellungen → Tools → Brainy**:
   Aktiviert-Schalter, Modell (Standard „Auto" = Server-Standardmodell),
-  Tool-Runden (1–12) und den editierbaren System-Prompt.
+  Tool-Runden (1–12) und den editierbaren System-Prompt. Hinweis: die
+  Modell-Beratung braucht ein Modell, das Werkzeuge zuverlässig aufruft —
+  mit `mistral-small` riet Brainy stattdessen und verwechselte Konten mit
+  Modellen; seit 9.314.0 läuft er auf `deepseek-v4-flash`.
 
 ---
 

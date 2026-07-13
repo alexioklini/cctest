@@ -209,3 +209,226 @@ def tool_helpdesk_user_activity(args: dict) -> str:
         "terminal_chat_count": len(terminal_chats),
         "terminal_chats_live_now": live_count,
     })
+
+
+# --- Settings lookup ---------------------------------------------------------
+#
+# Brainy reads the settings that matter for the question and reasons about them
+# itself — we return facts, it produces the recommendation.
+#
+# It goes through the SAME seams the HTTP endpoints use — `engine._models_config`
+# (the runtime source of truth), `AuthDB.get_user_allowed_models`,
+# `engine.is_model_local`, `engine.get_coding_plans` — NOT a fresh read of
+# config.json. That matters for two reasons:
+#   * the endpoints scope by permission (a non-admin sees only the models they
+#     were granted, and sensitive fields are stripped). Re-reading the file
+#     would hand Brainy everything and quietly bypass that.
+#   * config.json is not the runtime truth — the in-memory config is. A file
+#     reader would be a second, drifting source.
+# Secrets (api keys, tokens) never appear in any section.
+
+_CFG_SECTIONS = ("models", "coding_plans", "quotas", "cost_rates",
+                 "providers", "service_models")
+
+# Fields that answer "which model, and what does it cost me?". The internal
+# plumbing (warmup flags, sync bookkeeping, raw_formats, inference knobs) is
+# left out — it carries no signal for any user-facing question and would push
+# 140 models past the context budget.
+_MODEL_FIELDS = (
+    "display_name", "description", "provider", "is_local", "capabilities",
+    "max_context", "profile", "priority",
+    "cost_input", "cost_output", "cost_cache_read",
+    "cost_per_minute_usd", "cost_per_1k_chars_usd", "cost_per_page_usd",
+    "coding_plan", "flat_plan",
+)
+
+
+def _model_row(mid: str, cfg: dict) -> dict:
+    """One model, reduced to the decision-relevant fields, with the benchmark
+    blob flattened to {task: {capability, tps}}.
+
+    Flattening matters: the raw shape nests `measured` / `override` / `raw` /
+    `source` under each of 9 task types. `override` wins where present — that's
+    the admin's correction of a bad synthetic benchmark, and it's the number
+    that actually drives routing, so it must be the number Brainy sees too."""
+    import brain as _brain
+    row = {"id": mid}
+    for f in _MODEL_FIELDS:
+        if cfg.get(f) is not None:
+            row[f] = cfg[f]
+    try:
+        row["is_local"] = _brain.is_model_local(mid)
+    except Exception:
+        row.setdefault("is_local", False)
+
+    bench = cfg.get("benchmark") or {}
+    if isinstance(bench, dict):
+        flat = {}
+        for task, entry in bench.items():
+            if not isinstance(entry, dict):
+                continue
+            src = entry.get("override") or entry.get("measured") or {}
+            cap, tps = src.get("capability"), src.get("tps")
+            if cap is None and tps is None:
+                continue
+            flat[task] = {k: v for k, v in (("capability", cap), ("tps", tps))
+                          if v is not None}
+        if flat:
+            row["benchmark"] = flat
+
+    # Resolve the billing account through the SAME seam billing uses, so the
+    # provider default is included (a model may inherit its plan from its
+    # provider — see brain.resolve_model_plan_id).
+    try:
+        pid = _brain.resolve_model_plan_id(mid)
+        if pid:
+            row["coding_plan"] = pid
+        row["billed_at_zero"] = bool(_brain.model_is_flat_plan(mid))
+    except Exception:
+        pass
+    return row
+
+
+def tool_helpdesk_config(args: dict) -> str:
+    """Read the settings relevant to the user's question (read-only, no secrets).
+
+    Brainy analyses the returned JSON and answers — this tool supplies facts,
+    not verdicts."""
+    import brain as _brain
+
+    section = str((args or {}).get("section") or "").strip().lower()
+    if section not in _CFG_SECTIONS:
+        return _err(f"helpdesk_config: unbekannter Abschnitt '{section}'. "
+                    f"Erlaubt: {', '.join(_CFG_SECTIONS)}.")
+
+    uid = get_request_context().current_user_id or ""
+
+    if section == "models":
+        # Same permission scoping the /v1/models/config endpoint applies:
+        # a non-admin only ever sees the models granted to them.
+        allowed = None
+        try:
+            user = AuthDB.get_user(uid) if uid else None
+            is_admin = bool(user) and user.get("role") == "admin"
+            if uid and not is_admin:
+                allowed = AuthDB.get_user_allowed_models(uid)
+        except Exception:
+            allowed = None
+
+        only_enabled = (args or {}).get("enabled_only", True) is not False
+        rows = []
+        for mid, cfg in (getattr(_brain, "_models_config", None) or {}).items():
+            if not isinstance(cfg, dict):
+                continue
+            if allowed is not None and mid not in allowed:
+                continue
+            if only_enabled and not cfg.get("enabled"):
+                continue
+            rows.append(_model_row(mid, cfg))
+        rows.sort(key=lambda m: -(m.get("priority") or 0))
+
+        return _ok({
+            "section": "models",
+            "count": len(rows),
+            "enabled_only": only_enabled,
+            "hinweis": (
+                "capability = 0-100 je Aufgabentyp (höher = besser); tps = gemessene "
+                "Tokens/Sekunde (höher = schneller). Preise in $ pro 1 Mio. Token. "
+                "is_local=true ⇒ läuft auf diesem Gerät: kostenlos, und die Daten "
+                "verlassen das Gerät nicht. billed_at_zero=true ⇒ das Modell läuft in "
+                "einem Abo (coding_plan), ein Aufruf kostet real $0 — die Preisfelder "
+                "sind dann nur der Listenpreis zum Vergleich. Fehlt ein Preis, ist für "
+                "dieses Modell keiner hinterlegt. Aufgabentypen: coding, math, research, "
+                "analysis, reporting, creative, orchestration, agentic, fast."
+            ),
+            "models": rows,
+        })
+
+    if section == "coding_plans":
+        plans = []
+        for p in (_brain.get_coding_plans() or []):
+            plans.append({k: p.get(k) for k in
+                          ("id", "name", "type", "price", "quota_note",
+                           "balance_usd", "windows", "count") if p.get(k) is not None})
+        return _ok({
+            "section": "coding_plans",
+            "hinweis": ("Abrechnungskonten. type='flat' = Abo: Aufrufe kosten real $0, "
+                        "dafür gelten Token-Kontingente je Zeitfenster. type='credit' = "
+                        "API-Guthaben (balance_usd): echte Abrechnung gegen das Guthaben. "
+                        "Die aktuelle Auslastung zeigt das Plan-Popover in der Statusleiste."),
+            "coding_plans": plans,
+        })
+
+    if section == "quotas":
+        qm = getattr(_brain, "_quota_manager", None)
+        cfg = {}
+        try:
+            cfg = dict(qm.get_config()) if qm else {}
+        except Exception:
+            cfg = {}
+        cfg.pop("user_overrides", None)          # other users' limits are none of Brainy's business
+        me = {}
+        try:
+            if qm and uid:
+                me = qm.get_user_state(uid) or {}
+        except Exception:
+            me = {}
+        return _ok({
+            "section": "quotas",
+            "hinweis": ("Kostenkontingente in $ je Nutzerrolle (daily_usd = rollierender "
+                        "Tag, cycle_usd = Abrechnungszeitraum). Lokale Modelle zählen NIE "
+                        "dagegen. 'mein_stand' ist der Verbrauch des angemeldeten Nutzers."),
+            "config": cfg,
+            "mein_stand": me,
+        })
+
+    if section == "cost_rates":
+        return _ok({
+            "section": "cost_rates",
+            "hinweis": ("Editierbare Preistabelle ($ pro 1 Mio. Token). Greift für Modelle "
+                        "OHNE eigenen Preis im Modelle-Grid. Der Schlüssel kann eine "
+                        "Modell-ID oder ein Präfix sein; bei mehreren Treffern gewinnt der "
+                        "längste. Zusätzlich gibt es eingebaute Standardpreise."),
+            "cost_rates": _brain.get_config_cost_rates() or {},
+            "ohne_hinterlegten_preis": [m["id"] for m in (_brain.unpriced_models() or [])],
+        })
+
+    if section == "providers":
+        provs = []
+        for name, p in (_brain.get_provider_configs() or {}).items():
+            if not isinstance(p, dict):
+                continue
+            provs.append({
+                "name": name,
+                "is_local": bool(p.get("is_local")),
+                "coding_plan": p.get("coding_plan") or "",
+                "api_key_count": len(p.get("api_keys") or ([1] if p.get("api_key") else [])),
+            })
+        return _ok({
+            "section": "providers",
+            "hinweis": ("Anbieter. API-Schlüssel werden NIE ausgegeben (nur ihre Anzahl). "
+                        "is_local=true ⇒ läuft auf diesem Gerät. coding_plan = "
+                        "Abrechnungskonto-Vorgabe für alle Modelle dieses Anbieters "
+                        "(ein einzelnes Modell kann sie überstimmen)."),
+            "providers": provs,
+        })
+
+    # service_models — which model does each background job use? Read the LIVE
+    # config via _server_config() (the same seam every runtime reader uses —
+    # settings edits mirror into it without a restart), NOT a fresh file read.
+    cfg = {}
+    try:
+        cfg = _brain._server_config() or {}
+    except Exception:
+        cfg = {}
+    svc = {k: v for k, v in cfg.items()
+           if k.endswith("_model") and isinstance(v, str)}
+    return _ok({
+        "section": "service_models",
+        "hinweis": ("Welches Modell welche Hintergrund-Aufgabe erledigt. Leer = "
+                    "Server-Standard (default_model). Einstellbar unter "
+                    "Einstellungen → Service-Modelle."),
+        "service_models": svc,
+        "default_model": cfg.get("default_model") or "",
+    })
+

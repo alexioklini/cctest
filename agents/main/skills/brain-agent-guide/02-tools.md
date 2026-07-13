@@ -662,9 +662,22 @@ session).
   with a `live` flag; `terminal_chats_live_now` counts those with a turn
   streaming right now — `code_chat` sessions are excluded from the normal
   chat list, so this is how Brainy sees whether a terminal chat is active).
+- `helpdesk_config({section, enabled_only?})` (9.314.0) — the LIVE settings
+  relevant to a question, as facts-JSON for Brainy to analyse. Sections:
+  `models` (per model: $/M prices, capability 0-100 **per task type**
+  [coding/math/research/analysis/reporting/creative/orchestration/agentic/fast],
+  measured tps, `is_local`, context window, billing account + `billed_at_zero`),
+  `coding_plans`, `quotas` (config **without** `user_overrides` + the caller's
+  own usage), `providers` (keys only as a COUNT, never content), `cost_rates`
+  (+ the unpriced-models list), `service_models`. Goes through the SAME seams
+  as the HTTP endpoints (`resolve_model_plan_id`, `model_is_flat_plan`,
+  permission scoping via `get_user_allowed_models`, `_server_config()` live
+  mirror) — NOT a raw config.json read; secrets appear in no section. THE tool
+  for "which model for X / what does it cost / is it local / what's my limit".
+  Careful: `coding_plans` entries are BILLING ACCOUNTS, not models.
 
 Brainy's full fixed read-only set (`_HELPDESK_TOOLS`): `use_skill`, the
-three `helpdesk_*` tools, `mempalace_query`, `read_document`, `read_file`,
+four `helpdesk_*` tools, `mempalace_query`, `read_document`, `read_file`,
 `list_directory`, `search_files`, `context_search`, `context_detail`,
 `context_recall`, `web_fetch`, `exa_search`, `searxng_search`. Every
 write/exec tool is deliberately excluded.

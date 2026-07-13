@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.314.0",
+        "date": "2026-07-13",
+        "title": "Brainy berät Sie jetzt bei der Modellwahl",
+        "body": "Fragen Sie den Helpdesk-Assistenten Brainy 🧠 ab sofort Dinge wie "
+                "„Welches Modell nehme ich fürs Programmieren?“, „Was kostet mich "
+                "Modell X?“ oder „Gibt es eine schnelle Alternative ohne Cloud?“. "
+                "Brainy liest dafür die tatsächliche Konfiguration Ihres Systems — "
+                "Fähigkeits-Bewertungen je Aufgabentyp, gemessene Geschwindigkeit, "
+                "Preise, Abo-Deckung und ob ein Modell lokal läuft — und begründet "
+                "seine Empfehlung, statt zu raten.",
+        "audience": "user",
+        "versions": ["9.314.0"],
+    },
+    {
         "version": "9.313.0",
         "date": "2026-07-12",
         "title": "Preise und Abrechnungskonten vollständig im Griff",

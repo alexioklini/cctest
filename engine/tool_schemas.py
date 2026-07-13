@@ -1496,6 +1496,51 @@ TOOL_DEFINITIONS = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "helpdesk_config",
+        "description": (
+            "Helpdesk only. Read the LIVE settings relevant to the user's question (read-only; API keys "
+            "are never returned). This is the source of truth for anything about models, costs, plans "
+            "and limits — prefer it over the guide whenever the answer depends on what is actually "
+            "configured RIGHT NOW. You get the facts as JSON; YOU analyse them and give the answer.\n\n"
+            "Use it for questions like: what does model X cost · which model is best for coding / "
+            "research / writing (compare the per-task capability scores) · which model is fastest (tps) · "
+            "which models run locally (free, and data stays on the device) · which models a subscription "
+            "already covers so they cost nothing extra · what is my spending limit and how much have I "
+            "used · which model does a background job use.\n\n"
+            "Sections:\n"
+            "• models — every model the user may pick, each with: cost ($ per 1M tokens), capability "
+            "0-100 PER TASK TYPE (coding, math, research, analysis, reporting, creative, orchestration, "
+            "agentic, fast), measured speed (tokens/sec), is_local, context window, and billing "
+            "(coding_plan + billed_at_zero). THE section for 'which model should I use for …'. Defaults "
+            "to enabled models; pass enabled_only=false for the full catalogue.\n"
+            "• coding_plans — billing accounts: 'flat' = subscription (calls really cost $0; the price "
+            "fields are only the list price for comparison), 'credit' = prepaid API balance.\n"
+            "• quotas — the user's own spending limits ($/day, $/cycle) and current usage.\n"
+            "• providers — provider list (local-vs-cloud, plan default; keys masked).\n"
+            "• cost_rates — the editable price table + which models have NO price.\n"
+            "• service_models — which model each background job uses.\n\n"
+            "When recommending a model, weigh capability against cost AND tell the user whether it is "
+            "local (free, private) or cloud, and whether a subscription already covers it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "enum": ["models", "coding_plans", "quotas", "providers",
+                             "cost_rates", "service_models"],
+                    "description": "Which settings section to read.",
+                },
+                "enabled_only": {
+                    "type": "boolean",
+                    "description": ("section='models' only: true (default) = only models the user can "
+                                    "actually pick; false = the full catalogue including disabled ones."),
+                },
+            },
+            "required": ["section"],
+        },
+    },
+    {
         "name": "helpdesk_user_activity",
         "description": (
             "Helpdesk only. List what the user has done in this system: their recent chat sessions, "
