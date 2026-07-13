@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.315.0",
+        "date": "2026-07-13",
+        "title": "Mehr Platz im Code-Terminal",
+        "body": "Öffnen Sie in einem Code-Projekt den Terminal/Editor-Bereich, "
+                "zieht sich die linke Navigationsleiste automatisch auf ihre "
+                "schmale Symbol-Ansicht zurück — Terminal, Editor und Datei-Baum "
+                "bekommen die volle Bildschirmbreite. Beim Schließen des Bereichs "
+                "kehrt die Leiste in Ihre gewohnte Breite zurück; Ihre manuelle "
+                "Einstellung bleibt dabei stets respektiert.",
+        "audience": "user",
+        "versions": ["9.315.0"],
+    },
+    {
         "version": "9.314.0",
         "date": "2026-07-13",
         "title": "Brainy berät Sie jetzt bei der Modellwahl",

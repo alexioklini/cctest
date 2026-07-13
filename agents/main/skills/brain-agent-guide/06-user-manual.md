@@ -778,6 +778,13 @@ anderen Ansicht (Startseite, anderes Projekt, Chat ohne Bezug), **schließt sich
 der Bereich automatisch** — er bleibt an das Projekt/den Chat gebunden, aus dem
 Sie ihn geöffnet haben.
 
+**Maximale Arbeitsfläche**: Solange der Terminal/Editor-Bereich offen ist,
+zieht sich die **linke Navigationsleiste automatisch auf ihre schmale
+Symbol-Ansicht** zurück (alle Funktionen bleiben über die Symbole erreichbar).
+Beim Schließen des Bereichs kehrt sie in Ihre gewohnte Breite zurück; haben Sie
+die Leiste selbst eingeklappt (Pin-Knopf oben), bleibt sie auch danach
+eingeklappt — Ihre manuelle Einstellung gewinnt immer.
+
 **Standard-Platzierung**: Neue Inhalte landen je nach Layout automatisch im
 passenden Bereich — **Quelldateien** oben links, **andere Dateien** (HTML,
 Markdown, SVG …) oben rechts, **Terminal** und **Terminal-Chat** unten; fehlt

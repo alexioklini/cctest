@@ -598,11 +598,16 @@ async function terminalTogglePanel(force) {
     if (_term.open && _term.project === ctx.project && _term.agent === ctx.agent) {
       panel.style.display = 'flex';
       document.getElementById('main-content').classList.add('terminal-open');
+      document.getElementById('sidebar')?.classList.add('collapsed');
       return;
     }
     _term.agent = ctx.agent; _term.project = ctx.project; _term.wd = ctx.wd;
     panel.style.display = 'flex';
     document.getElementById('main-content').classList.add('terminal-open');
+    // Squeeze the app nav to its icon rail while the terminal is open (max work
+    // area). Not persisted — close restores the user's saved preference below;
+    // a manual toggle while open wins because it rewrites localStorage.
+    document.getElementById('sidebar')?.classList.add('collapsed');
     _term.open = true;
     _terminalRestoreHeight();
     await _terminalLoadSessions();
@@ -613,6 +618,9 @@ async function terminalTogglePanel(force) {
   } else {
     panel.style.display = 'none';
     document.getElementById('main-content').classList.remove('terminal-open');
+    if (localStorage.getItem('sidebar-collapsed') !== '1') {
+      document.getElementById('sidebar')?.classList.remove('collapsed');
+    }
     _term.open = false;
     stopEditorFreshPoll();
   }
