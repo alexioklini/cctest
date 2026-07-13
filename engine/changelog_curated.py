@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.323.0",
+        "date": "2026-07-13",
+        "title": "Begleitdateien direkt im Projekt sichtbar",
+        "body": "Die Begleitdateien eines Projekts (Vorlagen, Styleguides, "
+                "Referenztabellen) haben jetzt einen eigenen Eintrag im "
+                "rechten Projekt-Bereich — gleichrangig neben Anweisungen, "
+                "Dateien, Ordnern und Web-Adressen. Sie sehen auf einen Blick, "
+                "wie viele hinterlegt sind, und können sie dort direkt "
+                "hinzufügen oder entfernen. Bisher waren sie nur über den "
+                "Dialog „Anweisungen bearbeiten“ erreichbar und wurden daher "
+                "leicht übersehen — obwohl eine Projektanweisung sich "
+                "ausdrücklich auf sie berief.",
+        "audience": "user",
+        "versions": ["9.323.0"],
+    },
+    {
         "version": "9.322.0",
         "date": "2026-07-13",
         "title": "Terminal-Bereich: Arbeitsplatz je Chat, aufgeräumte Dateilisten",

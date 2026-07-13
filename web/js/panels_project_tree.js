@@ -244,6 +244,7 @@ function renderProjectSourceTree() {
   host.innerHTML = legend + `
     <div class="pt-root">
       ${_ptInstructionsNode(p)}
+      ${_ptInstructionFilesNode(p)}
       ${_ptTypeNode('files', 'Dateien', p)}
       ${_ptTypeNode('folders', 'Ordner', p)}
       ${_ptTypeNode('urls', 'Web-Adressen', p)}
@@ -292,6 +293,43 @@ function _ptInstructionsNode(p) {
     </div>`;
 }
 
+// Begleitdateien — a singleton node like Anweisungen: NOT groupable, NOT a drop
+// target, and no index-state dot, because instruction files are deliberately not
+// mined (the model is handed their disk path and reads them on demand). Renders
+// straight off project.instruction_files, which loadProjectDetail already holds.
+function _ptInstructionFilesNode(p) {
+  const open = _ptIsExpanded('instrfiles', false);
+  const files = p.instruction_files || [];
+  const body = files.length
+    ? files.map(f => {
+        const fn = (f && f.filename) || '';
+        const kb = f && f.size ? `${Math.max(1, Math.round(f.size / 1024))} KB` : '';
+        return `<div class="pt-row pt-item" title="${esc(fn)}">
+            <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
+            <span class="pt-label">${esc(fn)}</span>
+            ${kb ? `<span class="pt-count">${esc(kb)}</span>` : ''}
+            <span class="pt-actions">
+              <button class="pt-act" title="Entfernen"
+                onclick="event.stopPropagation(); ptDeleteInstructionFile('${esc(fn).replace(/'/g, "\\'")}')">✕</button>
+            </span>
+          </div>`;
+      }).join('')
+    : `<div class="pt-empty">Noch keine Begleitdateien.</div>`;
+  return `
+    <div class="pt-branch" data-node="instrfiles">
+      <div class="pt-row pt-typerow" onclick="ptToggle('instrfiles')">
+        ${_ptCaret(open)}
+        <span class="pt-icon">${_PT_ICON.instructions}</span>
+        <span class="pt-label">Begleitdateien</span>
+        <span class="pt-count">${files.length ? `(${files.length})` : ''}</span>
+        <span class="pt-actions">
+          <label class="pt-act" title="Begleitdatei hinzufügen (max. 25 MB)" onclick="event.stopPropagation()">＋<input type="file" style="display:none" onchange="ptUploadInstructionFile(this)"></label>
+        </span>
+      </div>
+      <div class="pt-children" data-children="instrfiles" style="${open ? '' : 'display:none'}">${body}</div>
+    </div>`;
+}
+
 // One groupable type branch (files / folders / urls). The virtual-folder groups
 // (C3) render INSIDE #pt-items-<type>; C2 just lists the flat items.
 function _ptTypeNode(type, label, p) {
@@ -317,6 +355,26 @@ function _ptTypeNode(type, label, p) {
         <div class="pt-items pt-typeroot" id="pt-items-${type}" data-droptarget="1" data-type="${type}" data-group=""><div class="pt-loading">Lädt…</div></div>
       </div>
     </div>`;
+}
+
+// Both delegate to the canonical handlers in panels_projects.js, which own the
+// API call, the state._projectDetail update AND the repaint of both surfaces
+// (renderProjectInstructionFiles re-renders this tree) — so no repaint here.
+async function ptUploadInstructionFile(input) {
+  // The modal's inline progress bar isn't in the DOM here (_instrUploadProgress
+  // no-ops without it), so the tree gives its own feedback via toasts.
+  const name = input && input.files && input.files[0] && input.files[0].name;
+  const before = ((state._projectDetail || {}).instruction_files || []).length;
+  if (name) showToast(`„${name}“ wird hochgeladen …`);
+  await uploadProjectInstructionFile(input);
+  const after = ((state._projectDetail || {}).instruction_files || []).length;
+  if (after > before) showToast('Begleitdatei hinzugefügt');
+}
+
+async function ptDeleteInstructionFile(filename) {
+  if (!await showConfirmDanger(
+        `Begleitdatei „${filename}“ entfernen?`, 'Begleitdatei entfernen', 'Entfernen')) return;
+  await deleteProjectInstructionFile(filename);
 }
 
 function ptToggle(nodeKey) {

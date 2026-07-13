@@ -960,7 +960,16 @@ Projekt gemerkt und beim erneuten Öffnen wiederhergestellt.
 Projekt in jeder Antwort hält — Tonfall, Sprache, Formatvorgaben; Markdown +
 Vorschau). Darunter der Bereich **Begleitdateien**: hier lassen sich
 ergänzende Dateien hochladen (Styleguide, Vorlage, Begriffsliste, erläuternde
-Unterlagen — beliebige Typen, max. 25 MB/Datei). **Wichtiger Unterschied zu
+Unterlagen — beliebige Typen, max. 25 MB/Datei).
+
+Dieselben Begleitdateien stehen als **eigener Knoten „Begleitdateien"** direkt
+im rechten Projekt-Panel — gleichrangig neben *Anweisungen*, *Dateien*,
+*Ordner* und *Web-Adressen*. Der Knoten zeigt die Anzahl im Kopf, aufgeklappt
+jede Datei mit Größe; über **＋** lädst du eine hinzu, über **✕** entfernst du
+eine (mit Rückfrage). Beide Oberflächen zeigen denselben Stand — was du im
+Panel änderst, steht auch im Dialog und umgekehrt. Anders als *Dateien*/
+*Ordner* tragen Begleitdateien **keinen Index-Status-Punkt**, weil sie
+absichtlich nicht gemined werden (siehe nächster Absatz). **Wichtiger Unterschied zu
 hochgeladenen Projektdateien (Schritt 4):** Begleitdateien werden **NICHT**
 ins Projektgedächtnis aufgenommen/gemined. Sie funktionieren wie ein
 Chat-Anhang — der Assistent bekommt ihren Speicherort genannt und liest die

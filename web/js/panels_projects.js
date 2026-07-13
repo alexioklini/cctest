@@ -1463,6 +1463,10 @@ function editProjectInstructions() {
 }
 
 function renderProjectInstructionFiles(files) {
+  // Both surfaces show the same list, so repaint the project tree here (the one
+  // point every add/remove passes through) — otherwise a modal upload leaves the
+  // tree node behind it stale. Guarded: the tree only exists on the project page.
+  if (document.getElementById('project-source-tree')) renderProjectSourceTree();
   const el = document.getElementById('project-instr-files-list');
   if (!el) return;
   const list = files || [];
