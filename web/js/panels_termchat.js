@@ -1640,12 +1640,24 @@ async function renderTermchatHistory() {
     const openCls = openIds.has(s.id) ? ' tc-hist-open' : '';
     const activeCls = (activeSid && s.id === activeSid) ? ' tc-hist-active' : '';
     const title = s.title || 'Chat';
+    // Chat-output folders (chats/<slug>_<date>_<sid>/ in the working dir):
+    // expandable UNDER the chat row. Default collapsed; auto-expanded by
+    // _wdSyncChatFolders when new files arrive; state persisted per project.
+    const folders = _tcChatFolders(s.id);
+    const fOpen = folders.length && !!((_term.chatFolderOpen || {})[s.id]);
+    const caret = folders.length
+      ? `<span class="pt-caret${fOpen ? ' open' : ''}" title="Dateien dieses Chats"
+          onclick="event.stopPropagation();tcToggleChatFolder('${esc(s.id)}')"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>`
+      : '<span class="pt-caret-spacer"></span>';
+    const kids = fOpen
+      ? `<div class="tc-hist-files">${_tcFolderNodesHtml(folders.length > 1 ? folders : (folders[0].children || []), 0)}</div>`
+      : '';
     return `<div class="tc-hist-row${openCls}${activeCls}" data-sid="${esc(s.id)}" onclick="tcOpenHistory('${esc(s.id)}','${esc(title)}')"
       oncontextmenu="tcHistMenu(event,'${esc(s.id)}')" title="${esc(title)}">
-      <span class="tc-hist-icon">◈</span><span class="tc-hist-label">${esc(title)}</span>
+      ${caret}<span class="tc-hist-icon">◈</span><span class="tc-hist-label">${esc(title)}</span>
       <span style="flex:1"></span>
       <button class="tc-hist-del" title="Chat löschen"
-        onclick="event.stopPropagation();tcDeleteHistory('${esc(s.id)}')">✕</button></div>`;
+        onclick="event.stopPropagation();tcDeleteHistory('${esc(s.id)}')">✕</button></div>${kids}`;
   }).join('');
   // "Delete all" only when there's something to delete.
   const delAllBtn = sessions.length ? `
@@ -1671,6 +1683,45 @@ async function renderTermchatHistory() {
   host.classList.toggle('tc-collapsed', collapsed);
   const col = document.getElementById('terminal-tree-col');
   if (col) col.classList.toggle('chats-collapsed', collapsed);
+}
+
+// ── Per-chat output folders in the history list ───────────────────────────────
+// A terminal-chat writes its generated files to chats/<slug>_<date>_<sid>/ in
+// the project working dir (one folder per day the chat produced output). Match
+// by the session-id suffix off the cached tree data — the tree is always fetched
+// COMPLETE (the work-files toggle filters display only), so this works even
+// while chats/ is hidden in the file tree.
+function _tcChatFolders(sid) {
+  if (!sid) return [];
+  const root = (window._wdTreeData || []).find(n => n.type === 'dir' && n.name === 'chats');
+  return ((root && root.children) || []).filter(n => n.type === 'dir' && (n.name || '').endsWith('_' + sid));
+}
+
+// Flat nested render of a chat folder's contents. Directories are always shown
+// expanded (chat folders are small); clicking a file opens it in the editor.
+function _tcFolderNodesHtml(nodes, depth) {
+  const pad = 20 + depth * 12;
+  return (nodes || []).map(n => {
+    if (n.type === 'dir') {
+      return `<div class="tc-hf-row tc-hf-dir" style="padding-left:${pad}px" title="${esc(n.path || n.name)}">
+        <span class="tc-hf-ico"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+        <span class="tc-hf-name">${esc(n.name)}</span></div>`
+        + _tcFolderNodesHtml(n.children || [], depth + 1);
+    }
+    return `<div class="tc-hf-row tc-hf-file" style="padding-left:${pad}px" title="${esc(n.path || n.name)}"
+      onclick="event.stopPropagation();terminalOpenFile('${esc(n.path)}')">
+      <span class="tc-hf-ico"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+      <span class="tc-hf-name">${esc(n.name)}</span></div>`;
+  }).join('');
+}
+
+// Toggle a chat's folder subtree in the history list; persisted per project
+// (bottom_workspace.chat_folders_open) and restored on the next panel open.
+function tcToggleChatFolder(sid) {
+  if (!_term.chatFolderOpen) _term.chatFolderOpen = {};
+  _term.chatFolderOpen[sid] = !_term.chatFolderOpen[sid];
+  if (typeof _terminalPersist === 'function') _terminalPersist();
+  renderTermchatHistory();
 }
 
 // Delete ALL terminal-chats for this project (confirm first). Closes any open

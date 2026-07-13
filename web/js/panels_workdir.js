@@ -308,6 +308,82 @@ function _wdFileSymbolsHtml(n, fileNameMatched) {
   return _wdSymbolRowsHtml(syms);
 }
 
+// ── Work-files toggle (chats/ output folders in the tree) ─────────────────────
+// The per-chat output folders (chats/<slug>_<date>_<sid>/) are the agent's
+// working directories, not project sources — with the toggle OFF the tree shows
+// only what code mining sees (project files + imports). The chats/ contents are
+// still FETCHED (window._wdTreeData stays complete — the Terminal-Chats list
+// renders each chat's folder from it); only the tree DISPLAY filters them.
+function _wdWorkVisible() {
+  return !!(typeof _term !== 'undefined' && _term.workFilesVisible);
+}
+// Top-level display filter for the tree paint (root call only, not recursion).
+function _wdDisplayNodes(nodes) {
+  if (_wdWorkVisible()) return nodes || [];
+  return (nodes || []).filter(n => !(n.type === 'dir' && n.name === 'chats'));
+}
+function wdToggleWorkFiles() {
+  if (typeof _term === 'undefined') return;
+  _term.workFilesVisible = !_term.workFilesVisible;
+  if (typeof _terminalApplyLayout === 'function') _terminalApplyLayout();  // button active state
+  if (typeof _terminalPersist === 'function') _terminalPersist();
+  repaintTerminalTree();
+  if (typeof showToast === 'function') {
+    showToast(_term.workFilesVisible ? 'Chat-Arbeitsdateien im Baum: sichtbar' : 'Chat-Arbeitsdateien im Baum: ausgeblendet');
+  }
+}
+
+// Per-chat-folder content signatures {folderName: "mtime:size,…"} from the
+// chats/ top-level dir — drives the Terminal-Chats auto-expand on NEW files.
+function _wdChatFolderSigs(nodes) {
+  const root = (nodes || []).find(n => n.type === 'dir' && n.name === 'chats');
+  const sigs = {};
+  for (const d of ((root && root.children) || [])) {
+    if (d.type !== 'dir') continue;
+    const flat = [];
+    (function walk(ns) {
+      for (const n of (ns || [])) {
+        if (n.type === 'dir') walk(n.children || []);
+        else flat.push(`${n.name}:${n.mtime || 0}:${n.size || 0}`);
+      }
+    })(d.children || []);
+    sigs[d.name] = flat.sort().join(',');
+  }
+  return sigs;
+}
+
+// Diff the fresh tree's chat-folder signatures against the last seen set; a
+// changed/new folder auto-expands ITS chat's node in the Terminal-Chats list
+// (never anything in the file tree) and re-renders that list. First load after
+// panel-open only seeds (_chatFolderSigs reset in _terminalLoadSessions) so
+// reopening restores the persisted expand state without surprises.
+function _wdSyncChatFolders(tree) {
+  if (typeof _term === 'undefined') return;
+  const sigs = _wdChatFolderSigs(tree);
+  const prev = _term._chatFolderSigs;
+  _term._chatFolderSigs = sigs;
+  if (!prev) {
+    // Seed pass (first tree load after panel open): no auto-expand, but the
+    // history list may have rendered BEFORE tree data existed — repaint it once
+    // so the folder carets appear.
+    if (Object.keys(sigs).length && typeof renderTermchatHistory === 'function') renderTermchatHistory();
+    return;
+  }
+  let changed = false;
+  for (const name in sigs) {
+    if (prev[name] === sigs[name]) continue;
+    changed = true;
+    const sid = name.split('_').pop();
+    if (sid && !(_term.chatFolderOpen || {})[sid]) {
+      if (!_term.chatFolderOpen) _term.chatFolderOpen = {};
+      _term.chatFolderOpen[sid] = true;
+      if (typeof _terminalPersist === 'function') _terminalPersist();
+    }
+  }
+  for (const name in prev) { if (!(name in sigs)) changed = true; }
+  if (changed && typeof renderTermchatHistory === 'function') renderTermchatHistory();
+}
+
 function _wdRenderTree(nodes) {
   if (!nodes || !nodes.length) return '<div class="pt-empty">Leer.</div>';
   const filt = _wdFilter;
@@ -697,8 +773,12 @@ async function refreshTerminalTree() {
     // Detect new/modified files vs the persisted snapshot (first load only seeds
     // the snapshot — nothing flagged) BEFORE rendering so badges paint.
     _wdComputeChanges(window._wdTreeData);
+    // Chat-output folders: diff their content signatures → auto-expand the
+    // affected chat's node in the Terminal-Chats list (display-only there;
+    // the file tree itself never auto-expands).
+    _wdSyncChatFolders(window._wdTreeData);
     const prevTop = host.scrollTop;
-    host.innerHTML = _wdRenderTree(window._wdTreeData);
+    host.innerHTML = _wdRenderTree(_wdDisplayNodes(window._wdTreeData));
     host.dataset.loaded = '1';
     // Restore scroll: keep the live position on a refresh, or — on the very first
     // load after a page reload — the persisted viewport, so a reload doesn't reset
@@ -733,6 +813,6 @@ function repaintTerminalTree() {
   // Preserve the scroll position across the innerHTML swap so a poll-driven
   // resync doesn't jump the viewport back to the top (no flicker/reset).
   const top = host.scrollTop;
-  host.innerHTML = _wdRenderTree(window._wdTreeData);
+  host.innerHTML = _wdRenderTree(_wdDisplayNodes(window._wdTreeData));
   host.scrollTop = top;
 }

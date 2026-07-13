@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.316.0",
+        "date": "2026-07-13",
+        "title": "Aufgeräumter Datei-Baum im Code-Terminal",
+        "body": "Der Datei-Baum im Terminal-Bereich zeigt jetzt standardmäßig nur "
+                "noch Ihre echten Projektdateien — die von Chats erzeugten "
+                "Arbeitsdateien (Skripte, Reports, Zwischenergebnisse) sind "
+                "ausgeblendet und über einen Knopf in der Baum-Leiste jederzeit "
+                "einblendbar. Stattdessen finden Sie die Dateien eines Chats nun "
+                "direkt bei ihm: In der Liste „Terminal-Chats“ lässt sich jeder "
+                "Chat aufklappen und zeigt seine erzeugten Dateien; ein Klick "
+                "öffnet sie im Editor. Erzeugt ein Chat neue Dateien, klappt sein "
+                "Eintrag automatisch auf; Ihr Auf- und Zuklapp-Stand bleibt pro "
+                "Projekt gespeichert.",
+        "audience": "user",
+        "versions": ["9.316.0"],
+    },
+    {
         "version": "9.315.0",
         "date": "2026-07-13",
         "title": "Mehr Platz im Code-Terminal",

@@ -824,6 +824,20 @@ einer Datei zeigt Pfad, **Größe** und **letzte Änderung**. Über den
 Standard), **Name**, **Datum** (neueste zuerst) oder **Größe** (größte zuerst);
 die Wahl wird pro Projekt gemerkt.
 
+**Chat-Arbeitsdateien im Baum (Toggle)**: Die von Terminal-Chats erzeugten
+Dateien (Skripte, Reports, Zwischenergebnisse) liegen im Ordner `chats/` des
+Arbeitsverzeichnisses — je Chat ein eigener Unterordner. Standardmäßig ist
+dieser Ordner im Datei-Baum **ausgeblendet**, sodass der Baum nur die echten
+**Projektdateien** zeigt (das, was auch ins Code-Mining eingeht). Über den
+**Ordner-Toggle-Knopf** in der Baum-Leiste blenden Sie `chats/` bei Bedarf ein;
+die Wahl wird pro Projekt gemerkt. Die Chat-Dateien selbst finden Sie
+stattdessen in der Sektion **Terminal-Chats**: jeder Chat mit erzeugten Dateien
+trägt dort einen **Aufklapp-Pfeil**, der seinen Ausgabe-Ordner direkt unter dem
+Chat zeigt (Klick auf eine Datei öffnet sie im Editor). Standardmäßig
+zugeklappt; **erzeugt ein Chat neue Dateien, klappt sein Eintrag automatisch
+auf** (nur dort — der Datei-Baum bleibt unberührt). Der Auf-/Zuklapp-Zustand
+wird pro Projekt gespeichert und beim nächsten Öffnen wiederhergestellt.
+
 **Terminal-Chat** (Code-Projekte): Neben Terminal und Editor öffnen Sie im
 unteren Bereich einen **Terminal-Chat** — eine schlanke, terminalartige
 Chat-Oberfläche („wie ein Coding-Assistent im Terminal"). Sie ist im echten

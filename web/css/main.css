@@ -1131,6 +1131,16 @@ textarea { resize: none; }
   color: var(--text-400); font-size: 11px; padding: 0 2px; opacity: 0; transition: opacity .1s; }
 .tc-hist-row:hover .tc-hist-del { opacity: .7; }
 .tc-hist-del:hover { opacity: 1 !important; color: var(--git-deleted); }
+/* Expandable per-chat output folder (chats/<slug>_<date>_<sid>/) under its row. */
+.tc-hist-row .pt-caret, .tc-hist-row .pt-caret-spacer { flex: 0 0 auto; }
+.tc-hist-files { padding: 1px 0 3px; }
+.tc-hf-row { display: flex; align-items: center; gap: 5px; padding: 2px 6px;
+  border-radius: 4px; color: var(--text-300); font-size: 12px; white-space: nowrap; }
+.tc-hf-row .tc-hf-ico { flex: 0 0 auto; color: var(--text-400); display: inline-flex; }
+.tc-hf-row .tc-hf-name { overflow: hidden; text-overflow: ellipsis; }
+.tc-hf-file { cursor: pointer; }
+.tc-hf-file:hover { background: var(--bg-200); color: var(--text-100); }
+.tc-hf-dir { color: var(--text-400); }
 
 /* Editor tabs (CodeMirror) inside the bottom panel. */
 /* Absolute layout (NOT flex) so the editor area gets a DEFINITE height: flexbox

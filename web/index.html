@@ -1671,6 +1671,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="pt-act" id="terminal-tree-collapse" onclick="wdExpandAll(false)" title="Alle Ordner einklappen">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg>
         </button>
+        <button class="pt-act tt-toggle" id="terminal-tree-workfiles" onclick="wdToggleWorkFiles()" title="Chat-Arbeitsdateien (chats/) im Baum ein-/ausblenden — ausgeblendet zeigt der Baum nur Projektdateien">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M9.5 13.5h5M9.5 16.5h3"/></svg>
+        </button>
         <button class="pt-act tt-toggle" id="terminal-single-editor" onclick="terminalToggleSingleEditor()" title="Ein-Editor-Modus: Klick ersetzt den Editor (kein neuer Tab)">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
         </button>

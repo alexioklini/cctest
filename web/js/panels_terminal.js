@@ -24,6 +24,15 @@ const _term = {
   treeWidth: 240,    // file-tree column width (px)
   treeSplit: 0.5,    // file-tree vs Terminal-Chats height split (tree's fraction)
   singleEditor: false, // single-editor mode: tree click replaces the editor tab
+  // Work-files toggle: show the chats/ output folders (per-chat working dirs)
+  // inside the file tree? Off = the tree shows only the project's own files
+  // (what code mining sees); the chat outputs live under their chat in the
+  // Terminal-Chats list instead.
+  workFilesVisible: false,
+  // Expanded chat-output folders in the Terminal-Chats list, {sessionId: true}.
+  // Persisted in bottom_workspace (chat_folders_open) so reopening the project
+  // restores the same expand state. Auto-set when a chat's folder gains files.
+  chatFolderOpen: {},
 };
 
 // Slot order (DOM/visual): top-left, top-right, bottom-left, bottom-right.
@@ -669,7 +678,14 @@ async function _terminalLoadSessions() {
     if (typeof ws.tree_split === 'number' && ws.tree_split > 0 && ws.tree_split < 1) _term.treeSplit = ws.tree_split;
     if (typeof ws.single_editor === 'boolean') _term.singleEditor = ws.single_editor;
     if (ws.sizes && typeof ws.sizes === 'object') _term.sizes = _terminalMigrateSizes(ws.sizes, ws.layout);
+    if (typeof ws.work_files_visible === 'boolean') _term.workFilesVisible = ws.work_files_visible;
   }
+  // Restore per-chat folder expand state; reset the change-signature seed so
+  // files that appeared while the panel was closed don't count as "new" (only
+  // LIVE arrivals auto-expand — reopen restores the persisted state as-is).
+  _term.chatFolderOpen = {};
+  for (const sid of ((ws && ws.chat_folders_open) || [])) _term.chatFolderOpen[sid] = true;
+  _term._chatFolderSigs = null;
   ws = _terminalMigrateWorkspace(ws);   // map legacy lr/tb/lrb panes → a/b/c/d
   _terminalApplyLayout();
   _terminalBuildPanes();   // creates pane DOM for the current occupancy
@@ -785,6 +801,8 @@ function _terminalPersist() {
       tree_width: _term.treeWidth,
       tree_split: _term.treeSplit,
       single_editor: _term.singleEditor,
+      work_files_visible: _term.workFilesVisible,
+      chat_folders_open: Object.keys(_term.chatFolderOpen || {}).filter(k => _term.chatFolderOpen[k]),
     };
     try { API.updateProject(_term.agent, _term.project, { bottom_workspace: ws }); } catch (_) {}
   }, 600);
@@ -2369,6 +2387,8 @@ function _terminalApplyLayout() {
   if (se) se.classList.toggle('active', !!_term.singleEditor);
   const show = document.getElementById('terminal-tree-show');
   if (show) show.classList.toggle('active', !!_term.treeVisible);
+  const wf = document.getElementById('terminal-tree-workfiles');
+  if (wf) wf.classList.toggle('active', !!_term.workFilesVisible);
 }
 
 function terminalToggleTree() {
