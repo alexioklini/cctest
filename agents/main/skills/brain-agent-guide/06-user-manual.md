@@ -625,6 +625,20 @@ Codebasen, Forschungspapiere, …).
    **automatisch transkribiert** und danach wie jedes andere Dokument
    durchsucht (standardmäßig lokal, also ohne Zusatzkosten). Alles andere
    wird beim Hochladen mit „Dateityp nicht unterstützt" abgelehnt.
+
+   **Bilder werden ausgelesen:** Aus einem Bild wird nicht nur Größe/Format
+   erfasst, sondern per **OCR der enthaltene Text** (Scan eines Dokuments,
+   Ausweis, Screenshot) — damit ist der Inhalt durchsuchbar und landet im
+   Wissensgraphen. Welche OCR benutzt wird, steuert der `ocr`-Block in
+   `config.json` (dieselbe Einstellung wie für gescannte PDFs): Cloud-OCR,
+   ein **lokales** Vision-Modell (wenn die Daten den Rechner nicht verlassen
+   dürfen) oder `none` zum Abschalten.
+
+   **Originale bleiben erhalten:** Die hochgeladene Datei selbst wird im
+   Projekt unter `originals/` aufbewahrt (nicht nur der extrahierte Text).
+   Sie wird mitgelöscht, wenn Sie das Dokument aus dem Baum entfernen. Für
+   **Eingabeordner** ist das ohnehin nie ein Thema — die liegen auf Ihrer
+   Platte und werden nur gelesen, nie verändert oder gelöscht.
 5. **Web-Adressen** — über das ＋ im Web-Adressen-Zweig öffnet sich ein Dialog
    (Adresse + optionale Bezeichnung). Eine Liste von URLs, die das Projekt frisch abruft
    und ins Projektgedächtnis + KG einspeist (per crawl4ai gerendert, also

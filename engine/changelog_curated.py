@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.327.0",
+        "date": "2026-07-13",
+        "title": "Originaldateien bleiben erhalten · Text aus Bildern",
+        "body": "Hochgeladene Dateien werden ab sofort im Projekt "
+                "aufbewahrt. Bisher wurde nach dem Einlesen nur der "
+                "extrahierte Text behalten und die Originaldatei verworfen — "
+                "ein Scan liess sich danach weder erneut ansehen noch später "
+                "besser auswerten. Ausserdem werden Bilder jetzt inhaltlich "
+                "erschlossen: Aus einem eingescannten Dokument oder Ausweis "
+                "wird der enthaltene Text ausgelesen und durchsuchbar "
+                "gemacht — zuvor waren davon nur Bildgrösse und Dateiformat "
+                "bekannt, der eigentliche Inhalt blieb aussen vor. Bitte "
+                "beachten Sie: Für bereits früher importierte Bilder lässt "
+                "sich das nicht nachholen, diese müssen Sie erneut "
+                "hochladen.",
+        "audience": "user",
+        "versions": ["9.327.0"],
+    },
+    {
         "version": "9.326.0",
         "date": "2026-07-13",
         "title": "Dateinamen im Projekt-Baum · Tonaufnahmen importierbar",

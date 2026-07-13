@@ -263,6 +263,29 @@ class DocumentParser:
         except Exception:
             pass
         img.close()
+        # Read the TEXT off the image (scans/photos of documents). Without
+        # this an ingested passport scan entered the corpus as nothing but
+        # "821 x 852 JPEG" — the metadata says a file exists, the content is
+        # lost. Routed through the same ocr config block as scanned PDFs.
+        # Best-effort: OCR failure keeps the metadata-only document.
+        try:
+            from engine.doc_convert import _extract_image_ocr
+            text, backend, err = _extract_image_ocr(path)
+            if text:
+                # Mistral's /ocr wraps its output in a "## Page 1" heading. On
+                # a single image that page number says nothing, and worse:
+                # DocumentChunker takes the first heading as the chunk title,
+                # so every scan would be titled "## Page 1".
+                text = re.sub(r"^\s*##\s*Page\s+\d+\s*\n+", "", text.strip())
+                info_parts.append(f"**OCR:** {backend}")
+                info_parts.append("")
+                info_parts.append(text)
+            elif err:
+                print(f"[ingest] image OCR failed for {path}: {err}",
+                      flush=True)
+        except Exception as e:
+            print(f"[ingest] image OCR error for {path}: "
+                  f"{type(e).__name__}: {e}", flush=True)
         return "\n".join(info_parts)
 
     @staticmethod
@@ -863,6 +886,16 @@ tags:
                         pass
                 os.remove(os.path.join(ingest_dir, fname))
                 deleted += 1
+        # The kept original dies with its document — else deleting a file from
+        # the tree would leave an unreachable binary behind forever. (On a
+        # mid-extraction cancel no original exists yet; this is then a no-op.)
+        try:
+            orig = IngestQueue.original_path(agent_id, project_name,
+                                             source_hash)
+            if orig:
+                os.remove(orig)
+        except OSError:
+            pass
         return {"source": source_name, "source_hash": source_hash, "deleted": deleted}
 
 
@@ -889,6 +922,15 @@ tags:
 
 _STAGING_DIRNAME = "ingest-staging"
 
+# Uploaded originals are KEPT after extraction (moved staging → originals/),
+# not deleted. Extraction is lossy and improves over time — an image today
+# yields only Pillow metadata, a scan depends on the OCR of the day — so
+# throwing the source away made the loss permanent and the file un-viewable
+# from the UI. originals/ is a sibling of ingested/, deliberately NOT one of
+# the miner's roots (it walks an explicit root list: ingested/, input folders,
+# web-urls/), so raw binaries never enter the palace.
+_ORIGINALS_DIRNAME = "originals"
+
 
 class IngestQueue:
     """Extraction worker pool for staged project-file uploads."""
@@ -911,6 +953,28 @@ class IngestQueue:
         # must never see raw originals there.
         ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
         return os.path.join(os.path.dirname(ingest_dir), _STAGING_DIRNAME)
+
+    @staticmethod
+    def originals_dir(agent_id: str, project_name: str | None) -> str:
+        """Where the untouched uploaded files are kept, keyed by source_hash."""
+        ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
+        return os.path.join(os.path.dirname(ingest_dir), _ORIGINALS_DIRNAME)
+
+    @staticmethod
+    def original_path(agent_id: str, project_name: str | None,
+                      key: str) -> str | None:
+        """Absolute path of the kept original for `key`, or None if absent.
+
+        Stored as `<key><ext>`, so the doc's source_hash — the id the docs
+        list, the tree and the delete endpoint already use — resolves straight
+        to the file without a second index."""
+        odir = IngestQueue.originals_dir(agent_id, project_name)
+        if not os.path.isdir(odir):
+            return None
+        for fn in os.listdir(odir):
+            if os.path.splitext(fn)[0] == key:
+                return os.path.join(odir, fn)
+        return None
 
     # ── public API ───────────────────────────────────────────────────────
     def stage(self, agent_id: str, project_name: str, filename: str,
@@ -1084,6 +1148,7 @@ class IngestQueue:
                 self._cleanup(meta_path)
                 return
             job["state"] = "extracting"
+        keep_original = False
         # Pooled thread → context MUST be entered via `with request_context`
         # (reused-thread bleed invariant); current_user_id feeds OCR cost
         # attribution in doc_convert.
@@ -1128,8 +1193,31 @@ class IngestQueue:
                           flush=True)
                 self._finish(agent_id, project_name, key,
                              chunks=int(result.get("chunks", 0)))
+                keep_original = True
+        if keep_original:
+            # Success → KEEP the source (staging is a hand-off buffer, not the
+            # archive). Cancelled/errored jobs fall through to _cleanup: they
+            # have no doc row, so a kept original would be unreachable garbage.
+            self._keep_original(agent_id, project_name, key, staged, meta)
         self._cleanup(staged, meta_path)
         self._maybe_kick_sync(agent_id, project_name)
+
+    def _keep_original(self, agent_id: str, project_name: str, key: str,
+                       staged: str, meta: dict):
+        """Move the extracted upload's bytes into originals/<key><ext>."""
+        try:
+            odir = self.originals_dir(agent_id, project_name)
+            os.makedirs(odir, exist_ok=True)
+            ext = os.path.splitext(meta.get("filename", "") or staged)[1].lower()
+            dest = os.path.join(odir, f"{key}{ext}")
+            # A re-ingest reuses the key, so replace in place — same overwrite
+            # semantics the chunks in ingested/ already have.
+            os.replace(staged, dest)
+        except OSError as e:
+            # Never fail the ingest over the archive copy — the document is
+            # already extracted and stored at this point.
+            print(f"[ingest-queue] keeping original failed for {key}: {e}",
+                  flush=True)
 
     def _finish(self, agent_id: str, project_name: str, key: str,
                 *, error: str = "", chunks: int = 0, state: str = ""):

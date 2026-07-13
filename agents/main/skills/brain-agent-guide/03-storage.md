@@ -40,6 +40,22 @@ agents/
                                #   Folder import sends rel_path so same-named
                                #   files in different groups get distinct keys
                                #   (Bericht / Bericht-2), no overwrite (v9.160.9).
+                               #   Images carry OCR text (v9.327.0), not just
+                               #   Pillow metadata — routed via config ocr.*.
+        originals/             # the UPLOADED FILE ITSELF, kept after extraction
+                               #   (v9.327.0), named <source_hash><ext> — so a
+                               #   doc's source_hash resolves straight to its
+                               #   original with no second index. Deleted with
+                               #   the document (delete_ingested). Extraction is
+                               #   lossy and improves over time, so the source is
+                               #   archived rather than discarded. Deliberately
+                               #   NOT a miner root (the daemon walks an explicit
+                               #   list: ingested/, input_folders, web-urls/), so
+                               #   raw binaries never enter the palace.
+        ingest-staging/        # transient: upload bytes + .meta.json sidecar
+                               #   awaiting extraction. Drains to originals/ on
+                               #   success, deleted on error/cancel. Re-enqueued
+                               #   on boot (crash-safe).
         web-urls/              # mined project web_urls, one .md per URL named
                                #   <url-slug>_<YYYY-MM-DD-HHMM>.md (a -<hash8>
                                #   is inserted before the _ ONLY when two URLs

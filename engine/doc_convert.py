@@ -29,6 +29,7 @@ the whole pass.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import threading
@@ -337,10 +338,12 @@ def reset_ocr_cycle_counter() -> int:
     return n
 
 
-def _extract_with_mistral_ocr(path: str) -> tuple[str, str | None, int]:
-    """OCR a PDF via Mistral's /v1/ocr endpoint. Returns (markdown, error,
-    pages_processed). On any failure returns ("", "<reason>", 0) so the
-    caller can fall through to the empty-marker path.
+def _extract_with_mistral_ocr(path: str, *, mime: str = "application/pdf"
+                              ) -> tuple[str, str | None, int]:
+    """OCR a PDF (or an image — pass its `mime`) via Mistral's /v1/ocr
+    endpoint. Returns (markdown, error, pages_processed). On any failure
+    returns ("", "<reason>", 0) so the caller can fall through to the
+    empty-marker path.
 
     Reads provider config from config.json -> providers[<provider>] (api_key
     + base_url). Per-cycle page cap honored via _ocr_pages_this_cycle.
@@ -377,16 +380,21 @@ def _extract_with_mistral_ocr(path: str) -> tuple[str, str | None, int]:
     import urllib.error
     try:
         with open(path, "rb") as f:
-            pdf_b64 = base64.b64encode(f.read()).decode("ascii")
+            data_b64 = base64.b64encode(f.read()).decode("ascii")
     except OSError as e:
         return "", f"read failed: {e}", 0
 
+    # The /ocr endpoint takes a PDF as `document_url` and an image as
+    # `image_url` — same call, different document type.
+    if mime == "application/pdf":
+        document = {"type": "document_url",
+                    "document_url": f"data:{mime};base64,{data_b64}"}
+    else:
+        document = {"type": "image_url",
+                    "image_url": f"data:{mime};base64,{data_b64}"}
     payload = {
         "model": cfg["model"],
-        "document": {
-            "type": "document_url",
-            "document_url": f"data:application/pdf;base64,{pdf_b64}",
-        },
+        "document": document,
         "include_image_base64": False,
     }
     req = urllib.request.Request(
@@ -445,6 +453,76 @@ _LOCAL_OCR_PROMPT = (
     "do not describe images. If the page contains a table, output it as a "
     "markdown table. If the page is empty, return an empty response."
 )
+
+
+def _vision_provider_cfg(model: str) -> tuple[str, str, str, str | None]:
+    """Resolve (wire_model, base_url, api_key, error) for a vision model.
+
+    Reads config.json directly — same shape (and same reason) as
+    _extract_with_mistral_ocr: avoids depending on engine.provider's
+    module-globals being initialized outside the daemon.
+    """
+    try:
+        cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                                "config.json")
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            full = json.load(f)
+    except (OSError, ValueError) as e:
+        return "", "", "", f"config read failed: {e}"
+    model_cfg = (full.get("models") or {}).get(model) or {}
+    provider_name = model_cfg.get("provider", "")
+    if not provider_name:
+        return "", "", "", f"model '{model}' has no provider in config"
+    prov = (full.get("providers") or {}).get(provider_name) or {}
+    base_url = prov.get("base_url", "")
+    if not base_url:
+        return "", "", "", f"no base_url for provider '{provider_name}'"
+    wire_model = model_cfg.get("base_model_id") or model.split("/", 1)[-1]
+    return wire_model, base_url, prov.get("api_key", ""), None
+
+
+def _vision_ocr_round(img_b64: str, mime: str, *, wire_model: str,
+                      base_url: str, api_key: str,
+                      max_tokens: int) -> tuple[str, str | None]:
+    """One image → text round against an OpenAI-compatible vision endpoint.
+
+    The single wire shape used for BOTH a rendered PDF page and a standalone
+    image file, so the two paths can't drift apart.
+    """
+    import urllib.request
+    import urllib.error
+
+    payload = {
+        "model": wire_model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": _LOCAL_OCR_PROMPT},
+                {"type": "image_url",
+                 "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
+            ],
+        }],
+        "max_tokens": max_tokens,
+        "temperature": 0.0,
+        "stream": False,
+    }
+    req = urllib.request.Request(
+        base_url.rstrip("/") + "/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}",
+                 "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=_OCR_TIMEOUT_SECS) as resp:
+            body = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        return "", f"http {e.code}: {e.read().decode('utf-8', errors='replace')[:200]}"
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return "", f"request failed: {type(e).__name__}: {e}"
+    choices = body.get("choices") or []
+    if not choices:
+        return "", "empty response"
+    return ((choices[0].get("message") or {}).get("content") or "").strip(), None
 
 
 def _extract_with_local_vision(path: str) -> tuple[str, str | None, int]:
@@ -583,6 +661,77 @@ def _extract_with_local_vision(path: str) -> tuple[str, str | None, int]:
               f"{type(e).__name__}: {e}", flush=True)
 
     return text + "\n", None, pages_processed
+
+
+_IMAGE_MIME = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+}
+
+
+def _extract_image_ocr(path: str) -> tuple[str, str, str | None]:
+    """Read the TEXT out of a standalone image (scan, photo of a document).
+
+    Returns (text, backend, error); empty text = nothing readable, caller
+    keeps its metadata-only output. Routed by the SAME config.json -> ocr
+    block as the PDF path (engine: mistral_ocr | local_vision | auto | none),
+    so an operator who pins OCR to a local model for privacy gets that for
+    images too — which is the point, since the images that carry text here
+    are passports and ID scans.
+
+    Why this exists: a project image used to yield Pillow metadata ONLY
+    (dimensions/format), so a scanned passport entered the corpus as
+    "821 x 852 JPEG" with zero content and the KG extracted 0 triples from it.
+    """
+    ext = os.path.splitext(path)[1].lower()
+    mime = _IMAGE_MIME.get(ext)
+    if not mime:
+        return "", "", None          # .svg et al — not a raster scan
+    cfg = _ocr_config()
+    engine = cfg["engine"]
+    if engine == "none":
+        return "", "", None
+
+    global _ocr_pages_this_cycle
+    if _ocr_pages_this_cycle >= cfg["max_pages_per_cycle"]:
+        return "", "", f"per-cycle cap {cfg['max_pages_per_cycle']} reached"
+
+    # Cloud OCR first (when allowed): Mistral's /ocr takes an image data-URI
+    # the same way it takes a PDF one — only the document type differs.
+    err = ""
+    if engine in ("mistral_ocr", "auto"):
+        _extract_progress("OCR", note="Bild — Cloud-OCR")
+        text, err, pages = _extract_with_mistral_ocr(path, mime=mime)
+        if text:
+            _ocr_pages_this_cycle += pages
+            return text, f"mistral-ocr ({pages}p)", None
+
+    if engine in ("local_vision", "auto"):
+        model = cfg.get("local_vision_model") or ""
+        if not model:
+            return "", "", err or "local_vision_model not configured"
+        _extract_progress("OCR", note="Bild — lokales Vision-Modell")
+        wire_model, base_url, api_key, cfg_err = _vision_provider_cfg(model)
+        if cfg_err:
+            return "", "", err or cfg_err
+        try:
+            with open(path, "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode("ascii")
+        except OSError as e:
+            return "", "", f"read failed: {e}"
+        text, v_err = _vision_ocr_round(
+            img_b64, mime, wire_model=wire_model, base_url=base_url,
+            api_key=api_key, max_tokens=cfg["local_vision_max_tokens"])
+        if text:
+            _ocr_pages_this_cycle += 1
+            try:
+                _log_ocr_cost(model=model, provider="", pages=1, cost_usd=0.0)
+            except Exception:
+                pass
+            return text + "\n", "local-vision (1p)", None
+        err = err or v_err
+
+    return "", "", err or None
 
 
 def _log_ocr_cost(*, model: str, provider: str, pages: int, cost_usd: float) -> None:
