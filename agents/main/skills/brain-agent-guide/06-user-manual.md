@@ -238,6 +238,15 @@ Tippen, `Enter` drücken (Shift+Enter für Zeilenumbruch) oder den
 Senden-Knopf klicken. Während das Modell antwortet, wird der Senden-Knopf
 zum Stopp-Knopf.
 
+**Projekt-Chip**: Links in der Eingabeleiste zeigt ein kleiner Chip, ob die
+nächste Nachricht **projektgebunden** läuft (farbig, Projektname — z. B.
+„sql-und-showcase") oder als **„Allgemeiner Chat"** (grau, ohne
+Projektkontext). So sehen Sie vor dem Senden, ob Wissensbasis, Instruktionen
+und Arbeitsverzeichnis des Projekts gelten. Landet eine Projekt-Aufgabe
+versehentlich im allgemeinen Chat (z. B. nach „Neuer Chat" außerhalb der
+Projektansicht), macht der Chip das sofort sichtbar — für einen Projekt-Chat
+starten Sie den Chat aus der Projektansicht heraus.
+
 **Eine laufende Antwort steuern**: Sie müssen eine Antwort nicht abwarten oder
 abbrechen, um weiterzuarbeiten. Während gestreamt wird, stehen vier Werkzeuge
 bereit (im normalen Chat über Knöpfe in der Eingabeleiste, im Terminal-Chat über

@@ -1914,6 +1914,15 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <div class="slash-popup" data-id="slash-popup"></div>
     <div class="composer-footer">
       <div class="composer-footer-left">
+        <!-- Projekt-Chip: zeigt, ob die NÄCHSTE Nachricht projektgebunden läuft
+             (state.currentProject gewinnt, sonst die Bindung der Session) oder
+             als allgemeiner Chat. Rein informativ; aktualisiert von
+             updateStatusBar(). Macht den stillen Kontextverlust sichtbar, bei
+             dem eine im Projekt gedachte Aufgabe als projektloser Chat landet. -->
+        <span class="composer-project-chip" data-composer-toggle="project-chip">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span class="cpc-label"></span>
+        </span>
         <button class="composer-btn" onclick="triggerFileUpload()" title="Dateien anhängen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
         </button>

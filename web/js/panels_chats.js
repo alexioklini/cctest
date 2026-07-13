@@ -79,6 +79,22 @@ function updateStatusBar() {
   document.getElementById('status-model').textContent = '';
   document.getElementById('status-session').textContent = chat.sessionId ? (chat.sessionId.startsWith('sched-') ? chat.sessionId : chat.sessionId.substring(0,8)) : '';
 
+  // Projekt-Chip: shows whether the NEXT send runs project-bound. Mirrors the
+  // server rule (handlers/chat.py: body.project = state.currentProject wins,
+  // else the session keeps its stored binding) so the chip can never disagree
+  // with what the turn will actually do.
+  {
+    const proj = state.currentProject || chat.project || '';
+    for (const chip of _composerToggleEls('project-chip')) {
+      chip.classList.toggle('cpc-bound', !!proj);
+      const lbl = chip.querySelector('.cpc-label');
+      if (lbl) lbl.textContent = proj || 'Allgemeiner Chat';
+      chip.title = proj
+        ? `An Projekt „${proj}“ gebunden — die nächste Nachricht läuft mit Projektkontext.`
+        : 'Allgemeiner Chat ohne Projektbindung. Für einen Projekt-Chat den Chat aus der Projektansicht heraus starten.';
+    }
+  }
+
   // Save-to-memory toggle: green=on, amber=auto, grey=off
   // Mirror the same state to both chat- and welcome-screen composers.
   const mode = chat.memoryMode || (chat.saveToMemory ? 'on' : 'off');

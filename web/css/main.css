@@ -1656,14 +1656,32 @@ textarea { resize: none; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* Never let the clusters escape the box: a crowded left row (many toggles +
+     Projekt-Chip) or a long model name wraps onto a second line instead of
+     pushing the model selector / send button out of the composer. */
+  flex-wrap: wrap;
   padding: 6px 12px 10px;
 }
-.composer-footer-left { display: flex; align-items: center; gap: 4px; }
-.composer-footer-right { display: flex; align-items: center; gap: 8px; }
+.composer-footer-left { display: flex; align-items: center; gap: 1px;
+  flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+/* Projekt-Chip: Projektbindung des nächsten Sends (gesetzt von updateStatusBar).
+   Neutral-grau für allgemeine Chats, Akzent wenn projektgebunden. Shrinks
+   (Label ellipsiert) bevor irgendetwas anderes Platz verliert. */
+.composer-project-chip { display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 7px; margin-right: 2px; border-radius: 10px; font-size: 10.5px;
+  color: var(--text-400); background: var(--bg-200); white-space: nowrap;
+  max-width: 150px; flex: 0 1 auto; min-width: 0; cursor: default; }
+.composer-project-chip .cpc-label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.composer-project-chip.cpc-bound {
+  color: var(--accent-brand);
+  background: color-mix(in srgb, var(--accent-brand) 12%, transparent); }
+.composer-footer-right { display: flex; align-items: center; gap: 6px;
+  flex: 0 0 auto; margin-left: auto; min-width: 0; }
 
 .composer-btn {
-  width: 32px;
-  height: 32px;
+  width: 26px;
+  height: 28px;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1672,7 +1690,7 @@ textarea { resize: none; }
   transition: all 0.15s;
 }
 .composer-btn:hover { background: var(--bg-200); color: var(--text-200); }
-.composer-btn svg { width: 18px; height: 18px; }
+.composer-btn svg { width: 17px; height: 17px; }
 
 /* MemPalace activity animations on the save-to-memory button */
 @keyframes mp-pulse-store {
@@ -1707,7 +1725,9 @@ textarea { resize: none; }
   white-space: nowrap;
 }
 .model-selector-btn:hover { background: var(--bg-200); color: var(--text-100); }
-.model-selector-btn .model-name { font-weight: 500; color: var(--text-200); }
+/* Long model names ellipsize instead of widening the button past the composer. */
+.model-selector-btn .model-name { font-weight: 500; color: var(--text-200);
+  max-width: 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .model-selector-btn .model-tier { color: var(--text-400); }
 .model-selector-btn svg { width: 12px; height: 12px; }
 

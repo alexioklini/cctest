@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.317.0",
+        "date": "2026-07-13",
+        "title": "Projekt-Chip in der Eingabeleiste",
+        "body": "Links in der Eingabeleiste zeigt ein kleiner Chip jetzt vor dem "
+                "Absenden, ob Ihre Nachricht in einem Projekt läuft (farbig, mit "
+                "Projektname) oder als allgemeiner Chat (grau). So passiert es "
+                "nicht mehr unbemerkt, dass eine Projekt-Aufgabe ohne das Wissen "
+                "und die Einstellungen des Projekts beantwortet wird. Die "
+                "Eingabeleiste wurde zudem kompakter: Die Knöpfe rücken enger "
+                "zusammen, und auch bei langen Modellnamen bleiben Modellwahl "
+                "und Senden-Knopf sauber innerhalb des Eingabefelds.",
+        "audience": "user",
+        "versions": ["9.317.0"],
+    },
+    {
         "version": "9.316.0",
         "date": "2026-07-13",
         "title": "Aufgeräumter Datei-Baum im Code-Terminal",
