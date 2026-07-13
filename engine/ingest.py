@@ -53,11 +53,18 @@ class DocumentParser:
     # async upload queue for the CHEAP pre-stage rejection (unsupported types
     # fail synchronously with the same wording parse() would raise, so the
     # client's reason translation keeps working without an extraction round).
+    # Audio/video → transcribed via the shared STT pipeline (parse_audio).
+    # Kept as its own set so the dispatch table and this gate can't drift.
+    AUDIO_EXTS = frozenset({
+        ".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac",
+        ".mp4", ".mov", ".webm",
+    })
+
     SUPPORTED_EXTS = frozenset({
         ".pdf", ".docx", ".txt", ".md", ".html", ".htm", ".xlsx", ".xls",
         ".pptx", ".eml", ".msg", ".csv", ".tsv",
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
-    })
+    }) | AUDIO_EXTS
 
     @staticmethod
     def parse_pdf(path: str) -> str:
@@ -174,6 +181,35 @@ class DocumentParser:
         if err:
             raise RuntimeError(err)
         return text
+
+    @staticmethod
+    def parse_audio(path: str) -> str:
+        """Transcribe an audio/video file to markdown via the SHARED STT path.
+
+        Same choke point web_fetch's audio branch, the Übersetzen tab and the
+        transcribe_audio tool use (`transcribe_and_translate` → model resolver
+        + cost logging, purpose='transcribe'; local Whisper default = $0), so
+        an .mp3 dropped into a project mines like any other document instead of
+        being rejected as an unsupported format."""
+        from server_lib.translate import media as _media
+        res = _media.transcribe_and_translate(path, target_lang="")
+        text = (res.get("transcript") or "").strip()
+        if not text:
+            # Empty transcript = silent/undecodable audio. Return nothing so the
+            # caller's "no content extracted" path reports it like any other
+            # empty document (rather than storing a header-only chunk).
+            return ""
+        dur = float(res.get("duration_s") or 0)
+        # No markdown header here: DocumentChunker treats the first heading as
+        # the chunk `title`, so a "## Transcript" line would title every audio
+        # doc "## Transcript" instead of the filename.
+        header = [
+            f"**Audio:** {os.path.basename(path)}",
+            f"**Duration:** {int(dur // 60)}:{int(dur % 60):02d} min",
+            f"**Language:** {res.get('language') or '?'}",
+            "",
+        ]
+        return "\n".join(header) + text + "\n"
 
     @staticmethod
     def parse_csv(path: str) -> str:
@@ -308,6 +344,8 @@ class DocumentParser:
             ".bmp": ("image", DocumentParser.parse_image),
             ".svg": ("svg", DocumentParser.parse_svg),
         }
+        parsers.update({e: ("audio", DocumentParser.parse_audio)
+                        for e in DocumentParser.AUDIO_EXTS})
         if ext not in parsers:
             raise ValueError(f"Unsupported format: {ext}. Supported: {', '.join(parsers.keys())}")
         source_type, parser_fn = parsers[ext]
@@ -534,7 +572,35 @@ class IngestManager:
                 return parts[1]
         return None
 
+    # Frontmatter can outgrow any fixed byte cap: `title:` + `source:` both
+    # carry the full relative path, and middle chunks add TWO `related:` entries
+    # (prev+next, each a full chunk filename), so a deep folder import lands at
+    # ~970 chars while chunk __000 (next only) fits in 700. A capped read that
+    # cuts the block loses its closing `---`, and _parse_frontmatter's regex
+    # then matches NOTHING and returns {} — every field silently falls back to
+    # its default ("unknown" in the docs list; "" in the dedup key). Read the
+    # header until the terminator instead of guessing its size.
+    _FM_READ_CHUNK = 4096
+    _FM_READ_MAX = 65536
+
     @staticmethod
+    def _read_frontmatter(fpath: str) -> dict:
+        """Parse a chunk file's frontmatter, reading only as far as it spans."""
+        import brain as _brain
+        with open(fpath, "r", errors="replace") as f:
+            raw = f.read(IngestManager._FM_READ_CHUNK)
+            if not raw.startswith("---"):
+                return {}
+            # Grow until the closing '---' is in hand (or the file/cap ends).
+            while ("\n---" not in raw[3:]
+                   and len(raw) < IngestManager._FM_READ_MAX):
+                more = f.read(IngestManager._FM_READ_CHUNK)
+                if not more:
+                    break
+                raw += more
+        fm, _ = _brain._parse_frontmatter(raw)
+        return fm
+
     @staticmethod
     def _yaml_unquote(s: str) -> str:
         """Invert brain._yaml_escape: strip the surrounding quotes + unescape.
@@ -553,10 +619,8 @@ class IngestManager:
     @staticmethod
     def _read_chunk_source(fpath: str) -> str:
         """Read the `source:` frontmatter value from a chunk file."""
-        import brain as _brain
         try:
-            with open(fpath, "r") as f:
-                fm, _ = _brain._parse_frontmatter(f.read(800))
+            fm = IngestManager._read_frontmatter(fpath)
             return IngestManager._yaml_unquote(fm.get("source", ""))
         except Exception:
             return ""
@@ -743,9 +807,7 @@ tags:
                 continue
             fpath = os.path.join(ingest_dir, fname)
             try:
-                with open(fpath, "r") as f:
-                    raw = f.read(800)
-                fm, _ = _brain._parse_frontmatter(raw)
+                fm = IngestManager._read_frontmatter(fpath)
             except Exception:
                 continue
             source = IngestManager._yaml_unquote(fm.get("source", "unknown"))
@@ -760,6 +822,17 @@ tags:
                     "tags": [],
                 }
             groups[src_hash]["chunks"] += 1
+            # os.listdir order is arbitrary, so the group may have been seeded
+            # from a chunk whose header didn't parse. Let any chunk that DOES
+            # carry a real value replace the placeholder — the listing must not
+            # depend on which chunk happened to come first.
+            if groups[src_hash]["source"] == "unknown" and source != "unknown":
+                groups[src_hash]["source"] = source
+            if (groups[src_hash]["source_type"] == "unknown"
+                    and fm.get("source_type")):
+                groups[src_hash]["source_type"] = fm["source_type"]
+            if not groups[src_hash]["ingested_at"] and fm.get("ingested_at"):
+                groups[src_hash]["ingested_at"] = fm["ingested_at"]
             # Parse tags from frontmatter
             tags_str = fm.get("tags", "")
             if isinstance(tags_str, str) and tags_str:
@@ -773,7 +846,6 @@ tags:
     def delete_ingested(agent_id: str, source_hash: str,
                         project_name: str | None = None) -> dict:
         """Delete all chunks for a source hash."""
-        import brain as _brain
         ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
         if not os.path.isdir(ingest_dir):
             return {"error": "No ingested documents found"}
@@ -784,9 +856,9 @@ tags:
                 if not source_name:
                     fpath = os.path.join(ingest_dir, fname)
                     try:
-                        with open(fpath, "r") as f:
-                            fm, _ = _brain._parse_frontmatter(f.read(800))
-                        source_name = fm.get("source", "unknown")
+                        fm = IngestManager._read_frontmatter(fpath)
+                        source_name = IngestManager._yaml_unquote(
+                            fm.get("source", ""))
                     except Exception:
                         pass
                 os.remove(os.path.join(ingest_dir, fname))

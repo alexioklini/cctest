@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.326.0",
+        "date": "2026-07-13",
+        "title": "Dateinamen im Projekt-Baum · Tonaufnahmen importierbar",
+        "body": "Importierte Dateien mit langen Pfaden erschienen im Projekt-"
+                "Baum teils als „unknown“ und wirkten dadurch fehlerhaft — "
+                "tatsächlich waren sie vollständig eingelesen, nur ihr Name "
+                "wurde nicht angezeigt. Sie sehen jetzt durchgehend den echten "
+                "Dateinamen; auch das erneute Hochladen derselben Datei "
+                "aktualisiert sie wieder, statt eine Zweitfassung anzulegen. "
+                "Neu ist außerdem, dass Sie Tonaufnahmen (etwa MP3 oder "
+                "Sprachnotizen) direkt in ein Projekt importieren können: sie "
+                "werden automatisch transkribiert und sind danach wie jedes "
+                "andere Dokument durchsuchbar.",
+        "audience": "user",
+        "versions": ["9.326.0"],
+    },
+    {
         "version": "9.325.0",
         "date": "2026-07-13",
         "title": "Terminal-Chat: Verlauf klarer lesbar",

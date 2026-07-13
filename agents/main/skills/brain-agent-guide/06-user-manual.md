@@ -617,6 +617,14 @@ Codebasen, Forschungspapiere, …).
    Unterordner-Struktur wird als Gruppen übernommen. Das Einspeisen ins
    Projektgedächtnis wartet automatisch, bis die Extraktion des gesamten
    Stapels fertig ist, und startet dann sofort.
+
+   **Unterstützte Dateitypen:** PDF (gescannte inkl. OCR), docx, xlsx/xls,
+   pptx, eml/msg (Outlook-Mails), txt/md, html, csv/tsv, Bilder
+   (png/jpg/gif/webp/bmp/svg) sowie **Tonaufnahmen** (mp3, m4a, wav, flac,
+   ogg, opus, aac, mp4, mov, webm) — Audio-/Videodateien werden beim Import
+   **automatisch transkribiert** und danach wie jedes andere Dokument
+   durchsucht (standardmäßig lokal, also ohne Zusatzkosten). Alles andere
+   wird beim Hochladen mit „Dateityp nicht unterstützt" abgelehnt.
 5. **Web-Adressen** — über das ＋ im Web-Adressen-Zweig öffnet sich ein Dialog
    (Adresse + optionale Bezeichnung). Eine Liste von URLs, die das Projekt frisch abruft
    und ins Projektgedächtnis + KG einspeist (per crawl4ai gerendert, also

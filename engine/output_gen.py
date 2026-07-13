@@ -260,10 +260,15 @@ def _iter_project_sources(agent_id: str, project: dict) -> list[tuple[str, str, 
                     continue
                 fpath = os.path.join(ingest_dir, fname)
                 try:
-                    with open(fpath, "r") as f:
-                        fm, _ = _brain_mod._parse_frontmatter(f.read(800))
+                    # Reads to the frontmatter terminator, not a byte cap — a
+                    # deep folder import pushes the header past any fixed size
+                    # and a truncated block parses to {} (no closing '---').
+                    fm = _brain_mod.IngestManager._read_frontmatter(fpath)
                     key = fm.get("source_hash") or key
-                    names.setdefault(key, fm.get("source") or fname)
+                    names.setdefault(
+                        key,
+                        _brain_mod.IngestManager._yaml_unquote(
+                            fm.get("source") or "") or fname)
                 except OSError:
                     continue
                 groups.setdefault(key, []).append(fpath)
