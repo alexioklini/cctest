@@ -43,6 +43,14 @@ const _term = {
   // Persisted in bottom_workspace (chat_folders_open) so reopening the project
   // restores the same expand state. Auto-set when a chat's folder gains files.
   chatFolderOpen: {},
+  // Expanded DIRECTORIES inside a chat's folder subtree, {dirPath: true} —
+  // default collapsed; auto-opened along the path to a new/changed file.
+  // Persisted in bottom_workspace (chat_dirs_open).
+  chatDirOpen: {},
+  // Auto-Close per-chat tab snapshots {sid: {tabs:[…], sizes:{col,row}}}:
+  // taken when the user LEAVES a chat (mode on), restored when they return.
+  // Persisted in bottom_workspace (chat_tab_sets).
+  chatTabSets: {},
 };
 
 // Slot order (DOM/visual): top-left, top-right, bottom-left, bottom-right.
@@ -260,7 +268,9 @@ function _terminalMakePane(slot) {
   bar.addEventListener('drop', (e) => {
     e.preventDefault(); bar.classList.remove('tp-drop');
     const tabId = e.dataTransfer.getData('text/tab-id');
-    if (tabId) _terminalMoveTabToPane(tabId, 'pane-' + slot);
+    // Empty strip space = append at the end (per-tab drops reorder in place and
+    // stopPropagation before reaching this handler).
+    if (tabId) _terminalMoveTabToEnd(tabId, 'pane-' + slot);
   });
   // Tab overflow scroll arrows (VS Code-style): only shown when the tab strip
   // overflows; click scrolls by ~70% of the visible width. Visibility is kept in
@@ -697,7 +707,12 @@ async function _terminalLoadSessions() {
   // LIVE arrivals auto-expand — reopen restores the persisted state as-is).
   _term.chatFolderOpen = {};
   for (const sid of ((ws && ws.chat_folders_open) || [])) _term.chatFolderOpen[sid] = true;
+  _term.chatDirOpen = {};
+  for (const dp of ((ws && ws.chat_dirs_open) || [])) _term.chatDirOpen[dp] = true;
+  _term.chatTabSets = (ws && ws.chat_tab_sets && typeof ws.chat_tab_sets === 'object') ? ws.chat_tab_sets : {};
   _term._chatFolderSigs = null;
+  _term._chatFileChanged = {};
+  _term._lastChatSid = '';
   ws = _terminalMigrateWorkspace(ws);   // map legacy lr/tb/lrb panes → a/b/c/d
   _terminalApplyLayout();
   _terminalBuildPanes();   // creates pane DOM for the current occupancy
@@ -816,6 +831,8 @@ function _terminalPersist() {
       auto_close: _term.autoClose,
       work_files_visible: _term.workFilesVisible,
       chat_folders_open: Object.keys(_term.chatFolderOpen || {}).filter(k => _term.chatFolderOpen[k]),
+      chat_dirs_open: Object.keys(_term.chatDirOpen || {}).filter(k => _term.chatDirOpen[k]),
+      chat_tab_sets: _term.chatTabSets || {},
     };
     try { API.updateProject(_term.agent, _term.project, { bottom_workspace: ws }); } catch (_) {}
   }, 600);
@@ -980,6 +997,10 @@ function _terminalActivate(id) {
     }, 30);
     if (typeof tcRenderStatus === 'function') tcRenderStatus(tab);
     if (typeof renderTermchatHistory === 'function') renderTermchatHistory();
+    // Auto-Close: a direct click on a chat TAB selects that chat just like the
+    // Terminal-Chats list does → same scope-to-chat + restore hook (no-op when
+    // the mode is off, re-entry guarded inside).
+    if (tab.sessionId) _terminalAutoCloseFor(tab.sessionId);
     _terminalPersist();
     return;
   }
@@ -1225,7 +1246,9 @@ function _terminalRenderTabs() {
       return `<div class="terminal-tab${active}${cls}" draggable="true" data-tab-id="${esc(t.id)}"
         title="${esc(t.path || label)}" onclick="_terminalActivate('${t.id}')"
         oncontextmenu="_terminalTabMenu('${t.id}', event)"
-        ondragstart="_terminalTabDragStart(event,'${esc(t.id)}')" ondragend="_terminalTabDragEnd(event)">
+        ondragstart="_terminalTabDragStart(event,'${esc(t.id)}')" ondragend="_terminalTabDragEnd(event)"
+        ondragover="_terminalTabDragOver(event)" ondragleave="_terminalTabDragLeave(event)"
+        ondrop="_terminalTabDrop(event,'${esc(t.id)}')">
         <span class="tt-name">${label}</span>
         <span class="terminal-tab-close" onclick="terminalCloseTab('${t.id}', event)">✕</span>
       </div>`;
@@ -1288,10 +1311,91 @@ function terminalCloseUnrelated(anchorId) {
   _terminalCloseUnrelatedBySid(anchor.sessionId, false);
 }
 
+// ── Auto-Close per-chat tab restore ──────────────────────────────────────────
+// Leaving a chat (mode on) snapshots the workspace tabs that were on screen —
+// editors/diffs by path, live terminals by PTY id, the chat's own pane — plus
+// the pane split fractions. Returning to the chat restores that set: files
+// reopen into their remembered panes, still-alive PTYs reattach, splits apply.
+// Diff tabs can't be rebuilt from a path alone (their content is a computed
+// pair) and are snapshotted as plain editors of the right-hand file.
+function _terminalSnapshotChatTabs(sid) {
+  if (!sid) return;
+  const tabs = [];
+  for (const t of _term.tabs) {
+    if (t.kind === 'editor' && t.path) tabs.push({ kind: 'editor', path: t.path, pane: t.pane });
+    else if (t.kind === 'diff' && t.path) tabs.push({ kind: 'editor', path: t.path, pane: t.pane });
+    else if (t.kind === 'terminal') tabs.push({ kind: 'terminal', id: t.id, pane: t.pane });
+    else if (t.kind === 'chat' && t.sessionId === sid) tabs.push({ kind: 'chat', pane: t.pane });
+    // foreign chats belong to their own snapshot; the subagent hub follows the
+    // active chat by itself — neither is recorded.
+  }
+  if (!_term.chatTabSets) _term.chatTabSets = {};
+  _term.chatTabSets[sid] = { tabs, sizes: { ..._term.sizes } };
+}
+
+async function _terminalRestoreChatTabs(sid) {
+  const snap = (_term.chatTabSets || {})[sid];
+  if (!snap || !Array.isArray(snap.tabs)) return;
+  _term._acRestoring = true;
+  try {
+    if (snap.sizes && typeof snap.sizes === 'object') _term.sizes = { ...snap.sizes };
+    // Terminals: only PTYs that still exist server-side can reattach.
+    let liveIds = null;
+    if (snap.tabs.some(r => r.kind === 'terminal')) {
+      try {
+        const d = await API.get(`/v1/agents/${_term.agent}/projects/${encodeURIComponent(_term.project)}/terminal/sessions`);
+        liveIds = new Set(((d && d.sessions) || []).map(s => s.id));
+      } catch (_) { liveIds = new Set(); }
+    }
+    for (const r of snap.tabs) {
+      const pane = _TERM_SLOTS.includes(String(r.pane || '').replace('pane-', '')) ? r.pane : 'pane-a';
+      if (r.kind === 'editor' && r.path) {
+        if (!_term.tabs.find(t => t.kind === 'editor' && t.path === r.path)) {
+          _termOpenInPane = pane;
+          try { await terminalOpenFile(r.path); } catch (_) {}
+          _termOpenInPane = null;
+        }
+        const t = _term.tabs.find(x => x.kind === 'editor' && x.path === r.path);
+        if (t) t.pane = pane;
+      } else if (r.kind === 'terminal' && r.id && liveIds && liveIds.has(r.id)) {
+        if (!_term.tabs.find(t => t.id === r.id)) _terminalAddTab(r.id, pane);
+        const t = _term.tabs.find(x => x.id === r.id);
+        if (t) t.pane = pane;
+      } else if (r.kind === 'chat') {
+        const t = _term.tabs.find(x => x.kind === 'chat' && x.sessionId === sid);
+        if (t) t.pane = pane;
+      }
+    }
+    // Materialise panes from the restored occupancy, then put focus back on the
+    // chat tab (the restore ran because the user selected the CHAT).
+    _terminalBuildPanes();
+    _terminalApplySizes();
+    const chatTab = _term.tabs.find(x => x.kind === 'chat' && x.sessionId === sid);
+    _terminalReflow(chatTab ? chatTab.id : null, true);
+  } finally {
+    _term._acRestoring = false;
+  }
+}
+
 // Auto-Close hook: fired when a chat is SELECTED (Terminal-Chats list) or a
-// file BELONGING to a chat is opened. No-op unless the mode is on.
+// file BELONGING to a chat is opened. No-op unless the mode is on. Snapshots
+// the chat being LEFT, scopes the workspace to the new chat, then restores the
+// new chat's remembered tab set (layout + panes included).
 function _terminalAutoCloseFor(sid) {
-  if (_term.autoClose && sid) _terminalCloseUnrelatedBySid(sid, true);
+  // _acBusy blocks re-entry from the _terminalActivate calls the close cascade
+  // itself triggers; _acRestoring blocks the terminalOpenFile-hook during restore.
+  if (!_term.autoClose || !sid || _term._acRestoring || _term._acBusy) return;
+  _term._acBusy = true;
+  try {
+    if (_term._lastChatSid && _term._lastChatSid !== sid) _terminalSnapshotChatTabs(_term._lastChatSid);
+    const returning = _term._lastChatSid !== sid;
+    _term._lastChatSid = sid;
+    _terminalCloseUnrelatedBySid(sid, true);
+    if (returning) { _terminalRestoreChatTabs(sid); }   // async; guards itself
+    _terminalPersist();
+  } finally {
+    _term._acBusy = false;
+  }
 }
 
 function terminalToggleAutoClose() {
@@ -1320,6 +1424,77 @@ function _terminalTabDragEnd(ev) {
   ev.currentTarget.classList.remove('tp-dragging');
   const host = document.getElementById('terminal-panes');
   if (host) { host.classList.remove('tp-dnd'); host.querySelectorAll('.tpane-drop[data-zone]').forEach(d => d.removeAttribute('data-zone')); }
+  document.querySelectorAll('.terminal-tab.tt-drop-before, .terminal-tab.tt-drop-after')
+    .forEach(el => el.classList.remove('tt-drop-before', 'tt-drop-after'));
+}
+
+// ── Tab reorder within/into a tab bar ────────────────────────────────────────
+// Dragging a tab ONTO another tab inserts it at that position (left/right of
+// the target's midpoint — indicator edge shows where); dropping on the bar's
+// empty space appends at the end. Order lives in _term.tabs (pane bars render
+// the array filtered by pane, so a global re-insert IS the visual order).
+function _terminalTabDragOver(ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  ev.dataTransfer.dropEffect = 'move';
+  const el = ev.currentTarget;
+  const r = el.getBoundingClientRect();
+  const before = (ev.clientX - r.left) < r.width / 2;
+  el.classList.toggle('tt-drop-before', before);
+  el.classList.toggle('tt-drop-after', !before);
+}
+function _terminalTabDragLeave(ev) {
+  ev.currentTarget.classList.remove('tt-drop-before', 'tt-drop-after');
+}
+function _terminalTabDrop(ev, overId) {
+  ev.preventDefault(); ev.stopPropagation();   // don't bubble to the bar's move-to-pane drop
+  const el = ev.currentTarget;
+  const before = el.classList.contains('tt-drop-before');
+  el.classList.remove('tt-drop-before', 'tt-drop-after');
+  const tabId = ev.dataTransfer.getData('text/tab-id');
+  if (!tabId || tabId === overId) return;
+  _terminalReorderTab(tabId, overId, before);
+}
+// Move tab `dragId` next to `overId` (before/after), adopting overId's pane.
+function _terminalReorderTab(dragId, overId, before) {
+  const drag = _term.tabs.find(t => t.id === dragId);
+  const over = _term.tabs.find(t => t.id === overId);
+  if (!drag || !over) return;
+  const srcPane = drag.pane;
+  drag.pane = over.pane;
+  _term.tabs = _term.tabs.filter(t => t.id !== dragId);
+  const idx = _term.tabs.findIndex(t => t.id === overId);
+  _term.tabs.splice(before ? idx : idx + 1, 0, drag);
+  if (srcPane !== over.pane) {
+    const src = _terminalGetPane(srcPane);
+    if (src) {
+      const left = _terminalPaneTabs(srcPane);
+      if (!left.find(t => t.id === src.active)) src.active = left.length ? left[0].id : null;
+    }
+  }
+  const dst = _terminalGetPane(over.pane);
+  if (dst) { dst.active = drag.id; _term.activePane = dst.id; }
+  _terminalReflow(drag.id);
+}
+// Bar drop on empty strip space: append at the END of that pane's tab list
+// (also as an in-pane "move to end" — the old handler no-opped on same pane).
+function _terminalMoveTabToEnd(tabId, paneId) {
+  const tab = _term.tabs.find(t => t.id === tabId);
+  const pane = _terminalGetPane(paneId);
+  if (!tab || !pane) return;
+  const srcId = tab.pane;
+  tab.pane = paneId;
+  _term.tabs = _term.tabs.filter(t => t.id !== tabId);
+  _term.tabs.push(tab);
+  if (srcId !== paneId) {
+    const src = _terminalGetPane(srcId);
+    if (src) {
+      const left = _terminalPaneTabs(srcId);
+      if (!left.find(t => t.id === src.active)) src.active = left.length ? left[0].id : null;
+    }
+  }
+  pane.active = tab.id;
+  _term.activePane = paneId;
+  _terminalReflow(tab.id);
 }
 
 // ── Editor tabs (CodeMirror 5) ───────────────────────────────────────────────

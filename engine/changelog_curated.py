@@ -29,6 +29,30 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.322.0",
+        "date": "2026-07-13",
+        "title": "Terminal-Bereich: Arbeitsplatz je Chat, aufgeräumte Dateilisten",
+        "body": "Drei Verbesserungen im Terminal-Bereich von Code-Projekten: "
+                "(1) Die Arbeitsdateien unter einem Terminal-Chat sind jetzt "
+                "auf jeder Ordner-Ebene auf- und zuklappbar — standardmäßig "
+                "zugeklappt. Erzeugt oder ändert ein Chat eine Datei, klappt "
+                "der Pfad dorthin automatisch auf und die Datei wird grün "
+                "markiert, bis Sie sie öffnen — Neues fällt sofort ins Auge, "
+                "ohne dass die Liste ausufert. (2) Der Auto-Close-Modus merkt "
+                "sich jetzt je Chat, welche Tabs offen waren: Wechseln Sie in "
+                "einen anderen Chat und wieder zurück, erscheinen Ihre "
+                "Dateien und Terminals automatisch wieder — an denselben "
+                "Positionen und mit derselben Fensteraufteilung wie zuvor, "
+                "auch nach einem Neuladen der Seite. (3) Die Reihenfolge der "
+                "Tabs lässt sich per Ziehen ändern: Ein Tab, den Sie auf "
+                "einen anderen Tab ziehen, wird an genau dieser Stelle "
+                "eingefügt (eine farbige Kante zeigt die Zielposition); auf "
+                "der freien Fläche der Tab-Leiste abgelegt, wandert er ans "
+                "Ende.",
+        "audience": "user",
+        "versions": ["9.322.0"],
+    },
+    {
         "version": "9.320.0",
         "date": "2026-07-13",
         "title": "Subagenten: überall stoppbar, robust bei Fehlern",

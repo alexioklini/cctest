@@ -333,30 +333,50 @@ function wdToggleWorkFiles() {
   }
 }
 
-// Per-chat-folder content signatures {folderName: "mtime:size,…"} from the
-// chats/ top-level dir — drives the Terminal-Chats auto-expand on NEW files.
+// Per-chat-folder content signatures {folderName: {filePath: "mtime:size"}}
+// from the chats/ top-level dir — drives the Terminal-Chats auto-expand on
+// new/changed files (per-FILE so the expand can target the file's dir chain).
 function _wdChatFolderSigs(nodes) {
   const root = (nodes || []).find(n => n.type === 'dir' && n.name === 'chats');
   const sigs = {};
   for (const d of ((root && root.children) || [])) {
     if (d.type !== 'dir') continue;
-    const flat = [];
+    const files = {};
     (function walk(ns) {
       for (const n of (ns || [])) {
         if (n.type === 'dir') walk(n.children || []);
-        else flat.push(`${n.name}:${n.mtime || 0}:${n.size || 0}`);
+        else files[n.path || n.name] = `${n.mtime || 0}:${n.size || 0}`;
       }
     })(d.children || []);
-    sigs[d.name] = flat.sort().join(',');
+    sigs[d.name] = files;
   }
   return sigs;
 }
 
-// Diff the fresh tree's chat-folder signatures against the last seen set; a
-// changed/new folder auto-expands ITS chat's node in the Terminal-Chats list
-// (never anything in the file tree) and re-renders that list. First load after
-// panel-open only seeds (_chatFolderSigs reset in _terminalLoadSessions) so
-// reopening restores the persisted expand state without surprises.
+// Open every ancestor DIRECTORY on the way to a chat work file (the file's own
+// dir chain below chats/) so the auto-expanded file is actually visible.
+// Paths are slash-joined; the chain is every prefix from the chat folder down
+// to (excluding) the file itself.
+function _wdOpenDirChainFor(filePath) {
+  const p = String(filePath || '');
+  const i = p.indexOf('chats/');
+  if (i < 0) return;
+  const base = p.slice(0, i + 'chats/'.length);   // "…/chats/" prefix incl. slash
+  const parts = p.slice(base.length).split('/');  // [<chatFolder>, sub…, file]
+  if (!_term.chatDirOpen) _term.chatDirOpen = {};
+  let acc = base.replace(/\/$/, '');
+  for (let k = 0; k < parts.length - 1; k++) {
+    acc += '/' + parts[k];
+    _term.chatDirOpen[acc] = true;
+  }
+}
+
+// Diff the fresh tree's per-file signatures against the last seen set; a
+// new/changed file auto-expands ITS chat's node in the Terminal-Chats list plus
+// the dir chain down to the file, and marks the file (change dot) until it's
+// opened (never anything in the file tree). First load after panel-open only
+// seeds (_chatFolderSigs reset in _terminalLoadSessions) so reopening restores
+// the persisted expand state without surprises.
 function _wdSyncChatFolders(tree) {
   if (typeof _term === 'undefined') return;
   const sigs = _wdChatFolderSigs(tree);
@@ -369,18 +389,26 @@ function _wdSyncChatFolders(tree) {
     if (Object.keys(sigs).length && typeof renderTermchatHistory === 'function') renderTermchatHistory();
     return;
   }
-  let changed = false;
+  let changed = false, dirty = false;
   for (const name in sigs) {
-    if (prev[name] === sigs[name]) continue;
-    changed = true;
-    const sid = name.split('_').pop();
-    if (sid && !(_term.chatFolderOpen || {})[sid]) {
-      if (!_term.chatFolderOpen) _term.chatFolderOpen = {};
-      _term.chatFolderOpen[sid] = true;
-      if (typeof _terminalPersist === 'function') _terminalPersist();
+    const cur = sigs[name], old = prev[name] || {};
+    for (const fp in cur) {
+      if (old[fp] === cur[fp]) continue;
+      changed = true;
+      if (!_term._chatFileChanged) _term._chatFileChanged = {};
+      _term._chatFileChanged[fp] = true;
+      _wdOpenDirChainFor(fp);
+      const sid = name.split('_').pop();
+      if (sid && !(_term.chatFolderOpen || {})[sid]) {
+        if (!_term.chatFolderOpen) _term.chatFolderOpen = {};
+        _term.chatFolderOpen[sid] = true;
+      }
+      dirty = true;
     }
+    for (const fp in old) { if (!(fp in cur)) changed = true; }
   }
   for (const name in prev) { if (!(name in sigs)) changed = true; }
+  if (dirty && typeof _terminalPersist === 'function') _terminalPersist();
   if (changed && typeof renderTermchatHistory === 'function') renderTermchatHistory();
 }
 

@@ -756,9 +756,17 @@ gehört**, automatisch aufgeräumt — alle Tabs, die nicht zu diesem Chat
 gehören (andere Chats, fremde Dateien, Terminals), werden geschlossen. „Zum
 Chat gehörend“ sind der Chat selbst, seine Arbeitsdateien (Ordner
 `chats/…_<Chat-ID>/`) und der Subagenten-Hub. Terminals werden dabei nur
-ausgeblendet (die Sitzung läuft serverseitig weiter). Dieselbe Aktion gibt es
+ausgeblendet (die Sitzung läuft serverseitig weiter). **Der Arbeitsplatz je
+Chat wird dabei gemerkt und wiederhergestellt** (seit 9.322.0): Beim Verlassen
+eines Chats merkt sich der Modus, welche Tabs gerade offen waren — geöffnete
+Dateien, Terminals, deren Fenster-Zuordnung und die Aufteilungs-Größen. Wechseln
+Sie später zu diesem Chat zurück, öffnen sich diese Tabs automatisch wieder an
+ihren alten Positionen (Beispiel: Chat + eine CSV-Datei offen, Wechsel in einen
+anderen Chat und zurück → Chat und CSV erscheinen wieder wie zuvor). Die
+gemerkten Tab-Sätze werden pro Projekt gespeichert und überleben ein Neuladen
+der Seite. Dieselbe Aufräum-Aktion gibt es
 auch einmalig per **Rechtsklick auf einen Chat-Tab → „Alles Chat-Fremde
-schließen“** (dort schließen Terminals endgültig).
+schließen“** (dort schließen Terminals endgültig, ohne Merken/Wiederherstellen).
 
 **Dateien vergleichen (Diff-Ansicht, seit 9.318.0)**: Ein **Rechtsklick auf
 eine geänderte Datei** im Datei-Baum (amber gefärbt) bietet **„Diff gegen
@@ -803,7 +811,12 @@ sodass immer die vollständige `.dbq` geschrieben wird. Ein dritter Knopf
 Sie einen Tab an den **linken, rechten, oberen oder unteren Rand** eines
 Teilbereichs, teilt sich der Bereich in diese Richtung und der Tab landet im neuen
 Teilbereich; ziehen Sie ihn in die **Mitte** (oder auf die Tab-Leiste), wandert er
-nur dorthin. So entstehen bis zu vier Teilbereiche (ein 2×2-Raster: oben links,
+nur dorthin. Innerhalb einer Tab-Leiste lässt sich die **Reihenfolge der Tabs
+per Ziehen ändern** (seit 9.322.0): Ziehen Sie einen Tab **auf einen anderen
+Tab**, wird er an dieser Position eingefügt — eine farbige Kante am Ziel-Tab
+zeigt, ob er links oder rechts davon landet; ein Ablegen auf der **freien
+Fläche** der Tab-Leiste hängt ihn ans Ende. So entstehen bis zu vier
+Teilbereiche (ein 2×2-Raster: oben links,
 oben rechts, unten links, unten rechts). Jeder Teilbereich hat eigene Tabs und
 einen eigenen „+“/◈/Neue-Datei-Knopf, und die Teilbereiche sind über die
 Trennlinien **größenverstellbar**. **Schließen Sie das letzte Fenster eines
@@ -875,10 +888,15 @@ dieser Ordner im Datei-Baum **ausgeblendet**, sodass der Baum nur die echten
 die Wahl wird pro Projekt gemerkt. Die Chat-Dateien selbst finden Sie
 stattdessen in der Sektion **Terminal-Chats**: jeder Chat mit erzeugten Dateien
 trägt dort einen **Aufklapp-Pfeil**, der seinen Ausgabe-Ordner direkt unter dem
-Chat zeigt (Klick auf eine Datei öffnet sie im Editor). Standardmäßig
-zugeklappt; **erzeugt ein Chat neue Dateien, klappt sein Eintrag automatisch
-auf** (nur dort — der Datei-Baum bleibt unberührt). Der Auf-/Zuklapp-Zustand
-wird pro Projekt gespeichert und beim nächsten Öffnen wiederhergestellt.
+Chat zeigt (Klick auf eine Datei öffnet sie im Editor). **Auch jede
+Ordner-Ebene innerhalb dieser Hierarchie ist auf-/zuklappbar** (seit 9.322.0)
+— standardmäßig ist alles zugeklappt. **Erzeugt oder ändert ein Chat eine
+Datei, klappt der Pfad dorthin automatisch auf** (Chat-Eintrag plus die
+betroffenen Unterordner) und die Datei erhält eine **grüne Markierung**, bis
+Sie sie öffnen — Neues ist so sofort sichtbar, ohne dass alles andere offen
+stehen muss (nur dort — der Datei-Baum bleibt unberührt). Der
+Auf-/Zuklapp-Zustand wird pro Projekt gespeichert und beim nächsten Öffnen
+wiederhergestellt.
 
 **Terminal-Chat** (Code-Projekte): Neben Terminal und Editor öffnen Sie im
 unteren Bereich einen **Terminal-Chat** — eine schlanke, terminalartige

@@ -1715,22 +1715,62 @@ function _tcChatFolders(sid) {
   return ((root && root.children) || []).filter(n => n.type === 'dir' && (n.name || '').endsWith('_' + sid));
 }
 
-// Flat nested render of a chat folder's contents. Directories are always shown
-// expanded (chat folders are small); clicking a file opens it in the editor.
+// Nested render of a chat folder's contents. Every directory level is
+// collapsible (caret), DEFAULT COLLAPSED; the open set lives in
+// _term.chatDirOpen {dirPath: true} (persisted, bottom_workspace.chat_dirs_open)
+// and is auto-opened along the path to a new/changed file by _wdSyncChatFolders.
+// Files that arrived/changed live carry a change dot until they're opened.
 function _tcFolderNodesHtml(nodes, depth) {
   const pad = 20 + depth * 12;
   return (nodes || []).map(n => {
     if (n.type === 'dir') {
-      return `<div class="tc-hf-row tc-hf-dir" style="padding-left:${pad}px" title="${esc(n.path || n.name)}">
+      const open = !!((_term.chatDirOpen || {})[n.path]);
+      const hasChg = !open && _tcSubtreeHasChangedFile(n);
+      return `<div class="tc-hf-row tc-hf-dir${hasChg ? ' tc-hf-chg' : ''}" style="padding-left:${pad}px" title="${esc(n.path || n.name)}"
+        onclick="event.stopPropagation();tcToggleChatDir('${esc(n.path)}')">
+        <span class="pt-caret${open ? ' open' : ''}"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
         <span class="tc-hf-ico"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
         <span class="tc-hf-name">${esc(n.name)}</span></div>`
-        + _tcFolderNodesHtml(n.children || [], depth + 1);
+        + (open ? _tcFolderNodesHtml(n.children || [], depth + 1) : '');
     }
-    return `<div class="tc-hf-row tc-hf-file" style="padding-left:${pad}px" title="${esc(n.path || n.name)}"
-      onclick="event.stopPropagation();terminalOpenFile('${esc(n.path)}')">
+    const chg = !!((_term._chatFileChanged || {})[n.path]);
+    return `<div class="tc-hf-row tc-hf-file${chg ? ' tc-hf-chg' : ''}" style="padding-left:${pad}px" title="${esc(n.path || n.name)}"
+      onclick="event.stopPropagation();tcOpenChatFile('${esc(n.path)}')">
       <span class="tc-hf-ico"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
       <span class="tc-hf-name">${esc(n.name)}</span></div>`;
   }).join('');
+}
+
+// Does any file under this dir carry a live "new/changed" marker? Drives the
+// change dot on a COLLAPSED folder so an update isn't invisible behind it.
+function _tcSubtreeHasChangedFile(dir) {
+  const chg = _term._chatFileChanged || {};
+  let found = false;
+  (function walk(ns) {
+    for (const n of (ns || [])) {
+      if (found) return;
+      if (n.type === 'dir') walk(n.children || []);
+      else if (chg[n.path]) { found = true; return; }
+    }
+  })(dir.children || []);
+  return found;
+}
+
+// Open a chat work file from the history list; opening clears its change dot.
+function tcOpenChatFile(path) {
+  if ((_term._chatFileChanged || {})[path]) {
+    delete _term._chatFileChanged[path];
+    renderTermchatHistory();
+  }
+  if (typeof terminalOpenFile === 'function') terminalOpenFile(path);
+}
+
+// Toggle a directory inside a chat's folder subtree (persisted per project).
+function tcToggleChatDir(dirPath) {
+  if (!_term.chatDirOpen) _term.chatDirOpen = {};
+  _term.chatDirOpen[dirPath] = !_term.chatDirOpen[dirPath];
+  if (typeof _terminalPersist === 'function') _terminalPersist();
+  renderTermchatHistory();
 }
 
 // Toggle a chat's folder subtree in the history list; persisted per project

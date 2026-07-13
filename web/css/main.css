@@ -794,6 +794,9 @@ textarea { resize: none; }
 }
 .terminal-tab.active { background: var(--bg-000); color: var(--text-100); }
 .terminal-tab.tp-dragging { opacity: .5; }
+/* Reorder drop indicator: accent edge on the side the dragged tab will land. */
+.terminal-tab.tt-drop-before { box-shadow: inset 3px 0 0 var(--accent-brand); }
+.terminal-tab.tt-drop-after { box-shadow: inset -3px 0 0 var(--accent-brand); }
 /* file changed on disk while the tab had unsaved edits (conflict). */
 .terminal-tab.ed-conflict .tt-name { color: var(--git-modified); }
 .terminal-tab.ed-conflict { border-color: var(--git-modified); }
@@ -1151,7 +1154,15 @@ textarea { resize: none; }
 .tc-hf-row .tc-hf-name { overflow: hidden; text-overflow: ellipsis; }
 .tc-hf-file { cursor: pointer; }
 .tc-hf-file:hover { background: var(--bg-200); color: var(--text-100); }
-.tc-hf-dir { color: var(--text-400); }
+.tc-hf-dir { color: var(--text-400); cursor: pointer; }
+.tc-hf-dir:hover { background: var(--bg-200); color: var(--text-200); }
+.tc-hf-dir .pt-caret { display: inline-flex; flex: 0 0 auto; transition: transform .12s; }
+.tc-hf-dir .pt-caret.open { transform: rotate(90deg); }
+/* New/changed work file (live arrival): green dot until the file is opened;
+   a COLLAPSED dir hiding such a file carries the same cue. */
+.tc-hf-chg .tc-hf-name { color: var(--git-added, #3fb950); }
+.tc-hf-chg::after { content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--git-added, #3fb950); flex: 0 0 auto; margin-left: 4px; }
 
 /* Editor tabs (CodeMirror) inside the bottom panel. */
 /* Absolute layout (NOT flex) so the editor area gets a DEFINITE height: flexbox
