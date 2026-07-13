@@ -1656,14 +1656,15 @@ textarea { resize: none; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  /* Never let the clusters escape the box: a crowded left row (many toggles +
-     Projekt-Chip) or a long model name wraps onto a second line instead of
-     pushing the model selector / send button out of the composer. */
-  flex-wrap: wrap;
+  /* ONE line on desktop: no wrap — instead the flexible parts (Projekt-Chip
+     label, model name) SHRINK with ellipsis so model selector + send button
+     always stay inside the box. Wrap would fire on base sizes (before shrink
+     gets a chance) and push the right cluster onto a second row. The ≤768px
+     media block re-enables wrapping for phones. */
   padding: 6px 12px 10px;
 }
 .composer-footer-left { display: flex; align-items: center; gap: 1px;
-  flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+  flex: 1 1 auto; min-width: 0; }
 /* Projekt-Chip: Projektbindung des nächsten Sends (gesetzt von updateStatusBar).
    Neutral-grau für allgemeine Chats, Akzent wenn projektgebunden. Shrinks
    (Label ellipsiert) bevor irgendetwas anderes Platz verliert. */
@@ -1676,7 +1677,9 @@ textarea { resize: none; }
   color: var(--accent-brand);
   background: color-mix(in srgb, var(--accent-brand) 12%, transparent); }
 .composer-footer-right { display: flex; align-items: center; gap: 6px;
-  flex: 0 0 auto; margin-left: auto; min-width: 0; }
+  flex: 0 1 auto; margin-left: auto; min-width: 0; }
+/* Send/stop buttons keep their size — only chip label + model name compress. */
+.composer-footer-right > button { flex: 0 0 auto; }
 
 .composer-btn {
   width: 26px;
@@ -1723,12 +1726,17 @@ textarea { resize: none; }
   color: var(--text-300);
   transition: all 0.15s;
   white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
 }
 .model-selector-btn:hover { background: var(--bg-200); color: var(--text-100); }
-/* Long model names ellipsize instead of widening the button past the composer. */
+/* Long model names SHRINK with ellipsis (capped at 200px) instead of widening
+   the button past the composer; the provider suffix gives way first. */
 .model-selector-btn .model-name { font-weight: 500; color: var(--text-200);
-  max-width: 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.model-selector-btn .model-tier { color: var(--text-400); }
+  max-width: 200px; min-width: 24px; flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; }
+.model-selector-btn .model-tier { color: var(--text-400);
+  min-width: 0; flex: 0 2 auto; overflow: hidden; text-overflow: ellipsis; }
 .model-selector-btn svg { width: 12px; height: 12px; }
 
 /* Agent selector badge */

@@ -41,7 +41,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "zusammen, und auch bei langen Modellnamen bleiben Modellwahl "
                 "und Senden-Knopf sauber innerhalb des Eingabefelds.",
         "audience": "user",
-        "versions": ["9.317.0"],
+        "versions": ["9.317.0", "9.317.1"],
     },
     {
         "version": "9.316.0",
