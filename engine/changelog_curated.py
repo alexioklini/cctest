@@ -44,13 +44,18 @@ CURATED_CHANGELOG: list[dict] = [
                 "Im Code-Terminal öffnet ein Rechtsklick auf eine geänderte "
                 "Datei die neue Diff-Ansicht (Vorher/Nachher nebeneinander), "
                 "und zwei beliebige Dateien lassen sich über „Zum Vergleich "
-                "markieren“ gegenüberstellen. Außerdem neu: der "
-                "Ein-Fenster-Modus im Terminal-Bereich — aktiviert gibt es "
-                "maximal drei Tabs (Editor, Terminal, Chat); Neues ersetzt "
-                "den jeweiligen Tab, nichts zersplittert mehr in viele "
-                "Fenster.",
+                "markieren“ gegenüberstellen. Außerdem wird der "
+                "Terminal-Bereich aufgeräumter: Der neue Ein-Fenster-Modus "
+                "begrenzt auf einen Tab je Typ (Editor, Terminal, Chat) — "
+                "Neues ersetzt den jeweiligen Tab, die Fensteraufteilung per "
+                "Ziehen bleibt frei. Der neue Auto-Close-Modus (⚡) schließt "
+                "beim Wechsel in einen Chat automatisch alles, was nicht zu "
+                "ihm gehört; dieselbe Aufräum-Aktion gibt es per Rechtsklick "
+                "auf einen Chat-Tab („Alles Chat-Fremde schließen“). "
+                "Terminal-Chats öffnen jetzt zudem immer bei der neuesten "
+                "Nachricht.",
         "audience": "user",
-        "versions": ["9.318.0"],
+        "versions": ["9.318.0", "9.319.0"],
     },
     {
         "version": "9.317.0",

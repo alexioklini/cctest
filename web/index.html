@@ -1681,8 +1681,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <button class="pt-act tt-toggle" id="terminal-tree-workfiles" onclick="wdToggleWorkFiles()" title="Chat-Arbeitsdateien (chats/) im Baum ein-/ausblenden — ausgeblendet zeigt der Baum nur Projektdateien">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><path d="M9.5 13.5h5M9.5 16.5h3"/></svg>
         </button>
-        <button class="pt-act tt-toggle" id="terminal-single-window" onclick="terminalToggleSingleWindow()" title="Ein-Fenster-Modus: ein Fenster ohne Splits, maximal 3 Tabs (Editor · Terminal · Chat) — Neues ersetzt den jeweiligen Tab">
+        <button class="pt-act tt-toggle" id="terminal-single-window" onclick="terminalToggleSingleWindow()" title="Ein-Fenster-Modus: maximal ein Tab je Typ (Editor · Terminal · Chat) — Neues ersetzt den jeweiligen Tab; Fensteraufteilung per Ziehen bleibt frei">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>
+        </button>
+        <button class="pt-act tt-toggle" id="terminal-auto-close" onclick="terminalToggleAutoClose()" title="Auto-Close: beim Auswählen eines Chats (oder Öffnen einer Chat-Datei) werden alle chat-fremden Tabs geschlossen (Terminals bleiben serverseitig erhalten)">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         </button>
         <button class="pt-act" id="terminal-tree-refresh" onclick="refreshTerminalTree(); codeOutlineLoad(true)" title="Dateien + Symbole aktualisieren">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>

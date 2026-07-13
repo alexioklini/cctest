@@ -23,12 +23,17 @@ const _term = {
   treeVisible: true, // file-tree column shown?
   treeWidth: 240,    // file-tree column width (px)
   treeSplit: 0.5,    // file-tree vs Terminal-Chats height split (tree's fraction)
-  // One-window mode (rebuilt from the old single-editor mode): while active
-  // the workspace is ONE pane (every tab lives in slot 'a', splits inert —
-  // enforced at the normalize choke point) AND at most 3 tabs — one per slot
-  // Editor (editor+diff) / Terminal / Chat (chat+subagent hub). Opening new
-  // content replaces its slot's tab (_terminalSingleWindowClear).
+  // One-window mode (rebuilt from the old single-editor mode; the user
+  // re-scoped it live several times — final semantics): at most 3 tabs, one
+  // per slot Editor (editor+diff) / Terminal / Chat (chat+subagent hub);
+  // opening new content REPLACES its slot's tab (_terminalSingleWindowClear).
+  // Pane LAYOUT stays free — drag/drop splits work exactly as outside the
+  // mode (an explicit late re-add after 'nur 1 Pane' proved too restrictive).
   singleWindow: false,
+  // Auto-Close mode: selecting a chat (Terminal-Chats list) or opening a file
+  // that belongs to a chat closes every chat-foreign tab (other chats, files
+  // of other chats; terminals detach, PTY survives). Persisted per project.
+  autoClose: false,
   // Work-files toggle: show the chats/ output folders (per-chat working dirs)
   // inside the file tree? Off = the tree shows only the project's own files
   // (what code mining sees); the chat outputs live under their chat in the
@@ -77,11 +82,6 @@ function _terminalRawOccupied() {
 //   3/4     → keep positions (already a real 2×2 sub-grid)
 // Returns the post-compaction occupied-slot list. Mutates tab.pane.
 function _terminalNormalizeSlots() {
-  if (_term.singleWindow) {
-    // One-window mode: everything collapses into the home cell.
-    for (const t of _term.tabs) t.pane = 'pane-a';
-    return ['a'];
-  }
   const occ = _terminalRawOccupied();
   if (occ.length === 0) return ['a'];           // empty → home cell a
   let remap = null;
@@ -316,7 +316,6 @@ function _terminalWirePaneDrop(pane, slot) {
   if (!drop) return;
   // Edge zone under the cursor, measured against the overlay (== body) rect.
   const zoneFor = (e) => {
-    if (_term.singleWindow) return 'center';  // one-window mode: no split zones
     const r = drop.getBoundingClientRect();
     const fx = (e.clientX - r.left) / Math.max(1, r.width);
     const fy = (e.clientY - r.top) / Math.max(1, r.height);
@@ -403,7 +402,6 @@ function _terminalMoveTabToPane(tabId, paneId) {
 function _terminalSplitToSlot(tabId, srcSlot, dir) {
   const tab = _term.tabs.find(t => t.id === tabId);
   if (!tab) return;
-  if (_term.singleWindow) return;  // one-window mode: splitting is inert
   const pos = _TERM_SLOT_POS[srcSlot]; if (!pos) return;
   let row = pos.row, col = pos.col;
   if (dir === 'left') col = 'left';
@@ -690,6 +688,7 @@ async function _terminalLoadSessions() {
     if (typeof ws.tree_split === 'number' && ws.tree_split > 0 && ws.tree_split < 1) _term.treeSplit = ws.tree_split;
     if (typeof ws.single_window === 'boolean') _term.singleWindow = ws.single_window;
     else if (typeof ws.single_editor === 'boolean') _term.singleWindow = ws.single_editor;  // legacy key
+    if (typeof ws.auto_close === 'boolean') _term.autoClose = ws.auto_close;
     if (ws.sizes && typeof ws.sizes === 'object') _term.sizes = _terminalMigrateSizes(ws.sizes, ws.layout);
     if (typeof ws.work_files_visible === 'boolean') _term.workFilesVisible = ws.work_files_visible;
   }
@@ -814,6 +813,7 @@ function _terminalPersist() {
       tree_width: _term.treeWidth,
       tree_split: _term.treeSplit,
       single_window: _term.singleWindow,
+      auto_close: _term.autoClose,
       work_files_visible: _term.workFilesVisible,
       chat_folders_open: Object.keys(_term.chatFolderOpen || {}).filter(k => _term.chatFolderOpen[k]),
     };
@@ -967,7 +967,17 @@ function _terminalActivate(id) {
   }
   if (tab.kind === 'chat') {
     // No stream/PTY to attach — just focus the input + refresh the status footer.
-    setTimeout(() => { try { const ta = tab.el.querySelector('.tc-ta'); if (ta) ta.focus({ preventScroll: true }); } catch (_) {} }, 30);
+    // Scroll to the newest message: a transcript loaded while the tab was
+    // HIDDEN (display:none → scrollHeight 0) could never scroll itself, so a
+    // freshly opened chat showed its TOP. Only when the user is stuck to the
+    // bottom (default) — scrolling up to read history is never interrupted.
+    setTimeout(() => {
+      try {
+        if (tab._stick !== false && typeof _tcScrollToEnd === 'function') _tcScrollToEnd(tab);
+        const ta = tab.el.querySelector('.tc-ta');
+        if (ta) ta.focus({ preventScroll: true });
+      } catch (_) {}
+    }, 30);
     if (typeof tcRenderStatus === 'function') tcRenderStatus(tab);
     if (typeof renderTermchatHistory === 'function') renderTermchatHistory();
     _terminalPersist();
@@ -1138,15 +1148,17 @@ function _terminalTabMenu(id, ev) {
   const _t = (_term.tabs || []).find(x => x.id === id);
   // Chat tabs export their transcript (panels_termchat); shell terminals export
   // their xterm scrollback. Editors already have a download button.
-  let exportRow = '';
+  let exportRow = '', chatRow = '';
   if (_t && _t.kind === 'chat') {
     exportRow = `<div onclick="tcExportMarkdown('${id}'); document.getElementById('terminal-tab-menu').remove()">Als Markdown exportieren</div>`;
+    chatRow = `<div onclick="terminalCloseUnrelated('${id}'); document.getElementById('terminal-tab-menu').remove()">Alles Chat-Fremde schließen</div>`;
   } else if (_t && _t.kind === 'terminal') {
     exportRow = `<div onclick="terminalExportMarkdown('${id}'); document.getElementById('terminal-tab-menu').remove()">Als Markdown exportieren</div>`;
   }
   m.innerHTML = `${exportRow}
     <div onclick="terminalCloseTab('${id}'); document.getElementById('terminal-tab-menu').remove()">Tab schließen</div>
     <div onclick="terminalCloseTabs('others','${id}'); document.getElementById('terminal-tab-menu').remove()">Andere schließen</div>
+    ${chatRow}
     <div onclick="terminalCloseTabs('right','${id}'); document.getElementById('terminal-tab-menu').remove()">Rechte schließen</div>
     <div onclick="terminalCloseTabs('all'); document.getElementById('terminal-tab-menu').remove()">Alle schließen</div>`;
   document.body.appendChild(m);
@@ -1232,6 +1244,65 @@ function _terminalRenderTabs() {
       }
     });
   }
+}
+
+// ── Chat-scoped bulk close + Auto-Close mode ─────────────────────────────────
+// "Related to chat <sid>" = the chat tab itself, the subagent hub (follows the
+// active chat), and editor/diff tabs whose file lives in that chat's output
+// folder chats/<slug>_<date>_<sid>/ (same suffix rule as the Terminal-Chats
+// list). Everything else is chat-foreign: other chats, terminals, other files.
+
+// Owning chat-session id of a path inside a chats/ output folder ('' if none).
+// Folder names end with _<sid> and sids carry no underscore.
+function _terminalChatSidFromPath(p) {
+  const m = String(p || '').match(/\/chats\/([^/]+)\//);
+  return m ? m[1].slice(m[1].lastIndexOf('_') + 1) : '';
+}
+
+// Close every chat-foreign tab. detachTerminals=true keeps the server PTY
+// alive (auto behaviour must not kill shells); false closes them for real
+// (explicit menu action — same contract as 'Andere schließen').
+function _terminalCloseUnrelatedBySid(sid, detachTerminals) {
+  if (!sid) return;
+  for (const t of [..._term.tabs]) {
+    if (t.kind === 'agent') continue;
+    if (t.kind === 'chat' && t.sessionId === sid) continue;
+    if ((t.kind === 'editor' || t.kind === 'diff')
+        && _terminalChatSidFromPath(t.path) === sid) continue;
+    if (detachTerminals && t.kind === 'terminal') {
+      if (t.abort) { try { t.abort.abort(); } catch (_) {} }
+      try { t.term.dispose(); } catch (_) {}
+      if (t.el) t.el.remove();
+      _term.tabs = _term.tabs.filter(x => x.id !== t.id);
+      continue;
+    }
+    terminalCloseTab(t.id);
+  }
+  _terminalBuildPanes();
+}
+
+// Chat-tab context menu: 'Alles Chat-Fremde schließen'.
+function terminalCloseUnrelated(anchorId) {
+  const anchor = (_term.tabs || []).find(t => t.id === anchorId);
+  if (!anchor || anchor.kind !== 'chat' || !anchor.sessionId) return;
+  _terminalCloseUnrelatedBySid(anchor.sessionId, false);
+}
+
+// Auto-Close hook: fired when a chat is SELECTED (Terminal-Chats list) or a
+// file BELONGING to a chat is opened. No-op unless the mode is on.
+function _terminalAutoCloseFor(sid) {
+  if (_term.autoClose && sid) _terminalCloseUnrelatedBySid(sid, true);
+}
+
+function terminalToggleAutoClose() {
+  _term.autoClose = !_term.autoClose;
+  _terminalApplyLayout();
+  if (typeof showToast === 'function') {
+    showToast(_term.autoClose
+      ? 'Auto-Close: an — Chat-Wechsel schließt chat-fremde Tabs'
+      : 'Auto-Close: aus');
+  }
+  _terminalPersist();
 }
 
 // Tab drag-and-drop between panes (HTML5 DnD). While a drag is active, raise the
@@ -1462,6 +1533,9 @@ async function terminalOpenFile(absPath) {
   const existing = _term.tabs.find(t => t.kind === 'editor' && t.path === absPath);
   if (existing) { _terminalActivate(existing.id); return; }
   if (!_terminalSingleWindowClear('editor')) return;  // one-window: replace
+  // Auto-Close: opening a file that BELONGS to a chat scopes the workspace to
+  // that chat (no-op when the mode is off or the file is chat-free).
+  _terminalAutoCloseFor(_terminalChatSidFromPath(absPath));
   const name = absPath.split('/').pop();
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
   const id = 'edit-' + absPath;
@@ -2004,7 +2078,7 @@ async function terminalOpenDiff(absPath, opts) {
   _termOpenInPane = null;
   const pane = _terminalGetPane(paneId) || _terminalActivePane() || _term.panes[0];
   (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
-  const tab = { id, kind: 'diff', name: 'Δ ' + name, el, mv: null,
+  const tab = { id, kind: 'diff', name: 'Δ ' + name, path: absPath, el, mv: null,
                 pane: pane ? pane.id : 'pane-a' };
   _term.tabs.push(tab);
   _terminalRenderTabs();
@@ -2456,6 +2530,8 @@ function _terminalApplyLayout() {
   _terminalApplyTreeSplit();
   const se = document.getElementById('terminal-single-window');
   if (se) se.classList.toggle('active', !!_term.singleWindow);
+  const ac = document.getElementById('terminal-auto-close');
+  if (ac) ac.classList.toggle('active', !!_term.autoClose);
   const show = document.getElementById('terminal-tree-show');
   if (show) show.classList.toggle('active', !!_term.treeVisible);
   const wf = document.getElementById('terminal-tree-workfiles');
@@ -2470,9 +2546,10 @@ function terminalToggleTree() {
   setTimeout(_terminalOnResize, 30);
 }
 
-// One-window mode: ONE pane, at most THREE tabs — one per SLOT. The slots are
+// One-window mode: at most THREE tabs — one per SLOT. The slots are
 // Editor (editor+diff share it), Terminal, and Chat (chat+subagent hub share
-// it). Opening new content REPLACES its slot's current tab. This helper
+// it); the pane layout (splits via drag) stays free.
+// Opening new content REPLACES its slot's current tab. This helper
 // closes every existing tab of `kind`'s slot (except keepId) and is called by
 // every tab-creating path. Terminals are DETACHED, not closed — the server
 // PTY session survives and re-attaches on the next panel open (closing would
@@ -2517,12 +2594,11 @@ function terminalToggleSingleWindow() {
       _terminalSingleWindowClear(s, (act || inSlot[inSlot.length - 1]).id);
     }
   }
-  // Rebuild either way (normalize retags panes; dividers (dis)appear).
   _terminalBuildPanes();
   _terminalApplyLayout();
   if (typeof showToast === 'function') {
     showToast(_term.singleWindow
-      ? 'Ein-Fenster-Modus: an — max. 3 Tabs (Editor · Terminal · Chat)'
+      ? 'Ein-Fenster-Modus: an — max. ein Tab je Typ (Editor · Terminal · Chat)'
       : 'Ein-Fenster-Modus: aus');
   }
   _terminalPersist();

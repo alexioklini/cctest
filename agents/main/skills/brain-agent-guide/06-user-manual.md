@@ -736,16 +736,29 @@ SQL-SELECT-Skript, das keine benannte Funktion/Prozedur enthält; grau =
 veraltet; rot = sollte indexiert sein, ist es aber nicht; hohl-grau = keine
 Quelldatei). Ein Klick öffnet die Datei im
 Editor; die gerade bearbeitete Datei ist im Baum hervorgehoben. Der
-**Ein-Fenster-Modus** (Umschalter in der Baum-Leiste, seit 9.318.0 — ersetzt
+**Ein-Fenster-Modus** (Umschalter in der Baum-Leiste, seit 9.318 — ersetzt
 den früheren Ein-Editor-Modus) hält den Terminal-Bereich bewusst aufgeräumt:
-aktiviert gibt es **ein Fenster ohne Splits und maximal drei Tabs** — einen
-Editor, ein Terminal, einen Terminal-Chat. Öffnen Sie etwas Neues, **ersetzt**
-es den jeweiligen Tab seines Typs (eine neue Datei ersetzt die offene Datei,
-ein neuer Chat den offenen Chat); die Diff-Ansicht teilt sich den Editor-Platz,
-der Subagenten-Hub den Chat-Platz. Terminals werden dabei nur ausgeblendet,
-nicht beendet — die Sitzung läuft serverseitig weiter. Deaktivieren Sie den
-Modus, können Sie wieder beliebig viele Tabs öffnen und per Ziehen an
-Fensterkanten splitten.
+aktiviert gibt es **maximal einen Tab je Typ** — einen Editor, ein Terminal,
+einen Terminal-Chat. Öffnen Sie etwas Neues, **ersetzt** es den jeweiligen
+Tab seines Typs (eine neue Datei ersetzt die offene Datei, ein neuer Chat den
+offenen Chat); die Diff-Ansicht teilt sich den Editor-Platz, der
+Subagenten-Hub den Chat-Platz. Die **Fensteraufteilung bleibt frei**: die bis
+zu drei Tabs lassen sich weiterhin per Ziehen an Fensterkanten in Splits
+anordnen (z. B. Editor oben, Terminal unten). Terminals werden beim Ersetzen
+nur ausgeblendet, nicht beendet — die Sitzung läuft serverseitig weiter.
+Deaktivieren Sie den Modus, können Sie wieder beliebig viele Tabs je Typ
+öffnen.
+
+**Auto-Close-Modus** (⚡-Umschalter in der Baum-Leiste, seit 9.319.0): Wenn
+aktiv, wird der Terminal-Bereich beim **Auswählen eines Chats** (in der
+Terminal-Chats-Liste) oder beim **Öffnen einer Datei, die zu einem Chat
+gehört**, automatisch aufgeräumt — alle Tabs, die nicht zu diesem Chat
+gehören (andere Chats, fremde Dateien, Terminals), werden geschlossen. „Zum
+Chat gehörend“ sind der Chat selbst, seine Arbeitsdateien (Ordner
+`chats/…_<Chat-ID>/`) und der Subagenten-Hub. Terminals werden dabei nur
+ausgeblendet (die Sitzung läuft serverseitig weiter). Dieselbe Aktion gibt es
+auch einmalig per **Rechtsklick auf einen Chat-Tab → „Alles Chat-Fremde
+schließen“** (dort schließen Terminals endgültig).
 
 **Dateien vergleichen (Diff-Ansicht, seit 9.318.0)**: Ein **Rechtsklick auf
 eine geänderte Datei** im Datei-Baum (amber gefärbt) bietet **„Diff gegen

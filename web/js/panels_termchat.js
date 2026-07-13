@@ -1758,9 +1758,17 @@ function tcHistToggle() {
 // Open a past chat: focus its tab if already open, else add a chat tab + load.
 async function tcOpenHistory(sid, title) {
   const open = (_term.tabs || []).find(t => t.kind === 'chat' && t.sessionId === sid);
-  if (open) { _terminalActivate(open.id); return; }
+  if (open) {
+    _terminalActivate(open.id);
+    // Auto-Close: SELECTING a chat scopes the workspace to it (no-op when off).
+    if (typeof _terminalAutoCloseFor === 'function') _terminalAutoCloseFor(sid);
+    return;
+  }
   const tab = _terminalAddChatTab(sid, null, title);
-  if (tab) { await tcLoadTranscript(tab); }
+  if (tab) {
+    if (typeof _terminalAutoCloseFor === 'function') _terminalAutoCloseFor(sid);
+    await tcLoadTranscript(tab);
+  }
 }
 
 function tcHistMenu(ev, sid) {
