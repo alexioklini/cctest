@@ -2290,6 +2290,21 @@ def _project_sync_loop(srv):
                                   f"not due ({_age}s since last sync < {interval}s "
                                   f"interval)", flush=True)
                             continue
+                    # HOLD OFF while the async upload queue is still extracting
+                    # files for this project (9.324.0): mining a half-staged
+                    # batch would index an incomplete set and churn per-drawer
+                    # state. Nothing is lost by skipping — the queue kicks a
+                    # sync request the moment its last job for this project
+                    # finishes (also covers a manual "Sync now" pressed
+                    # mid-extraction, which would otherwise be dropped here).
+                    try:
+                        from engine.ingest import INGEST_QUEUE as _iq
+                        if _iq.has_pending(agent_id, proj_name):
+                            print(f"[project-sync] skip {agent_id}/{proj_name}: "
+                                  f"upload extraction in progress", flush=True)
+                            continue
+                    except Exception:
+                        pass
                     wing = _project_wing(project_id)
                     # Per-project KG method/profile override (project.json) for
                     # the _run_kg_for closure this iteration. Empty = inherit the

@@ -335,6 +335,8 @@ class API {
   static updateProject(agent, name, cfg) { return this.put(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`, cfg); }
   static deleteProject(agent, name) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
   static listProjectInstructionFiles(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files`); }
+  static getProjectIngestStatus(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/ingest-status`); }
+  static cancelProjectIngestJob(agent, name, key) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/ingest-jobs/${encodeURIComponent(key)}`); }
   // XHR (not fetch) so upload.onprogress can drive a progress bar for big files.
   // onProgress(pct|null) — pct is 0..100, or null once the bytes are sent and the
   // server is still processing (length not computable / 100% reached).

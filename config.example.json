@@ -4798,40 +4798,6 @@
       "is_local": false,
       "warmup": false
     },
-    "liquid/lfm-2.5-1.2b-thinking:free": {
-      "enabled": false,
-      "shortname": "lfm-2.5-1.2b-thinking:free",
-      "display_name": "lfm-2.5-1.2b-thinking:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "inline_tags",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "liquid/lfm-2.5-1.2b-instruct:free": {
-      "enabled": false,
-      "shortname": "lfm-2.5-1.2b-instruct:free",
-      "display_name": "lfm-2.5-1.2b-instruct:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "nvidia/nemotron-3-nano-30b-a3b:free": {
       "enabled": false,
       "shortname": "nemotron-3-nano-30b-a3b:free",

@@ -1748,6 +1748,28 @@ multi-project cycles strictly sequential. Per project:
 Startup wipe drops every drawer in `project__*` wings AND clears
 `sync_status` (needs marker-file gate — see backlog).
 
+## Async upload ingestion (IngestQueue, 9.324.0)
+
+`POST .../ingest` no longer extracts inline. The handler stages the original
+bytes + a metadata sidecar under `<pdir>/ingest-staging/` and returns
+immediately; the group key (`source_hash`) is RESERVED at stage time (against
+disk AND pending jobs, so two same-stem files staged back-to-back get `x` /
+`x-2` instead of colliding). `engine/ingest.py:IngestQueue` (2 worker threads,
+module singleton `INGEST_QUEUE`, started in server.py main()) then runs the
+exact same `IngestManager.ingest_file` path — chunk layout in `ingested/` and
+everything downstream unchanged, incl. the doc_review auto-scan. Workers wrap
+each job in `with request_context(current_user_id=…)` (pooled-thread bleed
+invariant; feeds OCR cost attribution). Terminal states: done/error/cancelled;
+per-file cancel via `DELETE .../ingest-jobs/<key>` (queued dies instantly,
+in-flight is flagged and its chunks deleted after the call returns). Staged
+leftovers are re-enqueued on boot (crash-safe). When a project's jobs drain,
+the queue calls `_project_sync_request(…, triggered_by="upload")` — and the
+sync daemon conversely SKIPS a project while `INGEST_QUEUE.has_pending()`
+(mining a half-extracted batch would churn; the drain-kick re-syncs promptly).
+Rationale: inline extraction of a scanned PDF (pymupdf4llm 60s + Mistral-OCR
+300s) blew past the Cloudflare tunnel's ~100s limit → HTTP 524 on upload while
+the server kept working (the ko-kunden OnBase import incident).
+
 ## Goal-Modus (post-turn judge loop, v9.256.0)
 
 A per-session (or per-scheduled-task) GOAL the server judges every turn

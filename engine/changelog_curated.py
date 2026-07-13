@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.324.0",
+        "date": "2026-07-13",
+        "title": "Datei-Import blockiert nicht mehr",
+        "body": "Der Import von Projektdateien ist grundlegend beschleunigt: "
+                "Hochladen dauert jetzt nur noch Augenblicke — auch bei "
+                "gescannten PDFs, deren Texterkennung (OCR) mehrere Minuten "
+                "brauchen kann. Die Inhalte werden im Hintergrund extrahiert; "
+                "Sie können den Dialog jederzeit schließen und den Fortschritt "
+                "direkt im Dateien-Zweig verfolgen, wo jede Datei ihren Status "
+                "zeigt (offen, wird extrahiert, fertig). Einzelne Extraktionen "
+                "lassen sich dort gezielt abbrechen. Damit gehören auch die "
+                "Zeitüberschreitungs-Fehler (HTTP 524) beim Import großer "
+                "gescannter Dokumente der Vergangenheit an, und mehrere "
+                "Dateien laden parallel statt nacheinander.",
+        "audience": "user",
+        "versions": ["9.324.0"],
+    },
+    {
         "version": "9.323.0",
         "date": "2026-07-13",
         "title": "Begleitdateien direkt im Projekt sichtbar",

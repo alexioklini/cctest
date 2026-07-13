@@ -276,7 +276,26 @@ function startProjectSyncPoll(agentId, projectName) {
   refreshProjectSyncStatus(agentId, projectName);
   state._projectSyncPollHandle = setInterval(() => {
     refreshProjectSyncStatus(agentId, projectName);
+    _pollProjectIngestJobs(agentId, projectName);
   }, 5000);
+}
+
+// Piggyback on the 5s sync poll: while background extractions are running
+// (async upload queue), keep the file tree's per-file extraction pills live.
+// Only refetches/repaints when the job snapshot actually changed.
+async function _pollProjectIngestJobs(agentId, projectName) {
+  const hadJobs = Object.keys(state._projectIngestJobs || {}).length > 0;
+  if (!hadJobs && !state._projectIngestPollActive) return;
+  try {
+    const st = await API.getProjectIngestStatus(agentId, projectName);
+    const jobs = (st && st.jobs) || {};
+    state._projectIngestPollActive = (st && st.pending > 0);
+    const sig = JSON.stringify(jobs);
+    if (sig === state._projectIngestJobsSig) return;
+    state._projectIngestJobsSig = sig;
+    state._projectIngestJobs = jobs;
+    if (typeof _ptApplyIngestJobs === 'function') _ptApplyIngestJobs();
+  } catch (_) { /* transient — next tick retries */ }
 }
 
 function stopProjectSyncPoll() {

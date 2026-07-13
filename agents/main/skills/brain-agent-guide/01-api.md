@@ -285,7 +285,19 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST .../projects/<name>/sync-now` — trigger immediate sync
 - `POST .../projects/<name>/full-resync` — wipe wing + re-mine
 - `POST .../projects/<name>/sync-cancel` — abort live sync
-- `POST .../projects/<name>/ingest` — upload files (multipart) → mined into the wing
+- `POST .../projects/<name>/ingest` — upload files (multipart). Since 9.324.0
+  ASYNC: the request only stages the bytes and returns immediately with
+  `{status:"queued", source_hash}` (the key is reserved at stage time); a
+  server-side worker pool (2 threads) runs the extraction — incl. OCR for
+  scanned PDFs — in the background, then kicks project-sync. Unsupported file
+  types still fail synchronously. (Previously extraction ran inline and a
+  scanned PDF blew past the Cloudflare tunnel's ~100s limit → HTTP 524.)
+- `GET .../projects/<name>/ingest-status` — background extraction jobs:
+  `{jobs: {key: {state: queued|extracting|done|error|cancelled, filename,
+  error, chunks}}, pending}`
+- `DELETE .../projects/<name>/ingest-jobs/<key>` — terminate one extraction
+  (queued dies instantly; in-flight is flagged and its result discarded).
+  On an already-terminal job this dismisses the status entry.
 - `GET .../projects/<name>/instruction-files` — list supplementary instruction
   files (owner docs that complement the project instructions; NEVER mined — the
   model reads them on demand with read_document, like a chat attachment)

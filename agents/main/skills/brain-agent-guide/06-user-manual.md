@@ -599,12 +599,24 @@ Codebasen, Forschungspapiere, …).
    ganzen **Ordner** über das 📁 (bzw. per Drag&Drop auf den Dateien-Zweig).
    Ein Ordner-Import (per Drag&Drop) zeigt zuerst einen Bestätigungsdialog
    (Anzahl Dateien/Ordner/Größe; beim 📁-Picker entfällt der, weil der Browser
-   selbst schon fragt), dann einen Fortschrittsdialog mit Balken und einem
-   **Abbrechen**-Button (bereits importierte Dateien bleiben erhalten). Am Ende
-   erscheint ein **Status** — bei Fehlern bleibt der Dialog offen und listet,
-   welche Dateien nicht importiert werden konnten und warum (z. B. „Kein Text
-   extrahierbar", „Dateityp nicht unterstützt"). Die Unterordner-Struktur wird
-   als Gruppen übernommen.
+   selbst schon fragt). Der Import läuft dann in **zwei Phasen**: Erst werden
+   die Dateien hochgeladen (mehrere parallel — der Server nimmt sie nur
+   entgegen, das dauert Millisekunden pro Datei), danach zeigt derselbe Dialog
+   „Inhalte werden extrahiert …" — die eigentliche Text-Extraktion (bei
+   gescannten PDFs inkl. **OCR**, das mehrere Minuten pro Datei dauern kann)
+   läuft **im Hintergrund auf dem Server**. Der Button **„Im Hintergrund
+   fortsetzen"** schließt den Dialog, ohne etwas abzubrechen — der Fortschritt
+   bleibt im Dateien-Zweig sichtbar: jede Datei trägt dort ihren
+   Extraktions-Status (**offen** → **wird extrahiert …** → normale
+   Dateizeile; bei Problemen **Fehler** mit Grund im Tooltip), der Zweigkopf
+   zählt „N in Extraktion" mit, und über das **✕** an einer wartenden oder
+   laufenden Datei lässt sich deren Extraktion **einzeln abbrechen**.
+   Am Ende erscheint ein **Status** — bei Fehlern bleibt der Dialog offen und
+   listet, welche Dateien nicht importiert werden konnten und warum (z. B.
+   „Kein Text extrahierbar", „Dateityp nicht unterstützt"). Die
+   Unterordner-Struktur wird als Gruppen übernommen. Das Einspeisen ins
+   Projektgedächtnis wartet automatisch, bis die Extraktion des gesamten
+   Stapels fertig ist, und startet dann sofort.
 5. **Web-Adressen** — über das ＋ im Web-Adressen-Zweig öffnet sich ein Dialog
    (Adresse + optionale Bezeichnung). Eine Liste von URLs, die das Projekt frisch abruft
    und ins Projektgedächtnis + KG einspeist (per crawl4ai gerendert, also

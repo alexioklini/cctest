@@ -396,10 +396,15 @@ async function _ptFillFiles(agentId, projectName) {
   const host = document.getElementById('pt-items-files');
   if (!host) return;
   try {
-    const data = await API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/docs`);
+    // Docs (extracted chunks) + the async upload queue's job registry — a
+    // freshly uploaded file has NO chunks yet, so without the job merge it
+    // would be invisible until extraction finishes.
+    const [data, ingest] = await Promise.all([
+      API.get(`/v1/agents/${agentId}/projects/${encodeURIComponent(projectName)}/docs`),
+      API.getProjectIngestStatus(agentId, projectName).catch(() => null),
+    ]);
+    if (ingest) state._projectIngestJobs = ingest.jobs || {};
     const docs = data.documents || [];
-    _ptSetCount('files', docs.length);
-    if (!docs.length) { host.innerHTML = '<div class="pt-empty">Noch keine Dateien.</div>'; return; }
     const ids = [], byId = {};
     for (const d of docs) {
       const id = d.source_hash || '';
@@ -417,8 +422,83 @@ async function _ptFillFiles(agentId, projectName) {
           ctx: `ptReviewMenu(event, {agentId:'${esc(agentId)}',project:'${esc(projectName)}',sourceHash:'${esc(id)}'})`,
         });
     }
+    // Per-file extraction rows: jobs without chunks on disk yet (queued/
+    // extracting) or terminally failed/cancelled ones (dismissable). A 'done'
+    // job already appears as a normal doc row above — skip it.
+    const jobs = state._projectIngestJobs || {};
+    const docSet = new Set(ids);
+    let extracting = 0;
+    for (const [key, job] of Object.entries(jobs)) {
+      if (docSet.has(key) || job.state === 'done') continue;
+      if (job.state === 'queued' || job.state === 'extracting') extracting++;
+      ids.push(key);
+      byId[key] = _ptIngestJobRow(agentId, projectName, key, job);
+    }
+    const docCountLabel = docs.length
+      + (extracting ? ` · ${extracting} in Extraktion` : '');
+    const cntEl = document.getElementById('pt-count-files');
+    if (cntEl) cntEl.textContent = ids.length ? `(${docCountLabel})` : '';
+    if (!ids.length) { host.innerHTML = '<div class="pt-empty">Noch keine Dateien.</div>'; return; }
     host.innerHTML = _ptRenderGrouped('files', ids, byId) || '<div class="pt-empty">Noch keine Dateien.</div>';
   } catch (_) { host.innerHTML = '<div class="pt-empty">Dateien konnten nicht geladen werden.</div>'; }
+}
+
+// Row for an upload whose extraction hasn't produced chunks (yet/at all).
+// States: queued → "offen", extracting → "wird extrahiert …", error/cancelled
+// → dismissable. ✕ on a pending row TERMINATES the job (per-file cancel); on
+// a terminal row it just dismisses the registry entry. Not draggable/groupable
+// — the row becomes a normal doc row once extraction lands.
+function _ptIngestJobRow(agentId, projectName, key, job) {
+  const name = job.filename || key;
+  const stMap = {
+    queued: { dot: 'pending', txt: 'offen' },
+    extracting: { dot: 'partial', txt: 'wird extrahiert …' },
+    error: { dot: 'error', txt: 'Fehler' },
+    cancelled: { dot: 'stale', txt: 'abgebrochen' },
+  };
+  const m = stMap[job.state] || stMap.queued;
+  const tip = job.state === 'error'
+    ? `${name} — ${(typeof _ingestReasonDe === 'function' ? _ingestReasonDe(job.error) : job.error) || 'Fehler'}`
+    : name;
+  const pendingJob = job.state === 'queued' || job.state === 'extracting';
+  const btnTitle = pendingJob ? 'Extraktion abbrechen' : 'Ausblenden';
+  return `<div class="pt-row pt-item" data-type="files" data-id="${esc(key)}" title="${esc(tip)}">
+      ${_ptDot(m.dot)}
+      <span class="pt-icon pt-fileicon">${_PT_ICON.file}</span>
+      <span class="pt-label">${esc(name)}</span>
+      <span class="pt-count">${esc(m.txt)}</span>
+      <span class="pt-actions">
+        <button class="pt-act" title="${btnTitle}"
+          onclick="event.stopPropagation(); ptCancelIngestJob('${esc(key).replace(/'/g, "\\'")}')">✕</button>
+      </span>
+    </div>`;
+}
+
+// Terminate (pending) or dismiss (terminal) one extraction job, then repaint.
+async function ptCancelIngestJob(key) {
+  const agentId = state._projectDetailAgent || 'main';
+  const projectName = state._projectDetailName || '';
+  if (!projectName) return;
+  const job = (state._projectIngestJobs || {})[key] || {};
+  const pendingJob = job.state === 'queued' || job.state === 'extracting';
+  if (pendingJob && !await showConfirmDanger(
+        `Extraktion von „${job.filename || key}“ abbrechen?`,
+        'Extraktion abbrechen', 'Abbrechen')) return;
+  try {
+    await API.cancelProjectIngestJob(agentId, projectName, key);
+  } catch (e) {
+    showToast('Abbruch fehlgeschlagen: ' + (e.message || e), true);
+  }
+  _ptApplyIngestJobs();
+}
+
+// Refresh only the files branch (used by the import dialog's phase-2 poll and
+// the sync-status poller, so extraction pills move without a full re-render).
+function _ptApplyIngestJobs() {
+  const agentId = state._projectDetailAgent || 'main';
+  const projectName = state._projectDetailName || '';
+  if (!projectName || !document.getElementById('pt-items-files')) return;
+  _ptFillFiles(agentId, projectName);
 }
 
 async function _ptFillFolders(agentId, projectName) {

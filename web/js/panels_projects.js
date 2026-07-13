@@ -631,40 +631,132 @@ async function uploadProjectFiles(files) {
   const agentId = state._projectDetailAgent;
   const projectName = state._projectDetailName;
   if (!agentId || !projectName) return;
+  const items = Array.from(files).map(f => ({ file: f, relPath: '', dispName: f.name }));
+  const title = items.length === 1 ? 'Datei wird hochgeladen …' : 'Dateien werden hochgeladen …';
+  await _runProjectImport(agentId, projectName, items, { title });
+}
 
-  // Show the same progress modal the folder import uses, so a single-file
-  // upload also gives visible "something is happening" feedback (extraction +
-  // mining can take seconds) instead of only a transient toast. Files uploaded
-  // this way land at the project root (no group chain — that's folder-import's
-  // job). Reuses _folderImportProgress* + _folderImportShowResult verbatim.
-  const total = files.length;
-  const title = total === 1 ? 'Datei wird hochgeladen …' : 'Dateien werden hochgeladen …';
+// ── Two-phase import driver (shared: file upload + folder import) ───────────
+// Phase 1 uploads with a small pool — since 9.324.0 /ingest only STAGES the
+// bytes and returns immediately (source_hash reserved), so uploads are cheap
+// and safe to parallelise. Phase 2 watches the background extraction via
+// /ingest-status until every accepted file is terminal; the button becomes
+// "Im Hintergrund fortsetzen" (extraction keeps running server-side, status
+// stays visible in the file tree). onAccepted(item, result) fires per staged
+// file (the folder import assigns source groups there).
+async function _runProjectImport(agentId, projectName, items, { title, onAccepted } = {}) {
+  const total = items.length;
   _folderImportProgressOpen(total, title);
-  let ok = 0, done = 0, aborted = false;
   const failures = [];
-  for (const file of files) {
-    if (window._folderImportAborted) { aborted = true; break; }
-    _folderImportProgressUpdate(done, total, file.name, failures.length);
-    try {
-      const result = await _ingestOneProjectFile(agentId, projectName, file);
-      if (result.error) failures.push({ name: file.name, reason: result.error });
-      else if (!result.source_hash) failures.push({ name: file.name, reason: 'kein Inhalt extrahiert' });
-      else ok++;
-    } catch(e) {
-      failures.push({ name: file.name, reason: (e && e.message) || 'Netzwerkfehler' });
+  const watched = [];        // [{key, name}] accepted → background extraction
+  let done = 0, aborted = false;
+
+  const q = items.slice();
+  const workers = Array.from({ length: Math.min(4, q.length) }, async () => {
+    while (q.length) {
+      if (window._folderImportAborted) { aborted = true; return; }
+      const item = q.shift();
+      const name = item.dispName || item.file.name;
+      try {
+        const result = await _ingestOneProjectFile(agentId, projectName, item.file, item.relPath);
+        if (result.error) failures.push({ name, reason: result.error });
+        else if (!result.source_hash) failures.push({ name, reason: 'kein Inhalt extrahiert' });
+        else {
+          watched.push({ key: result.source_hash, name });
+          if (onAccepted) { try { onAccepted(item, result); } catch (_) {} }
+        }
+      } catch (e) {
+        failures.push({ name, reason: (e && e.message) || 'Netzwerkfehler' });
+      }
+      done++;
+      _folderImportProgressUpdate(done, total, name, failures.length);
     }
-    done++;
-    _folderImportProgressUpdate(done, total, file.name, failures.length);
+  });
+  await Promise.all(workers);
+
+  let backgrounded = false;
+  let extracted = watched.length;
+  if (watched.length && !aborted) {
+    _folderImportPhaseExtract(watched.length);
+    const res = await _ingestAwaitExtraction(agentId, projectName, watched);
+    backgrounded = res.backgrounded;
+    failures.push(...res.failures);
+    extracted = watched.length - res.failures.length;
   }
   window._folderImportAborted = false;
   loadProjectFiles(agentId, projectName);
   if (typeof renderProjectSourceTree === 'function') renderProjectSourceTree();
-  if (!failures.length && !aborted) {
+  if (backgrounded) {
     _folderImportProgressClose();
-    showToast(total === 1 ? `${files[0].name} hochgeladen` : `${ok} Datei(en) hochgeladen`);
+    showToast('Import läuft im Hintergrund weiter — Status im Datei-Baum');
+  } else if (!failures.length && !aborted) {
+    _folderImportProgressClose();
+    showToast(total === 1 ? `${items[0].dispName || items[0].file.name} importiert`
+                          : `${extracted} Datei(en) importiert`);
   } else {
-    _folderImportShowResult({ ok, total, aborted, failures });
+    _folderImportShowResult({ ok: extracted, total, aborted, failures });
   }
+  return { ok: extracted, total, aborted, backgrounded, failures };
+}
+
+// Switch the progress modal into extraction-watch mode (phase 2).
+function _folderImportPhaseExtract(totalWatched) {
+  const ov = document.getElementById('folder-import-progress');
+  if (!ov) return;
+  const h2 = ov.querySelector('h2');
+  if (h2) h2.textContent = 'Inhalte werden extrahiert …';
+  const cur = document.getElementById('fip-current');
+  if (cur) cur.textContent = 'Extraktion läuft (gescannte PDFs mit OCR können mehrere Minuten dauern) …';
+  const bar = document.getElementById('fip-bar');
+  if (bar) bar.style.width = '0%';
+  const cnt = document.getElementById('fip-count');
+  if (cnt) cnt.textContent = `0 / ${totalWatched}`;
+  const btn = document.getElementById('fip-abort');
+  if (btn) { btn.disabled = false; btn.textContent = 'Im Hintergrund fortsetzen'; }
+}
+
+// Poll /ingest-status until every watched key is terminal. Closing via the
+// phase-2 button ("Im Hintergrund fortsetzen") stops WATCHING only — the
+// server-side jobs keep running (per-file cancel lives in the file tree).
+async function _ingestAwaitExtraction(agentId, projectName, watched) {
+  const failures = [];
+  const pending = new Set(watched.map(w => w.key));
+  const nameByKey = {};
+  watched.forEach(w => { nameByKey[w.key] = w.name; });
+  const totalW = watched.length;
+  while (pending.size) {
+    if (window._folderImportAborted) return { failures, backgrounded: true };
+    await new Promise(r => setTimeout(r, 2000));
+    if (window._folderImportAborted) return { failures, backgrounded: true };
+    let st;
+    try { st = await API.getProjectIngestStatus(agentId, projectName); }
+    catch (_) { continue; }
+    state._projectIngestJobs = (st && st.jobs) || {};
+    let currentName = '';
+    for (const key of Array.from(pending)) {
+      const job = state._projectIngestJobs[key];
+      if (!job) {
+        // Server restart pruned the registry: if nothing at all is pending
+        // any more, treat the key as finished instead of waiting forever.
+        if (!st.pending) pending.delete(key);
+        continue;
+      }
+      if (job.state === 'done') pending.delete(key);
+      else if (job.state === 'error') {
+        failures.push({ name: nameByKey[key], reason: _ingestReasonDe(job.error) });
+        pending.delete(key);
+      } else if (job.state === 'cancelled') {
+        failures.push({ name: nameByKey[key], reason: 'Abgebrochen' });
+        pending.delete(key);
+      } else if (job.state === 'extracting') {
+        currentName = job.filename || nameByKey[key];
+      }
+    }
+    _folderImportProgressUpdate(totalW - pending.size, totalW,
+      currentName || 'Warten auf Extraktion …', failures.length);
+    if (typeof _ptApplyIngestJobs === 'function') _ptApplyIngestJobs();
+  }
+  return { failures, backgrounded: false };
 }
 
 // Ingest a set of files that came from a dropped/picked FOLDER, preserving the
@@ -796,55 +888,28 @@ async function addProjectFolderFiles(entries) {
     return leaf;
   }
 
-  const total = entries.length;
-  _folderImportProgressOpen(total);
-  let ok = 0, done = 0, aborted = false;
-  const failures = [];   // [{name, reason}]
-  for (const { file, relPath } of entries) {
-    if (window._folderImportAborted) { aborted = true; break; }
-    // Split "MyFolder/sub/report.pdf" → dir segments ["MyFolder","sub"].
-    const parts = String(relPath || file.name).split('/').filter(Boolean);
-    const dirSegs = parts.slice(0, -1);
-    const dispName = relPath || file.name;
-    _folderImportProgressUpdate(done, total, dispName, failures.length);
-    try {
-      const result = await _ingestOneProjectFile(agentId, projectName, file, relPath);
-      if (result.error) {
-        failures.push({ name: dispName, reason: result.error });
-      } else if (!result.source_hash) {
-        failures.push({ name: dispName, reason: 'kein Inhalt extrahiert' });
-      } else {
-        const leaf = ensureGroupChain(dirSegs);
-        if (leaf) bucket.assign[result.source_hash] = leaf;
-        ok++;
-      }
-    } catch(e) {
-      failures.push({ name: dispName, reason: (e && e.message) || 'Netzwerkfehler' });
-    }
-    done++;
-    _folderImportProgressUpdate(done, total, dispName, failures.length);
-  }
+  const items = entries.map(({ file, relPath }) => ({
+    file, relPath, dispName: relPath || file.name,
+  }));
+  // Group assignment happens at ACCEPT time (phase 1) — the staged response
+  // already carries the reserved source_hash, so grouping never waits on the
+  // background extraction.
+  await _runProjectImport(agentId, projectName, items, {
+    onAccepted: (item, result) => {
+      const parts = String(item.relPath || item.file.name).split('/').filter(Boolean);
+      const leaf = ensureGroupChain(parts.slice(0, -1));
+      if (leaf) bucket.assign[result.source_hash] = leaf;
+    },
+  });
 
-  // Persist the groups for whatever was imported so far (an aborted run keeps
-  // the files it already ingested, correctly grouped — nothing is rolled back).
+  // Persist the groups for whatever was accepted so far (an aborted run keeps
+  // the files it already staged, correctly grouped — nothing is rolled back).
   try {
     await API.updateProject(agentId, projectName, { source_groups: state._projectDetail.source_groups });
   } catch(e) {
     showToast('Gruppierung konnte nicht gespeichert werden: ' + (e.message || e), true);
   }
-  window._folderImportAborted = false;
-  loadProjectFiles(agentId, projectName);
   if (typeof renderProjectSourceTree === 'function') renderProjectSourceTree();
-  // Turn the progress modal into a result/status view — keeps it open so the
-  // user sees the outcome, especially WHICH files failed and WHY. If everything
-  // succeeded and nothing was skipped, just close with a toast (no need to
-  // block on an all-green result).
-  if (!failures.length && !aborted) {
-    _folderImportProgressClose();
-    showToast(`Ordner importiert: ${ok} Datei(en)`);
-  } else {
-    _folderImportShowResult({ ok, total, aborted, failures });
-  }
 }
 
 // Replace the progress modal body with a final status: counts + a scrollable

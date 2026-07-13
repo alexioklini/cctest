@@ -36,8 +36,11 @@ import hashlib
 import json
 import logging
 import os
+import queue
 import re
+import sys
 import threading
+import time
 import urllib.request
 
 
@@ -45,6 +48,16 @@ import urllib.request
 
 class DocumentParser:
     """Parse various document formats to plain text."""
+
+    # Must stay in sync with the parsers dict in parse() below. Used by the
+    # async upload queue for the CHEAP pre-stage rejection (unsupported types
+    # fail synchronously with the same wording parse() would raise, so the
+    # client's reason translation keeps working without an extraction round).
+    SUPPORTED_EXTS = frozenset({
+        ".pdf", ".docx", ".txt", ".md", ".html", ".htm", ".xlsx", ".xls",
+        ".pptx", ".eml", ".msg", ".csv", ".tsv",
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
+    })
 
     @staticmethod
     def parse_pdf(path: str) -> str:
@@ -522,13 +535,29 @@ class IngestManager:
         return None
 
     @staticmethod
+    @staticmethod
+    def _yaml_unquote(s: str) -> str:
+        """Invert brain._yaml_escape: strip the surrounding quotes + unescape.
+
+        _parse_frontmatter returns values VERBATIM, so a source that
+        _yaml_escape quoted ("Kunde-A/Bericht.txt" — any value with '-', '/'
+        neighbours etc.) came back with literal quotes. That broke re-ingest
+        dedup (_source_key compared '"x"' against 'x' → never matched → a
+        re-upload minted a fresh -2 key instead of overwriting) and leaked a
+        trailing quote into the docs list UI. Pre-existing; surfaced by the
+        async-upload tests (9.324.0)."""
+        if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+            return s[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+        return s
+
+    @staticmethod
     def _read_chunk_source(fpath: str) -> str:
         """Read the `source:` frontmatter value from a chunk file."""
         import brain as _brain
         try:
             with open(fpath, "r") as f:
                 fm, _ = _brain._parse_frontmatter(f.read(800))
-            return fm.get("source", "")
+            return IngestManager._yaml_unquote(fm.get("source", ""))
         except Exception:
             return ""
 
@@ -555,7 +584,8 @@ class IngestManager:
                     project_name: str | None = None,
                     tags: list[str] | None = None,
                     chunk_size: int = 1500, chunk_overlap: int = 200,
-                    source_name: str | None = None) -> dict:
+                    source_name: str | None = None,
+                    key_override: str | None = None) -> dict:
         """Parse, chunk, and store a file as ingested memory chunks.
 
         `source_name` overrides the recorded source (default: the temp file's
@@ -563,7 +593,13 @@ class IngestManager:
         here so two same-named files in different groups get DISTINCT source
         keys (_source_key disambiguates by full source string → `-2` suffix);
         without it both collapse to the same key and the second overwrites the
-        first."""
+        first.
+
+        `key_override` pins the chunk-group key instead of recomputing it —
+        used by the async upload queue (IngestQueue), which RESERVES the key at
+        stage time so the client learns the source_hash before extraction has
+        run. Recomputing here would race a second staged same-stem file onto
+        the same key."""
         if not os.path.exists(file_path):
             return {"error": f"File not found: {file_path}"}
         source_name = source_name or os.path.basename(file_path)
@@ -574,6 +610,7 @@ class IngestManager:
         return IngestManager._store_chunks(
             agent_id, project_name, source_name, source_type, text,
             tags=tags, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
+            key_override=key_override,
         )
 
     @staticmethod
@@ -595,15 +632,17 @@ class IngestManager:
     def _store_chunks(agent_id: str, project_name: str | None,
                       source: str, source_type: str, text: str,
                       tags: list[str] | None = None,
-                      chunk_size: int = 1500, chunk_overlap: int = 200) -> dict:
+                      chunk_size: int = 1500, chunk_overlap: int = 200,
+                      key_override: str | None = None) -> dict:
         """Chunk text and write as `<stem>__NNN.md` files with frontmatter.
 
         The chunk filename preserves the original source filename (extension
         dropped); `key` is that stem and doubles as the public `source_hash`
-        group key. See `_source_key`."""
+        group key. See `_source_key` (or `key_override`, reserved at stage
+        time by the async upload queue)."""
         import brain as _brain
         ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
-        key = IngestManager._source_key(ingest_dir, source)
+        key = key_override or IngestManager._source_key(ingest_dir, source)
         collection = IngestManager._collection_name(agent_id, project_name)
 
         # Delete existing chunks for this source (re-ingest) — both schemes.
@@ -709,7 +748,7 @@ tags:
                 fm, _ = _brain._parse_frontmatter(raw)
             except Exception:
                 continue
-            source = fm.get("source", "unknown")
+            source = IngestManager._yaml_unquote(fm.get("source", "unknown"))
             src_hash = fm.get("source_hash") or src_hash
             if src_hash not in groups:
                 groups[src_hash] = {
@@ -756,6 +795,352 @@ tags:
 
 
 # ─── Watched Folders (Auto-Ingestion) ────────────────────────────────
+
+# ─── Async upload ingestion (staging + extraction worker pool) ───────────────
+#
+# The /ingest HTTP handler used to run the FULL extraction inline on the
+# request thread. For a scanned PDF that means pymupdf4llm (60s budget) plus
+# cloud OCR (300s budget) — far past the Cloudflare tunnel's ~100s response
+# limit, so the browser got HTTP 524 while the server kept working, and the
+# client's upload loop stalled for minutes per file. Since the handler also
+# DISCARDED the original bytes after extraction, the work could not be deferred
+# without first persisting them.
+#
+# New shape: the handler calls IngestManager.stage_upload(), which writes the
+# original bytes + a metadata sidecar under <pdir>/ingest-staging/, RESERVES
+# the chunk-group key (so the client gets its source_hash immediately for
+# group assignment), and returns. The IngestQueue worker pool then runs the
+# exact same IngestManager.ingest_file() path — same chunk .md layout in
+# ingested/, same downstream contract (docs list, project-sync mining, KG).
+# When a project's staged jobs drain, the queue kicks the project-sync daemon
+# so mining doesn't wait for the next scheduled pass.
+
+_STAGING_DIRNAME = "ingest-staging"
+
+
+class IngestQueue:
+    """Extraction worker pool for staged project-file uploads."""
+
+    WORKERS = 2                      # OCR/markitdown are heavy; keep modest
+    DONE_TTL_SECS = 24 * 3600        # prune terminal registry entries after
+
+    def __init__(self):
+        self._q: queue.Queue = queue.Queue()
+        self._lock = threading.Lock()
+        # (agent_id, project_name) -> {key: {state, filename, source, ...}}
+        self._jobs: dict[tuple[str, str], dict[str, dict]] = {}
+        self._threads: list[threading.Thread] = []
+
+    # ── paths ────────────────────────────────────────────────────────────
+    @staticmethod
+    def _staging_dir(agent_id: str, project_name: str | None) -> str:
+        # Sibling of ingested/ (same parent dir), NOT inside it — the docs
+        # list, the sync daemon and _source_key all enumerate ingested/ and
+        # must never see raw originals there.
+        ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
+        return os.path.join(os.path.dirname(ingest_dir), _STAGING_DIRNAME)
+
+    # ── public API ───────────────────────────────────────────────────────
+    def stage(self, agent_id: str, project_name: str, filename: str,
+              data: bytes, *, source_name: str = "", tags: list | None = None,
+              chunk_size: int = 1500, chunk_overlap: int = 200,
+              user_id: str = "") -> dict:
+        """Persist upload bytes + sidecar, reserve the group key, enqueue.
+
+        Returns the immediate HTTP response dict ({status:"queued",
+        source_hash:...}) or {"error": ...} for cheap synchronous rejections
+        (unsupported extension — mirrors DocumentParser.parse()'s wording so
+        the client's reason translation keeps working)."""
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in DocumentParser.SUPPORTED_EXTS:
+            supported = ", ".join(sorted(DocumentParser.SUPPORTED_EXTS))
+            return {"error": f"Unsupported format: {ext}. Supported: {supported}"}
+        source = source_name or filename
+        ingest_dir = IngestManager._ingest_dir(agent_id, project_name)
+        sdir = self._staging_dir(agent_id, project_name)
+        os.makedirs(sdir, exist_ok=True)
+        with self._lock:
+            key = self._reserve_key_locked(agent_id, project_name,
+                                           ingest_dir, source)
+            staged = os.path.join(sdir, f"{key}{ext}")
+            with open(staged, "wb") as f:
+                f.write(data)
+            meta = {
+                "agent_id": agent_id, "project_name": project_name,
+                "filename": filename, "source_name": source_name,
+                "tags": tags or [], "chunk_size": chunk_size,
+                "chunk_overlap": chunk_overlap, "user_id": user_id,
+                "key": key, "staged": staged,
+                "queued_at": time.time(),
+            }
+            with open(os.path.join(sdir, f"{key}.meta.json"), "w") as f:
+                json.dump(meta, f)
+            self._jobs.setdefault((agent_id, project_name), {})[key] = {
+                "state": "queued", "filename": filename, "source": source,
+                "error": "", "chunks": 0, "queued_at": meta["queued_at"],
+            }
+        self._q.put((agent_id, project_name, key))
+        return {"status": "queued", "source": source,
+                "source_type": ext.lstrip("."), "source_hash": key,
+                "filename": filename, "agent": agent_id,
+                "project": project_name}
+
+    def status(self, agent_id: str, project_name: str) -> dict:
+        """Snapshot of this project's jobs; prunes stale terminal entries."""
+        now = time.time()
+        with self._lock:
+            jobs = self._jobs.get((agent_id, project_name), {})
+            for k in [k for k, j in jobs.items()
+                      if j["state"] in ("done", "error", "cancelled")
+                      and now - j.get("finished_at", now) > self.DONE_TTL_SECS]:
+                del jobs[k]
+            snapshot = {k: dict(j) for k, j in jobs.items()}
+        pending = sum(1 for j in snapshot.values()
+                      if j["state"] in ("queued", "extracting"))
+        return {"jobs": snapshot, "pending": pending}
+
+    def has_pending(self, agent_id: str, project_name: str) -> bool:
+        """True while any staged job for this project is queued/extracting.
+        The project-sync daemon checks this to HOLD OFF mining until the
+        upload batch is fully extracted (else it mines a half-set and the
+        drain-kick immediately re-syncs)."""
+        with self._lock:
+            return any(j["state"] in ("queued", "extracting")
+                       for j in self._jobs.get((agent_id, project_name),
+                                               {}).values())
+
+    def cancel(self, agent_id: str, project_name: str, key: str) -> dict:
+        """Per-file terminate. A QUEUED job dies immediately (staged files
+        removed; the worker skips the stale queue entry when it pops). An
+        EXTRACTING job can't be aborted mid-call (the extraction owns its own
+        subprocess/HTTP timeouts), so it's flagged — the worker discards the
+        result and deletes the written chunks the moment the call returns."""
+        with self._lock:
+            job = self._jobs.get((agent_id, project_name), {}).get(key)
+            if not job:
+                return {"error": "unknown job"}
+            state = job["state"]
+            if state in ("done", "error", "cancelled"):
+                # Terminal → DELETE acts as dismiss (drops the registry row so
+                # the file tree stops showing a stale error/cancel entry).
+                del self._jobs[(agent_id, project_name)][key]
+                return {"status": "dismissed"}
+            job["cancel_requested"] = True
+            if state == "queued":
+                job["state"] = "cancelled"
+                job["finished_at"] = time.time()
+        if state == "queued":
+            sdir = self._staging_dir(agent_id, project_name)
+            ext = os.path.splitext(job.get("filename", ""))[1].lower()
+            self._cleanup(os.path.join(sdir, f"{key}{ext}"),
+                          os.path.join(sdir, f"{key}.meta.json"))
+            self._maybe_kick_sync(agent_id, project_name)
+            return {"status": "cancelled"}
+        return {"status": "cancelling"}
+
+    def start(self):
+        """Spawn workers + re-enqueue staged leftovers from a prior run."""
+        for i in range(self.WORKERS):
+            t = threading.Thread(target=self._work, daemon=True,
+                                 name=f"ingest_queue_{i}")
+            t.start()
+            self._threads.append(t)
+        try:
+            self._rescan_staging()
+        except Exception as e:
+            print(f"[ingest-queue] boot rescan failed: {e}", flush=True)
+
+    # ── internals ────────────────────────────────────────────────────────
+    def _reserve_key_locked(self, agent_id: str, project_name: str,
+                            ingest_dir: str, source: str) -> str:
+        """_source_key against disk, then disambiguate against PENDING jobs.
+
+        Two same-stem files staged back to back both see an empty ingested/
+        (no chunks written yet), so _source_key alone would hand both the same
+        key and the second extraction would overwrite the first. A pending job
+        with the SAME source reuses its key (re-upload = overwrite, matching
+        _source_key's on-disk semantics). Caller holds self._lock."""
+        pend = self._jobs.get((agent_id, project_name), {})
+        active = {k: j for k, j in pend.items()
+                  if j["state"] in ("queued", "extracting")}
+        for k, j in active.items():
+            if j.get("source") == source:
+                return k
+        key = IngestManager._source_key(ingest_dir, source)
+        base, n = key, 2
+        while key in active:
+            key = f"{base}-{n}"
+            n += 1
+        return key
+
+    def _work(self):
+        while True:
+            agent_id, project_name, key = self._q.get()
+            try:
+                self._run_job(agent_id, project_name, key)
+            except Exception as e:
+                print(f"[ingest-queue] job {key} crashed: {e}", flush=True)
+                self._finish(agent_id, project_name, key,
+                             error=f"{type(e).__name__}: {e}")
+            finally:
+                self._q.task_done()
+
+    def _run_job(self, agent_id: str, project_name: str, key: str):
+        from engine.context import request_context
+        sdir = self._staging_dir(agent_id, project_name)
+        meta_path = os.path.join(sdir, f"{key}.meta.json")
+        try:
+            with open(meta_path, "r") as f:
+                meta = json.load(f)
+        except (OSError, ValueError):
+            # Staged pair gone (double-enqueue of a re-upload already handled
+            # by the first pop) — nothing to do.
+            return
+        staged = meta.get("staged", "")
+        with self._lock:
+            job = self._jobs.setdefault((agent_id, project_name), {}) \
+                            .setdefault(key, {"filename": meta.get("filename", ""),
+                                              "source": meta.get("source_name")
+                                              or meta.get("filename", "")})
+            if job.get("state") == "cancelled":
+                # cancelled while queued — staged files already removed
+                return
+            if not os.path.isfile(staged):
+                job["state"] = "error"
+                job["error"] = "staged file missing"
+                job["finished_at"] = time.time()
+                self._cleanup(meta_path)
+                return
+            job["state"] = "extracting"
+        # Pooled thread → context MUST be entered via `with request_context`
+        # (reused-thread bleed invariant); current_user_id feeds OCR cost
+        # attribution in doc_convert.
+        with request_context(current_user_id=meta.get("user_id", "")):
+            result = IngestManager.ingest_file(
+                agent_id, staged,
+                project_name=project_name or None,
+                tags=meta.get("tags") or None,
+                chunk_size=int(meta.get("chunk_size", 1500)),
+                chunk_overlap=int(meta.get("chunk_overlap", 200)),
+                source_name=meta.get("source_name") or None,
+                key_override=key,
+            )
+            with self._lock:
+                cancelled = bool(self._jobs.get((agent_id, project_name), {})
+                                 .get(key, {}).get("cancel_requested"))
+            if cancelled:
+                # Terminate-per-file: the extraction call itself couldn't be
+                # aborted, so discard its output — delete any chunks it wrote.
+                if not result.get("error"):
+                    try:
+                        IngestManager.delete_ingested(
+                            agent_id, key, project_name=project_name or None)
+                    except Exception:
+                        pass
+                self._finish(agent_id, project_name, key, state="cancelled")
+            elif result.get("error"):
+                self._finish(agent_id, project_name, key,
+                             error=result["error"])
+            else:
+                # Same best-effort auto-review the inline path ran, still
+                # while the original is on disk.
+                try:
+                    if meta.get("user_id"):
+                        from engine import doc_review as _dr
+                        _dr.review_file_to_db(
+                            staged, user_id=meta["user_id"],
+                            source_kind="project_doc", source_ref=key,
+                            filename=meta.get("filename", ""))
+                except Exception as _e:
+                    print(f"[ingest-queue] auto-review failed for {key}: {_e}",
+                          flush=True)
+                self._finish(agent_id, project_name, key,
+                             chunks=int(result.get("chunks", 0)))
+        self._cleanup(staged, meta_path)
+        self._maybe_kick_sync(agent_id, project_name)
+
+    def _finish(self, agent_id: str, project_name: str, key: str,
+                *, error: str = "", chunks: int = 0, state: str = ""):
+        with self._lock:
+            job = self._jobs.setdefault((agent_id, project_name), {}) \
+                            .setdefault(key, {})
+            job["state"] = state or ("error" if error else "done")
+            job["error"] = error
+            job["chunks"] = chunks
+            job["finished_at"] = time.time()
+
+    @staticmethod
+    def _cleanup(*paths: str):
+        for p in paths:
+            try:
+                if p and os.path.isfile(p):
+                    os.unlink(p)
+            except OSError:
+                pass
+
+    def _maybe_kick_sync(self, agent_id: str, project_name: str):
+        """When a project's staged jobs drain, wake the sync daemon so the
+        fresh chunks get mined now instead of on the next scheduled pass."""
+        if not project_name:
+            return
+        with self._lock:
+            jobs = self._jobs.get((agent_id, project_name), {})
+            if any(j["state"] in ("queued", "extracting")
+                   for j in jobs.values()):
+                return
+        try:
+            srv = sys.modules.get("__main__")
+            if not hasattr(srv, "_project_sync_request"):
+                srv = sys.modules.get("server")
+            if srv and hasattr(srv, "_project_sync_request"):
+                srv._project_sync_request(agent_id, project_name,
+                                          triggered_by="upload")
+        except Exception as e:
+            print(f"[ingest-queue] sync kick failed: {e}", flush=True)
+
+    def _rescan_staging(self):
+        """Re-enqueue staged files that survived a server restart."""
+        import brain as _brain
+        agents_dir = _brain.AGENTS_DIR
+        if not os.path.isdir(agents_dir):
+            return
+        found = 0
+        for agent_id in os.listdir(agents_dir):
+            pdir_root = os.path.join(agents_dir, agent_id, "projects")
+            if not os.path.isdir(pdir_root):
+                continue
+            for proj in os.listdir(pdir_root):
+                sdir = os.path.join(pdir_root, proj, _STAGING_DIRNAME)
+                if not os.path.isdir(sdir):
+                    continue
+                for fn in os.listdir(sdir):
+                    if not fn.endswith(".meta.json"):
+                        continue
+                    try:
+                        with open(os.path.join(sdir, fn), "r") as f:
+                            meta = json.load(f)
+                    except (OSError, ValueError):
+                        continue
+                    key = meta.get("key") or fn[:-len(".meta.json")]
+                    with self._lock:
+                        self._jobs.setdefault((agent_id, proj), {})[key] = {
+                            "state": "queued",
+                            "filename": meta.get("filename", ""),
+                            "source": meta.get("source_name")
+                            or meta.get("filename", ""),
+                            "error": "", "chunks": 0,
+                            "queued_at": meta.get("queued_at", time.time()),
+                        }
+                    self._q.put((agent_id, proj, key))
+                    found += 1
+        if found:
+            print(f"[ingest-queue] re-enqueued {found} staged upload(s) "
+                  f"from a prior run", flush=True)
+
+
+# Module-level singleton, started by server.py main() next to IngestWatcher.
+INGEST_QUEUE = IngestQueue()
+
 
 class IngestWatcher:
     """Background thread that polls watched folders and auto-ingests new/modified files."""

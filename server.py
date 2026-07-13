@@ -1852,6 +1852,8 @@ class BrainAgentHandler(
             self._handle_code_index_history(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-status"):
             self._handle_project_sync_status(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/ingest-status"):
+            self._handle_project_ingest_status(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-runs"):
             self._handle_project_sync_runs(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/sync-runs/" in path:
@@ -2469,6 +2471,8 @@ class BrainAgentHandler(
             self._handle_project_artifact_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/input-folders/" in path:
             self._handle_project_input_folders_delete(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and "/ingest-jobs/" in path:
+            self._handle_project_ingest_job_cancel(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/instruction-files/" in path:
             self._handle_project_instruction_file_delete(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/image"):
@@ -4012,6 +4016,11 @@ def main():
     engine._ingest_watcher = engine.IngestWatcher()
     engine._ingest_watcher.start()
     print("Ingest watcher: started (30s poll)")
+
+    # Start the async upload-extraction pool (staged /ingest uploads);
+    # re-enqueues staging leftovers from a prior run.
+    engine.INGEST_QUEUE.start()
+    print(f"Ingest queue: started ({engine.INGEST_QUEUE.WORKERS} workers)")
 
     # Initialize main agent
     engine._current_agent = engine.AgentConfig("main")

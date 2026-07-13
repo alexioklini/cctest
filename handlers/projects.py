@@ -3,7 +3,6 @@ import datetime
 import json
 import os
 import sys
-import tempfile
 
 from server_lib import auth as _auth_mod
 from server_lib import pathsafe
@@ -1823,53 +1822,68 @@ class ProjectsHandlerMixin:
         if not filename:
             return {"error": "No file uploaded"}
 
-        # Save to temp file with original filename preserved
-        tmp_dir = tempfile.mkdtemp()
-        tmp_path = os.path.join(tmp_dir, filename)
-        with open(tmp_path, "wb") as tmp:
-            tmp.write(file_data)
-        try:
-            tags_raw = form_fields.get("tags", "")
-            tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
-            chunk_size = int(form_fields.get("chunk_size", "1500"))
-            chunk_overlap = int(form_fields.get("chunk_overlap", "200"))
-            # A folder import sends rel_path ("Kunde-A/Bericht.pdf") so two
-            # same-named files in different groups get distinct source keys
-            # (the filename itself is basenamed above for safety, losing the
-            # path). Strip any leading "/" or ".." defensively. Absent → the
-            # plain basename (single-file upload, unchanged).
-            rel_path = (form_fields.get("rel_path", "") or "").replace("\\", "/").strip()
-            rel_path = "/".join(p for p in rel_path.split("/") if p and p != "..")
-            result = engine.IngestManager.ingest_file(
-                agent_id, tmp_path, project_name=project_name,
-                tags=tags, chunk_size=chunk_size, chunk_overlap=chunk_overlap,
-                source_name=(rel_path or None),
-            )
-            # Auto-review the uploaded file synchronously BEFORE the temp file
-            # is deleted, keyed by the resulting source_hash so the ingested
-            # node's badge resolves. Best-effort. Project-uploaded files have
-            # no persisted original on disk, so the review's source_ref is the
-            # source_hash (reviewer re-fetches its text from the review row).
-            try:
-                shash = (result or {}).get("source_hash") or ""
-                user = getattr(self, "_auth_user", None) or {}
-                uid = (user.get("id") or user.get("user_id")
-                       or user.get("username") or "")
-                if shash and uid and "error" not in (result or {}):
-                    from engine import doc_review as _dr
-                    _dr.review_file_to_db(
-                        tmp_path, user_id=uid, source_kind="project_doc",
-                        source_ref=shash, filename=filename)
-            except Exception as _e:
-                print(f"[data_review] ingest auto-review failed: {_e}",
-                      flush=True)
-            return result
-        finally:
-            try:
-                os.unlink(tmp_path)
-                os.rmdir(tmp_dir)
-            except OSError:
-                pass
+        # DECOUPLED (9.324.0): no inline extraction on the request thread any
+        # more. A scanned PDF used to run pymupdf4llm (60s) + cloud OCR (300s)
+        # HERE, blowing past the Cloudflare tunnel's ~100s limit → HTTP 524
+        # while the server kept working. Now the original bytes + metadata are
+        # staged on disk and the IngestQueue worker pool runs the exact same
+        # ingest_file path (incl. the auto-review) in the background; the
+        # response returns immediately with the RESERVED source_hash so the
+        # client can assign source groups right away. Cheap rejections
+        # (unsupported extension) still fail synchronously.
+        tags_raw = form_fields.get("tags", "")
+        tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
+        # A folder import sends rel_path ("Kunde-A/Bericht.pdf") so two
+        # same-named files in different groups get distinct source keys
+        # (the filename itself is basenamed above for safety, losing the
+        # path). Strip any leading "/" or ".." defensively. Absent → the
+        # plain basename (single-file upload, unchanged).
+        rel_path = (form_fields.get("rel_path", "") or "").replace("\\", "/").strip()
+        rel_path = "/".join(p for p in rel_path.split("/") if p and p != "..")
+        user = getattr(self, "_auth_user", None) or {}
+        uid = (user.get("id") or user.get("user_id")
+               or user.get("username") or "")
+        return engine.INGEST_QUEUE.stage(
+            agent_id, project_name, filename, file_data,
+            source_name=rel_path,
+            tags=tags,
+            chunk_size=int(form_fields.get("chunk_size", "1500")),
+            chunk_overlap=int(form_fields.get("chunk_overlap", "200")),
+            user_id=uid,
+        )
+
+    def _handle_project_ingest_status(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/ingest-status — snapshot of the
+        background extraction jobs for this project (async upload queue):
+        {jobs: {key: {state: queued|extracting|done|error|cancelled, filename,
+        error, chunks}}, pending: n}. Polled by the import dialog (phase 2)
+        and the project file tree (per-file extraction pills)."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name) is None:
+            return
+        self._send_json(engine.INGEST_QUEUE.status(agent_id, proj_name))
+
+    def _handle_project_ingest_job_cancel(self, path: str):
+        """DELETE /v1/agents/{id}/projects/{name}/ingest-jobs/{key} —
+        terminate one staged/running extraction. Queued jobs die immediately;
+        an extraction already in flight is flagged and its result discarded
+        when the call returns (the extractor owns its own timeouts)."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name,
+                                      require_manage=True) is None:
+            return
+        from urllib.parse import unquote
+        key = unquote(path.rstrip("/").split("/")[-1])
+        result = engine.INGEST_QUEUE.cancel(agent_id, proj_name, key)
+        self._send_json(result, 400 if "error" in result else 200)
 
     def _handle_list_ingested(self, path: str):
         """GET /v1/agents/{id}/ingested"""
