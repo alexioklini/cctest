@@ -327,7 +327,8 @@ def scan_text(text: str, *, lang: str = "de",
     Findings carry:
       rule_id   - 'name' | 'address' | 'organisation'
       label     - display label
-      category  - 'contact' (matches PII_RULE_CATEGORIES)
+      category  - from PII_RULE_CATEGORIES ('contact' for name/address,
+                  'business_id' for organisation)
       start     - char offset in `text`
       end       - char offset in `text`
       len       - end - start
@@ -378,7 +379,12 @@ def scan_text(text: str, *, lang: str = "de",
             "start": ent.start_char,
             "end": ent.end_char,
             "len": ent.end_char - ent.start_char,
-            "category": "contact",
+            # Category from the rule map — `organisation` lives under
+            # `business_id` (a legal entity is not a natural person), the
+            # rest under `contact`. Was hardcoded 'contact', which mislabelled
+            # ORG findings in the audit view (action resolution was never
+            # affected — _pii_effective_action resolves by rule_id).
+            "category": PII_RULE_CATEGORIES.get(rule_id, "contact"),
             "source": "ner",
         })
         if len(findings) >= max_findings:

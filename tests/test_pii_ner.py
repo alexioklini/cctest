@@ -140,7 +140,11 @@ class TestNERScan(unittest.TestCase):
         for f in findings:
             for k in ("rule_id", "label", "category", "start", "end", "len", "source"):
                 self.assertIn(k, f, f"missing {k} in {f}")
-            self.assertEqual(f["category"], "contact")
+            # Category mirrors PII_RULE_CATEGORIES: name/address → contact,
+            # organisation → business_id (a legal entity is not a natural
+            # person; was hardcoded 'contact' until 9.314.2).
+            self.assertEqual(f["category"],
+                             pii_ner.PII_RULE_CATEGORIES.get(f["rule_id"], "contact"))
             self.assertEqual(f["source"], "ner")
             self.assertEqual(f["len"], f["end"] - f["start"])
 
@@ -304,9 +308,13 @@ class TestNERIntegration(unittest.TestCase):
         # rule_overrides.name='ignore' must drop NER name findings even when
         # the surrounding category is bumped to warn. organisation should
         # still surface because only the `name` rule was overridden.
+        # NB: `organisation` lives under `business_id` (a legal entity is not
+        # a natural person — default-ignore), so that category must be bumped
+        # too or the org finding never surfaces regardless of overrides.
         text = "Maria Schmidt arbeitet bei Siemens."
         findings = self._scan(text,
-                              categories={"contact": {"action": "warn"}},
+                              categories={"contact": {"action": "warn"},
+                                          "business_id": {"action": "warn"}},
                               rule_overrides={"name": "ignore"})
         rule_ids = {f["rule_id"] for f in findings}
         self.assertNotIn("name", rule_ids)
@@ -357,10 +365,15 @@ class TestPseudonymizerRoundtrip(unittest.TestCase):
 
     def test_name_roundtrip(self):
         original = "Maria Schmidt arbeitet bei Siemens in München."
-        # NER findings live under the `contact` category which defaults to
-        # ignore — bump to warn so we get real findings to pseudonymise.
+        # name lives under `contact`, organisation under `business_id` (a
+        # legal entity is not a natural person) — both default to ignore, so
+        # bump both to get real findings to pseudonymise. rule_overrides is
+        # pinned EMPTY so the developer's live config.json (which may set
+        # organisation=ignore) can't decide whether this test passes.
         cfg = {**self.brain._get_gdpr_scanner_config(),
-               "categories": {"contact": {"action": "warn"}}}
+               "categories": {"contact": {"action": "warn"},
+                              "business_id": {"action": "warn"}},
+               "rule_overrides": {}}
         findings = self.brain._pii_scan_text(original, cfg=cfg)
         # Need at least one of each rule_id to make this test meaningful.
         rule_ids = {f["rule_id"] for f in findings}
@@ -372,9 +385,12 @@ class TestPseudonymizerRoundtrip(unittest.TestCase):
             # Original PII must be gone from the wire copy.
             self.assertNotIn("Maria Schmidt", anon)
             self.assertNotIn("Siemens", anon)
-            # Tokens follow the documented format.
-            self.assertIn("NAME_", anon)
-            self.assertIn("ORGANISATION_", anon)
+            # names/orgs get REALISTIC surrogates ("Maria Parker", "Hooli
+            # Corp"), not <NAME_N> tokens — the wire copy must read as natural
+            # text to the cloud model. The invariant is the MAPPING, not a
+            # token shape: one forward entry per distinct original, reversible.
+            self.assertGreaterEqual(len(mapping.forward), 2,
+                f"expected mapping entries for name+organisation: {mapping.forward}")
             # Reverse restores verbatim.
             restored, n = self.ps.deanonymize_text(anon, mapping=mapping)
             self.assertEqual(restored, original)

@@ -84,9 +84,10 @@ event vocabulary via `event_callback`.
   `run_turn_blocking` polls it via `is_cancelled`).
 - **Tool-call dedup** (Brain side): session-scoped (1h TTL, 100 entries).
   1 dup = error, 2 dups = `TaskCancelled`. `reset_tool_dedup()` runs at
-  turn start. Exempt: `memory_recall`, `memory_shared`, `delegate_task`,
-  `task_status`, `schedule_list`, `schedule_history`. (`read_document` /
-  `read_file` are NOT exempt — within-turn double-reads of the same file
+  turn start. Exempt: `wiki_read`, `wiki_structure`, `delegate_task`,
+  `task_status`, `schedule_list`, `schedule_history` (the wiki tools replaced
+  the retired `memory_recall`/`memory_shared` — Wiki Phase 2). (`read_document`
+  / `read_file` are NOT exempt — within-turn double-reads of the same file
   hit dedup, which is the desired guard against tool-loops; the prior
   per-session cache that exempted them was removed in v9.7.0.)
 - **Three-layer hooks**: tool pre/post (external subprocess),

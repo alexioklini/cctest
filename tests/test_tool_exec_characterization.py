@@ -160,10 +160,14 @@ class TestCheckToolDedup(_ThreadLocalFixture):
         self.assertIsNotNone(out2)
 
     def test_exempt_tool_never_dedups(self):
+        # wiki_read is on _DEDUP_EXEMPT — the wiki tools replaced the RETIRED
+        # memory_recall/memory_shared there (Wiki Phase 2, 8cd8b249; the old
+        # names no longer exist in TOOL_DISPATCH). A legitimate re-read of the
+        # same page must never be treated as a tool loop.
         a = {"q": "x"}
-        self.assertIsNone(brain._check_tool_dedup("memory_recall", a))
-        self.assertIsNone(brain._check_tool_dedup("memory_recall", a))
-        self.assertIsNone(brain._check_tool_dedup("memory_recall", a))
+        self.assertIsNone(brain._check_tool_dedup("wiki_read", a))
+        self.assertIsNone(brain._check_tool_dedup("wiki_read", a))
+        self.assertIsNone(brain._check_tool_dedup("wiki_read", a))
 
     def test_args_order_insensitive(self):
         # key uses json.dumps(args, sort_keys=True) -> arg order must not matter.
