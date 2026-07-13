@@ -95,6 +95,14 @@ function terminalOpenAgentPane(taskId, title, sessionId, opts) {
   const _activate = opts.activate !== false;
   if (typeof _term === 'undefined' || !_term.open) return null;
   let tab = _agentHubTab();
+  if (!tab && typeof _terminalSingleWindowClear === 'function' && _term.singleWindow) {
+    // One-window mode: hub shares the CHAT slot. A passive reattach
+    // (activate:false, panel load) must never evict the user's chat tab —
+    // suppress the hub instead (cards reattach when the user opens it).
+    // A user-facing open replaces the chat-slot tab like any other open.
+    if (!_activate && _term.tabs.some(t => t.kind === 'chat')) return null;
+    if (!_terminalSingleWindowClear('agent')) return null;
+  }
   if (!tab) {
     const target = opts.paneId || _terminalDefaultPane('chat');
     const pane = _terminalGetPane(target) || _terminalActivePane() || _term.panes[0];

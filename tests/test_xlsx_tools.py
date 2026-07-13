@@ -938,6 +938,123 @@ class TestV4FormatDiff(_ToolFixture):
         self.assertIn("füllung:FFFF00", fmts["report"])
 
 
+class TestV5JsonXmlGrids(_ToolFixture):
+    """v5: .json/.jsonl/.xml load into the same grid pipeline — inspect/query/
+    diff/create become format-agnostic (incl. cross-format CSV↔JSON diffs).
+    WHY: JSON/XML data files previously had NO deterministic path at all —
+    models fell back to python_exec, the exact failure mode the xlsx toolset
+    was built to remove."""
+
+    def _write(self, name: str, text: str) -> str:
+        p = os.path.join(self._tmp, name)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+        return p
+
+    def test_json_array_of_records(self):
+        p = self._write("orders.json", json.dumps([
+            {"nr": "MO-1", "stueck": 10, "kunde": {"name": "Alice", "plz": "10115"}},
+            {"nr": "MO-2", "stueck": 5, "kunde": {"name": "Bob", "plz": "80331"}},
+        ]))
+        out = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": p,
+            "sql": "SELECT nr, kunde_name FROM orders WHERE stueck > 7"}))
+        self.assertEqual(out["row_count"], 1)
+        self.assertIn("| MO-1 | Alice |", out["result"])
+        # nested dict flattened to a dot column, sanitized for SQL
+        rep = json.loads(xlsx_tools.tool_xlsx_inspect({"path": p}))["report"]
+        self.assertIn("kunde.plz", rep)
+        # JSON stays typed: a string "10115" must NOT coerce to a number
+        self.assertIn("| kunde.plz | kunde_plz | text |", rep)
+
+    def test_json_dict_of_arrays_is_multiple_tables(self):
+        p = self._write("dump.json", json.dumps({
+            "orders": [{"nr": "MO-1"}, {"nr": "MO-2"}],
+            "kunden": [{"name": "Alice"}],
+            "export_datum": "2026-07-13",
+        }))
+        rep = json.loads(xlsx_tools.tool_xlsx_inspect({"path": p}))["report"]
+        self.assertIn("Sheet: orders", rep)
+        self.assertIn("Sheet: kunden", rep)
+        self.assertIn("dump_meta", rep)       # scalar leftovers kept, not dropped
+        self.assertIn("export_datum", rep)
+
+    def test_json_lookup_dict_gets_key_column(self):
+        p = self._write("byid.json", json.dumps({
+            "MO-1": {"stueck": 10}, "MO-2": {"stueck": 5}}))
+        # _sanitize_name strips the leading underscore: SQL name is `key`
+        out = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": p, "sql": "SELECT key FROM byid WHERE stueck = 5"}))
+        self.assertIn("| MO-2 |", out["result"])
+
+    def test_jsonl(self):
+        p = self._write("log.jsonl",
+                        '{"ts": 1, "ev": "start"}\n\n{"ts": 2, "ev": "stop"}\n')
+        out = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": p, "sql": "SELECT COUNT(*) AS n FROM log"}))
+        self.assertIn("| 2 |", out["result"])
+
+    def test_invalid_json_is_clean_error(self):
+        p = self._write("broken.json", "{nope")
+        out = json.loads(xlsx_tools.tool_xlsx_query(
+            {"path": p, "sql": "SELECT 1"}))
+        self.assertIn("invalid JSON", out["error"])
+
+    def test_xml_repeated_elements(self):
+        p = self._write("orders.xml", """<export datum="2026-07-13">
+          <order nr="MO-1"><stueck>10</stueck><name>Alice</name></order>
+          <order nr="MO-2"><stueck>5</stueck><name>Bob</name></order>
+        </export>""")
+        rep = json.loads(xlsx_tools.tool_xlsx_inspect({"path": p}))["report"]
+        self.assertIn("Sheet: order", rep)
+        out = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": p, "sql": "SELECT name FROM \"order\" WHERE stueck > 7"}))
+        self.assertIn("| Alice |", out["result"])   # XML text coerced to int
+
+    def test_xml_nested_repetition_yields_both_tables(self):
+        p = self._write("nested.xml", """<orders>
+          <order nr="MO-1"><item sku="A"/><item sku="B"/></order>
+          <order nr="MO-2"><item sku="C"/><item sku="D"/></order>
+        </orders>""")
+        rep = json.loads(xlsx_tools.tool_xlsx_inspect({"path": p}))["report"]
+        self.assertIn("Sheet: order", rep)
+        self.assertIn("Sheet: item", rep)
+        out = json.loads(xlsx_tools.tool_xlsx_query({
+            "path": p, "sql": "SELECT COUNT(*) AS n FROM item"}))
+        self.assertIn("| 4 |", out["result"])
+
+    def test_cross_format_diff_csv_vs_json(self):
+        a = self._write("alt.csv", "nr;stueck\nMO-1;10\nMO-2;5\n")
+        b = self._write("neu.json", json.dumps([
+            {"nr": "MO-1", "stueck": 10},
+            {"nr": "MO-2", "stueck": 7},
+            {"nr": "MO-3", "stueck": 1},
+        ]))
+        out = json.loads(xlsx_tools.tool_xlsx_diff(
+            {"path_a": a, "path_b": b, "key": "nr"}))
+        self.assertEqual(out["differences"], 2)     # 1 changed cell + 1 added row
+        self.assertIn("MO-3", out["report"])
+        self.assertIn("stueck: '5' → '7'", out["report"])
+
+    def test_diff_compare_formats_refuses_non_xlsx(self):
+        a = self._write("a.json", "[]")
+        b = self._write("b.json", "[]")
+        out = json.loads(xlsx_tools.tool_xlsx_diff(
+            {"path_a": a, "path_b": b, "compare": "formats"}))
+        self.assertIn("needs .xlsx", out["error"])
+
+    def test_create_from_json_source(self):
+        src = self._write("rows.json", json.dumps(
+            [{"nr": "MO-1", "stueck": 10}, {"nr": "MO-2", "stueck": 5}]))
+        out = json.loads(xlsx_tools.tool_xlsx_create({
+            "path": "aus_json.xlsx",
+            "spec": {"sheets": [{"name": "Daten", "source": {"file": src}}]}}))
+        wb = openpyxl.load_workbook(out["path"])
+        ws = wb["Daten"]
+        self.assertEqual(ws.cell(row=1, column=1).value, "nr")
+        self.assertEqual(ws.cell(row=3, column=2).value, 5)
+
+
 class TestVbaModules(_XlsxFixture):
     """list_vba_modules (doc_convert) — the structured twin of _extract_vba
     feeding the UI VBA viewer. Graceful [] on macro-free/invalid files."""

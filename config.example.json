@@ -8042,6 +8042,26 @@
         "instruction_gen": "inactive",
         "workflow_step": "inactive"
       }
+    },
+    "text_diff": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "active"
+      }
     }
   },
   "research_mode_disciplines": {

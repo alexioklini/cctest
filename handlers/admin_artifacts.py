@@ -1938,6 +1938,77 @@ class AdminArtifactsHandlers:
         except Exception as e:
             self._send_json({"error": f"Grid-Parse fehlgeschlagen: {e}"}, 500)
 
+    def _handle_file_diff(self):
+        """GET /v1/files/file-diff?path_a=&path_b=  OR  ?path=&git=head — the
+        two sides of a text diff for the bottom-panel Diff tab (CodeMirror
+        MergeView aligns them CLIENT-side; the server only validates + loads).
+        git=head reads side A from `git show HEAD:<relpath>` in the file's
+        repo — a new/untracked file yields an empty side A, which renders as
+        an all-added diff."""
+        from urllib.parse import urlparse, parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        cap = 5 * 1024 * 1024
+
+        def _read_side(p):
+            if os.path.getsize(p) > cap:
+                raise ValueError("Datei zu groß für die Diff-Ansicht (>5 MB)")
+            with open(p, "rb") as f:
+                raw = f.read()
+            if b"\x00" in raw[:8192]:
+                raise ValueError("Binärdatei — keine Text-Diff-Ansicht")
+            return raw.decode("utf-8", errors="replace")
+
+        try:
+            if (qs.get("git", [""])[0] or "").lower() == "head":
+                resolved = self._validate_file_path(qs.get("path", [""])[0])
+                if not resolved:
+                    self._send_json({"error": "Invalid or disallowed file path"}, 403)
+                    return
+                if not os.path.isfile(resolved):
+                    self._send_json({"error": "File not found"}, 404)
+                    return
+                import subprocess
+                b_text = _read_side(resolved)
+                top = subprocess.run(
+                    ["git", "-C", os.path.dirname(resolved),
+                     "rev-parse", "--show-toplevel"],
+                    capture_output=True, text=True, timeout=10)
+                if top.returncode != 0:
+                    self._send_json({"error": "Datei liegt in keinem Git-Repository"}, 400)
+                    return
+                repo = top.stdout.strip()
+                rel = os.path.relpath(resolved, repo)
+                show = subprocess.run(
+                    ["git", "-C", repo, "show", f"HEAD:{rel}"],
+                    capture_output=True, timeout=10)
+                raw_a = show.stdout if show.returncode == 0 else b""
+                if b"\x00" in raw_a[:8192]:
+                    self._send_json({"error": "Binärdatei — keine Text-Diff-Ansicht"}, 400)
+                    return
+                name = os.path.basename(resolved)
+                self._send_json({
+                    "a": raw_a.decode("utf-8", errors="replace"),
+                    "b": b_text,
+                    "label_a": f"HEAD: {name}", "label_b": name})
+                return
+            ra = self._validate_file_path(qs.get("path_a", [""])[0])
+            rb = self._validate_file_path(qs.get("path_b", [""])[0])
+            if not ra or not rb:
+                self._send_json({"error": "Invalid or disallowed file path"}, 403)
+                return
+            for p in (ra, rb):
+                if not os.path.isfile(p):
+                    self._send_json({"error": f"File not found: {os.path.basename(p)}"}, 404)
+                    return
+            self._send_json({
+                "a": _read_side(ra), "b": _read_side(rb),
+                "label_a": os.path.basename(ra),
+                "label_b": os.path.basename(rb)})
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 400)
+        except Exception as e:
+            self._send_json({"error": f"Diff fehlgeschlagen: {e}"}, 500)
+
     def _handle_file_xlsx_cell(self):
         """POST /v1/files/xlsx-cell {path, sheet, row, col, value, mtime?} —
         write ONE cell of an existing workbook (the UI grid's inline edit,

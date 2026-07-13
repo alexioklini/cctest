@@ -1148,6 +1148,16 @@ textarea { resize: none; }
  * off-screen). Toolbar pinned top, status pinned bottom, .editor-cm fills the
  * gap with explicit top/bottom insets → CM has a real box to scroll inside. */
 .terminal-editor { position: absolute; inset: 0; background: var(--bg-000); overflow: hidden; }
+/* Diff tab (kind:'diff'): label strip on top, MergeView fills the rest. */
+.terminal-diff { position: absolute; inset: 0; background: var(--bg-000); overflow: hidden;
+  display: flex; flex-direction: column; }
+.tdiff-head { flex: 0 0 auto; display: flex; gap: 8px; align-items: center; padding: 5px 10px;
+  font-size: 12px; color: var(--text-300); background: var(--bg-200);
+  border-bottom: 1px solid var(--border-200); }
+.tdiff-label { font-family: var(--font-mono, monospace); }
+.tdiff-body { flex: 1 1 auto; min-height: 0; }
+.tdiff-body .CodeMirror-merge { height: 100%; border: none; }
+.tdiff-body .CodeMirror-merge .CodeMirror { height: 100%; }
 .editor-toolbar { position: absolute; top: 0; left: 0; right: 0; height: 33px;
   box-sizing: border-box; z-index: 2;
   display: flex; align-items: center; gap: 4px; padding: 4px 8px;

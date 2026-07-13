@@ -23,7 +23,12 @@ const _term = {
   treeVisible: true, // file-tree column shown?
   treeWidth: 240,    // file-tree column width (px)
   treeSplit: 0.5,    // file-tree vs Terminal-Chats height split (tree's fraction)
-  singleEditor: false, // single-editor mode: tree click replaces the editor tab
+  // One-window mode (rebuilt from the old single-editor mode): while active
+  // the workspace is ONE pane (every tab lives in slot 'a', splits inert —
+  // enforced at the normalize choke point) AND at most 3 tabs — one per slot
+  // Editor (editor+diff) / Terminal / Chat (chat+subagent hub). Opening new
+  // content replaces its slot's tab (_terminalSingleWindowClear).
+  singleWindow: false,
   // Work-files toggle: show the chats/ output folders (per-chat working dirs)
   // inside the file tree? Off = the tree shows only the project's own files
   // (what code mining sees); the chat outputs live under their chat in the
@@ -72,6 +77,11 @@ function _terminalRawOccupied() {
 //   3/4     → keep positions (already a real 2×2 sub-grid)
 // Returns the post-compaction occupied-slot list. Mutates tab.pane.
 function _terminalNormalizeSlots() {
+  if (_term.singleWindow) {
+    // One-window mode: everything collapses into the home cell.
+    for (const t of _term.tabs) t.pane = 'pane-a';
+    return ['a'];
+  }
   const occ = _terminalRawOccupied();
   if (occ.length === 0) return ['a'];           // empty → home cell a
   let remap = null;
@@ -306,6 +316,7 @@ function _terminalWirePaneDrop(pane, slot) {
   if (!drop) return;
   // Edge zone under the cursor, measured against the overlay (== body) rect.
   const zoneFor = (e) => {
+    if (_term.singleWindow) return 'center';  // one-window mode: no split zones
     const r = drop.getBoundingClientRect();
     const fx = (e.clientX - r.left) / Math.max(1, r.width);
     const fy = (e.clientY - r.top) / Math.max(1, r.height);
@@ -392,6 +403,7 @@ function _terminalMoveTabToPane(tabId, paneId) {
 function _terminalSplitToSlot(tabId, srcSlot, dir) {
   const tab = _term.tabs.find(t => t.id === tabId);
   if (!tab) return;
+  if (_term.singleWindow) return;  // one-window mode: splitting is inert
   const pos = _TERM_SLOT_POS[srcSlot]; if (!pos) return;
   let row = pos.row, col = pos.col;
   if (dir === 'left') col = 'left';
@@ -676,7 +688,8 @@ async function _terminalLoadSessions() {
     if (typeof ws.tree_visible === 'boolean') _term.treeVisible = ws.tree_visible;
     if (ws.tree_width >= 120) _term.treeWidth = Math.min(ws.tree_width, 700);
     if (typeof ws.tree_split === 'number' && ws.tree_split > 0 && ws.tree_split < 1) _term.treeSplit = ws.tree_split;
-    if (typeof ws.single_editor === 'boolean') _term.singleEditor = ws.single_editor;
+    if (typeof ws.single_window === 'boolean') _term.singleWindow = ws.single_window;
+    else if (typeof ws.single_editor === 'boolean') _term.singleWindow = ws.single_editor;  // legacy key
     if (ws.sizes && typeof ws.sizes === 'object') _term.sizes = _terminalMigrateSizes(ws.sizes, ws.layout);
     if (typeof ws.work_files_visible === 'boolean') _term.workFilesVisible = ws.work_files_visible;
   }
@@ -800,7 +813,7 @@ function _terminalPersist() {
       tree_visible: _term.treeVisible,
       tree_width: _term.treeWidth,
       tree_split: _term.treeSplit,
-      single_editor: _term.singleEditor,
+      single_window: _term.singleWindow,
       work_files_visible: _term.workFilesVisible,
       chat_folders_open: Object.keys(_term.chatFolderOpen || {}).filter(k => _term.chatFolderOpen[k]),
     };
@@ -861,6 +874,7 @@ function terminalRetheme() {
 
 function _terminalAddTab(id, paneId) {
   if (_term.tabs.find(t => t.id === id)) return;
+  if (!_terminalSingleWindowClear('terminal')) return;  // one-window: replace
   const pane = _terminalGetPane(paneId) || _terminalActivePane() || _term.panes[0];
   const el = document.createElement('div');
   el.className = 'terminal-xterm';
@@ -895,6 +909,7 @@ function _terminalAddChatTab(sessionId, paneId, title, tmpId) {
   const id = sessionId ? ('chat-' + sessionId) : (tmpId || ('chat-new-' + _term.tabs.length));
   const exist = _term.tabs.find(t => t.id === id);
   if (exist) { _terminalActivate(id); return exist; }
+  if (!_terminalSingleWindowClear('chat')) return null;  // one-window: replace
   // Explicit paneId (per-pane ◈ button / persistence restore) wins; otherwise a
   // terminal-chat defaults to bottom → top-right → top-left for the layout.
   const _targetPane = paneId || _terminalDefaultPane('chat');
@@ -960,6 +975,13 @@ function _terminalActivate(id) {
   }
   if (tab.kind === 'agent') {
     // Read-only Subagent-Pane — its transcript stream is already attached.
+    return;
+  }
+  if (tab.kind === 'diff') {
+    // MergeView editors need a refresh after display:none → visible.
+    setTimeout(() => {
+      try { tab.mv.editor().refresh(); tab.mv.leftOriginal().refresh(); } catch (_) {}
+    }, 30);
     return;
   }
   // terminal: (re)attach the output stream from our current offset
@@ -1052,6 +1074,8 @@ async function terminalCloseTab(id, ev) {
       if (c._ctrl) { try { c._ctrl.abort(); } catch (_) {} }
     }
     tab.el.remove();
+  } else if (tab.kind === 'diff') {
+    tab.el.remove();   // pure view — nothing to detach server-side
   } else {
     if (tab.abort) { try { tab.abort.abort(); } catch (_) {} }
     try { tab.term.dispose(); } catch (_) {}
@@ -1181,6 +1205,8 @@ function _terminalRenderTabs() {
         label = '✦ ' + esc(t.name || 'Subagenten') + (running ? ` (${running})` : '');
         if (running) cls = ' tc-tab-live';
         else if (Object.values(t._cards || {}).some(c => c.status === 'error')) cls = ' ap-tab-err';
+      } else if (t.kind === 'diff') {
+        label = esc(t.name);   // 'Δ <datei>'
       } else {
         label = 'Terminal ' + (termNum.get(t.id) || '');
       }
@@ -1435,18 +1461,7 @@ async function terminalOpenFile(absPath) {
   if (!_term.open) { await terminalTogglePanel(true); }
   const existing = _term.tabs.find(t => t.kind === 'editor' && t.path === absPath);
   if (existing) { _terminalActivate(existing.id); return; }
-  // Single-editor mode: close the current (or any) open editor tab first so at
-  // most one editor stays open — the new file replaces it. A dirty editor still
-  // gets the unsaved-changes confirm via terminalCloseTab.
-  if (_term.singleEditor) {
-    const cur = _term.tabs.find(t => t.kind === 'editor');  // at most one open
-    if (cur) {
-      const before = _term.tabs.length;
-      await terminalCloseTab(cur.id);
-      // user cancelled the dirty-close confirm → abort opening the new file
-      if (_term.tabs.length === before) return;
-    }
-  }
+  if (!_terminalSingleWindowClear('editor')) return;  // one-window: replace
   const name = absPath.split('/').pop();
   const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
   const id = 'edit-' + absPath;
@@ -1953,6 +1968,62 @@ function _terminalEditorShowGrid(tab, sheetIdx) {
   });
 }
 
+// ── Diff tab (kind:'diff') — side-by-side compare via CodeMirror MergeView ───
+// Sources: (a) file vs git HEAD (tree context menu on a git-modified row),
+// (b) two files (tree: 'Zum Vergleich markieren' → 'Vergleichen mit …').
+// GET /v1/files/file-diff only validates + loads both sides; the alignment is
+// computed client-side (merge addon + diff_match_patch). Read-only — editing
+// stays in the editor tab.
+async function terminalOpenDiff(absPath, opts) {
+  opts = opts || {};
+  if (!_term.open) { await terminalTogglePanel(true); }
+  const qs = opts.git
+    ? `path=${encodeURIComponent(absPath)}&git=head`
+    : `path_a=${encodeURIComponent(opts.pathA || '')}&path_b=${encodeURIComponent(absPath)}`;
+  const id = 'diff-' + qs;
+  // Re-open = re-fetch (the file may have changed since) — drop a stale tab.
+  const existing = _term.tabs.find(t => t.id === id);
+  if (existing) { await terminalCloseTab(existing.id); }
+  let d;
+  try { d = await API.get('/v1/files/file-diff?' + qs); }
+  catch (e) { d = { error: 'Diff fehlgeschlagen' }; }
+  if (!d || d.error) {
+    if (typeof showToast === 'function') showToast((d && d.error) || 'Diff fehlgeschlagen', true);
+    return;
+  }
+  if (!_terminalSingleWindowClear('diff')) return;  // one-window: replace
+  const name = absPath.split('/').pop();
+  const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+  const el = document.createElement('div');
+  el.className = 'terminal-diff';
+  el.style.display = 'none';
+  el.innerHTML = `
+    <div class="tdiff-head"><span class="tdiff-label">${esc(d.label_a)}</span><span class="tdiff-arrow">→</span><span class="tdiff-label">${esc(d.label_b)}</span></div>
+    <div class="tdiff-body"></div>`;
+  const paneId = _termOpenInPane || _terminalDefaultPane('editor', ext);
+  _termOpenInPane = null;
+  const pane = _terminalGetPane(paneId) || _terminalActivePane() || _term.panes[0];
+  (pane ? pane.bodyEl : document.getElementById('terminal-panes')).appendChild(el);
+  const tab = { id, kind: 'diff', name: 'Δ ' + name, el, mv: null,
+                pane: pane ? pane.id : 'pane-a' };
+  _term.tabs.push(tab);
+  _terminalRenderTabs();
+  _terminalActivate(id);
+  try {
+    tab.mv = new CodeMirror.MergeView(el.querySelector('.tdiff-body'), {
+      value: d.b, origLeft: d.a, lineNumbers: true,
+      mode: _cmModeFor(ext) || null, readOnly: true,
+      revertButtons: false, connect: 'align', collapseIdentical: 3,
+    });
+    setTimeout(() => {
+      try { tab.mv.editor().refresh(); tab.mv.leftOriginal().refresh(); } catch (_) {}
+    }, 30);
+  } catch (e) {
+    el.querySelector('.tdiff-body').innerHTML =
+      `<div class="pt-empty">Diff-Renderer nicht verfügbar (${esc(String((e && e.message) || e))})</div>`;
+  }
+}
+
 // Render a renderable file's content into the .editor-render pane (Ansicht mode).
 function _terminalEditorRender(tab) {
   const renderEl = tab.el.querySelector('.editor-render');
@@ -2375,7 +2446,7 @@ function _terminalInitResize() {
 }
 
 // ── File-tree column (left of the terminal/editor) ───────────────────────────
-// Apply the persisted layout state (visibility, width, single-editor toggle) to
+// Apply the persisted layout state (visibility, width, one-window toggle) to
 // the DOM. Called on open and after each toggle.
 function _terminalApplyLayout() {
   const panel = document.getElementById('terminal-panel');
@@ -2383,8 +2454,8 @@ function _terminalApplyLayout() {
   if (panel) panel.classList.toggle('tree-hidden', !_term.treeVisible);
   if (col) col.style.flexBasis = Math.max(120, _term.treeWidth || 240) + 'px';
   _terminalApplyTreeSplit();
-  const se = document.getElementById('terminal-single-editor');
-  if (se) se.classList.toggle('active', !!_term.singleEditor);
+  const se = document.getElementById('terminal-single-window');
+  if (se) se.classList.toggle('active', !!_term.singleWindow);
   const show = document.getElementById('terminal-tree-show');
   if (show) show.classList.toggle('active', !!_term.treeVisible);
   const wf = document.getElementById('terminal-tree-workfiles');
@@ -2399,13 +2470,63 @@ function terminalToggleTree() {
   setTimeout(_terminalOnResize, 30);
 }
 
-function terminalToggleSingleEditor() {
-  _term.singleEditor = !_term.singleEditor;
+// One-window mode: ONE pane, at most THREE tabs — one per SLOT. The slots are
+// Editor (editor+diff share it), Terminal, and Chat (chat+subagent hub share
+// it). Opening new content REPLACES its slot's current tab. This helper
+// closes every existing tab of `kind`'s slot (except keepId) and is called by
+// every tab-creating path. Terminals are DETACHED, not closed — the server
+// PTY session survives and re-attaches on the next panel open (closing would
+// kill the shell as a side effect of opening a terminal, which is data loss).
+// Returns false when the user cancelled a dirty-editor confirm — the caller
+// aborts its open.
+const _SW_SLOT = { editor: 'editor', diff: 'editor',
+                   terminal: 'terminal', chat: 'chat', agent: 'chat' };
+function _terminalSingleWindowClear(kind, keepId) {
+  if (!_term.singleWindow) return true;
+  const slot = _SW_SLOT[kind] || kind;
+  for (const t of [..._term.tabs]) {
+    if (kind && (_SW_SLOT[t.kind] || t.kind) !== slot) continue;
+    if (keepId && t.id === keepId) continue;
+    if (t.kind === 'terminal') {
+      if (t.abort) { try { t.abort.abort(); } catch (_) {} }
+      try { t.term.dispose(); } catch (_) {}
+      if (t.el) t.el.remove();
+      _term.tabs = _term.tabs.filter(x => x.id !== t.id);
+      continue;
+    }
+    const before = _term.tabs.length;
+    terminalCloseTab(t.id);   // tab removal is synchronous (confirm() blocks)
+    if (_term.tabs.length === before) return false;
+  }
+  _terminalBuildPanes();
+  return true;
+}
+
+function terminalToggleSingleWindow() {
+  _term.singleWindow = !_term.singleWindow;
+  if (_term.singleWindow) {
+    // Collapse each SLOT to one tab right away: keep the tab that is active
+    // in its pane (else the most recently opened one of that slot).
+    for (const s of [...new Set(_term.tabs.map(t => _SW_SLOT[t.kind] || t.kind))]) {
+      const inSlot = _term.tabs.filter(t => (_SW_SLOT[t.kind] || t.kind) === s);
+      if (inSlot.length <= 1) continue;
+      const act = inSlot.find(t => {
+        const p = _terminalGetPane(t.pane);
+        return p && p.active === t.id;
+      });
+      _terminalSingleWindowClear(s, (act || inSlot[inSlot.length - 1]).id);
+    }
+  }
+  // Rebuild either way (normalize retags panes; dividers (dis)appear).
+  _terminalBuildPanes();
   _terminalApplyLayout();
   if (typeof showToast === 'function') {
-    showToast(_term.singleEditor ? 'Ein-Editor-Modus: an' : 'Ein-Editor-Modus: aus');
+    showToast(_term.singleWindow
+      ? 'Ein-Fenster-Modus: an — max. 3 Tabs (Editor · Terminal · Chat)'
+      : 'Ein-Fenster-Modus: aus');
   }
   _terminalPersist();
+  setTimeout(_terminalOnResize, 40);
 }
 
 function _terminalInitTreeResize() {

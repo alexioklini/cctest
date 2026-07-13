@@ -29,6 +29,30 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.318.0",
+        "date": "2026-07-13",
+        "title": "Dateien vergleichen — Daten, Code, JSON/XML",
+        "body": "Der Agent vergleicht und kombiniert jetzt Datendateien aller "
+                "gängigen Formate: JSON- und XML-Dateien werden wie Tabellen "
+                "behandelt und funktionieren überall dort, wo bisher Excel/CSV "
+                "ging — inklusive Vergleich über Formatgrenzen hinweg (z. B. "
+                "gestriger CSV-Export gegen heutigen JSON-Export) und der "
+                "Erzeugung fertig formatierter Excel-Auswertungen daraus. Für "
+                "Quellcode, Konfigurationen und andere Textdateien gibt es "
+                "einen präzisen Zeilenvergleich mit Änderungsübersicht, auf "
+                "Wunsch als anschauliche Gegenüberstellung zum Herunterladen. "
+                "Im Code-Terminal öffnet ein Rechtsklick auf eine geänderte "
+                "Datei die neue Diff-Ansicht (Vorher/Nachher nebeneinander), "
+                "und zwei beliebige Dateien lassen sich über „Zum Vergleich "
+                "markieren“ gegenüberstellen. Außerdem neu: der "
+                "Ein-Fenster-Modus im Terminal-Bereich — aktiviert gibt es "
+                "maximal drei Tabs (Editor, Terminal, Chat); Neues ersetzt "
+                "den jeweiligen Tab, nichts zersplittert mehr in viele "
+                "Fenster.",
+        "audience": "user",
+        "versions": ["9.318.0"],
+    },
+    {
         "version": "9.317.0",
         "date": "2026-07-13",
         "title": "Projekt-Chip in der Eingabeleiste",

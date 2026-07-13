@@ -736,8 +736,28 @@ SQL-SELECT-Skript, das keine benannte Funktion/Prozedur enthält; grau =
 veraltet; rot = sollte indexiert sein, ist es aber nicht; hohl-grau = keine
 Quelldatei). Ein Klick öffnet die Datei im
 Editor; die gerade bearbeitete Datei ist im Baum hervorgehoben. Der
-**Ein-Editor-Modus** (Umschalter) lässt jeden Klick die aktuelle Datei
-**ersetzen**, statt immer einen neuen Tab zu öffnen.
+**Ein-Fenster-Modus** (Umschalter in der Baum-Leiste, seit 9.318.0 — ersetzt
+den früheren Ein-Editor-Modus) hält den Terminal-Bereich bewusst aufgeräumt:
+aktiviert gibt es **ein Fenster ohne Splits und maximal drei Tabs** — einen
+Editor, ein Terminal, einen Terminal-Chat. Öffnen Sie etwas Neues, **ersetzt**
+es den jeweiligen Tab seines Typs (eine neue Datei ersetzt die offene Datei,
+ein neuer Chat den offenen Chat); die Diff-Ansicht teilt sich den Editor-Platz,
+der Subagenten-Hub den Chat-Platz. Terminals werden dabei nur ausgeblendet,
+nicht beendet — die Sitzung läuft serverseitig weiter. Deaktivieren Sie den
+Modus, können Sie wieder beliebig viele Tabs öffnen und per Ziehen an
+Fensterkanten splitten.
+
+**Dateien vergleichen (Diff-Ansicht, seit 9.318.0)**: Ein **Rechtsklick auf
+eine geänderte Datei** im Datei-Baum (amber gefärbt) bietet **„Diff gegen
+HEAD“** — die Datei erscheint als Vorher/Nachher-Gegenüberstellung
+(Seite-an-Seite, Änderungen farbig markiert, unveränderte Passagen
+eingeklappt) in einem eigenen Tab (Δ). Zwei beliebige Dateien vergleichen Sie
+per Rechtsklick → **„Zum Vergleich markieren“** auf der ersten und
+**„Vergleichen mit …“** auf der zweiten Datei. Die Ansicht ist nur-lesend;
+bearbeitet wird weiterhin im Editor-Tab. Unabhängig davon kann der Agent im
+Chat Datendateien vergleichen: Excel/CSV/JSON/XML per Schlüssel-Vergleich
+(auch über Formatgrenzen, z. B. CSV gegen JSON) und Text-/Code-Dateien als
+Zeilen-Diff — fragen Sie einfach „vergleiche Datei A mit B“.
 
 **Ansicht vs. Bearbeiten im Editor**: In der **Ansicht** (nur lesen) werden
 **darstellbare Dateien gerendert** — HTML/SVG als fertige Seite bzw. Grafik,

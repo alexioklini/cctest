@@ -586,15 +586,35 @@ function _wdMenu(ev, items) {
   setTimeout(() => document.addEventListener('click', close), 0);
 }
 
-// Right-click a FILE row → open / rename / delete.
+// Two-file compare: 'Zum Vergleich markieren' remembers side A; the next
+// file's menu offers 'Vergleichen mit <A>' → diff tab (panels_terminal.js).
+let _wdDiffMark = null;
+
+// Right-click a FILE row → open / diff / rename / delete.
 function wdFileMenu(ev, absPath) {
-  _wdMenu(ev, [
+  const row = ev.target && ev.target.closest ? ev.target.closest('.pt-row') : null;
+  const git = (row && row.dataset ? row.dataset.git : '') || '';
+  const items = [
     { label: 'Im Editor öffnen', fn: () => terminalOpenFile(absPath) },
     { label: 'In externem Programm öffnen', fn: () => wdOpenExternal(absPath) },
     { sep: true },
-    { label: 'Umbenennen…', fn: () => wdRename(absPath) },
-    { label: 'Löschen…', danger: true, fn: () => wdDelete(absPath) },
-  ]);
+  ];
+  // git-modified (not untracked/deleted) → line diff against the last commit
+  if (git && !'?D'.includes(git)) {
+    items.push({ label: 'Diff gegen HEAD', fn: () => terminalOpenDiff(absPath, { git: true }) });
+  }
+  if (_wdDiffMark && _wdDiffMark !== absPath) {
+    const aName = _wdDiffMark.split('/').pop();
+    items.push({ label: `Vergleichen mit „${aName}“`, fn: () => {
+      const a = _wdDiffMark; _wdDiffMark = null;
+      terminalOpenDiff(absPath, { pathA: a });
+    } });
+  }
+  items.push({ label: 'Zum Vergleich markieren', fn: () => { _wdDiffMark = absPath; } });
+  items.push({ sep: true });
+  items.push({ label: 'Umbenennen…', fn: () => wdRename(absPath) });
+  items.push({ label: 'Löschen…', danger: true, fn: () => wdDelete(absPath) });
+  _wdMenu(ev, items);
 }
 
 // Right-click a FOLDER row → new file / new folder / rename / delete.

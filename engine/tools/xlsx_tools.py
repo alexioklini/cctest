@@ -37,6 +37,8 @@ from engine import doc_convert
 _XLSX_EXTS = {".xlsx", ".xlsm"}
 _CSV_EXTS = {".csv", ".tsv"}
 _LEGACY_EXTS = {".xls", ".ods"}  # converted to .xlsx via LibreOffice (v3)
+_JSON_EXTS = {".json", ".jsonl", ".ndjson"}  # v5: records → grids
+_XML_EXTS = {".xml"}  # v5: repeated elements → grids
 
 # Caps: keep tool results small (the model only ever needs a preview — full
 # results go to CSV artifacts) and refuse workbooks too big for an in-memory
@@ -285,19 +287,203 @@ def _resolve_input_path(raw: str) -> str:
     return os.path.abspath(p)
 
 
+# --- JSON/XML → grids (v5) --------------------------------------------------
+# Same contract as the sheet grids, so inspect/query/create-source/diff work
+# unchanged on .json/.xml inputs (incl. cross-format: CSV old vs JSON new).
+# JSON keeps its native types; XML text is coerced like CSV cells.
+
+_FLATTEN_MAX_DEPTH = 4
+RECORD_MAX_COLUMNS = 512
+
+
+def _flatten_record(obj: dict, prefix: str = "", depth: int = 0) -> dict:
+    """Nested dicts flatten to dot-joined columns (`kunde.plz`); nested lists
+    (and too-deep dicts) stay as compact JSON strings so no data is dropped."""
+    out = {}
+    for k, v in obj.items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict) and depth < _FLATTEN_MAX_DEPTH:
+            out.update(_flatten_record(v, key + ".", depth + 1))
+        elif isinstance(v, (dict, list)):
+            out[key] = json.dumps(v, ensure_ascii=False, default=str)
+        else:
+            out[key] = v
+    return out
+
+
+def _records_to_grid(name: str, records: list) -> dict | None:
+    """List of dicts (or scalars → one `value` column) → grid. Column order =
+    first-seen; missing keys become NULLs (heterogeneous records are fine)."""
+    flat = [_flatten_record(r) if isinstance(r, dict) else {"value": r}
+            for r in records]
+    header: list = []
+    seen: set = set()
+    for r in flat:
+        for k in r:
+            if k not in seen:
+                seen.add(k)
+                header.append(k)
+    if not header:
+        return None
+    if len(header) > RECORD_MAX_COLUMNS:
+        raise ValueError(
+            f"'{name}' flattens to {len(header)} columns (> "
+            f"{RECORD_MAX_COLUMNS}) — the records are too heterogeneous for "
+            f"a table; extract the relevant list first")
+    rows = [[r.get(h) for h in header] for r in flat]
+    return {"name": name, "header": header, "rows": rows,
+            "header_row_idx": 0, "sheet_title": name}
+
+
+def _grids_from_json(path: str) -> list[dict]:
+    """JSON/JSONL → grids ("sheets"). Shapes: top-level array of records →
+    one grid; object with array-of-record values → one grid per key (like a
+    workbook's sheets); object of same-shaped objects (lookup by id) →
+    records with a `_key` column; anything else → one single-record grid."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    ext = os.path.splitext(path)[1].lower()
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        if ext in (".jsonl", ".ndjson"):
+            records = []
+            for ln, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"invalid JSONL at line {ln}: {e}")
+            data = records
+        else:
+            try:
+                data = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"invalid JSON: {e}")
+    if isinstance(data, list):
+        g = _records_to_grid(stem, data)
+        return [g] if g else []
+    if isinstance(data, dict):
+        vals = list(data.values())
+        if (len(data) >= 2 and vals
+                and all(isinstance(v, dict) for v in vals)):
+            # lookup-table shape {id: {...}, ...} → records + _key column
+            g = _records_to_grid(
+                stem, [{"_key": k, **v} for k, v in data.items()])
+            return [g] if g else []
+        grids = []
+        rest = {}
+        for k, v in data.items():
+            if (isinstance(v, list) and v
+                    and all(isinstance(x, dict) for x in v[:50])):
+                g = _records_to_grid(k, v)
+                if g:
+                    grids.append(g)
+            else:
+                rest[k] = v
+        if not grids:
+            g = _records_to_grid(stem, [data])
+            return [g] if g else []
+        if rest:  # scalars/misc next to the arrays — keep, don't drop
+            g = _records_to_grid(f"{stem}_meta", [rest])
+            if g:
+                grids.append(g)
+        return grids
+    g = _records_to_grid(stem, [data])  # bare scalar
+    return [g] if g else []
+
+
+def _xml_local(tag) -> str:
+    return str(tag).rsplit("}", 1)[-1]
+
+
+def _xml_record(el, prefix: str = "", depth: int = 0) -> dict:
+    """One element → one flat record: attributes + single-occurrence child
+    leaves (dot-joined when nested). Repeated child tags are skipped here —
+    they surface as their own record grids."""
+    rec = {}
+    for k, v in el.attrib.items():
+        rec[f"{prefix}{_xml_local(k)}"] = _coerce_csv_value(v)
+    children = list(el)
+    if not children:
+        text = (el.text or "").strip()
+        if text:
+            rec[prefix.rstrip(".") or _xml_local(el.tag)] = \
+                _coerce_csv_value(text)
+        return rec
+    counts: dict = {}
+    for ch in children:
+        t = _xml_local(ch.tag)
+        counts[t] = counts.get(t, 0) + 1
+    for ch in children:
+        tag = _xml_local(ch.tag)
+        if counts[tag] >= 2:
+            continue
+        if not list(ch) and not ch.attrib:
+            t = (ch.text or "").strip()
+            rec[f"{prefix}{tag}"] = _coerce_csv_value(t) if t else None
+        elif depth < _FLATTEN_MAX_DEPTH:
+            rec.update(_xml_record(ch, prefix=f"{prefix}{tag}.",
+                                   depth=depth + 1))
+    return rec
+
+
+def _grids_from_xml(path: str) -> list[dict]:
+    """XML → grids: every tag that repeats (≥2 siblings under one parent)
+    becomes a record grid named after the tag (collected across parents, so
+    nested repetition yields several grids — orders AND their items). A
+    document without repetition → one single-record grid. stdlib ET only
+    (no external entity resolution — same posture as _read_merges)."""
+    import xml.etree.ElementTree as ET
+    stem = os.path.splitext(os.path.basename(path))[0]
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as e:
+        raise ValueError(f"invalid XML: {e}")
+    groups: dict[str, list] = {}
+    for parent in root.iter():
+        counts: dict = {}
+        for ch in parent:
+            t = _xml_local(ch.tag)
+            counts[t] = counts.get(t, 0) + 1
+        for ch in parent:
+            t = _xml_local(ch.tag)
+            if counts[t] >= 2:
+                groups.setdefault(t, []).append(ch)
+    if not groups:
+        g = _records_to_grid(stem, [_xml_record(root)])
+        return [g] if g else []
+    grids = []
+    for tag, elems in groups.items():
+        g = _records_to_grid(tag, [_xml_record(e) for e in elems])
+        if g:
+            grids.append(g)
+    return grids
+
+
 def _load_grids(path: str, sheet: str | None = None,
                 formulas: bool = False) -> list[dict]:
-    """Load a workbook/CSV into plain grids:
+    """Load a workbook/CSV/JSON/XML into plain grids:
     [{name, header:[str], rows:[[...]], header_row_idx}].
     Header row is detected, placeholder columns trimmed (the v9.261.0 logic,
     shared with doc_convert), empty header cells named col<N>. v2: a sheet
     with several table blocks yields several grids (`<sheet>`, `<sheet>_2`,
-    …), and a merged two-row header composes into "Top / Sub" column names."""
+    …), and a merged two-row header composes into "Top / Sub" column names.
+    v5: .json/.jsonl/.xml load as record grids (each array/repeated tag =
+    one "sheet"), so every grid consumer is format-agnostic."""
     ext = os.path.splitext(path)[1].lower()
     if ext in _LEGACY_EXTS:
         # .xls/.ods → cached LibreOffice conversion, then the normal path.
         path = _legacy_to_xlsx(path)
         ext = ".xlsx"
+    if ext in _JSON_EXTS or ext in _XML_EXTS:
+        grids = (_grids_from_json(path) if ext in _JSON_EXTS
+                 else _grids_from_xml(path))
+        if sheet:
+            grids = [g for g in grids if g["name"] == sheet]
+            if not grids:
+                raise ValueError(
+                    f"table '{sheet}' not found in {os.path.basename(path)}")
+        return grids
     grids = []
     if ext in _CSV_EXTS:
         delim = "\t" if ext == ".tsv" else None
@@ -514,10 +700,14 @@ def _build_sqlite(paths: list[str], sheet: str | None = None,
         size_mb = os.path.getsize(rp) / (1024 * 1024)
         # v3: big files ARE loadable when scoped to one sheet (read_only
         # streaming + the row cap bound the memory); unscoped stays refused.
+        # JSON/XML parse whole-file, so sheet-scoping can't help there.
         if size_mb > QUERY_MAX_FILE_MB and not sheet:
+            rext = os.path.splitext(rp)[1].lower()
+            hint = ("Split the file." if rext in _JSON_EXTS | _XML_EXTS else
+                    "Pass sheet='<name>' to load a single sheet, or split the file.")
             raise ValueError(
                 f"{os.path.basename(rp)} is {size_mb:.0f} MB (> {QUERY_MAX_FILE_MB} MB). "
-                f"Pass sheet='<name>' to load a single sheet, or split the file.")
+                + hint)
         for g in _load_grids(rp, sheet=sheet):
             total_rows += len(g["rows"])
             if total_rows > max_rows:
@@ -2076,6 +2266,13 @@ def tool_xlsx_diff(args: dict) -> str:
                     raise ValueError(
                         f"compare='{mode}' works on files, not stored results")
                 return [_grid_from_handle(p)]
+            if formulas or formats:
+                pext = os.path.splitext(p)[1].lower()
+                if pext not in _XLSX_EXTS:
+                    raise ValueError(
+                        f"compare='{mode}' needs .xlsx/.xlsm on both sides "
+                        f"({os.path.basename(p)} has no formulas/formats) — "
+                        f"omit compare for a value diff")
             return _load_grids(_resolve_input_path(p), sheet=sheet,
                                formulas=formulas)
 

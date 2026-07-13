@@ -1047,15 +1047,19 @@ TOOL_DEFINITIONS = [
     {
         "name": "xlsx_inspect",
         "description": (
-            "Understand an Excel/CSV file WITHOUT reading its data into chat: "
-            "sheets, dimensions, per-column name/type/nulls/distinct/samples, "
-            "merged cells, formula count, and JOIN-KEY CANDIDATES across "
+            "Understand a DATA FILE (Excel/CSV/JSON/XML) WITHOUT reading its "
+            "data into chat: sheets/tables, dimensions, per-column name/type/"
+            "nulls/distinct/samples, merged cells, formula count, and "
+            "JOIN-KEY CANDIDATES across "
             "sheets (columns that link tables, with value overlap). ALWAYS "
-            "call this FIRST for any spreadsheet task — it prints the exact "
+            "call this FIRST for any data-file task — it prints the exact "
             "table and column names to use in xlsx_query, so never guess "
             "identifiers. Do NOT write pandas/openpyxl code via python_exec "
-            "for spreadsheets — use xlsx_inspect → xlsx_query → xlsx_create/"
-            "xlsx_edit instead; the data stays server-side. Pass paths=[...] "
+            "for data files — use xlsx_inspect → xlsx_query → xlsx_create/"
+            "xlsx_edit instead; the data stays server-side. JSON/JSONL: each "
+            "record array becomes a table (nested objects flatten to "
+            "a.b columns); XML: each repeated element becomes a table. Pass "
+            "paths=[...] "
             "to profile several files in one call (e.g. to compare exports). "
             "Multi-table sheets are split into one table per block; merged "
             "two-row headers compose to 'Q1 / Umsatz' names. Pass deep=true "
@@ -1067,9 +1071,9 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Path to the .xlsx/.xlsm/.csv file"},
+                "path": {"type": "string", "description": "Path to the .xlsx/.xlsm/.csv/.json/.jsonl/.xml file"},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Several files at once (alternative to path)"},
-                "sheet": {"type": "string", "description": "Restrict to one sheet (default: all)"},
+                "sheet": {"type": "string", "description": "Restrict to one sheet/table (default: all)"},
                 "deep": {"type": "boolean", "description": "Add data-quality checks (duplicates, outliers, orphan keys) + formula map"},
             },
         },
@@ -1077,11 +1081,15 @@ TOOL_DEFINITIONS = [
     {
         "name": "xlsx_query",
         "description": (
-            "Run ONE read-only SQL SELECT against spreadsheet data. Each sheet "
-            "becomes a SQLite table — use the table/column names EXACTLY as "
+            "Run ONE read-only SQL SELECT against tabular data from .xlsx/"
+            ".csv/.json/.xml files. Each sheet (JSON array / repeated XML "
+            "element) becomes a SQLite table — use the table/column names "
+            "EXACTLY as "
             "xlsx_inspect printed them. Filtering, JOINs across sheets, GROUP "
             "BY, aggregates — all without writing code; the data never enters "
-            "the chat. Returns up to 50 result rows as a table plus the total "
+            "the chat. CROSS-FORMAT joins work too (e.g. a CSV export against "
+            "a JSON API dump in one SELECT). Returns up to 50 result rows as "
+            "a table plus the total "
             "row count; pass out='name.csv' to save the FULL result as an "
             "artifact the user can download. Pass paths=[fileA, fileB] to "
             "query several files in one session (tables are then prefixed "
@@ -1096,12 +1104,12 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "Path to the .xlsx/.csv file (or 'result:<name>' for a stored result)"},
+                "path": {"type": "string", "description": "Path to the .xlsx/.csv/.json/.xml file (or 'result:<name>' for a stored result)"},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Several files in one SQL session (alternative to path)"},
                 "sql": {"type": "string", "description": "One SELECT statement. Use table/column names from xlsx_inspect verbatim."},
                 "out": {"type": "string", "description": "Optional relative .csv filename — writes the full result to your artifact folder"},
                 "save_as": {"type": "string", "description": "Store the full result under this name for later 'result:<name>' references"},
-                "sheet": {"type": "string", "description": "Load only this sheet — required for files over 30 MB, and .xls/.ods work too"},
+                "sheet": {"type": "string", "description": "Load only this sheet/table — required for files over 30 MB, and .xls/.ods work too"},
             },
             "required": ["sql"],
         },
@@ -1115,7 +1123,9 @@ TOOL_DEFINITIONS = [
             "preset). CRITICAL: for data that exists in a file, do NOT copy "
             "rows into the spec — point the sheet at source:{file, sheet?, "
             "sql?} and the server moves the data itself (sql may reshape it "
-            "first). Inline rows are ONLY for small, newly-authored tables. "
+            "first; source.file also takes .csv/.json/.xml — e.g. turn a "
+            "JSON export into a styled workbook in one call). Inline rows "
+            "are ONLY for small, newly-authored tables. "
             "Never write openpyxl/pandas code for this. Spec: {sheets:[{name, "
             "columns?:[{name, format?: text|int|number|eur|percent|date, "
             "width?}], rows?:[[...]] | source:{file, sheet?, sql?} | "
@@ -1189,7 +1199,9 @@ TOOL_DEFINITIONS = [
     {
         "name": "xlsx_diff",
         "description": (
-            "Compare two spreadsheets deterministically and report what "
+            "Compare two DATA FILES (.xlsx/.csv/.json/.xml — sides may be "
+            "DIFFERENT formats, e.g. yesterday's CSV vs today's JSON export) "
+            "deterministically and report what "
             "changed — sheets/columns present on one side only, and per sheet "
             "the changed rows. ALWAYS pass key='<column>' when the rows have "
             "an ID column (keyed compare: added/removed/changed rows with "
@@ -1212,12 +1224,39 @@ TOOL_DEFINITIONS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "path_a": {"type": "string", "description": "Old/left file (.xlsx/.xls/.ods/.csv or result:<name>)"},
-                "path_b": {"type": "string", "description": "New/right file (.xlsx/.xls/.ods/.csv or result:<name>)"},
+                "path_a": {"type": "string", "description": "Old/left file (.xlsx/.xls/.ods/.csv/.json/.xml or result:<name>)"},
+                "path_b": {"type": "string", "description": "New/right file (.xlsx/.xls/.ods/.csv/.json/.xml or result:<name>)"},
                 "key": {"type": "string", "description": "ID column on both sides (comma-separated for composite keys) — enables the keyed row compare"},
-                "sheet": {"type": "string", "description": "Compare only this sheet"},
+                "sheet": {"type": "string", "description": "Compare only this sheet/table"},
                 "out": {"type": "string", "description": "Optional relative filename — .xlsx = highlighted diff workbook, .csv = flat change list"},
                 "compare": {"type": "string", "description": "'formulas' = diff formula strings; 'formats' = diff cell formatting (rows still matched by value key)"},
+            },
+            "required": ["path_a", "path_b"],
+        },
+    },
+    {
+        "name": "text_diff",
+        "description": (
+            "Compare two TEXT files (source code, configs, SQL, markdown, "
+            "XML-as-text, logs …) deterministically — unified diff with "
+            "context plus counts (+added/-removed lines, hunks, similarity "
+            "%). Use this instead of reading both files into chat for "
+            "'vergleiche Datei A mit B'. mode='json' compares JSON/JSONL "
+            "STRUCTURALLY instead (path → value: added/removed/changed "
+            "paths, object-key order ignored) — right for nested configs "
+            "where a text diff drowns in reordering noise. out='diff.html' "
+            "saves a side-by-side review page as artifact (out='diff.txt' = "
+            "the raw patch). For TABULAR data (xlsx/csv/json record lists) "
+            "use xlsx_diff — it matches rows by key."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path_a": {"type": "string", "description": "Old/left file"},
+                "path_b": {"type": "string", "description": "New/right file"},
+                "mode": {"type": "string", "description": "'json' = structural JSON compare (path → value) instead of line diff"},
+                "context": {"type": "integer", "description": "Unified-diff context lines (default 3)"},
+                "out": {"type": "string", "description": "Optional relative filename — .html = side-by-side page, .txt/.diff = raw patch"},
             },
             "required": ["path_a", "path_b"],
         },

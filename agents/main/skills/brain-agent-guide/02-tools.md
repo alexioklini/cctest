@@ -324,6 +324,28 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
   csv/tsv "Ansicht" mode renders the same grid; artifacts fullview previews
   xlsx instead of the download-only card. Endpoint `GET /v1/files/xlsx-grid`.
 
+**v5 additions (v9.318.0) — JSON/XML in der Grid-Pipeline + text_diff:**
+- **JSON/XML als Tabellen**: `.json`/`.jsonl`/`.ndjson`/`.xml` laden in dieselbe
+  Grid-Pipeline wie xlsx/csv — damit sind **alle fünf xlsx-Tools format-agnostisch**
+  (inspect profiliert einen JSON-Export, query joint CSV gegen JSON, diff
+  vergleicht CROSS-FORMAT z. B. alte CSV gegen neuen JSON-Export, create macht
+  aus XML ein gestyltes Workbook). Mapping: JSON-Record-Array = eine Tabelle
+  (verschachtelte Objekte flatten zu `a.b`-Spalten, Lookup-Dicts `{id:{...}}`
+  bekommen eine `_key`-Spalte, Skalar-Reste landen in `<stem>_meta`); XML:
+  jedes wiederholte Element (≥2 Geschwister) = eine Record-Tabelle (Attribute +
+  Leaf-Kinder; XML-Text wird wie CSV zahlen-koerziert, JSON bleibt nativ
+  typisiert). `compare='formulas'/'formats'` verweigert Nicht-XLSX sauber.
+- **`text_diff(path_a, path_b, mode?, context?, out?)`** (documents-Gruppe,
+  `engine/tools/diff_tools.py`): deterministischer **unified Diff** beliebiger
+  TEXT-Dateien (Code, Configs, SQL, Logs) — Zähler (+/-/Hunks/Ähnlichkeit),
+  Binär-Guard (verweist auf xlsx_diff), 10-MB-Kappe. `mode='json'` = 
+  **struktureller** JSON/JSONL-Vergleich (Pfad→Wert: added/removed/changed;
+  Objekt-Key-Reihenfolge egal, Array-Position zählt — richtig für verschachtelte
+  Configs, wo ein Zeilen-Diff in Umsortier-Rauschen ertrinkt). `out='diff.html'`
+  speichert eine Side-by-Side-Gegenüberstellung als Artefakt, `.txt`/`.diff`
+  den rohen Patch. Abgrenzung: TABELLARISCHE Daten → `xlsx_diff` (matcht
+  Zeilen per Schlüssel), Text/Code → `text_diff`.
+
 ## OCR — deterministic local scan toolset (group `ocr`, v9.293.1)
 
 Read text out of SCANNED IMAGES / PHOTOS / scanned PDFs **deterministically** —
@@ -859,7 +881,7 @@ write/exec tool is deliberately excluded.
 core          read_file write_file edit_file list_directory search_files
               execute_command tool_search ask_user
 documents     read_document write_document edit_document render_diagram
-              xlsx_inspect xlsx_query xlsx_create xlsx_edit xlsx_diff
+              xlsx_inspect xlsx_query xlsx_create xlsx_edit xlsx_diff text_diff
 ocr           ocr_inspect ocr_extract ocr_region ocr_fields ocr_tables
 memory        mempalace_query save_chat_to_memory
               mempalace_kg_query mempalace_kg_search mempalace_kg_neighbors
