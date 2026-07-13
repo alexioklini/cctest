@@ -208,6 +208,68 @@ class TestBlockingTimeout(unittest.TestCase):
         self.assertEqual(res["reply"], "partial")  # partial is KEPT
 
 
+class TestProviderQueueForBgTasks(unittest.TestCase):
+    """Detached bg-task turns must respect the local provider's concurrency
+    cap (they fan out N-wide); every other background call stays UNQUEUED on
+    purpose — a nested call from inside a held run_turn slot would deadlock."""
+
+    def _run_parallel(self, bg_flag, n=3):
+        import threading as _th
+        import time as _time
+        import brain as engine
+        from handlers import sidecar_proxy
+        from engine import llm_loop
+
+        q = engine.get_provider_queue()
+        orig_res = q._resolve_max_concurrent
+        q._resolve_max_concurrent = (
+            lambda name: 1 if name == "ut-fakelocal" else orig_res(name))
+        orig_prov = engine.resolve_provider_for_model
+        engine.resolve_provider_for_model = lambda m: {
+            "provider_name": "ut-fakelocal", "api_key": "", "base_url": "http://x"}
+
+        state = {"now": 0, "max": 0}
+        lock = _th.Lock()
+
+        def fake_run_loop(**kw):
+            with lock:
+                state["now"] += 1
+                state["max"] = max(state["max"], state["now"])
+            _time.sleep(0.25)
+            with lock:
+                state["now"] -= 1
+            return {"final_text": "ok", "stop_reason": "", "rounds": 1,
+                    "tool_calls_total": 0, "usage_total": {}, "tool_events": []}
+
+        orig_loop = llm_loop.run_loop
+        llm_loop.run_loop = fake_run_loop
+        try:
+            def call():
+                sidecar_proxy.run_turn_blocking(
+                    messages=[{"role": "user", "content": "x"}], model="ut-fake",
+                    api_key="", base_url="http://x", system_prompt="",
+                    tool_context={"agent_id": "main", "bg_task": bg_flag},
+                    sampling={}, thinking_level=None, max_tokens=10,
+                    max_rounds=1, timeout_s=30)
+            ts = [_th.Thread(target=call) for _ in range(n)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        finally:
+            llm_loop.run_loop = orig_loop
+            engine.resolve_provider_for_model = orig_prov
+            q._resolve_max_concurrent = orig_res
+        return state["max"]
+
+    def test_bg_task_turns_are_serialized_by_provider_cap(self):
+        self.assertEqual(self._run_parallel(bg_flag=True), 1)
+
+    def test_non_bg_background_calls_stay_unqueued(self):
+        # Deliberate: nested calls from inside a held slot must never queue.
+        self.assertEqual(self._run_parallel(bg_flag=False), 3)
+
+
 class TestCancelCascadeScoping(unittest.TestCase):
     SID = "ut-bgtask-cascade"
 

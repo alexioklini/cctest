@@ -1160,6 +1160,14 @@ run WITHOUT blocking the chat. Mechanics (`engine/background_tasks.py`,
   under their chat entry in the left list (`nav.js renderSessionsList` +
   `pollRunningSubagents`, the pollActiveSessions pattern: 3s, signature
   compare) fed by `GET /v1/background-tasks/running`.
+- **Local-provider concurrency (9.321.0)**: detached bg-task turns go through
+  the `LocalProviderQueue` (`acquire_if`, label `background_task`) — a fan-out
+  on a local model (omlx `max_concurrent=2`) queues its leaves instead of
+  stampeding the batched decode. The per-task wall clock starts AFTER the slot
+  is acquired (queue wait doesn't consume the work budget); Stopp while
+  waiting in queue aborts cleanly (cancelled). Other background calls
+  (ask_llm, classifier, summariser …) stay unqueued on purpose — nested calls
+  from inside a held slot would deadlock.
 - **Boot reconcile**: a `running` row whose thread died on shutdown is set to
   `error` at startup so the panel never shows a zombie.
 

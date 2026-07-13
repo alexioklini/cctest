@@ -519,26 +519,72 @@ def run_turn_blocking(
     # deadline `is_cancelled()` flips, the round watcher closes the stream
     # socket, and the loop stops gracefully with the partial kept. The result
     # then carries `timed_out=True` + a loud `error` so no background caller
-    # can mistake a timed-out partial for a clean success.
-    _deadline = (time.time() + float(timeout_s)) if timeout_s and timeout_s > 0 else None
+    # can mistake a timed-out partial for a clean success. Set AFTER the
+    # provider-queue slot is acquired — queue wait must not consume the work
+    # budget (a fan-out's 3rd leaf on omlx=2 may wait a long time legitimately).
+    _deadline: float | None = None
 
     def _cancelled_or_deadline() -> bool:
         return _cancel_ev.is_set() or (_deadline is not None and time.time() > _deadline)
 
+    # Local-provider concurrency gate — but ONLY for top-level detached
+    # background-task turns (`bg_task=True`, the run_background_task leaves).
+    # Those are the calls that fan out N-wide and would otherwise stampede a
+    # local provider's batched-decode capacity (omlx max_concurrent=2).
+    # Every OTHER background call stays unqueued ON PURPOSE: run_turn holds
+    # its slot across the whole turn (incl. tool execution), so a nested
+    # background_call made from inside a held slot (ask_llm, classifier,
+    # summariser, image-describe, …) queueing on the same provider would
+    # deadlock once all slots are held by outer turns.
+    _queue_gate = None
+    if tool_context.get("bg_task"):
+        try:
+            _prov = engine.resolve_provider_for_model(model) or {}
+            _provider_name = _prov.get("provider_name", "") or "default"
+        except Exception:
+            _provider_name = "default"
+
+        class _EvCancelToken:
+            # acquire_if polls `.cancelled` — adapt the per-turn cancel Event.
+            @property
+            def cancelled(self) -> bool:
+                return _cancel_ev.is_set()
+
+        _queue_gate = engine.get_provider_queue().acquire_if(
+            _provider_name, label="background_task",
+            session_id=tool_context.get("session_id") or None,
+            agent_id=tool_context.get("agent_id") or None,
+            user_id=tool_context.get("user_id") or None,
+            model=model, event_callback=_emit,
+            cancel_token=_EvCancelToken(), timeout=timeout_s)
+
     summary: dict[str, Any] = {}
     error_msg: str | None = None
+    was_cancelled = False
     try:
         with engine.request_context():
             _apply_bg_context(tool_context)
-            summary = llm_loop.run_loop(
-                model=model, system_prompt=system_prompt, messages=messages,
-                tools=_tools, allowed_tools=allowed_tools,
-                max_tokens=int(max_tokens), max_rounds=int(max_rounds),
-                sampling=sampling, thinking_level=thinking_level,
-                disable_parallel_tool_use=False,
-                prompt_cache_key=(prompt_cache_key or ""),
-                forced_tool=forced_tool, api_key=api_key, base_url=base_url,
-                emit=_emit, is_cancelled=_cancelled_or_deadline)
+            import contextlib as _contextlib
+            with (_queue_gate if _queue_gate is not None
+                  else _contextlib.nullcontext()):
+                if timeout_s and timeout_s > 0:
+                    _deadline = time.time() + float(timeout_s)
+                summary = llm_loop.run_loop(
+                    model=model, system_prompt=system_prompt, messages=messages,
+                    tools=_tools, allowed_tools=allowed_tools,
+                    max_tokens=int(max_tokens), max_rounds=int(max_rounds),
+                    sampling=sampling, thinking_level=thinking_level,
+                    disable_parallel_tool_use=False,
+                    prompt_cache_key=(prompt_cache_key or ""),
+                    forced_tool=forced_tool, api_key=api_key, base_url=base_url,
+                    emit=_emit, is_cancelled=_cancelled_or_deadline)
+    except engine.TaskCancelled:
+        # Cancelled while waiting for a provider slot (user Stopp / admin
+        # queue-cancel) — a cancel, not an error.
+        was_cancelled = True
+    except TimeoutError as te:
+        # Queue-wait timeout (never got a slot) — fail loud, distinct message.
+        error_msg = f"provider queue timeout: {te}"
     except Exception as e:
         error_msg = f"inprocess loop {type(e).__name__}: {e}"
     finally:
@@ -558,7 +604,7 @@ def run_turn_blocking(
         "usage_total": summary.get("usage_total", {}) or {},
         "tool_events": summary.get("tool_events", []) or [],
         "forced_tool_input": summary.get("forced_tool_input"),
-        "cancelled": bool(_cancel_ev.is_set()),
+        "cancelled": bool(_cancel_ev.is_set() or was_cancelled),
         "timed_out": timed_out,
         "error": error_msg or summary.get("error"),
         "turn_id": turn_id,

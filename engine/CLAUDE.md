@@ -105,10 +105,14 @@ execution, variance kill-switches, worker-subagent envelopes,
 `resolve_provider_for_model(model)` is the **single source of truth** for `{api_key, base_url, provider_name}`.
 
 **Provider concurrency queue** (`LocalProviderQueue`): used by the warmup
-path (`run_model_warmup`) AND by interactive turns (`sidecar_proxy.run_turn`
-wraps the in-process loop in `acquire_if`) to serialize hits against the local
-provider's batched-decode capacity. No-op for cloud (`max_concurrent<=0`).
-Whole-turn scope (held across all rounds incl. tool execution).
+path (`run_model_warmup`), by interactive turns (`sidecar_proxy.run_turn`
+wraps the in-process loop in `acquire_if`) AND by detached background-task
+turns (`run_turn_blocking` when `tool_context.bg_task` — the fan-out leaves,
+9.321.0; wall-clock deadline starts after slot acquisition) to serialize hits
+against the local provider's batched-decode capacity. No-op for cloud
+(`max_concurrent<=0`). Whole-turn scope (held across all rounds incl. tool
+execution) — which is exactly why every OTHER background call stays unqueued:
+a nested `background_call` from inside a held slot would deadlock.
 
 **KV-prefix stability**: warmup payload MUST match first-turn payload byte-for-byte — system prompt timestamp rounded to hour (not minutes), MCP tools attached, tools merged/deduped/sorted, `stream=True` + `stream_options`. Warm pool `claim()` only fires for `{agent:main, project:'', status:'', note_context:''}` — anything else changes system prompt and invalidates prefix.
 

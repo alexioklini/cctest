@@ -335,9 +335,20 @@ function _bgCard(t, inGroup) {
     ? `<div class="bgtask-req"><div class="bgtask-req-label">Anfrage</div>`
       + `<div class="bgtask-req-text">${escapeHtml(reqText)}</div></div>` : '';
   // Tool calls as the SAME expandable cards as in-chat tools (live for running
-  // tasks, persisted tool_events after reload). Filled by _bgToolsRender; the
-  // wrapper is updated in place as live events arrive.
-  const toolsBlock = `<div class="bgtask-tools" id="bgtask-tools-${t.id}" onclick="event.stopPropagation()">${_bgToolsInner(t)}</div>`;
+  // tasks, persisted tool_events after reload). The whole list sits in a
+  // <details> wrapper, DEFAULT COLLAPSED (a 30-tool subagent otherwise bloats
+  // its card with 30 rows); each tool row inside stays its own collapsed
+  // <details>. Live updates target the INNER container + count span, so the
+  // user's open/closed choice on the wrapper survives streaming events.
+  const _toolCount = _bgToolEntries(t).length;
+  const toolsBlock = (_toolCount || t.status === 'running')
+    ? `<details class="bgtask-tools-wrap" onclick="event.stopPropagation()">
+        <summary class="bgtask-tools-summary">Tool-Verwendungen (<span id="bgtask-tools-count-${t.id}">${_toolCount}</span>)
+          <svg class="bggroup-chev" viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </summary>
+        <div class="bgtask-tools" id="bgtask-tools-${t.id}">${_bgToolsInner(t)}</div>
+      </details>`
+    : '';
   // Streamed answer-so-far (running only) — the live text deltas.
   const liveText = (t.status === 'running')
     ? `<div class="bgtask-live-text" id="bgtask-live-text-${t.id}">${_bgLiveTextInner(t.id)}</div>` : '';
@@ -410,7 +421,13 @@ function _bgLiveRenderCard(taskId) {
   const sid = state.activeChat?.sessionId;
   const t = (sid ? _bgTasksFor(sid) : []).find(x => x.id === taskId);
   const toolsEl = document.getElementById('bgtask-tools-' + taskId);
-  if (toolsEl && t) toolsEl.innerHTML = _bgToolsInner(t);
+  if (toolsEl && t) {
+    toolsEl.innerHTML = _bgToolsInner(t);
+    // Keep the collapsed wrapper's count fresh (the wrapper itself is NOT
+    // re-rendered here, so its open/closed state survives).
+    const cnt = document.getElementById('bgtask-tools-count-' + taskId);
+    if (cnt) cnt.textContent = String(_bgToolEntries(t).length);
+  }
   const textEl = document.getElementById('bgtask-live-text-' + taskId);
   if (textEl) textEl.innerHTML = _bgLiveTextInner(taskId);
 }

@@ -48,9 +48,15 @@ CURATED_CHANGELOG: list[dict] = [
                 "technisch ausgeschlossen. Eine von Ihnen gestoppte Aufgabe "
                 "wird dagegen nie ungefragt neu gestartet. Wartende "
                 "Rückfragen von Subagenten reagieren auf ein Stopp jetzt "
-                "sofort statt erst nach Minuten.",
+                "sofort statt erst nach Minuten. Im Aktivitäten-Panel ist die "
+                "Werkzeugliste jedes Subagenten jetzt standardmäßig "
+                "eingeklappt („Tool-Verwendungen (N)“) und per Klick "
+                "aufklappbar — lange Läufe blähen das Panel nicht mehr auf. "
+                "Zudem halten sich parallele Aufgaben auf lokalen Modellen "
+                "jetzt an deren Kapazitätsgrenze und stellen sich ordentlich "
+                "an, statt sich gegenseitig auszubremsen.",
         "audience": "user",
-        "versions": ["9.320.0"],
+        "versions": ["9.320.0", "9.321.0"],
     },
     {
         "version": "9.318.0",

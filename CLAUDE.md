@@ -201,7 +201,7 @@ WPB-policy document-sensitivity detector + enforcement. `ClassificationBlockedEr
 
 ## Provider Concurrency Queue
 
-`LocalProviderQueue` (`engine/provider.py`). `omlx=2` (continuous batching), cloud=0 (unlimited). Queue key = `provider_name`, not `base_url`. (The `cliproxyapi=2` serialization died with the provider in 9.278.0 — direct cloud turns run unqueued.)
+`LocalProviderQueue` (`brain.py`). `omlx=2` (continuous batching), cloud=0 (unlimited). Queue key = `provider_name`, not `base_url`. (The `cliproxyapi=2` serialization died with the provider in 9.278.0 — direct cloud turns run unqueued.) **Who queues**: interactive turns (`run_turn`, whole-turn scope) + warmup + detached bg-task turns (`run_turn_blocking` when `tool_context.bg_task` — the fan-out leaves, 9.321.0; their wall-clock deadline starts AFTER the slot is acquired). All other background calls stay unqueued ON PURPOSE: `run_turn` holds its slot across tool execution, so a nested `background_call` (ask_llm, classifier, summariser) queueing on the same provider would deadlock once every slot belongs to an outer turn.
 
 ## Warmup & Warm Session Pool
 
