@@ -458,7 +458,7 @@ async function tcSend(tab, text) {
     if (!ok) { tcPrint(tab, 'Konnte keine Sitzung erstellen.', 'tc-err'); return; }
   }
   // user echo
-  tcPrint(tab, `<span class="tc-uprompt">›</span> ${esc(text)}`, 'tc-user');
+  tcPrint(tab, `<span class="tc-uprompt">›</span> <span class="tc-utext">${esc(text)}</span>`, 'tc-user');
 
   // live rows for this turn. Only the transient think + spin rows are
   // pre-created; tool cards and answer-text rows are appended CHRONOLOGICALLY as
@@ -1528,7 +1528,15 @@ async function tcLoadTranscript(tab) {
 
 function _tcRenderHistMsg(tab, m) {
   const role = m.role;
-  if (role === 'user') { tcPrint(tab, `<span class="tc-uprompt">›</span> ${esc(_tcMsgText(m))}`, 'tc-user'); return; }
+  // Background-task delivery (metadata.background_delivery): a SYNTHETIC user
+  // turn the server persists so an auto-fired turn has something to answer —
+  // the user never typed it. Render it like thinking (italic, dimmed, indented)
+  // instead of as a flush-left query, so it doesn't masquerade as their input.
+  if (role === 'user' && m.metadata?.background_delivery) {
+    tcPrint(tab, esc(_tcMsgText(m)), 'tc-think');
+    return;
+  }
+  if (role === 'user') { tcPrint(tab, `<span class="tc-uprompt">›</span> <span class="tc-utext">${esc(_stripPreamble(m, _tcMsgText(m)))}</span>`, 'tc-user'); return; }
   if (role === 'assistant') { _tcRenderHistAssistant(tab, m); return; }
   if (role === 'thinking') { if (tab.showTools) tcPrint(tab, '⠿ ' + esc(_tcMsgText(m)), 'tc-think'); return; }
   if (role === 'tool_call') {

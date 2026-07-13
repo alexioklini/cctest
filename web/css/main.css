@@ -877,7 +877,13 @@ textarea { resize: none; }
      the whole transcript reads like Claude Code in a real terminal. */
   font-size: 13px; line-height: 1.45; color: var(--text-100);
   font-family: var(--font-term); }
-.tc-row { margin: 0 0 7px; word-break: break-word; }
+/* Everything in the log is indented EXCEPT the user's query (.tc-user below),
+   which stays flush left as the visual anchor you scan for when scrolling back:
+   each query starts a turn, the indented block under it is that turn's output.
+   Indent lives on .tc-row (set by tcPrint on every row) so new row types inherit
+   it automatically; padding-left keeps wrapped lines aligned under the first. */
+.tc-row { margin: 0 0 7px; word-break: break-word; padding-left: 16px; }
+.tc-row.tc-user { padding-left: 0; }
 .tc-row:last-child { margin-bottom: 0; }
 /* Raw-text rows (NOT rendered markdown) keep their literal newlines/spacing.
    IMPORTANT: pre-wrap must NOT apply to .tc-asst — marked emits "\n" between
@@ -893,6 +899,9 @@ textarea { resize: none; }
    row's line. */
 .tc-user .tc-uprompt { color: var(--accent-brand); font-weight: 700;
   display: inline-block; margin-right: 2px; }
+/* The query text takes the same colour as a tool-call NAME (--text-200), so the
+   log differentiates by colour only — no bold, per the blanket rule above. */
+.tc-user .tc-utext { color: var(--text-200); }
 .tc-prompt { color: var(--accent-brand); font-weight: 700; }
 /* assistant answer — rendered markdown; normal whitespace + tight block spacing.
    Body text is the slightly softer --text-200 at weight 400 so it doesn't read as

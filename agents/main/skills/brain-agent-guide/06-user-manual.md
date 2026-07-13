@@ -934,7 +934,18 @@ als Markdown** direkt herunterlädt (ohne Ablage im Arbeitsverzeichnis).
 Werkzeugaufrufe werden als kompakte Zeilen (`● Werkzeug Datei ✓`) eingeblendet
 (per `/tools` ein-/ausschaltbar) — zusammen mit den Denkschritten in der
 **tatsächlichen Reihenfolge der Ausführung**, live wie beim erneuten Öffnen
-eines Verlaufs. Mit
+eines Verlaufs.
+
+**Aufbau des Verlaufs** (v9.325.0): Ihre eigene Eingabe steht **bündig links**
+mit dem `›`-Zeichen davor und ist damit der Ankerpunkt, den Sie beim
+Zurückscrollen suchen — alles, was Brain daraufhin tut (Werkzeugaufrufe,
+Denkschritte, Antwort), ist darunter **eingerückt**. Eine Eingabe beginnt also
+sichtbar einen Abschnitt. Interne Hinweise, die Brain sich selbst gibt (etwa der
+Ausgabeordner dieses Chats oder die Zustellung fertiger Hintergrundaufgaben),
+erscheinen **nicht** als Ihre Eingabe: der Ordner-Hinweis wird ausgeblendet, die
+Zustellung erscheint gedämpft wie ein Denkschritt.
+
+Mit
 **↑/↓** blättern Sie wie in einer Shell durch zuletzt gesendete Eingaben, mit
 **Tab** auf leerer Zeile holen Sie einen Eingabe-Vorschlag. Über das
 **Rechtsklick-Menü** eines Tabs exportieren Sie Terminal-Chat **oder**

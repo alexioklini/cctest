@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.325.0",
+        "date": "2026-07-13",
+        "title": "Terminal-Chat: Verlauf klarer lesbar",
+        "body": "Der Verlauf im Terminal-Chat ist jetzt auf einen Blick "
+                "gegliedert: Ihre eigene Eingabe steht bündig links und bildet "
+                "den Ankerpunkt, alles was Brain daraufhin tut — Werkzeuge, "
+                "Denkschritte, Antwort — steht eingerückt darunter. Interne "
+                "Hinweise, die Brain sich selbst gibt, erscheinen nicht länger "
+                "so, als hätten Sie sie getippt: der technische Hinweis auf den "
+                "Ausgabeordner verschwindet aus Ihrer Eingabezeile, und die "
+                "Zustellung fertiger Hintergrundaufgaben wird gedämpft "
+                "dargestellt statt als Ihre Nachricht.",
+        "audience": "user",
+        "versions": ["9.325.0"],
+    },
+    {
         "version": "9.324.0",
         "date": "2026-07-13",
         "title": "Datei-Import blockiert nicht mehr",
