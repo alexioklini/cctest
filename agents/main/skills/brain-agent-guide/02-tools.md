@@ -401,6 +401,47 @@ but the page count is an audit signal, same as the cloud OCR path). Needs the
 `tesseract` binary + language data on the host (`brew install tesseract
 tesseract-lang`); every tool fails LOUD with the install hint if it's missing.
 
+## Document verification — deterministic checks (group `doc_checks`, v9.335.0)
+
+The KYC/fraud-analysis toolset (L1 of the PII-parity plan): the checks a
+document analysis stands on — MRZ check digits, date relations, identity
+consistency across documents — run SERVER-SIDE ON THE RAW FILES and return
+PII-FREE VERDICTS. They work identically whether the GDPR anonymiser is on or
+off (the model never needs the protected values to reason about the results),
+and they are IMMUNE to pseudonymised values: the model must NOT do this
+arithmetic itself — on anonymised (day-jittered/tokenised) values its own math
+produces FALSE forgery indications.
+
+- `mrz_verify(path?, text?, lang?)` — parses the machine-readable zone
+  (TD1/TD2/TD3) and verifies all ICAO-9303 check digits (weights 7,3,1).
+  Prefers `path`; a dedicated whitelist OCR pass (`A-Z0-9<`, bottom-strip +
+  full-frame crops) reads MRZs that the generic OCR garbles on phone photos.
+  Verdicts only: per-field checksum true/false/null, `all_valid` (needs ≥3
+  checkable digits, else `partial: true`), doc type, issuer, nationality,
+  expiry state vs today + expiry month, age — NEVER the number, name or raw
+  birth date. Unreadable fields are `null`, never `false` (an OCR garble must
+  not read as a forgery indication).
+- `doc_dates_check(sources, pairs?, lang?)` — date RELATIONS instead of model
+  arithmetic: each source is `{name, date}` (literal, all common formats incl.
+  EXIF `2026:07:02` and textual months `5 FEB 1947`) or `{name, path, select}`
+  (`exif_datetime`/`mrz_dob`/`mrz_expiry`/`file_mtime`). Returns per-source
+  past/future vs today and CALENDAR-exact pairwise gaps (`'10y - 1d'`,
+  `'9 days'` — leap-year-safe). Birth-named sources return age only.
+- `identity_consistency(paths, lang?)` — 'are the personal details identical
+  across these documents?': extracts each file's MRZ identity + filename
+  name-form, clusters names across case/order/initials/MRZ-form with
+  conservative OCR-garble fuzzy matching (`engine/identity.py`), and reports
+  distinct-person count, DOB equality (+ age), distinct document numbers and
+  the expiry chain. Deviating surface forms are listed per source as
+  discrepancies (that text passes the GDPR tool-result seam).
+
+Measured on the real reference set (10 JPGs of chat 58e3c521438a): the
+high-quality scan verifies fully (`all_valid: true`), a low-res photo yields an
+honest partial (number checksum verified, dates `null`), video-legitimation
+screenshots with the MRZ out of frame return `mrz_found: false` — and the
+identity comparison clusters scan + photo + filename to ONE person with
+matching DOB.
+
 ## Memory (MemPalace, direct — not MCP)
 
 - `mempalace_query(query, wing?, room?, limit?)` — semantic search.
@@ -926,6 +967,7 @@ core          read_file write_file edit_file list_directory search_files
 documents     read_document write_document edit_document render_diagram
               xlsx_inspect xlsx_query xlsx_create xlsx_edit xlsx_diff text_diff
 ocr           ocr_inspect ocr_extract ocr_region ocr_fields ocr_tables
+doc_checks    mrz_verify doc_dates_check identity_consistency
 memory        mempalace_query save_chat_to_memory
               mempalace_kg_query mempalace_kg_search mempalace_kg_neighbors
 wiki          wiki_write wiki_read wiki_delete wiki_structure

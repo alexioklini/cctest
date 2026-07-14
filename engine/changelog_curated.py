@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.335.0",
+        "date": "2026-07-14",
+        "title": "Ausweisprüfung rechnet jetzt der Server",
+        "body": "Drei neue Prüfwerkzeuge für Dokumenten-Analysen: die "
+                "Prüfziffern der maschinenlesbaren Zone eines Ausweises "
+                "(ICAO 9303), Datums-Beziehungen (Gültigkeit, Verlängerungs-"
+                "lücken, Foto- vs. Dokumentendatum) und der Abgleich der "
+                "Personalien über mehrere Dokumente werden nun deterministisch "
+                "auf dem Server berechnet statt vom Sprachmodell geschätzt. "
+                "Das Ergebnis sind verlässliche Urteile ohne personenbezogene "
+                "Werte — die Prüfungen funktionieren dadurch auch in "
+                "anonymisierten Chats unverändert, und ein unleserliches Foto "
+                "wird ehrlich als „nur teilweise prüfbar“ ausgewiesen statt "
+                "als Fälschungsverdacht.",
+        "audience": "user",
+        "versions": ["9.335.0"],
+    },
+    {
         "version": "9.334.0",
         "date": "2026-07-14",
         "title": "Kein Datenabfluss bei Web-Recherchen",

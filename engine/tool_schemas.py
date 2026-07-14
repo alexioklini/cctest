@@ -1412,6 +1412,103 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "mrz_verify",
+        "description": (
+            "Verify an ID document's machine-readable zone (MRZ) SERVER-SIDE: "
+            "parses TD1/TD2/TD3 and checks ALL ICAO-9303 check digits "
+            "deterministically (weights 7,3,1). Returns PII-FREE verdicts — "
+            "per-field checksum true/false, all_valid, doc type, issuer, "
+            "nationality, expiry state vs today, age — never the document "
+            "number, name or raw birth date. ALWAYS use this instead of "
+            "computing MRZ check digits yourself: your own arithmetic can be "
+            "wrong on pseudonymised values and would produce FALSE forgery "
+            "indications. Prefer `path` (the document image/PDF on disk — the "
+            "server reads the raw pixels); pass `text` only when no file is "
+            "available."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the document image/PDF/text file (preferred — server reads raw data)"},
+                "text": {"type": "string", "description": "Raw MRZ line(s) — fallback only when no file path is available"},
+                "lang": {"type": "string", "description": "Tesseract language(s), default 'deu+eng'"},
+            },
+        },
+    },
+    {
+        "name": "doc_dates_check",
+        "description": (
+            "Compute date RELATIONS server-side — validity vs today, renewal "
+            "gaps, validity spans, photo-vs-document date offsets — instead "
+            "of doing date arithmetic yourself (which breaks on pseudonymised "
+            "values). Each source is a named date: pass a literal `date` "
+            "value, or a `path` plus `select` (exif_datetime for photo "
+            "capture time, mrz_dob / mrz_expiry read from the document's MRZ, "
+            "file_mtime). Returns per-source past/future vs today and "
+            "pairwise gaps in days plus a human form ('10y - 1d', '9 days'). "
+            "Birth dates are returned as age only, never raw."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sources": {
+                    "type": "array",
+                    "description": "[{name, date | path[, select]}] — select: exif_datetime | mrz_dob | mrz_expiry | file_mtime",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Label for this date, e.g. 'old_expiry', 'new_issue', 'photo_taken'"},
+                            "date": {"type": "string", "description": "Literal date value (ISO, EU dot, US slash, '5 FEB 1947', EXIF '2026:07:02')"},
+                            "path": {"type": "string", "description": "File to read the date from (with select)"},
+                            "select": {"type": "string", "description": "exif_datetime | mrz_dob | mrz_expiry | file_mtime"},
+                        },
+                        "required": ["name"],
+                    },
+                },
+                "pairs": {
+                    "type": "array",
+                    "description": "Optional explicit pairs [{a, b}] by source name; default: consecutive gaps in chronological order",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "a": {"type": "string"},
+                            "b": {"type": "string"},
+                        },
+                        "required": ["a", "b"],
+                    },
+                },
+                "lang": {"type": "string", "description": "Tesseract language(s), default 'deu+eng'"},
+            },
+            "required": ["sources"],
+        },
+    },
+    {
+        "name": "identity_consistency",
+        "description": (
+            "Compare identity fields ACROSS documents server-side: extracts "
+            "each source's MRZ identity and filename name-form, normalises "
+            "names across case/order/initials/MRZ-form (fuzzy for OCR garble) "
+            "and reports MATCH VERDICTS — how many distinct persons the "
+            "sources describe, whether birth dates match (as equality + age, "
+            "never the raw date), how many distinct document numbers exist "
+            "and the expiry chain. Use this for 'are the personal details "
+            "consistent across these documents?' instead of comparing "
+            "(possibly pseudonymised) values yourself. Pass 2-8 file paths."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "paths": {
+                    "type": "array",
+                    "description": "2-8 document paths (images/PDFs/text files) to compare",
+                    "items": {"type": "string"},
+                },
+                "lang": {"type": "string", "description": "Tesseract language(s), default 'deu+eng'"},
+            },
+            "required": ["paths"],
+        },
+    },
+    {
         "name": "delegate_task",
         "description": (
             "Delegate a task to another agent. Runs in a background thread with its own context. "
