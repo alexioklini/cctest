@@ -111,7 +111,7 @@
     "local_vision_model": "gemma-4-12B-it-qat-oQ4-fp16",
     "local_vision_render_dpi": 200,
     "local_vision_max_tokens": 4096,
-    "mlx_ocr_model": "mlx-community/GLM-OCR-4bit",
+    "mlx_ocr_model": "mlx-community/GLM-OCR-8bit",
     "mlx_ocr_max_tokens": 4096,
     "mlx_ocr_max_edge_px": 1600
   },

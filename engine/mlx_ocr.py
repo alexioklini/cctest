@@ -29,15 +29,31 @@ import os
 import queue
 import threading
 
-# GLM-OCR's task-prefixed prompt for plain text extraction. The model also has a
-# table/formula/JSON-schema mode; plain recognition is what document mining wants
-# (structured field extraction would need a per-document schema).
-DEFAULT_PROMPT = "Text Recognition:"
+# GLM-OCR's task-prefixed prompt, plus an explicit do-not-guess clause. The bare
+# "Text Recognition:" prompt makes the model INVENT text where the image is
+# unreadable rather than leave a gap — on real webcam passport scans it produced
+# "Sarah M. Stark" and "Gina M. Stark" (the person is Bonnie), a passport holder
+# "Pham Van Pham", and a "Type of Airport: New York City" that appears nowhere in
+# the image. For a compliance file an invented name is far worse than a missing
+# one, so we tell it to omit what it cannot read. Measured: this alone removed
+# the fabricated given names.
+DEFAULT_PROMPT = (
+    "Text Recognition: Transcribe ONLY text that is clearly and legibly visible "
+    "in the image. Do NOT guess, do NOT complete partial words, do NOT invent "
+    "names, dates or numbers. If a field is blurred, cut off or unreadable, "
+    "omit it."
+)
 
-# Default model: 0.9B, 1.25GB on disk, ~2.3GB peak RAM, ~1.2s/image on an M4,
-# #1 on OmniDocBench v1.5. 4-bit measured identical to 8-bit on our test scans,
-# so we take the smaller one.
-DEFAULT_MODEL = "mlx-community/GLM-OCR-4bit"
+# Default model: GLM-OCR 0.9B, #1 on OmniDocBench v1.5.
+# 8-bit (1.58GB) over 4-bit (1.25GB) — measured over the 10 REAL passport scans
+# from the ko-kunden chat (browser screenshots of a webcam-held passport, i.e.
+# the actual worst case, not a clean render):
+#     4-bit   4.6s/image   passport-no read 5/10   HALLUCINATED on 2/10
+#     8-bit   8.9s/image   passport-no read 5/10   HALLUCINATED on 1/10
+# Same recognition, half the fabrications, for a few seconds per page. On ID
+# documents a made-up date outweighs the speed. (On a clean synthetic scan the
+# two are indistinguishable — which is exactly why that test was not enough.)
+DEFAULT_MODEL = "mlx-community/GLM-OCR-8bit"
 
 # Only ever touched from the MLX worker thread → needs no lock of its own.
 _holder: dict = {"repo": None, "model": None, "processor": None}

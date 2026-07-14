@@ -709,6 +709,32 @@ def _cap_image_edge(path: str, max_edge: int) -> None:
               f"{type(e).__name__}: {e}", flush=True)
 
 
+def _tesseract_sees_text(path: str) -> bool | None:
+    """Does a DETERMINISTIC OCR find any word at all? None = can't tell.
+
+    The sanity gate on the LLM's output. Tesseract never invents text — where
+    it reads nothing, there is nothing legible. The vision model does invent:
+    on a 420x160 unreadable crop of a passport it produced a holder named
+    "Pham Van Pham" and a "Type of Airport: New York City", neither of which is
+    in the image. Measured over the 10 real scans, Tesseract returned ZERO words
+    on exactly the worst one — so "Tesseract sees nothing" is a clean signal
+    that anything the model says about this image is unfounded.
+    Only that extreme is used: mid-range confidence does NOT predict a
+    hallucination (the other bad scan scored a perfectly normal 53%), so we do
+    not gate on a confidence threshold — that would throw away good reads.
+    """
+    try:
+        import pytesseract
+        from PIL import Image
+        with Image.open(path) as im:
+            d = pytesseract.image_to_data(
+                im, output_type=pytesseract.Output.DICT)
+        return any(t.strip() and int(c) > 0
+                   for t, c in zip(d["text"], d["conf"]))
+    except Exception:
+        return None      # tesseract absent/broken → no opinion, keep the text
+
+
 def _mlx_ocr_extract(path: str, cfg: dict) -> tuple[str, str | None]:
     """One image → text via the in-process MLX OCR model. (text, error)."""
     from engine import mlx_ocr as _mlx
@@ -717,6 +743,10 @@ def _mlx_ocr_extract(path: str, cfg: dict) -> tuple[str, str | None]:
         max_tokens=cfg.get("mlx_ocr_max_tokens", 4096))
     if err:
         return "", err
+    if text and _tesseract_sees_text(path) is False:
+        print(f"[doc-convert] OCR verworfen (kein lesbarer Text im Bild, "
+              f"Modellausgabe unbelegt): {os.path.basename(path)}", flush=True)
+        return "", None
     if text:
         # Local model on our own GPU → $0, but still logged so OCR throughput
         # shows up in the same dashboard as the cloud engine.

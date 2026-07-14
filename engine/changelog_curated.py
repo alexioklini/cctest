@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.329.0",
+        "date": "2026-07-14",
+        "title": "Texterkennung erfindet nichts mehr",
+        "body": "Bei schlecht lesbaren Bildern — etwa einem schräg "
+                "abfotografierten Ausweis — hat die Texterkennung bisher "
+                "Inhalte erfunden statt eine Lücke zu lassen: aus „Bonnie“ "
+                "wurde schon mal „Sarah“, und es tauchten Namen auf, die im "
+                "Bild gar nicht vorkamen. Das ist abgestellt: Findet eine "
+                "unbestechliche Zweitprüfung im Bild keinen lesbaren Text, "
+                "wird das Ergebnis verworfen, statt es zu übernehmen. "
+                "Zusätzlich trägt jeder aus einem Bild gewonnene Text nun "
+                "einen Hinweis, dass er Lesefehler enthalten kann und im "
+                "Zweifel das Originalbild gilt — gerade bei Namen, Daten und "
+                "Nummern.",
+        "audience": "user",
+        "versions": ["9.329.0"],
+    },
+    {
         "version": "9.328.0",
         "date": "2026-07-14",
         "title": "Texterkennung: schneller, genauer, vollständig lokal",

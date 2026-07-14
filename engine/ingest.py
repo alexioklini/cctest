@@ -46,6 +46,27 @@ import urllib.request
 
 # ─── Document Ingestion Engine ────────────────────────────────────────
 
+# Prepended to every OCR'd image body. See parse_image for the why: OCR of a
+# photographed/scanned document is a retrieval aid, NOT a source of record.
+_IMAGE_OCR_CAVEAT = (
+    "> **Hinweis:** Der folgende Text wurde per automatischer Texterkennung "
+    "(OCR) aus einem Bild gewonnen und kann Lesefehler enthalten — "
+    "insbesondere bei Namen, Daten und Nummern. Nicht als belegte Tatsache "
+    "verwenden; im Zweifel das Originalbild prüfen."
+)
+
+
+def _collapse_ocr_filler(text: str) -> str:
+    """Cap runs of a repeated filler character (`<<<<…`, `....`, `____`).
+
+    A passport's machine-readable zone is padded with `<`, and the OCR model
+    happily extends that run: one real scan produced a chunk that was **91%
+    `<` characters** — a whole drawer of padding, embedded and dragged through
+    every search. The run carries no information beyond "there was padding
+    here", so 8 characters say it just as well."""
+    return re.sub(r"([<>._\-=*#~])\1{7,}", r"\1" * 8, text)
+
+
 class DocumentParser:
     """Parse various document formats to plain text."""
 
@@ -277,7 +298,19 @@ class DocumentParser:
                 # DocumentChunker takes the first heading as the chunk title,
                 # so every scan would be titled "## Page 1".
                 text = re.sub(r"^\s*##\s*Page\s+\d+\s*\n+", "", text.strip())
+                text = _collapse_ocr_filler(text)
                 info_parts.append(f"**OCR:** {backend}")
+                info_parts.append("")
+                # Mark it UNRELIABLE, in the text itself. OCR of a photographed
+                # document is a search aid, not a source of fact: on the real
+                # ko-kunden passport scans the model still fabricated a given
+                # name ("Sarah"/"Gina" for Bonnie) and shifted a date where the
+                # image was unreadable. This line rides along into the drawer
+                # and the KG-extraction input, so neither the model answering a
+                # question nor the triple extractor treats a read-off name or
+                # date as established fact. Cheap, and the alternative — a
+                # hallucinated birth date in a compliance file — is not.
+                info_parts.append(_IMAGE_OCR_CAVEAT)
                 info_parts.append("")
                 info_parts.append(text)
             elif err:

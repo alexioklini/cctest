@@ -635,7 +635,7 @@ Codebasen, Forschungspapiere, …).
 
    - **`mlx_ocr`** (Standard) — ein spezialisiertes OCR-Modell, das **direkt im
      Brain-Prozess** auf der eigenen GPU läuft (mlx-vlm), Standardmodell
-     `mlx-community/GLM-OCR-4bit` (0,9 Mrd. Parameter, 1,25 GB, ~1 s/Bild).
+     `mlx-community/GLM-OCR-8bit` (0,9 Mrd. Parameter, 1,6 GB).
      Nichts verlässt den Rechner. Läuft **nicht** über oMLX — das bleibt den
      Chat-Modellen vorbehalten.
    - **`mistral_ocr`** — Cloud-OCR-Endpunkt (schnell, aber die Datei geht zum
@@ -643,6 +643,18 @@ Codebasen, Forschungspapiere, …).
    - **`local_vision`** — ein allgemeines Chat-Vision-Modell über oMLX.
      Funktioniert, ist aber deutlich langsamer als `mlx_ocr` (~37 s statt ~1 s).
    - **`auto`** — Cloud zuerst, lokal als Rückfall. · **`none`** — OCR aus.
+
+   **Wie verlässlich ist der erkannte Text?** Er ist ein **Sucheinstieg, keine
+   Datenquelle.** Bei sauberen Vorlagen (Dokumentenscan, Screenshot) stimmt er
+   meist; bei schwierigen Bildern (abfotografierter Ausweis, schräg, gespiegelt,
+   winziger Ausschnitt) **kann er Namen, Daten und Nummern falsch lesen**. Zwei
+   Schutzmechanismen sind eingebaut: (a) Findet eine unbestechliche
+   Zweitprüfung (Tesseract) im Bild **gar keinen** lesbaren Text, wird die
+   Ausgabe des Modells **verworfen** — denn ohne lesbare Vorlage wäre alles
+   Gesagte frei erfunden. (b) Jeder Bild-Text trägt einen **Warnhinweis** im
+   Dokument, den auch der Agent und der Wissensgraph mitlesen. Für belastbare
+   Angaben gilt: **Originalbild prüfen** — es bleibt unter `originals/`
+   erhalten.
 
    **Originale bleiben erhalten:** Die hochgeladene Datei selbst wird im
    Projekt unter `originals/` aufbewahrt (nicht nur der extrahierte Text).
