@@ -602,6 +602,18 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   bereits rückübersetzt → Fake-Text + Klartext-Anhang). Die Lese-Tools
   (`gmail_inbox`/`read`/`search`) pseudonymisieren ihr Ergebnis (fremde
   Mail-Inhalte sind fremde personenbezogene Daten).
+- **Firmen-Recherche trotz Anonymisierung (v9.344.0, Auto-Release)**: Suchst du
+  in einer anonymisierenden Sitzung mit einem **Firmen**-Pseudonym, wird der
+  Call NICHT mehr verweigert — das Gate setzt für die ausgehende Anfrage
+  automatisch den echten Firmennamen ein (die Kategorie `business_id` lässt die
+  Policy ohnehin passieren; du selbst bekommst den echten Namen nie zu sehen,
+  und die Ergebnisse kommen pseudonymisiert zurück). Adverse-Media-, Sanktions-
+  und Registerabgleiche laufen damit vollständig. **Bei PERSONEN-Pseudonymen
+  bleibt es bei der Verweigerung** — in JEDEM Modus: Fake-Namen sind reale
+  Namen, eine solche Suche träfe eine echte fremde Person und würde die Analyse
+  mit deren Daten vergiften. Enthält eine Query BEIDES, kippt die Person den
+  ganzen Call. Weise die Prüfung dann als „nicht prüfbar (Datenschutz)" aus
+  oder frage nach einer Freigabe.
 
 ## Code execution
 

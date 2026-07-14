@@ -1590,9 +1590,45 @@ preamble goes in first-user-message instead.
   refuse. Releases are visible + revocable in the GDPR history modal
   (statuses "Web freigegeben"/"Web verweigert", per-row toggle). Audit:
   `pii_web_egress` with `match=released` for every executed released call.
-- **KYC project preset + degradation strip (9.341.0, L7)**: a project can
-  declare its GDPR posture once — `project.json → gdpr_preset` ('' | 'kyc' |
-  'kyc_local'), editable in the project settings ("PII-Analyse (KYC-Preset)"
+- **Organisation entity layer + auto-release (9.344.0, M4/M5)**: companies get
+  the same entity treatment persons got in L2 — ONE fake per company, every
+  surface form (long form, short form, the ALLCAPS form sanctions/registry
+  lists use, URL slug, legal-form variants) renders the form-matching variant
+  of that ONE fake. Normalisation/rendering in `engine/identity.py`
+  (`org_tokens`/`org_structure`/`org_attach`/`org_render_variant`/
+  `org_variant_pairs`); Mapping wiring in `pseudonymizer.py`
+  (`mapping.entities[*].kind` = `'person'|'org'`, legacy rows default to
+  person; `_entity_fake_organisation` in `_ENTITY_GENERATORS`). Two things
+  this fixes: the sanctions/registry match (a different string used to mint a
+  different fake → silent FALSE NEGATIVE in a regulatory report) and the
+  group/UBO structure (parent↔subsidiary lives in the name containment —
+  `Wiener Privatbank Immobilien GmbH` ⊂ `Wiener Privatbank`; the fake now
+  MIRRORS it, the subsidiary inherits the parent's fake stem). `org_attach` is
+  deliberately strict (token equality, no substring merge, no fuzzy): a false
+  merge of two real companies would poison the evidence.
+  **Not faked** (both would be quality regressions, not leaks): bare generic
+  corporate words the NER mistags (`Trust`, `Holding`, `Schwestern`) and
+  public bodies / registries / check-lists (`OFAC-SDN-Liste`, `Firmenbuch`,
+  `Companies House`, `BaFin`) — they are the checking INSTRUMENT, never the
+  subject; faking them costs the model the name of the list it is matching
+  against. **Known limit**: the short form `WPB` is not derivable from the
+  stem tokens (it is an intra-word split of the compound `Privatbank`) — a
+  documented residual, not a silent error.
+  **Auto-release (M5)**: a fake whose rule_id's CATEGORY is one the policy
+  passes anyway (`business_id` → `organisation`, `network`) is translated
+  fake→original for the OUTGOING request instead of being refused — in every
+  `web_egress` mode, `ask` included. The model never sees the original (the
+  translation lives only in the dispatch copy of the args); results come back
+  re-anonymised through the L3b seam. Without it, M4 would have made company
+  research impossible: the gate let `organisation` through on a fresh scan,
+  but once the name was faked the model only knew the fake — and fakes refuse.
+  **Invariant (mutation-tested): PERSON fakes still refuse in EVERY mode**,
+  `allow` included, and a mixed query containing one kills the whole call.
+  Audit kind `policy_released` (`pii_web_egress`, tally `web_policy_released`).
+- **KYC project preset + degradation strip (9.341.0, L7; `screening` added
+  9.344.0)**: a project can declare its GDPR posture once — `project.json →
+  gdpr_preset` ('' | 'kyc' | 'kyc_local' | 'screening'), editable in the
+  project settings ("PII-Analyse (KYC-Preset)"
   select in the Projektmodus section). The preset OVERLAYS the global
   `gdpr_scanner` config for every turn/background call of that project on a
   COPY (the global config + cache stay untouched; resolution: explicit
@@ -1606,7 +1642,29 @@ preamble goes in first-user-message instead.
   the project's research/citation mode on once. `kyc_local`: the honest
   zero-egress alternative — every non-local turn of the project is swapped to
   the local fallback model (clear 400 if none is configured); background PII
-  calls swap local too. The per-turn **degradation strip** (a shield line
+  calls swap local too. `screening` (9.344.0): like `kyc` PLUS organisations
+  as entities (M4) — for workloads where the FIRM is the subject under review
+  (risk analysis, compliance checks, adverse media, group/UBO structures,
+  sanctions/registry matching). Company names are pseudonymised toward the
+  cloud model but auto-released (M5) into the outgoing search request, so the
+  research still works. `kyc` is deliberately UNCHANGED (orgs stay clear text —
+  when a PERSON is the subject, the company is not the thing to protect).
+  NB: `screening` must raise `organisation` as a **rule_override**, not a
+  category bump — the live config carries `rule_overrides['organisation'] =
+  'ignore'`, and rule_overrides beat the category in `_pii_effective_action`,
+  so a category bump would be silently shadowed.
+- **Ad-hoc egress protection without a project (9.344.0, M10b)**: the egress
+  gate used to be inert without an active mapping — but the MAJORITY of real
+  KYC/DD/compliance chats ran project-less (no preset → no turn-1
+  auto-anonymise → no mapping), so the clear name went to the search engine in
+  turn 1 with the gate switched off entirely. The gate's FRESH SCAN needs no
+  mapping, so it now runs whenever the scanner is enabled, project or not, and
+  refuses/asks on person PII. Auto-ANONYMISATION is unchanged (still modal /
+  sticky driven) — M10b changes only when the EGRESS is gated. Scanner off ⇒
+  gate inactive, as before. Honest dependency: a bare NAME is NER-only (there
+  is no name regex), so without the loaded spaCy model M10b does not protect
+  names; the server loads them at boot.
+  The per-turn **degradation strip** (a shield line
   under the reply, `metadata.gdpr_degradation` + `metadata.gdpr_unrestored`)
   tells the analyst WHY the answer differs: refused/denied/released web
   searches, server-side document checks, refused PDFs, unrestorable values —

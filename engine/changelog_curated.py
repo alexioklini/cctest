@@ -29,6 +29,35 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.344.0",
+        "date": "2026-07-14",
+        "title": "Firmen-Recherche mit Datenschutz — neuer Modus „Screening“",
+        "body": "Wenn Sie eine FIRMA prüfen (Risikoanalyse, Compliance-"
+                "Prüfung, Adverse-Media, Konzern- und UBO-Strukturen, "
+                "Sanktions- und Registerabgleich), wählen Sie in den "
+                "Projekt-Einstellungen ab sofort den neuen Datenschutz-Modus "
+                "„Screening“. Firmennamen werden dann gegenüber dem "
+                "Cloud-Modell durch Ersatznamen geschützt — und zwar über "
+                "alle Schreibweisen hinweg: Langform, Kurzform und die "
+                "GROSSSCHREIBUNG, in der Sanktionslisten geführt werden, "
+                "gelten als ein und dieselbe Firma. Auch Konzernstrukturen "
+                "bleiben erhalten: eine Tochtergesellschaft ist im "
+                "Ersatznamen weiterhin als Tochter ihrer Mutter erkennbar. "
+                "Ihre Recherche funktioniert dabei uneingeschränkt weiter: "
+                "für die Suchanfrage setzt Brain den echten Firmennamen "
+                "automatisch wieder ein, ohne ihn dem Sprachmodell zu "
+                "zeigen. Bisher schlossen sich Schutz und Recherche hier "
+                "gegenseitig aus. Der bisherige Modus „KYC“ bleibt "
+                "unverändert — er ist weiterhin die richtige Wahl, wenn eine "
+                "PERSON das Prüfsubjekt ist. Zusätzlich greift der Schutz "
+                "vor ungewollter Web-Weitergabe jetzt auch in Chats OHNE "
+                "Projekt: sobald der Datenschutz-Scanner aktiv ist, gelangen "
+                "personenbezogene Daten nicht mehr unbemerkt in eine "
+                "Suchanfrage.",
+        "audience": "user",
+        "versions": ["9.344.0"],
+    },
+    {
         "version": "9.343.0",
         "date": "2026-07-14",
         "title": "Datenschutz gilt jetzt überall, nicht nur im Chat",

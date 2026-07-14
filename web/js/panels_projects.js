@@ -410,7 +410,7 @@ async function loadProjectDetail(agentId, projectName) {
     // Render the GDPR preset (L7a) select state.
     const gdprPresetSel = document.getElementById('project-gdpr-preset-select');
     if (gdprPresetSel) {
-      gdprPresetSel.value = ['kyc', 'kyc_local'].includes(project.gdpr_preset)
+      gdprPresetSel.value = ['kyc', 'kyc_local', 'screening'].includes(project.gdpr_preset)
         ? project.gdpr_preset : '';
     }
     // Code Mode is fixed at creation. For a code project: show the Code Mode

@@ -1,8 +1,43 @@
 # PII-Parität — Welle 2 (M1–M11) · Handover
 
-**Stand:** 2026-07-14 · Basis-VERSION `9.342.0` · **Status: M1/M2/M3/M11 GELIEFERT in v9.343.0** (die vier Leck-Stopps). **OFFEN: M4/M5, M6, M7, M8, M9, M10** (die Qualitäts-Bausteine).
+**Stand:** 2026-07-14 · Basis-VERSION `9.344.0` · **Status: M1/M2/M3/M11 GELIEFERT in v9.343.0** (die vier Leck-Stopps) · **M4/M5 + M10 GELIEFERT in v9.344.0** (der Qualitäts-Hebel + Ad-hoc-Schutz). **OFFEN: M6, M7, M8, M9.**
 
 **Vorgänger:** `PII_ANALYSIS_PARITY_HANDOVER.md` (Serie L1–L7, v9.334.0–9.342.0, KOMPLETT). Der dortige Katalog bleibt gültig — diese Welle *ergänzt* ihn, sie widerruft nichts.
+
+---
+
+## STATUS nach Session 2 der Welle 2 (v9.344.0)
+
+### Geliefert — der Qualitäts-Hebel
+
+| # | Baustein | Schließt | Ergebnis |
+|---|---|---|---|
+| **M4** | Org-Entitäts-Schicht | **G2** | ✅ `engine/identity.py: org_*`; `entities[*].kind ∈ {person,org}`; Konzernstruktur wird im Fake **gespiegelt** (Tochter erbt Mutter-Stamm) |
+| **M5** | Auto-Release | **G3** | ✅ Pass-Kategorie-Fakes werden hin-übersetzt statt refused, in JEDEM Modus. Personen-Fakes refusen weiter (mutationsgeprüft) |
+| **M10** | Ad-hoc-Schutz ohne Projekt | **G13** | ✅ Variante **(b)** — Gate greift, sobald Scanner an; kein Preset nötig |
+| — | **Preset `screening`** | Produkt-Call | ✅ `kyc` bleibt unverändert; `screening` = kyc + Org-Entitäten |
+
+**Tests:** `tests/test_pseudonymizer_org_entities.py` (23), `tests/test_web_auto_release.py` (14) — **beide mutationsgeprüft**: Auto-Release entfernen → 7 Tests fallen mit dem G3-Symptom; Auto-Release auf Personen ausweiten (das gefährliche Leck) → 6 neue + 2 bestehende Tests schlagen an. 41/41 Test-Module grün. Live-E2E gegen die echten Module mit dem echten `screening`-Preset über das Golden-Material.
+
+### Fünf Befunde, die die Analyse NICHT hatte
+
+1. **Die NER-Spanne IST NICHT DER FIRMENNAME.** Offline gegen den echten Scanner gemessen: `Wiener Privatbank SE` → Span `Wiener Privatbank` (Rechtsform fehlt); `Matejka & Partner Asset Management GmbH` → **zwei** Spans; `ABACO OVERSEAS HOLDINGS INC.` → `ABACO` + `OVERSEAS HOLDINGS INC`; `3SI Holding` → Span mit Müll-Präfix (`ENTWURF JA 3SI Holding`). Daraus die drei Konstruktionsregeln: Rechtsform nie im Schlüssel, Müll-Präfixe strippen, Fragment-Spans müssen attachen können.
+2. **Namenstragende Wörter sind KEINE Rechtsformen.** `Holding`/`Partner`/`Invest` zu strippen kollabierte die drei 3SI-Schwestern auf **eine** Firma — ein selbstgemachter Homonym-Schaden (G12 rückwärts). Nur echte Rechtsform-Suffixe gehören in die Liste.
+3. **Der ORG-Tagger wirft gewöhnliche Substantive aus** (`Trust` aus „verwaltet den Trust", `Schwestern` aus „sind Schwestern"). Die fielen auf den alten String-Faker durch und schrieben `Vandelay Corp` mitten in den Fließtext. **Leerer Stamm ⇒ gar nicht faken** (nicht: anders faken).
+4. **Fakes-von-Fakes schnappt auch im Fake-POOL zu.** Ein Fake-Token, das selbst ein generisches Konzernwort ist (`Trust`/`Holding`/`Group`), wird beim nächsten Scan als frische Org-PII erkannt und ein zweites Mal gefakt (gemessen: `Nordstern Trust` → `NORDSTERN Stark Corp`). Der Handover nennt die Falle nur für einen zweiten Seam — sie gilt auch für den Pool.
+5. **Der Frisch-Scan des Gates erkennt Org-Fakes als PERSONEN wieder** (`Marbach Textil` → `rule=name`) und machte den Auto-Release im `ask`-Modus wieder zunichte. Bekannte Fakes werden jetzt **längentreu maskiert**, bevor der Frisch-Scan läuft — über sie ist in §1 bereits entschieden.
+
+### Der Befund, den erst `screening` sichtbar machte
+
+**Behörden/Prüflisten werden als Organisationen getaggt** (`OFAC-SDN-Liste`, `Firmenbuch`, `Companies House`, `BaFin`). Unter `kyc` egal (Orgs bleiben Klartext) — unter `screening` wurde daraus „In der **Oscorp Corp** steht …": das Modell verlor den Namen der Liste, gegen die es abgleichen soll. Kein Leak, aber eine **Qualitäts-Regression**. Sie sind das Prüf**werkzeug**, nie das Prüf**subjekt** → werden nicht mehr gefakt (`org_is_public_body`).
+
+### Dokumentierter Rest (bewusst offen)
+
+- **`WPB` bleibt ein Rest-Leak.** Die Kurzform ist aus den Stamm-Tokens **nicht ableitbar** (= W-iener P-rivat-B-ank, eine Intra-Wort-Zerlegung des Kompositums). Eine aggressivere Akronym-Regel würde die häufigsten ALLCAPS-Kürzel des Korpus (`HTML`, `USA`, `LEI`, `ROE`, `EBIT`) als Firmen faken und den Fließtext zerstören. Bewusste Grenze, kein stiller Fehler.
+- **M10b schützt Namen nur mit geladenem spaCy-Modell** (ein bloßer Name ist NER-only, es gibt keine Namens-Regex). Im Betrieb lädt der Server die Modelle beim Boot. Als Test festgehalten, nicht versteckt.
+- **Der Split-Span-Fall** (`Matejka & Partner` vs. die Langform) erzeugt zwei Entitäten für **eine** Firma. Aus Spans allein nicht auflösbar; der sichere Ausgang ist der gewählte (zwei distinkte Fakes mit gespiegeltem Stamm) — besser als ein False-Merge.
+
+**Nächster sinnvoller Schnitt:** **M6** (Tabellen/Massendaten — **Lasttest VOR dem Design**, wie im Handover gefordert) und **M9** (Erkennungs-Netz). M7/M8 sind kleiner und unabhängig.
 
 ---
 

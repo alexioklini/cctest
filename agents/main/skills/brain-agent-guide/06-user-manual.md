@@ -2280,6 +2280,42 @@ Modellqualität (das Fallback-Modell muss unter Einstellungen → GDPR
 konfiguriert sein). Ein bewusster Opt-out per Schild-Symbol im Eingabefeld
 gewinnt weiterhin über das Preset.
 
+**F: Wann nehme ich „Screening" statt „KYC"?**
+A: Seit v9.344.0 gibt es einen dritten Modus. Die Faustregel: **Prüfen Sie
+eine PERSON, nehmen Sie KYC. Prüfen Sie eine FIRMA, nehmen Sie Screening.**
+Mit **Screening** werden zusätzlich zu den Personendaten auch **Firmennamen**
+gegenüber dem Cloud-Modell durch Ersatznamen geschützt — und zwar über alle
+Schreibweisen hinweg: „Wiener Privatbank SE", „Wiener Privatbank", die
+GROSSSCHREIBUNG, in der Sanktionslisten geführt werden, und die Kurzform in
+einer Web-Adresse gelten als ein und dieselbe Firma und bekommen denselben
+Ersatznamen. Auch **Konzernstrukturen bleiben lesbar**: eine
+Tochtergesellschaft ist auch im Ersatznamen als Tochter ihrer Mutter
+erkennbar — ohne das ginge genau die Information verloren, um die es bei
+einer UBO-Prüfung geht.
+
+Der entscheidende Punkt: **Ihre Recherche funktioniert trotzdem.** Für die
+Suchanfrage setzt Brain den echten Firmennamen automatisch wieder ein, ohne
+ihn dem Sprachmodell zu zeigen. Adverse-Media-, Sanktions- und
+Registerabgleich laufen also vollständig — das Cloud-Modell bekommt den
+Firmennamen dabei nie zu sehen. (Bei Personennamen bleibt es dabei, dass Sie
+eine Websuche einzeln freigeben müssen: eine Suche mit einem
+Ersatz-Personennamen träfe eine echte fremde Person und würde Ihre Analyse
+verfälschen.) Nicht ersetzt werden Behörden, Register und Prüflisten (OFAC,
+Firmenbuch, Companies House, BaFin) — sie sind Ihr Prüfwerkzeug, nicht das
+Prüfsubjekt.
+
+**F: Bin ich auch ohne Projekt geschützt?**
+A: Teilweise — und seit v9.344.0 deutlich besser. Bisher hing der Schutz vor
+ungewollter Weitergabe an Suchmaschinen am Projekt-Preset: In einem Chat
+**ohne Projekt** konnte ein Name oder eine Kontonummer in die allererste
+Websuche geraten, bevor irgendein Schutz griff. Ab sofort gilt: Sobald der
+Datenschutz-Scanner aktiv ist (Einstellungen → GDPR), prüft Brain **jede**
+ausgehende Websuche — auch in Chats ohne Projekt — und verweigert bzw. fragt
+nach, wenn personenbezogene Daten darin vorkommen. Die automatische
+Ersetzung durch Ersatzwerte funktioniert unverändert wie bisher (per Dialog
+bzw. Merken der Entscheidung); neu ist allein, dass der Weg nach draußen auch
+ohne Projekt bewacht ist.
+
 **F: Was bedeutet die Zeile „Datenschutz dieser Antwort: …" unter einer Antwort?**
 A: In anonymisierten Chats zeigt diese Zeile (seit v9.341.0), was bei dieser
 Antwort aus Datenschutzgründen anders lief als in einem ungeschützten Chat —

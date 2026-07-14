@@ -638,8 +638,16 @@ _SHAPE_GENERATORS: dict[str, Callable[[str, str], str]] = {
 # doc_checks tools); this section owns the Mapping wiring.
 
 
+def _is_person_ent(ent: dict) -> bool:
+    """Entitäten ohne `kind` sind Personen (Legacy-Mappings von Platte, die vor
+    M4 serialisiert wurden — die Org-Schicht kam erst v9.344.0 dazu)."""
+    return ent.get("kind", "person") == "person"
+
+
 def _entity_find(mapping: Mapping, form: str) -> dict | None:
     for ent in mapping.entities.values():
+        if not _is_person_ent(ent):
+            continue
         if _identity.entity_attach(form, ent["sur"], ent["givens"]):
             return ent
     return None
@@ -660,12 +668,19 @@ def _pick_avoiding(seq: tuple, key: str, salt: str, kind: str,
 
 
 def _entity_taken_tokens(mapping: Mapping) -> set[str]:
+    """Alle real+fake belegten Tokens ÜBER BEIDE Entitäts-Arten — ein Org-Fake
+    darf nicht auf einem Personen-Fake landen (und umgekehrt), sonst
+    verschmelzen im Wire eine Firma und eine Person auf denselben String."""
     taken: set[str] = set()
     for ent in mapping.entities.values():
-        taken.add(ent["sur"])
-        taken.update(g for g in ent["givens"] if g)
-        taken.add(ent["fake_sur"].lower())
-        taken.update(f.lower() for f in ent["fake_givens"])
+        if _is_person_ent(ent):
+            taken.add(ent["sur"])
+            taken.update(g for g in ent["givens"] if g)
+            taken.add(ent["fake_sur"].lower())
+            taken.update(f.lower() for f in ent["fake_givens"])
+        else:
+            taken.update(t for t in ent.get("stem", []) if t)
+            taken.update(f.lower() for f in ent.get("fake_stem", []) if f)
     return taken
 
 
@@ -695,7 +710,8 @@ def _entity_create(mapping: Mapping, form: str) -> dict:
         f = _pick_avoiding(_FIRST_NAMES, key, mapping.salt, f"given{i}", taken)
         taken.add(f.lower())
         fake_givens.append(f)
-    ent = {"sur": sur, "givens": list(givens),
+    ent = {"kind": "person",
+           "sur": sur, "givens": list(givens),
            "fake_sur": fake_sur, "fake_givens": fake_givens}
     mapping.entities[f"e{len(mapping.entities) + 1}"] = ent
     return ent
@@ -772,6 +788,155 @@ def _entity_fake_name(original: str, mapping: Mapping) -> str:
     return fake
 
 
+# ---------------------------------------------------------------------------
+# M4 — Organisations-Entitäten (PII_PARITY_WAVE2_HANDOVER.md §M4 / G2)
+#
+# Spiegelbild der Personen-Schicht: EIN Fake pro Firma, jede Oberflächenform
+# (Langform/Kurzform/ALLCAPS-Registryform/Slug/Rechtsform-Varianten) rendert die
+# formgleiche Variante DESSELBEN Fakes. Ohne das bekommt jede Oberflächenform
+# einen eigenen Fake — dann bricht der Sanktions-/Registry-Abgleich (die Listen
+# führen ALLCAPS-/Aliasformen: anderer String → anderer Fake → stiller False
+# Negative in einem REGULATORISCHEN Bericht) und die Konzernstruktur, die im
+# Namens-Enthaltensein steckt, wird gelöscht.
+#
+# Normalisierung/Rendering: engine/identity.py (org_*). Hier lebt nur das
+# Mapping-Wiring — exakt die Arbeitsteilung der Personen-Schicht.
+# ---------------------------------------------------------------------------
+
+# Fake-Stamm-Pool: neutrale, klar erfundene Wortstämme. Bewusst NICHT die
+# Cartoon-Namen aus _ORG_NAMES (Acme/Globex/Hooli) — ein Fake muss wie eine
+# echte Firma AUSSEHEN, damit das Modell ihn als Firma behandelt und die
+# Analysequalität nicht kippt, aber nicht wie eine ECHTE existierende.
+_ORG_STEM_POOL = (
+    "Nordstern", "Weststadt", "Blauwald", "Hochfeld", "Silberbach", "Rotbuche",
+    "Grünthal", "Steinbrück", "Altmark", "Feldkirch", "Lindenau", "Sonnborn",
+    "Marbach", "Eichgraben", "Kaltenberg", "Ravensbrunn", "Talheim",
+    "Norwood", "Eastgate", "Fairbridge", "Kingsford", "Ashcroft", "Brightmoor",
+    "Cedarholm", "Lakemont", "Ridgeway", "Stonefield", "Westbrook",
+)
+# Zweit-/Folge-Tokens (Tochter-/Sparten-Bezeichner) — dieselbe Rolle wie
+# 'Immobilien'/'Invest' im echten Material.
+#
+# KEINE Wörter aus `_ORG_GENERIC_SOLO` hier hinein (Trust/Holding/Group/
+# Partner/Capital/Management/Services): ein Fake-Token, das SELBST ein
+# generisches Konzernwort ist, wird beim nächsten Scan als frische Org-PII
+# klassifiziert und ein zweites Mal gefakt — FAKES-VON-FAKES, das bricht den
+# Reply-Deanonymisierer und die NUTZERIN sieht den Fake (gemessen: der
+# Fake-Stamm 'Nordstern Trust' wurde zu 'NORDSTERN Stark Corp'). Der Handover
+# nennt genau diese Falle; sie schnappt auch im Fake-POOL zu, nicht nur bei
+# einem zweiten Seam.
+_ORG_QUALIFIER_POOL = (
+    "Immobilien", "Anlagen", "Technik", "Handel", "Logistik", "Bau",
+    "Energie", "Metall", "Chemie", "Papier", "Textil", "Werke",
+    "Trading", "Supply", "Industries", "Systems", "Logistics", "Overseas",
+    "Maritime", "Pacific", "Atlantic", "Continental",
+)
+
+
+def _org_find(mapping: Mapping, stem: list[str]) -> dict | None:
+    for ent in mapping.entities.values():
+        if _is_person_ent(ent):
+            continue
+        if ent.get("stem") == list(stem):
+            return ent
+    return None
+
+
+def _org_fake_stem(mapping: Mapping, stem: list[str]) -> list[str]:
+    """Fake-Stamm für `stem` — und dabei die KONZERNSTRUKTUR spiegeln.
+
+    Teilt der neue Stamm ein Präfix mit einer bekannten Org-Entität
+    ('wiener privatbank' ⊂ 'wiener privatbank immobilien'), erbt er deren
+    Fake-Präfix und mintet nur für die ZUSÄTZLICHEN Tokens neue Fakes:
+
+        Wiener Privatbank      → Nordstern Weststadt
+        Wiener Privatbank Immobilien → Nordstern Weststadt Immobilien
+                                       ^^^^^^^^^^^^^^^^^^^ geerbt
+
+    Damit bleibt die Mutter-Tochter-Beziehung im Fake-Raum SICHTBAR — sie
+    steckt real im Namens-Enthaltensein, und getrennte Fakes würden sie
+    löschen (der Kern von G2). Umgekehrt gilt es auch: taucht die Mutter NACH
+    der Tochter auf, erbt sie das gemeinsame Präfix von dieser."""
+    taken = _entity_taken_tokens(mapping)
+    fake: list[str] = []
+    # Längstes gemeinsames Präfix mit einer bekannten Org-Entität finden.
+    best: list[str] = []
+    best_fake: list[str] = []
+    for ent in mapping.entities.values():
+        if _is_person_ent(ent):
+            continue
+        other, other_fake = ent.get("stem") or [], ent.get("fake_stem") or []
+        n = 0
+        for a, b in zip(stem, other):
+            if a != b:
+                break
+            n += 1
+        if n and n > len(best) and n <= len(other_fake):
+            best, best_fake = list(other[:n]), list(other_fake[:n])
+    fake.extend(best_fake)
+    for i in range(len(fake), len(stem)):
+        pool = _ORG_STEM_POOL if i == 0 else _ORG_QUALIFIER_POOL
+        key = " ".join(stem[:i + 1])
+        f = _pick_avoiding(pool, key, mapping.salt, f"orgstem{i}", taken)
+        taken.add(f.lower())
+        fake.append(f)
+    return fake
+
+
+def _org_create(mapping: Mapping, form: str) -> dict:
+    stem, lf = _identity.org_structure(form)
+    if not stem:
+        raise ValueError(f"no org structure in {form!r}")
+    if len(stem) > 6:
+        # Müll-Span (halber Satz, Tabellenzeile) — kein Entitäts-Anker; der
+        # Aufrufer fällt auf den einfachen _fake_organisation-Shape-Fake zurück.
+        raise ValueError(f"implausible org form {form!r}")
+    ent = {"kind": "org", "stem": list(stem),
+           "fake_stem": _org_fake_stem(mapping, stem),
+           "legal_forms": [lf] if lf else []}
+    mapping.entities[f"e{len(mapping.entities) + 1}"] = ent
+    return ent
+
+
+def _register_org_variants(mapping: Mapping, ent: dict) -> None:
+    """Wie `_register_entity_variants` bei Personen: die erwartbaren
+    Oberflächenformen werden ECHTE forward/reverse-Paare, wodurch L3a-Deanon
+    und das Web-Egress-Gate (und damit M5s Auto-Release) org-fähig werden,
+    ohne dass dort Code angefasst wird."""
+    pairs = _identity.org_variant_pairs(
+        ent["stem"], ent["fake_stem"], ent.get("legal_forms") or [])
+    for real, fake in pairs:
+        if real in mapping.forward or real in mapping.reverse:
+            continue
+        if fake in mapping.reverse:
+            continue
+        mapping.record(real, fake, "organisation", count=False)
+
+
+def _entity_fake_organisation(original: str, mapping: Mapping) -> str | None:
+    """Entitäts-Generator für `organisation` (Gegenstück zu _entity_fake_name).
+    Gibt None zurück, wenn keine Org-Struktur erkennbar ist → der Aufrufer
+    fällt auf den alten String-Fake `_fake_organisation` zurück."""
+    stem, lf = _identity.org_structure(original)
+    if not stem:
+        return None
+    ent = _org_find(mapping, stem)
+    if ent is None:
+        try:
+            ent = _org_create(mapping, original)
+        except ValueError:
+            return None
+    elif lf and lf not in (ent.get("legal_forms") or []):
+        # Neue Rechtsform-Oberfläche derselben Firma ('… SE' nach '… AG') —
+        # als Variante mitregistrieren.
+        ent.setdefault("legal_forms", []).append(lf)
+    fake = _identity.org_render_variant(original, ent["stem"], ent["fake_stem"])
+    _register_org_variants(mapping, ent)
+    if fake == original:
+        return None
+    return fake
+
+
 def _mrz_name_form(line: str) -> str | None:
     """MRZ-Namenszeile → 'Vornamen Nachname'-Form (garble-bereinigt) für die
     Entitäts-Maschinerie, sonst None."""
@@ -799,7 +964,7 @@ def _seed_entities_in_text_order(text: str, findings: list[dict],
     statt 'bonnie marie' → Glued-Varianten fehlen → Leak)."""
     for f in sorted(findings, key=lambda x: x.get("start", 0)):
         rid = f.get("rule_id")
-        if rid not in ("name", "mrz"):
+        if rid not in ("name", "mrz", "organisation"):
             continue
         s, e = f.get("start", -1), f.get("end", -1)
         if not (0 <= s < e <= len(text)):
@@ -808,6 +973,17 @@ def _seed_entities_in_text_order(text: str, findings: list[dict],
         if val in mapping.reverse or val in mapping.forward:
             continue
         try:
+            if rid == "organisation":
+                # Org-Entitäten (M4): LÄNGSTE Form zuerst wäre falsch — die
+                # Text-Reihenfolge gilt auch hier, damit die Konzern-Spiegelung
+                # (_org_fake_stem) die Mutter sieht, bevor die Tochter kommt.
+                stem, _lf = _identity.org_structure(val)
+                if not stem:
+                    continue
+                if _org_find(mapping, stem) is None:
+                    _org_create(mapping, val)
+                _register_org_variants(mapping, _org_find(mapping, stem))
+                continue
             form = _mrz_name_form(val) if rid == "mrz" else val
             if not form:
                 continue
@@ -833,6 +1009,8 @@ def _entity_fake_email(original: str, mapping: Mapping) -> str | None:
     tld = domain.rsplit(".", 1)[-1].lower()[:6] if "." in domain else "org"
     lp = local.lower()
     for ent in mapping.entities.values():
+        if not _is_person_ent(ent):
+            continue
         sur = ent["sur"]
         if len(sur) < 4 or sur not in lp:
             continue
@@ -997,6 +1175,7 @@ def _fake_mrz(original: str, mapping: Mapping) -> str:
 _ENTITY_GENERATORS: dict[str, Callable[[str, "Mapping"], str | None]] = {
     "name": _entity_fake_name,
     "email": _entity_fake_email,
+    "organisation": _entity_fake_organisation,   # M4/G2
     "passport": _fake_passport,
     "passport_ctx_loose": _fake_passport,
     "mrz": _fake_mrz,
@@ -1262,6 +1441,15 @@ def pseudonymize_text(
         if original in mapping.reverse:
             continue
         rule_id = f["rule_id"]
+        # M4: der spaCy-ORG-Tagger wirft auch GEWÖHNLICHE Substantive als Firmen
+        # aus (am echten Material gemessen: 'Trust' aus 'verwaltet den Trust',
+        # 'Schwestern' aus 'sind Schwestern'). Sagt die Org-Entitäts-Schicht
+        # "das ist kein Firmenname" (leerer Stamm), ist das ein Scanner-FALSCH-
+        # TREFFER — dann darf der Wert GAR NICHT gefakt werden. Ohne diesen
+        # Skip fiele er auf den alten String-Faker durch und würde als
+        # 'Vandelay Corp' mitten in den Fließtext geschrieben (gemessen).
+        if rule_id == "organisation" and not _identity.org_structure(original)[0]:
+            continue
         # Stable within a mapping: same original → same token even if it
         # appears in multiple sources.
         replacement = mapping.forward.get(original)
@@ -1374,13 +1562,22 @@ def deanonymize_text(text: str, *, mapping: Mapping) -> tuple[str, int]:
 
 
 def apply_known_values(text: str, *, mapping: Mapping,
-                       categories: tuple = ("name", "email",
+                       categories: tuple = ("name", "email", "organisation",
                                             "passport", "dob")
                        ) -> tuple[str, int]:
     """Replace REMAINING occurrences of already-mapped originals (default:
-    entity-derived names/emails plus the MRZ-seeded document numbers and
+    entity-derived names/emails/ORGS plus the MRZ-seeded document numbers and
     DOB surface forms, L5b) with their registered fakes — word-bounded,
-    longest-first. Complements the scanner pass in `_gdpr_anon_tool_text`
+    longest-first.
+
+    `organisation` gehört seit M4 in die Default-Kategorien und ist dort NICHT
+    kosmetisch: die NER-Spanne ist bei Firmen fast nie der ganze Name (am
+    echten Material gemessen — 'Wiener Privatbank SE' → Span 'Wiener
+    Privatbank'; 'ABACO OVERSEAS HOLDINGS INC.' → zwei Spans; die Kurzform
+    'WPB' erkennt der Scanner GAR NICHT, sie steht in `_ORG_LEGAL_ABBR`).
+    Die registrierten Varianten der Org-Entität sind damit der einzige Weg,
+    auf dem ALLCAPS-Registryformen, Slugs und Akronyme überhaupt gefasst
+    werden. Complements the scanner pass in `_gdpr_anon_tool_text`
     and the chat worker's typed-text scan: the German spaCy NER often misses
     English names in mempalace drawers or web results, and a bare passport
     number / date has no context keyword for the regex rules — a registered
@@ -1474,6 +1671,8 @@ def apply_entity_variants(text: str, *, mapping: Mapping) -> tuple[str, int]:
     if "<<" in text:
         subs: list[tuple[str, str]] = []
         for ent in mapping.entities.values():
+            if not _is_person_ent(ent):
+                continue  # MRZ-Zeilen tragen Personen, keine Firmen
             for real, fake in zip([ent["sur"]] + ent["givens"],
                                   [ent["fake_sur"]] + ent["fake_givens"]):
                 if real and len(real) >= 4:

@@ -371,6 +371,299 @@ def standard_variant_pairs(sur: str, givens: list[str],
     return pairs
 
 
+# ---------------------------------------------------------------------------
+# M4 — Organisations-Entitäten (PII_PARITY_WAVE2_HANDOVER.md §M4 / G2)
+#
+# Dieselbe Denkfigur wie die Personen-Schicht oben, aber mit einer ANDEREN
+# Normalform — und deshalb bewusst eigene Funktionen statt eines `kind`-
+# Parameters durch die Personen-Pfade: eine Firma hat keinen Vor-/Nachnamen,
+# keine Initialen, keine MRZ-Form.
+#
+# Kalibriert am ECHTEN Scanner-Output über das Golden-Material (bcad56fa99f8,
+# 748f92cfeacf, 65b4aefeed11, 32e257377809 — offline gegen _pii_scan_text
+# gemessen, nicht geraten). Drei Befunde, die die Form dieser Schicht
+# diktieren — die NER-Spanne ist NICHT der Firmenname:
+#
+#   'Wiener Privatbank SE'                    → Span 'Wiener Privatbank'   (Rechtsform fehlt)
+#   'Matejka & Partner Asset Management GmbH' → 'Matejka & Partner' + 'Asset Management GmbH' (ZWEI Spans)
+#   'ABACO OVERSEAS HOLDINGS INC.'            → 'ABACO' + 'OVERSEAS HOLDINGS INC'
+#   '3SI Holding'                             → Span trägt Müll-Präfix ('ENTWURF JA 3SI Holding')
+#
+# Daraus folgt: (1) die Rechtsform darf NIE Teil des Entitäts-Schlüssels sein,
+# (2) Spans müssen von Müll-Präfixen befreit werden, (3) zwei Spans, von denen
+# einer ein FRAGMENT des anderen ist, müssen attachen können.
+# ---------------------------------------------------------------------------
+
+# Rechtsformen — beim Normalisieren IMMER abgeschnitten (sie sind kein Teil der
+# Identität: 'Wiener Privatbank SE' und 'Wiener Privatbank' sind dieselbe Firma).
+#
+# NUR ECHTE RECHTSFORM-SUFFIXE. Nicht hier hinein gehören namenstragende
+# Wörter wie 'Holding', 'Group', 'Trust', 'Partner', 'Capital', 'Invest' —
+# sie sind Teil des NAMENS und unterscheiden Schwestergesellschaften
+# voneinander ('3SI Holding' vs '3SI Partner GmbH' vs '3SI Invest GmbH' sind
+# DREI Firmen). Sie zu strippen kollabierte alle drei auf den Stamm ['3si']
+# und verschmölze sie zu einer Entität — exakt der Homonym-Schaden aus G12,
+# nur selbstgemacht. (Erste Fassung dieser Liste tat genau das; am echten
+# Material gemessen und korrigiert.)
+_ORG_LEGAL_FORMS = {
+    # DE/AT/CH
+    "gmbh", "mbh", "gesmbh", "ag", "kg", "kgaa", "ohg", "ug", "eg", "e.v.",
+    "se", "cokg",
+    # EN
+    "ltd", "limited", "inc", "incorporated", "corp", "corporation", "llc",
+    "llp", "lp", "plc",
+    # weitere
+    "sa", "sas", "sarl", "srl", "spa", "bv", "nv", "ab", "oy", "aps",
+    "a.s.", "ooo", "oao", "zao", "pte", "pty",
+}
+
+# Füllwörter, die NER-Spans vorn/hinten ankleben ('ENTWURF JA 3SI Holding',
+# 'Compare Abaco Overseas Holdings Inc and the', 'THE LEBC STAR TRUST').
+_ORG_NOISE_TOKENS = {
+    "the", "die", "der", "das", "den", "dem", "des", "a", "an",
+    "compare", "and", "und", "vs", "versus", "entwurf", "ja", "nein",
+    "firma", "company", "darlehen", "verlustverrechnung", "siehe", "vgl",
+    "betreff", "re", "fwd", "top", "neu", "alt", "non", "registered",
+}
+
+# Ein Org-Stamm-Token: Buchstaben/Ziffern (3SI, K5!), Punkt/Apostroph/Bindestrich
+# innen. Ziffern werden — anders als bei name_tokens — NICHT verworfen.
+_ORG_TOKEN_OK_RE = re.compile(r"^[a-z0-9ä-öø-ÿß][a-z0-9ä-öø-ÿß'\.\-&]{0,29}$")
+
+
+def org_tokens(s: str) -> list[str]:
+    """Zerlegt eine Firmen-Oberflächenform in Stamm-Tokens: lowercase,
+    Interpunktion/Separatoren weg, Rechtsformen und Füllwörter raus,
+    ZIFFERN-Tokens BLEIBEN ('3SI', 'K5' sind Teil des Namens — genau hier
+    unterscheidet sich die Org- von der Personen-Normalform).
+
+    `Wiener Privatbank SE`      → ['wiener', 'privatbank']
+    `WIENER PRIVATBANK`         → ['wiener', 'privatbank']   (gleiche Entität)
+    `K5 Beteiligungs GmbH.`     → ['k5', 'beteiligungs']     (Satzpunkt weg)
+    `Matejka & Partner`         → ['matejka']                ('partner' = Rechtsform)
+    `ENTWURF JA 3SI Holding`    → ['3si']                    (Müll-Präfix weg)
+    """
+    if not s:
+        return []
+    s = s.lower()
+    s = s.replace("&", " ")
+    s = re.sub(r"[<>_,;/\\|\(\)\[\]\"]+", " ", s)
+    # URL-Slug-Trenner: der Bindestrich ZWISCHEN Wörtern trennt Tokens
+    # ('wiener-privatbank' → 'wiener privatbank'). Ohne das wird der Slug eine
+    # EIGENE Entität — und der Slug ist genau die Form, in der der Klarname
+    # real ins Netz leakte (bizapedia.com/people/bonnie-stark.html).
+    s = re.sub(r"(?<=[a-z0-9])-(?=[a-zà-öø-ÿß])", " ", s)
+    toks: list[str] = []
+    for t in re.split(r"\s+", s):
+        t = t.strip(".- '\"")
+        if not t:
+            continue
+        if t in _ORG_LEGAL_FORMS or t in _ORG_NOISE_TOKENS:
+            continue
+        if not _ORG_TOKEN_OK_RE.match(t):
+            continue
+        toks.append(t)
+    return toks
+
+
+def org_legal_form(s: str) -> str:
+    """Die Rechtsform-Oberfläche am Ende der Form ('SE', 'GmbH', 'INC.') —
+    verbatim inkl. Case/Punkt, sonst ''. Wird beim Rendern wieder angehängt."""
+    if not s:
+        return ""
+    m = re.search(r"([A-Za-zÀ-ÿ\.&]+)\s*\.?\s*$", s.strip())
+    if not m:
+        return ""
+    tail = m.group(1)
+    if tail.lower().strip(".") in _ORG_LEGAL_FORMS:
+        return tail
+    return ""
+
+
+def org_acronym(toks: list[str]) -> str:
+    """Akronym aus den Stamm-ANFANGSBUCHSTABEN ('abaco overseas holdings' →
+    'AOH' — im Golden-Material real als Kurzform belegt).
+
+    Erst ab 3 Tokens: zweibuchstabige Akronyme ('WP') sind in Prosa zu
+    FP-trächtig, um sie als forward/reverse-Paar zu registrieren — und ein
+    Paar, das in Prosa matcht, schreibt Fließtext kaputt.
+
+    BEWUSSTE GRENZE (am Material gemessen, nicht geraten): Kurzformen, die
+    eine INTRA-Wort-Zerlegung eines Kompositums sind, erreicht diese Regel
+    NICHT — 'Wiener Privatbank' → 'WP', die im Korpus gebrauchte Kurzform ist
+    aber 'WPB' (= W-iener P-rivat-B-ank). Dafür bräuchte es einen deutschen
+    Kompositum-Splitter. Der Preis dafür wäre unvertretbar: die häufigsten
+    ALLCAPS-Kürzel des Golden-Materials sind HTML, USA, LEI, ROE, EBIT, EK —
+    eine aggressivere Akronym-Regel würde die als Firmen faken und den
+    Fließtext zerstören. 'WPB' bleibt daher ein dokumentierter Rest-Leak
+    (Handover §3), KEIN stiller Fehler."""
+    core = [t for t in toks if t and t[0].isalpha()]
+    if len(core) < 3:
+        return ""
+    ac = "".join(t[0] for t in core).upper()
+    return ac if len(ac) >= 3 else ""
+
+
+# Generische Firmen-/Konzern-Wörter: als EINZIGES Stamm-Token tragen sie keine
+# Identität ('Trust', 'Holding', 'Gesellschaft') — der spaCy-ORG-Tagger wirft
+# solche Spans (am echten Material gemessen: 'Trust' aus 'verwaltet den Trust',
+# 'Schwestern' aus 'sind Schwestern'). Eine Entität daraus zu bauen faked
+# gewöhnliche Substantive im Fließtext und zerstört den Text.
+_ORG_GENERIC_SOLO = {
+    "holding", "holdings", "group", "gruppe", "trust", "partner", "partners",
+    "capital", "invest", "management", "services", "beteiligung",
+    "beteiligungs", "gesellschaft", "gesellschaften", "konzern", "firma",
+    "unternehmen", "tochter", "tochterunternehmen", "mutter", "schwestern",
+    "schwester", "stiftung", "verein", "bank", "fonds", "fund",
+}
+
+# Behörden, Register, Sanktions-/Prüflisten und Normen — sie sind das
+# PRÜFWERKZEUG, nie das Prüfsubjekt. Der spaCy-ORG-Tagger wirft sie als Firmen
+# aus (gemessen: 'OFAC-SDN-Liste' → organisation). Sie zu faken ist kein Leak,
+# aber eine QUALITÄTS-Regression: das Modell verlöre den Namen der Liste, gegen
+# die es gerade abgleichen soll ('In der Oscorp Corp steht …' — real erzeugt).
+# Unter `kyc` fiel das nie auf, weil Orgs dort im Klartext bleiben; erst
+# `screening` anonymisiert sie und macht den Fehler sichtbar.
+_ORG_PUBLIC_BODY_TOKENS = {
+    "ofac", "sdn", "interpol", "europol", "un", "uno", "eu", "ec", "bafin",
+    "fma", "finma", "sec", "fbi", "bka", "lka", "fatf", "gafi", "wko",
+    "kommission", "ministerium", "behörde", "behoerde", "amt", "bundesamt",
+    "finanzamt", "gericht", "staatsanwaltschaft", "notariat", "firmenbuch",
+    "handelsregister", "companies", "house", "sanktionsliste", "sanktionslisten",
+    "iso", "icao", "swift", "iban", "lei", "kyc", "aml", "dsgvo", "gdpr",
+}
+
+
+def org_is_public_body(toks: list[str]) -> bool:
+    """True, wenn der Stamm eine Behörde/ein Register/eine Prüfliste bezeichnet
+    (≥1 eindeutiges Behörden-Token). Solche Namen werden NICHT pseudonymisiert:
+    sie sind öffentlich, nicht schutzwürdig — und ohne sie kann das Modell den
+    Abgleich nicht mehr benennen, gegen den es prüft."""
+    return any(t in _ORG_PUBLIC_BODY_TOKENS for t in toks)
+
+
+def org_structure(form: str) -> tuple[list[str], str]:
+    """Firmen-Oberflächenform → (stamm_tokens, rechtsform_oberfläche).
+
+    Ein EINZELNES generisches Konzernwort ist kein Firmenname → leerer Stamm
+    (der Aufrufer fällt dann auf den simplen String-Fake zurück, statt eine
+    Entität mit sinnlosen Varianten anzulegen). Mehrtoken-Formen, die ein
+    solches Wort ENTHALTEN, bleiben unberührt ('Intertrust Group' ist eine
+    Firma, 'Group' allein nicht).
+
+    Behörden/Register/Prüflisten (OFAC, Firmenbuch, Companies House) ergeben
+    ebenfalls einen leeren Stamm — sie sind das Prüfwerkzeug, nicht das
+    Prüfsubjekt, und dürfen nicht gefakt werden."""
+    toks = org_tokens(form)
+    if len(toks) == 1 and toks[0] in _ORG_GENERIC_SOLO:
+        return [], ""
+    if org_is_public_body(toks):
+        return [], ""
+    return toks, org_legal_form(form)
+
+
+def org_attach(form: str, stem: list[str]) -> bool:
+    """True, wenn `form` plausibel DIESELBE Organisation bezeichnet wie der
+    Entitäts-Stamm `stem` (lowercase-Tokens).
+
+    Bewusst STRIKT: nur Token-Gleichheit (nach Normalisierung) — KEIN
+    Substring-/Präfix-Merge. Das ist der Kern von G2: `Wiener Privatbank` und
+    `Wiener Privatbank Immobilien` sind VERWANDT, aber DISTINKT (Mutter vs.
+    Tochter). Ein Präfix-Merge würde die Konzernstruktur löschen — genau der
+    Schaden, den M4 verhindern soll. Die Verwandtschaft wird separat über
+    `org_shares_stem` modelliert und im Fake GESPIEGELT.
+
+    Fuzzy ist hier bewusst AUS: Firmennamen sind keine OCR-Namen; ein
+    False-Merge zweier echter Firmen erzeugt Gift-Evidenz in einem
+    regulatorischen Bericht (drei reale 'Atlantic Trading' → ein Fake, G12)."""
+    toks = org_tokens(form)
+    return bool(toks) and toks == list(stem)
+
+
+def org_shares_stem(a: list[str], b: list[str]) -> bool:
+    """True, wenn zwei Org-Stämme in einer Mutter-/Tochter-Beziehung stehen
+    könnten: der kürzere ist ein echtes PRÄFIX des längeren und trägt ≥1
+    substanzielles Token ('wiener privatbank' ⊂ 'wiener privatbank
+    immobilien'). Das Namens-Enthaltensein IST die Konzern-Beziehung — im
+    Fake-Raum muss sie gespiegelt werden, sonst ist die Struktur unsichtbar."""
+    if not a or not b or a == b:
+        return False
+    short, long_ = (a, b) if len(a) < len(b) else (b, a)
+    return len(short) >= 1 and long_[:len(short)] == short
+
+
+def org_render_variant(original: str, stem: list[str], fake_stem: list[str]) -> str:
+    """Rendert den Fake-Firmennamen in DERSELBEN Oberflächenform wie
+    `original`: Stamm-Token-weise ersetzt, Rechtsform/Interpunktion/Füllwörter
+    verbatim, Case pro Token übernommen (ALLCAPS-Registry-Form bleibt ALLCAPS
+    — das ist die Form, in der Sanktionslisten führen)."""
+    if not stem or not fake_stem:
+        return original
+    pairs = {}
+    for i, t in enumerate(stem):
+        if i < len(fake_stem):
+            pairs[t] = fake_stem[i]
+    out = []
+    for part in re.split(r"([^A-Za-z0-9À-ÖØ-öø-ÿß&\.\-']+)", original):
+        key = part.lower().strip(".- '\"")
+        rep = pairs.get(key)
+        if rep is None:
+            out.append(part)
+            continue
+        # Case des Originals übernehmen.
+        if part.isupper() and len(part) > 1:
+            rep = rep.upper()
+        elif part[:1].isupper():
+            rep = rep[:1].upper() + rep[1:]
+        else:
+            rep = rep.lower()
+        # Führende/schließende Interpunktion des Original-Parts erhalten.
+        lead = part[:len(part) - len(part.lstrip(".- '\""))]
+        trail = part[len(part.rstrip(".- '\"")):]
+        out.append(lead + rep + trail)
+    return "".join(out)
+
+
+def org_variant_pairs(stem: list[str], fake_stem: list[str],
+                      legal_forms: list[str] | None = None
+                      ) -> list[tuple[str, str]]:
+    """Erwartbare Firmen-Oberflächenformen als (real, fake)-PAARE — dieselbe
+    Invariante wie `standard_variant_pairs` bei Personen: die Paare werden als
+    ECHTE forward/reverse-Einträge registriert, wodurch der L3a-Args-Deanon UND
+    das Web-Egress-Gate org-fähig werden, ohne dass dort Code angefasst wird
+    (Handover §M4).
+
+    Deckt die am echten Material gemessenen Formen ab: Title-Case, ALLCAPS
+    (Registry-/Sanktionslisten führen so!), URL-Slug, plus jede im Text real
+    gesehene Rechtsform-Variante. Das AKRONYM wird mitregistriert, weil der
+    Scanner es nicht erkennt (`WPB` steht in `_ORG_LEGAL_ABBR`) — nur so wird
+    die Kurzform überhaupt gefasst."""
+    if not stem or not fake_stem:
+        return []
+    pairs: list[tuple[str, str]] = []
+
+    def _add(real: str, fake: str):
+        if real and fake and real != fake and (real, fake) not in pairs:
+            pairs.append((real, fake))
+
+    real_title = " ".join(t.title() for t in stem)
+    fake_title = " ".join(f.title() for f in fake_stem)
+    _add(real_title, fake_title)
+    _add(real_title.upper(), fake_title.upper())
+    for sep in ("-", "_"):
+        _add(sep.join(t.lower() for t in stem),
+             sep.join(f.lower() for f in fake_stem))
+    for lf in (legal_forms or []):
+        if not lf:
+            continue
+        _add(f"{real_title} {lf}", f"{fake_title} {lf}")
+        _add(f"{real_title.upper()} {lf.upper()}", f"{fake_title.upper()} {lf.upper()}")
+    real_ac, fake_ac = org_acronym(stem), org_acronym(fake_stem)
+    if real_ac and fake_ac:
+        _add(real_ac, fake_ac)
+    return pairs
+
+
 def match_score(a: str, b: str) -> float:
     """Grober Ähnlichkeits-Score 0..1 (token-sortiert, difflib) — für
     Diagnose/Ranking, NICHT als alleinige Match-Entscheidung nutzen."""

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.343.0"
+VERSION = "9.344.0"
 VERSION_DATE = "2026-07-14"
 CHANGELOG = [
+    ("9.344.0", "2026-07-14", "feat(PII-Parität WELLE 2 — M4/M5 + M10b + Preset `screening`: der QUALITÄTS-Hebel für den realen Mehrheits-Workload. Welle-2-Session 1 (9.343.0) schloss die vier LECKS; diese Lieferung schliesst die drei Befunde, die die ANALYSEQUALITÄT zerstörten, sobald das Prüfsubjekt eine ORGANISATION ist — und das ist die Mehrheit: von ~90 realen Analyse-Sessions liefen die meisten org-zentriert (Firmenbewertung, KYC-Firmen, UBO, Adverse-Media, Sanktionslisten). (M4/G2 — ORG-ENTITÄTS-SCHICHT: die Entitäts-Schicht L2 kannte nur `PER`. Firmen hatten NUR Exakt-String-Fakes, d.h. JEDE Oberflächenform bekam einen EIGENEN Fake. Zwei Dinge zerbrachen daran. (a) Der SANKTIONS-/REGISTRY-ABGLEICH, der Compliance-KERN: die Listen führen ALLCAPS-/Aliasformen — anderer String → anderer Fake → STILLER FALSE NEGATIVE in einem REGULATORISCHEN Bericht. (b) Die KONZERN-/UBO-STRUKTUR: die Mutter-Tochter-Beziehung steckt im NAMENS-ENTHALTENSEIN ('Wiener Privatbank Immobilien GmbH' ⊂ 'Wiener Privatbank') — getrennte Fakes LÖSCHEN sie. NEU in engine/identity.py: org_tokens/org_structure/org_attach/org_render_variant/org_variant_pairs/org_acronym — dieselbe Denkfigur wie die Personen-Schicht, aber eigene Funktionen statt eines `kind`-Parameters durch die Personen-Pfade (eine Firma hat keinen Vor-/Nachnamen, keine Initialen, keine MRZ-Form). In pseudonymizer.py: `entities` bekommt ein `kind` ('person'|'org'; Legacy-Zeilen von Platte defaulten auf 'person'), die fünf Personen-Funktionen überspringen Org-Entitäten, _entity_fake_organisation in _ENTITY_GENERATORS. AM ECHTEN MATERIAL KALIBRIERT, nicht geraten — der Scanner offline gegen die Golden-Sessions laufen lassen ergab, dass die NER-SPANNE NICHT DER FIRMENNAME IST: 'Wiener Privatbank SE' → Span 'Wiener Privatbank' (Rechtsform fehlt); 'Matejka & Partner Asset Management GmbH' → ZWEI Spans; 'ABACO OVERSEAS HOLDINGS INC.' → 'ABACO' + 'OVERSEAS HOLDINGS INC'; '3SI Holding' → Span mit Müll-Präfix ('ENTWURF JA 3SI Holding'). Daraus die drei Konstruktionsregeln: Rechtsform NIE Teil des Schlüssels, Müll-Präfixe strippen, Fragment-Spans müssen attachen können. Der Fake SPIEGELT die Konzernstruktur (Tochter erbt den Fake-Stamm der Mutter, in BEIDEN Entdeckungs-Reihenfolgen) — sonst ist die Struktur im anonymisierten Raum unsichtbar. org_attach ist bewusst STRIKT (Token-Gleichheit, KEIN Substring-Merge, kein Fuzzy): ein False-Merge zweier echter Firmen erzeugt GIFT-EVIDENZ in einem regulatorischen Bericht — die drei realen 'Atlantic Trading' dürfen nie auf einen Fake kollabieren. DREI FEHLER, DIE ERST DAS ECHTE MATERIAL ZEIGTE und die still Qualität zerstört hätten: (1) namenstragende Wörter ('Holding'/'Partner'/'Invest') als Rechtsform zu strippen kollabierte die DREI 3SI-Schwestern auf EINE Firma — nur ECHTE Rechtsform-Suffixe gehören in die Liste; (2) der spaCy-ORG-Tagger wirft GEWÖHNLICHE SUBSTANTIVE als Firmen aus ('Trust' aus 'verwaltet den Trust', 'Schwestern' aus 'sind Schwestern') — die fielen auf den alten String-Faker durch und schrieben 'Vandelay Corp' mitten in den Fließtext; sagt die Org-Schicht 'kein Firmenname' (leerer Stamm), wird der Wert jetzt GAR NICHT gefakt; (3) Fake-Pool-Tokens, die selbst generische Konzernwörter sind (Trust/Holding/Group), wurden beim nächsten Scan als frische Org-PII erkannt und ein ZWEITES Mal gefakt — FAKES-VON-FAKES, das bricht den Reply-Deanonymisierer und die NUTZERIN sieht den Fake. BEIFANG: der URL-Slug ('wiener-privatbank') wurde eine EIGENE Entität, weil org_tokens nicht am Bindestrich trennte — ausgerechnet die Form, in der der Klarname real ins Netz leakte. DOKUMENTIERTE GRENZE: die Kurzform 'WPB' ist aus den Stamm-Tokens NICHT ableitbar (= W-iener P-rivat-B-ank, eine INTRA-Wort-Zerlegung des Kompositums); eine aggressivere Akronym-Regel würde die häufigsten ALLCAPS-Kürzel des Korpus (HTML, USA, LEI, ROE, EBIT) als Firmen faken und den Fließtext zerstören — 'WPB' bleibt ein bewusster Rest-Leak, KEIN stiller Fehler.) (M5/G3 — AUTO-RELEASE: die KOMPOSITION tötete den Use-Case. Der Gate liess `organisation` beim Frisch-Scan durch (_WEB_GATE_PASS_CATEGORIES — eine juristische Person ist kein personenbezogenes Datum), aber sobald M4 den Firmennamen FAKT, kannte das Modell nur noch den Fake — und Fakes refusten in JEDEM Modus (die richtige L4-Invariante). Jede Einzelkomponente verhielt sich as designed; ZUSAMMEN machten sie Firmen-Recherche UNMÖGLICH: der Wert, den die Policy passieren liesse, konnte den Gate nie erreichen. Und genau das IST der Projektzweck — 15-30 Web-Calls pro Session in risikoanalysen/compliance-prüfung/firmenbewertung sind Adverse-Media-, Sanktions- und Registry-Screening. NEU: trägt ein Fake einen Wert, dessen KATEGORIE die Policy ohnehin passieren lässt, wird er per _web_release_translate_args für den AUSGEHENDEN Request hin-übersetzt statt refused — in JEDEM Modus, auch `ask` (die Policy hat generell zugestimmt; jeden Firmennamen einzeln freiklicken zu lassen wäre eine Rückfrage ohne Entscheidungsgehalt). Das MODELL sieht das Original nie (die Übersetzung lebt nur in der Dispatch-KOPIE der Args), die Results kommen durch den L3b-Seam re-anonymisiert zurück, die Suchmaschine bekommt den Namen, den die Policy ihr ohnehin zugesteht. DER TYP-FEHLER, an dem es hing: known_fakes trägt eine RULE_ID ('organisation'), _WEB_GATE_PASS_CATEGORIES hält KATEGORIEN ('business_id') — die Brücke ist PII_RULE_CATEGORIES. NICHT-VERHANDELBARE INVARIANTE, mutationsgeprüft: PERSONEN-Fakes refusen weiter in JEDEM Modus, auch `allow` (eine Fake-Personensuche trifft echte FREMDE Personen — Fake-Namen SIND reale Namen → Gift-Evidenz); eine Mischquery mit Personen-Fake kippt den ganzen Call. ZWEI BUGS BEIM BAUEN GEFUNDEN: (a) der Frisch-Scan (§3) erkannte den ORG-FAKE als frische PERSONEN-PII wieder ('Marbach Textil' → rule=name) und machte den Auto-Release im ask-Modus wieder zunichte — bekannte Fakes werden jetzt LÄNGENTREU aus dem Scan-Input maskiert (über sie ist in §1 entschieden; sie erneut zu bewerten wäre eine Doppel-Bewertung mit der FALSCHEN Kategorie); (b) in block_group wurden die übersetzten (= ECHTEN) Args auf dem REFUSAL-Pfad zurückgegeben — der Aufrufer verwirft sie zwar, aber ein Security-Gate reicht Klarwerte nicht auf einem Pfad heraus, auf dem es gerade 'nein' sagt. Neuer Audit-kind `policy_released` (pii_web_egress, NICHT pii_web_blocked — sonst loggte das Audit eine Blockade, die nie stattfand) + Degradations-Zähler web_policy_released.) (PRESET `screening` — die Produkt-Entscheidung: `kyc` bleibt UNVERÄNDERT (Orgs im Klartext — beim KYC einer PRIVATPERSON ist die Firma nicht das Prüfsubjekt). NEU `screening` = wie kyc PLUS Organisationen als Entitäten: für Workloads, in denen die FIRMA das Prüfsubjekt ist (Risikoanalyse, Compliance-Prüfung, Adverse-Media, UBO, Sanktions-/Registerabgleich). Zwei ehrliche Modi statt einem überladenen; bestehende kyc-Projekte ändern ihr Verhalten NICHT. `organisation` wird als RULE_OVERRIDE gehoben, nicht per Kategorie-Bump: die Live-Config trägt rule_overrides['organisation']='ignore', und rule_overrides schlagen die Kategorie in _pii_effective_action — ein Kategorie-Bump wäre still geschattet und das Preset wirkungslos geblieben.) (M10b/G13 — AD-HOC-SCHUTZ OHNE PROJEKT: der Schutz hing am project.json, die ARBEIT tat das nicht — die MEHRHEIT der realen KYC-/DD-/Compliance-Chats lief PROJEKTLOS (587a737dc21d, 1a830369e762, 088683fc47bc, 65b4aefeed11, 4aad5750c260). Kein Preset → kein Turn-1-Auto-Anonymise → kein Mapping → und damit war das Egress-Gate KOMPLETT AUS: der Klarname bzw. die IBAN ging in TURN 1 raus, bei mehreren sofort INS WEB, bevor irgendein Schutz greifen konnte. Ohne Mapping gibt es nichts zu übersetzen — der FRISCH-SCAN des Gates braucht aber gar keins. Er läuft jetzt auch ohne Mapping, sobald der Scanner aktiv ist, und refust/fragt bei Personen-PII. Die AUTO-ANONYMISIERUNG bleibt unverändert Modal-/Sticky-gesteuert (M10 ändert NICHT, wann pseudonymisiert wird — nur, wann der EGRESS gegated ist). Scanner aus ⇒ Gate inaktiv wie bisher. EHRLICHE ABHÄNGIGKEIT: ein bloßer NAME ist NER-only (es gibt keine Namens-Regex) — ohne geladenes spaCy-Modell schützt M10b Namen nicht; im Betrieb lädt der Server sie beim Boot. Als Test festgehalten statt versteckt.) LIVE-E2E gegen die echten Module mit dem echten `screening`-Preset über das Golden-Material (bcad56fa99f8 WPB-Konzern, 32e257377809 ABACO-Registry): 0 Klartext-Leaks im Wire (alle Oberflächenformen inkl. Slug + Person), die Konzernstruktur bleibt im Fake-Raum SICHTBAR, und die Suchmaschine bekommt den ECHTEN Firmennamen, während das Cloud-Modell ihn nie sieht. DABEI EIN QUALITÄTS-BUG GEFUNDEN, den erst `screening` sichtbar machte: der Scanner taggt BEHÖRDEN/PRÜFLISTEN als Organisationen ('OFAC-SDN-Liste') — unter kyc egal (Orgs bleiben Klartext), unter screening wurde daraus 'In der Oscorp Corp steht …' und das Modell verlor den Namen der Liste, gegen die es abgleichen soll. Behörden/Register/Prüflisten (OFAC, Firmenbuch, Companies House, BaFin, Interpol) sind das PRÜFWERKZEUG, nie das Prüfsubjekt → werden nicht mehr gefakt. NEU tests/test_pseudonymizer_org_entities.py (23) + tests/test_web_auto_release.py (14), beide MUTATIONSGEPRÜFT: entfernt man den Auto-Release, fallen 7 Tests mit exakt dem G3-Symptom; weitet man ihn auf Personen aus (das gefährliche Leck), schlagen 6 neue + 2 BESTEHENDE Tests an. 41/41 Test-Module grün. py_compile + js_gate GRÜN. Server-Restart nötig. KURATIERTER Eintrag (user+admin)."),
     ("9.343.0", "2026-07-14", "feat(PII-Parität WELLE 2 — M1/M2/M3/M11 aus PII_PARITY_WAVE2_HANDOVER.md: die vier LECK-STOPPS. Die erste Welle (L1-L7) war an EINEM Chat kalibriert (58e3c521438a, KYC einer Privatperson); die Wellen-2-Analyse zeigte, dass der Schutz nur im interaktiven Chat-Turn existierte und an drei Rändern brach. Diese Lieferung schließt die vier Lecks, die die Zusage 'anonymisiert' schlicht falsch machten — die QUALITÄTS-Bausteine (M4/M5 Org-Entitäten + Auto-Release, M6 Tabellen, M9 Erkennungs-Netz) bleiben bewusst offen. (M1/G1 — DER SCHWERSTE BEFUND: `_apply_bg_context` rekonstruierte ~20 Kontextfelder für Background-Turns, `_gdpr_mapping_id` war NICHT dabei. An DIESEM einen Feld hängt ALLES: Result-Seam, Args-Deanon UND das Web-Egress-Gate — alle drei no-op'en bei leerem Feld. Also lief JEDER geplante Task, JEDER Fan-out-Leaf und JEDE Delegation komplett ungeschützt: `read_document` auf die Kundenakte lieferte Klartext ans Cloud-Modell, und ein `searxng_search` im Sub-Turn durfte Klarnamen ungehindert googeln — exakt das Leck, das L4 im Chat geschlossen hat, eine Ebene tiefer. NEU: `brain.gdpr_bind_mapping(mid)` bindet das Mapping auf den Request-Context und REHYDRIERT es dabei aus chats.db — nicht optional: der interaktive Worker ruft `close_mapping()` in seinem finally, der Registry-Eintrag ist also weg, während ein detached Background-Task noch eine Stunde läuft; ein Sub-Turn, der die ID nur GEERBT hätte, fände `get_mapping()` → None und jeder Seam würde das als 'keine Anonymisierung aktiv' lesen — G1 wäre durch die Hintertür wieder offen, ausgerechnet auf den langen Fan-outs, für die der Fix existiert. Sub-Turns ERBEN das Parent-Mapping (bg-task via Session-Snapshot, delegate via Request-Context, Scheduler mintet eigenes und BEHÄLT die ID); `gdpr_persist_mapping` schreibt Erweiterungen zurück, damit der Parent die neuen Tokens umkehren kann. Der Gate wird dabei NIE übersprungen (er erzwingt auch ARL-Klassifikation + Quota-Swap — orthogonal zur Pseudonymisierung). LECK-FIX nebenbei: `delegate_task` DE-anonymisierte seine Antwort (`_del_deanon`, brain.py:9065) und reichte damit ECHTE Werte als ungeseamtes Tool-Result an genau das Cloud-Modell zurück, vor dem das Mapping sie schützen soll — entfällt, wenn das Mapping geteilt wird (die Antwort ist bereits in der richtigen Fake-Welt). NICHT im Gate gebunden, obwohl das alle 26 Aufrufer auf einen Schlag gefixt hätte: `_anonymise_background_samples` läuft auf dem CALLER-Thread, und die Pool-Aufrufer (deep_research, kg_extract) dispatchen via `copy_context().run(...)` — das kopiert die ContextVar-BINDINGS, nicht das RequestContext-OBJEKT dahinter; eine Attribut-Mutation dort blutet in die Geschwister-Tasks UND zurück in den Parent (mit einem Scratch-Skript nachgewiesen). Der Gate MELDET die ID jetzt nur (`deanon_fn.mapping_id`, auf jedem Rückgabepfad gesetzt) — gebunden wird nur dort, wo ein frischer RequestContext existiert.) (M2/G7 — EGRESS IST MEHR ALS WEB: das L4-Gate war auf WEB_SEARCH_TOOLS gescopet; alles andere, was die Maschine verlässt, war ungegated. NEU `EGRESS_TOOLS` = Web ∪ {gmail_send, gmail_reply, generate_image} ∪ MCP (dynamisch erkannt). gmail: Live-Specimen 30051b1f4439 — das Modell rief `gmail_send(to='<EMAIL_1_a812>', body='…IBAN DE38…')` und der SMTP-Send GING REAL RAUS; er scheiterte nur daran, dass das opake Token zufällig keine RFC-gültige Adresse ist — eine shape-preserving Fake-Adresse (die Pipeline erzeugt genau solche!) WÄRE ZUGESTELLT WORDEN. Anhänge sind bei aktivem Mapping jetzt FAIL-CLOSED: die Artefakt-Datei auf Platte ist bereits rückübersetzt (L6), eine Mail mit Fake-Body + Klartext-Anhang wäre der Egress am Gate vorbei. generate_image postet IMMER an api.mistral.ai — auch aus einer LOKALEN Session, wo gar keine Anonymisierung läuft und es kein Mapping zu gaten gibt (5175bf8fdf70: Familien-Stammbaum inkl. Verstorbenen-Status); daher zusätzlich ein mapping-UNABHÄNGIGER Cloud-Egress-Scan (`_gdpr_scan_cloud_egress`) — die Annahme 'lokales Modell ⇒ nichts verlässt die Maschine' bricht AM TOOL, nicht am Chat-Modell. SHELL-SEITENTÜR auf DENY-BY-DEFAULT gedreht: `_DEANON_NETWORK_MARKER_RE` war eine Blocklist (deanonymisiere, AUSSER ein Marker taucht auf) und kannte weder `mail` noch `sendmail`/`msmtp`/`osascript`/`gh` — b4edbc9dc8e7 zeigt das Modell bei `mail -s 'IBAN <fake>' …` und `sendmail … <<< …`; damals scheiterte es an zsh-Syntax, mit L3a würde es heute eine ECHTE IBAN verschicken. Eine Blocklist ist gegen einen kreativen Agenten strukturell verloren. `_deanon_string_is_local_safe` prüft jetzt POSITIV auf 'lokal' — und zwar GETRENNT je Tool, weil das Exfiltrations-Risiko verschieden ist: python_exec = keine Netz-Marker + jeder `import` aus einer Lokal-Liste (ein Token-Allowlisting wäre eine Kategorieverwechslung — `df = …`, `for r in …`, `print(…)` sind keine Kommandos, und die erste Fassung verweigerte damit JEDE pandas/openpyxl-Analyse: das hätte das Leck gegen eine stille QUALITÄTS-Regression getauscht, also genau den Fehler, den die Welle verhindern soll); execute_command = jedes Token in Kommando-Position aus einer Lokal-Liste. Kalibriert: 0 Lecks / 20 Egress-Versuche, 0 False-Negatives / 14 legitime Lokal-Operationen. MCP-Ergebnisse bekommen einen Result-Seam — MCP war der EINZIGE komplett seam-freie Tool-Pfad im Dispatcher.) (M3/G8+G9+G10 — DIE SEAM-LÜCKEN: `translate_text` ist ein background_call und korrekt gegatet — stellt seine Antwort dann aber per `_xlate_deanon` WIEDER HER (weil `_anonymise_background_samples` das Session-Mapping wiederverwendet, sobald current_session_id gesetzt ist — beim interaktiven Dispatch immer) und gab die ECHTEN Werte ungeseamt ans Cloud-Modell: deterministischer Klartext-Leak bei JEDER Übersetzung gemappter Inhalte. Gefixt an der TOOL-Grenze, nicht in `translate_text` selbst (der Handover schlug letzteres als 'sauberer' vor): dieselbe Funktion bedient die Übersetzungs-GUI, wo die Rück-Übersetzung KORREKT ist — die Nutzerin SOLL echten Text sehen. Unterscheidungskriterium ist der KONSUMENT: Modell → Fakes, Mensch → echt. Ebenso `context_recall` (gleiche Form: inbound gegatet, outbound restauriert, Rückgabe ungeseamt). `wiki_write` bekommt ARGS-DEANON (Echtwerte auf Platte): vorher persistierte es die FAKES des Modells und spiegelte sie in die Wings — das Mapping ist per Session, also las Session B die Fakes aus Session A als vermeintliche Fakten: weder umkehrbar noch konsistent zum eigenen Mapping = dauerhafte Gedächtnis-Vergiftung, die mit jeder Session schlimmer wird. `wiki_read` (+Baum: Seitentitel SIND eine Namens-Oberfläche), `gmail_read/inbox/search` (fremde Mail-Bodies), `context_search/detail` (der Lossless-DAG speichert die ORIGINALE — die Tools hatten NULL GDPR-Bezug), `use_skill` (Skills können seit v9.294 AUS CHATS generiert werden), `transcribe_audio` (Transkript + verkettete Übersetzung) bekommen Result-Seams. `wiki_from_chat` schickte den rohen ~24-KB-Korpus ungegatet ans wiki_model — ein VERGESSENER Call, kein Design: der Nachbar `wiki_worth_saving` gatet 90 Zeilen höher korrekt; ebenso audio_overview (2 Stellen). Getippter Text, der am Scanner vorbeilief, wird jetzt gescannt UND geledgert (sonst kein Self-Heal): Pinned Sources, POST /v1/chat/inject, ask_user-Antworten. Der BG-Task-Preamble (F5 aus dem L-Katalog) ist durch M1 KONSTRUKTIV geschlossen statt gepatcht — der Leaf erbt das Parent-Mapping, sein Output kommt also bereits in der richtigen Fake-Welt an; ein zweiter Seam wäre hier AKTIV SCHÄDLICH: Fakes sind shape-preserving, real aussehende Namen, ein Re-Scan klassifiziert sie als frische PII und mintet Fakes-von-Fakes — was den Reply-Deanonymisierer bricht, d.h. die NUTZERIN sähe den Fake. Aus demselben Grund NICHT in `_inject_web_preamble_into_wire` (den geteilten Choke-Point) gehoben: der Web-Preamble kommt bereits geseamt aus `tool_web_fetch`. DOKUMENTIERTER REST: ein Task, der VOR Beginn der Anonymisierung gestartet wurde, lief ungemappt — seine Werte fängt der Ledger-Rewrite einen Turn später; sauber wäre eine mapping_id-Spalte auf background_tasks (vertagt statt mit einer Heuristik gefaked).) (M11/G14 — DER KLARNAME IM PFAD, im L-Katalog als 'bewusst, unvermeidbar' fehlklassifiziert: der Attachment-Pfad ist scan-EXEMPT (NER halluziniert auf Boilerplate; ein pseudonymisierter Pfad bricht `read_document`) — die Einordnung war falsch, denn sie unterstellt, die Datei auf Platte MÜSSE den Nutzer-Dateinamen tragen. Brain legt sie selbst an. Also wird der Name AN DER QUELLE neutralisiert statt im Wire repariert: `CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf` → `att_01.pdf`. Der Pfad bleibt ECHT (read_document funktioniert byte-gleich, kein Deanon-Roundtrip, nichts kann brechen) und ist jetzt PII-FREI — die Exemption schützt danach nur noch echtes Boilerplate. Der Originalname wird zu gescanntem INHALT in der typed half (`att_01.pdf = <Original>`) und landet damit im Scanner UND im Ledger: aus dem Leck wird Evidenz (der Dateiname ist eine der F1-Oberflächenformen und SEEDET die Entität). Trifft jeden Cluster hart: risikoanalysen nennt in JEDEM Dateinamen Subjekt UND Prüfzweck ('Geldwäsche Risikoanalyse M&P AM_2025.xlsx' — das Analyse-Subjekt war gegenüber dem Cloud-Provider de facto deanonymisiert, egal wie gut der Inhalt geschützt war); ko-kunden ist über `CF_-_…_STARK_Bonnie_M_Mrs._107625_…` indexiert; härtester Einzelfall `Alcuatmisi02026!.txt` (4a6b889aee66) — ein PASSWORT als Dateiname, das per Exemption ungescannt in den Wire ging. Gegatet auf `gdpr_scanner.enabled`, NICHT auf ein aktives Mapping: die Datei entsteht beim Upload, das Mapping erst beim Scan — eine Mapping-Bedingung wäre ein Henne-Ei-Rennen. Beifang beim Testen gefunden: `splitext` ist kein Filter — bei '../../etc/passwd' (Separatoren bereits zu '.._.._etc_passwd' gestrippt) liefert es die 'Endung' '._etc_passwd', die den Angreifer-String in den neutralen Namen zurückgeschmuggelt hätte; jetzt nur eine plausible Endung (`\\.[a-z0-9]{1,8}`) oder gar keine.) NEU: tests/test_gdpr_mapping_every_turn.py (11 — inkl. Mutations-geprüft: reintroduziert man G1, schlägt der Gate-Test mit genau seiner Fehlermeldung fehl), tests/test_gdpr_egress_gate.py (13 — die Kalibrierungs-Matrix in beide Richtungen), tests/test_attachment_neutral_names.py (9). 39 Test-Module grün. py_compile + AST-Scope-Check über alle 15 berührten Dateien (drei gmail-Read-Tools hatten kein lazy `import brain as _brain` — ein NameError, den py_compile NICHT sieht). KURATIERTER Eintrag (user+admin)."),
     ("9.342.0", "2026-07-14", "fix(PII-Nebenbefund-Katalog aus dem L7-Live-E2E — 4 gezielte Härtungen; ausgenommen bewusst: Kilo-Multimodal-400 und der Upstream-Stream-Stall). (1) NER-RECALL-NETZ (der Turn-1-Wire-Leak des E2E): de_core_news_md taggt 'Bonnie M Stark' im getippten deutschen Satz NICHT (reproduziert; das kleine _sm-Modell tut es — md verlor genau die Middle-Initial-Form). NEU: KNOWN_LANGUAGES trägt ein `recall_model` (de_core_news_sm, ~15MB), load_models lädt es best-effort als '<lang>#recall', scan_text unioniert dessen PERSON-Spans ENG GEGATED dazu: nur name, ≥2 kapitalisierte Tokens mit ≥2 substanziellen (schließt _sm's lowercase-FP-Modus strukturell aus), kein Overlap mit Haupt-Findings, gleiche shape/precision-Gates, plus NEU _RECALL_STOP_TOKENS (flektierte Verben/Adverbien: 'Der Bericht Wurde Gestern Erstellt' feuert nie — ein echter Name enthält kein flektiertes Verb). FP-Kosten = eine Rückfrage, Miss = Klartext-Egress (Handover-§4.2-Asymmetrie). unload_model droppt den Recall-Eintrag mit. (2) SESSION-DELETE PURGT pii_decisions (ChatDB.delete_session): der Ledger ist append-only INNERHALB einer Session, aber nach deren Löschung sind die Zeilen Waisen mit raw_value-KLARTEXT, die kein Reader mehr erreicht (gemessen: 468 Zeilen nach dem E2E) — DSGVO-widrig, jetzt mit pseudonym_maps zusammen gedroppt. (3) GENITIV-RENDERING (engine/identity.py render_variant): Einzelbuchstabe direkt nach Apostroph ist ein Klitik-Suffix, KEIN Initial — vorher verbrauchte das lone `s` aus 'Bonnie Stark''s' den nächsten freien Vornamens-Slot und renderte 'Cameron Taylor''m' (im E2E-Ledger gemessen); jetzt verbatim → 'Cameron Taylor''s'. Initialen-/MRZ-Formen regressionsfrei. (4) DATUMS-PADDING-DETERMINISMUS (pseudonymizer.Mapping.record, der L2-Edge aus dem v9.340-Golden): '5 FEB 1947' und '05 FEB 1947' kollidieren auf demselben Fake, sobald der Offset den Tag zweistellig macht — reverse konnte nur last-write-wins. Jetzt: kollidieren zwei Originale, die auf DASSELBE Kalenderdatum parsen (_parse_date_surface), behält reverse deterministisch die LÄNGERE (gepaddete) Form — in beiden Registrierungs-Reihenfolgen; beide forward-Einträge bleiben; Nicht-Datums-Kollisionen behalten das Bestandsverhalten. BEIFANG: tests/test_web_egress_gate hatte einen VORBESTEHENDEN Ordnungs-Flake (auf HEAD verifiziert): läuft die Suite NACH test_pii_ner (geladene spaCy-Modelle im Prozess), sieht der Gate-Zusatz-Scan zusätzliche NER-Findings und 3-4 Ask-Tests kippen — _GateTestBase isoliert jetzt _NLP_CACHE (save/clear/restore). NEU tests/test_l7_cleanup_fixes.py (14: E2E-Miss gefangen, Title-Case-Prosa feuert nie, Standard-Sätze unverändert, Recall-fehlt-graceful, unload-Symmetrie, Delete-Purge mit Nachbar-Session-Überleben, Genitiv beide Apostroph-Typen + Initialen/MRZ-Regression, Padding beide Reihenfolgen + forward-Erhalt + Nicht-Datum-last-wins + distinkte-Daten-nie-gemerged). 269 Tests der GDPR-Familie grün — auch in der zuvor brechenden pii_ner-zuerst-Reihenfolge. py_compile OK. Kein Schema-/Tool-Change → kein Warmup-Reprime. Server-Restart nötig (Recall-Modell lädt beim Boot). KURATIERTER Eintrag (user)."),
     ("9.341.1", "2026-07-14", "fix(KYC-Preset: Erster-Send-Lücke — beim ALLERERSTEN Send einer frischen Projekt-Session ist session.project noch leer (wird erst im Worker gestempelt), der Sticky-Block in _handle_chat löste den Preset also über einen leeren Projektnamen auf → kein Auto-Anonymise auf Turn 1. Fix: Preset-Auflösung nutzt `project_name or session.project` (project_name = body.project, in _handle_chat in Scope). Beim Live-E2E VOR dem ersten Test-Send gefunden und gefixt; der E2E lief anschließend mit dem Fix (Mapping ab Turn 1 ohne Modal verifiziert). Tests: test_gdpr_project_preset + test_chat_worker_helpers grün (40)."),
@@ -3716,12 +3717,30 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         except Exception:
             mapping_id = ""
         if not mapping_id:
-            return None, args  # no anonymisation active → gate inactive
+            # ── M10(b) / G13: AD-HOC-EGRESS-SCHUTZ OHNE PROJEKT ────────────
+            # Der Schutz hing bisher am Projekt-Preset — die Arbeit tut das
+            # nicht: die MEHRHEIT der realen KYC-/DD-/Compliance-Chats lief
+            # PROJEKTLOS (587a737dc21d, 1a830369e762, 088683fc47bc, …). Kein
+            # Preset → kein Turn-1-Auto-Anonymise → kein Mapping → und damit
+            # war dieser Gate KOMPLETT AUS: der Klarname ging in Turn 1 an die
+            # Suchmaschine, bevor irgendein Schutz greifen konnte.
+            #
+            # Ohne Mapping gibt es nichts zu über-/rückübersetzen — der
+            # FRISCH-SCAN (§3) braucht aber gar keins. Er läuft daher auch
+            # hier und refust/fragt bei Personen-PII. Die AUTO-ANONYMISIERUNG
+            # bleibt unverändert Modal-/Sticky-gesteuert (M10 ändert NICHT,
+            # wann pseudonymisiert wird — nur, wann der EGRESS gegated ist).
+            try:
+                if not (_get_gdpr_scanner_config() or {}).get("enabled"):
+                    return None, args
+            except Exception:
+                return None, args
+        # ab hier: Mapping aktiv ODER Scanner aktiv (Ad-hoc-Schutz)
     except Exception:
         return None, args
     try:
         import pseudonymizer as _ps
-        mapping = _ps.get_mapping(mapping_id)
+        mapping = _ps.get_mapping(mapping_id) if mapping_id else None
         cfg = _get_gdpr_scanner_config()
         mode = cfg.get("web_egress") or "refuse"
         if mode not in _WEB_EGRESS_MODES:
@@ -3813,9 +3832,40 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         fake_kinds: list = []
         denied_kinds: list = []
         released_kinds: list = []
+        policy_released_kinds: list = []
         translate_pairs: list = []   # (fake, original) — released only
         for fake, (orig, rid) in known_fakes.items():
             if not any(v in haystack for v in _web_gate_value_variants(fake)):
+                continue
+            # ── M5 (G3): AUTO-RELEASE per stehendem Policy-Consent ──────────
+            # Trägt der Fake einen Wert, dessen KATEGORIE die Policy ohnehin
+            # passieren lässt (business_id/organisation, network), dann wird er
+            # für den ausgehenden Request hin-übersetzt statt refused.
+            #
+            # Warum das nötig ist (G3 — die Komposition tötete den Use-Case):
+            # der Gate liess `organisation` beim Frisch-Scan durch (§3), aber
+            # sobald M4 den Firmennamen FAKT, kennt das Modell nur noch den
+            # Fake — und Fakes refusten in JEDEM Modus. Jede Einzelkomponente
+            # war korrekt, die Komposition machte Firmen-Recherche UNMÖGLICH:
+            # der Wert, den die Policy passieren liesse, konnte den Gate nie
+            # erreichen. Adverse-Media-, Sanktions- und Registry-Screening über
+            # Firmen IST aber der Zweck der betroffenen Projekte.
+            #
+            # Sicherheit: das Modell sieht das Original NIE — die Übersetzung
+            # lebt nur in der Dispatch-Kopie der Args (_web_release_translate_args),
+            # und die Ergebnisse kommen durch den L3b-Seam re-anonymisiert
+            # zurück. Die Suchmaschine bekommt den Firmennamen, den die Policy
+            # ihr ohnehin zugesteht. PERSONEN-Fakes sind unberührt: ihre
+            # Kategorie (contact/personal) steht nicht in den Pass-Kategorien,
+            # sie refusen weiter in jedem Modus (Regressionstest hält das fest).
+            # Der Auto-Release gilt in JEDEM Modus (auch `ask`): die Policy hat
+            # für diese Kategorie bereits generell zugestimmt — die Nutzerin
+            # jeden Firmennamen einzeln freiklicken zu lassen, wäre eine
+            # Rückfrage ohne Entscheidungsgehalt.
+            if (orig
+                    and PII_RULE_CATEGORIES.get(rid) in _WEB_GATE_PASS_CATEGORIES):
+                translate_pairs.append((fake, orig))
+                policy_released_kinds.append(rid)
                 continue
             if mode == "ask" and orig:
                 st = _consent_status(orig)
@@ -3844,6 +3894,13 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         for orig, rid in known_origs.items():
             if not any(v in haystack for v in _web_gate_value_variants(orig)):
                 continue
+            # M5: Pass-Kategorie (Firma/Netz) → stehender Policy-Consent, weder
+            # Refusal noch Rückfrage. Spiegelt die Fake-Seite oben; ohne das
+            # würde der ECHTE Firmenname (den die Policy zulässt) refused,
+            # sobald er je gemappt wurde.
+            if PII_RULE_CATEGORIES.get(rid) in _WEB_GATE_PASS_CATEGORIES:
+                policy_released_kinds.append(rid)
+                continue
             if mode == "ask":
                 st = _consent_status(orig)
                 if st == "released":
@@ -3860,6 +3917,23 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         # per-category actions (contact=ignore must not blind the gate to
         # names). Pass-categories stay ignore so technical queries never
         # trip; rule_overrides are dropped for the same reason.
+        #
+        # BEKANNTE FAKES WERDEN VORHER MASKIERT (M5): Fakes sind shape-
+        # preserving und sehen aus wie echte Werte — der Frisch-Scan
+        # klassifiziert sie sonst als FRISCHE PII und schickt sie in den
+        # Consent-Dialog. Gemessen: der Org-Fake 'Marbach Textil' wurde als
+        # PERSONEN-Name (rule=name, category=contact) wiedererkannt und der
+        # Auto-Release damit im ask-Modus wieder zunichte gemacht. Über die
+        # Fakes ist in §1 bereits entschieden; sie hier erneut zu bewerten wäre
+        # eine Doppel-Bewertung mit der falschen Kategorie. Maskiert wird
+        # LÄNGENTREU, damit die Offsets des Scans gültig bleiben.
+        scan_text_in = raw_haystack
+        try:
+            for _fk in sorted(known_fakes, key=len, reverse=True):
+                if _fk and len(_fk) >= 4 and _fk in scan_text_in:
+                    scan_text_in = scan_text_in.replace(_fk, "\x00" * len(_fk))
+        except Exception:
+            scan_text_in = raw_haystack
         try:
             gate_cfg = dict(cfg)
             gate_cfg["categories"] = {
@@ -3867,7 +3941,7 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
                                  else "warn")}
                 for cat in cfg.get("categories", {})}
             gate_cfg["rule_overrides"] = {}
-            for f in _pii_scan_text(raw_haystack, cfg=gate_cfg):
+            for f in _pii_scan_text(scan_text_in, cfg=gate_cfg):
                 if f.get("category") in _WEB_GATE_PASS_CATEGORIES:
                     continue
                 matched_raw = raw_haystack[
@@ -3923,16 +3997,29 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
             if released_kinds:
                 _web_gate_audit(tool_name, released_kinds, mode,
                                 kind="released")
+            if policy_released_kinds:
+                _web_gate_audit(tool_name, policy_released_kinds, mode,
+                                kind="policy_released")
             return None, args
 
         # ── non-ask modes (Phase-1 semantics) ────────────────────────────
-        if not orig_kinds:
-            return None, args
-        if mode == "allow":
+        # M5: der Auto-Release gilt in JEDEM Modus — die Hin-Übersetzung muss
+        # daher auch hier laufen (vorher hing sie im ask-only-Zweig fest).
+        # WICHTIG: nur auf den DURCHLASS-Pfaden übersetzen. Ein Refusal darf
+        # die übersetzten (= echten) Args NICHT zurückgeben — der Aufrufer
+        # verwirft sie zwar, aber ein Security-Gate reicht Klarwerte nicht auf
+        # einem Pfad heraus, auf dem es gerade "nein" sagt.
+        if orig_kinds and mode != "allow":
+            _web_gate_audit(tool_name, orig_kinds, mode, kind="original")
+            return _web_gate_refusal(orig_kinds, fakes=False), args
+        if translate_pairs:
+            args = _web_release_translate_args(args, translate_pairs)
+        if policy_released_kinds:
+            _web_gate_audit(tool_name, policy_released_kinds, mode,
+                            kind="policy_released")
+        if orig_kinds:   # mode == "allow"
             _web_gate_audit(tool_name, orig_kinds, mode, kind="allowed")
-            return None, args
-        _web_gate_audit(tool_name, orig_kinds, mode, kind="original")
-        return _web_gate_refusal(orig_kinds, fakes=False), args
+        return None, args
     except Exception as e:
         # Fail CLOSED: a mapping is active (checked above), so an unexpected
         # gate crash must not silently open the egress path (CLAUDE.md rule 12).
@@ -4023,10 +4110,13 @@ def _web_gate_audit(tool_name: str, kinds: list, mode: str, *, kind: str) -> Non
     """Audit row per gate decision — kinds only, never values.
     kind: fake/original (refused) · denied (user refused/revoked the release)
     · allowed (allow mode) · released (ask mode, user-released values left the
-    machine — possibly translated fake→original)."""
+    machine — possibly translated fake→original) · policy_released (M5: the
+    category is one the policy passes anyway — auto-translated fake→original
+    for the outgoing request, no dialog)."""
     # L7b: tally the decision on the request context so the worker can surface
     # a per-turn "Datenschutz"-strip (metadata.gdpr_degradation) explaining
     # WHY the output differs. Counts only, never values.
+    _PASSED = ("allowed", "released", "policy_released")
     try:
         _ctx = get_request_context()
         _d = _ctx._gdpr_degradation
@@ -4034,6 +4124,7 @@ def _web_gate_audit(tool_name: str, kinds: list, mode: str, *, kind: str) -> Non
             _d = {}
             _ctx._gdpr_degradation = _d
         _key = ("web_released" if kind == "released"
+                else "web_policy_released" if kind == "policy_released"
                 else "web_allowed" if kind == "allowed"
                 else "web_denied" if kind == "denied"
                 else "web_blocked")
@@ -4046,12 +4137,12 @@ def _web_gate_audit(tool_name: str, kinds: list, mode: str, *, kind: str) -> Non
         _audit_log.log_action(
             agent=(get_request_context().current_agent.agent_id
                    if get_request_context().current_agent else "main"),
-            action_type=("pii_web_egress" if kind in ("allowed", "released")
+            action_type=("pii_web_egress" if kind in _PASSED
                          else "pii_web_blocked"),
             tool_name=tool_name,
             args_summary=f"kinds={sorted(set(kinds))} mode={mode} match={kind}",
             result_summary="",
-            result_status=("warning" if kind in ("allowed", "released")
+            result_status=("warning" if kind in _PASSED
                            else "blocked"),
             session_id=get_request_context().current_session_id or None,
             source="web_egress_gate",
@@ -11769,7 +11860,7 @@ _gdpr_scanner_cache_time: float = 0.0
 # explicit `preset=` param (HTTP-handler threads that know the session's
 # project pass it) > request-context field `gdpr_project_preset` (set by
 # apply_domain_context for worker/scheduler/background turns) > none.
-GDPR_PROJECT_PRESETS = ("kyc", "kyc_local")
+GDPR_PROJECT_PRESETS = ("kyc", "kyc_local", "screening")
 
 
 def _gdpr_apply_project_preset(cfg: dict, preset: str) -> dict:
@@ -11778,20 +11869,42 @@ def _gdpr_apply_project_preset(cfg: dict, preset: str) -> dict:
     kyc:        scanner ON + web_egress 'ask' (consent per value) + the name
                 rule raised out of the default contact=ignore hole (§0.5 of
                 PII_ANALYSIS_PARITY_HANDOVER.md) so the checked person's name
-                is actually anonymised.
+                is actually anonymised. Firmennamen bleiben im KLARTEXT —
+                beim KYC einer PRIVATPERSON ist die Firma nicht das Prüfsubjekt.
     kyc_local:  scanner ON + PII turns run on the local fallback model — the
                 only zero-egress route; background PII calls swap local too.
-    Only-strengthen rule: an admin's explicit stronger name setting wins —
-    the overlay touches `name` only when it currently resolves to ignore.
+    screening:  wie kyc, PLUS Organisationen als Entitäten (M4) — für
+                Workloads, in denen die FIRMA das Prüfsubjekt ist
+                (Risikoanalyse, Compliance-Prüfung, Adverse-Media, UBO,
+                Sanktions-/Registry-Screening). Der Firmenname wird gegenüber
+                dem CLOUD-MODELL pseudonymisiert (eine Entität pro Firma, alle
+                Oberflächenformen inkl. ALLCAPS-Registryform → EIN Fake), aber
+                per M5-Auto-Release im ausgehenden SUCH-Request wieder
+                eingesetzt — die Kategorie `business_id` lässt die Policy
+                ohnehin passieren. Ergebnis: Registry-/Sanktions-/Adverse-
+                Media-Recherche funktioniert vollständig, während der
+                Cloud-Provider den Firmennamen nie zu sehen bekommt.
+                Personen bleiben wie bei kyc geschützt (Consent-Klick).
+
+    Only-strengthen rule: an admin's explicit stronger setting wins — the
+    overlay raises a rule only when it currently resolves to `ignore`.
     """
     if preset not in GDPR_PROJECT_PRESETS:
         return cfg
     out = dict(cfg)
     out["enabled"] = True
+    _ro = dict(cfg.get("rule_overrides") or {})
     if _pii_effective_action("name", cfg) == "ignore":
-        out["rule_overrides"] = {**(cfg.get("rule_overrides") or {}),
-                                 "name": "warn"}
-    if preset == "kyc":
+        _ro["name"] = "warn"
+    if preset == "screening" and _pii_effective_action("organisation", cfg) == "ignore":
+        # MUSS ein rule_override sein, kein Kategorie-Bump: die Live-Config
+        # trägt rule_overrides['organisation']='ignore', und rule_overrides
+        # schlagen die Kategorie in _pii_effective_action. Ein Bump von
+        # business_id würde davon still geschattet — das Preset wäre wirkungslos.
+        _ro["organisation"] = "warn"
+    if _ro != (cfg.get("rule_overrides") or {}):
+        out["rule_overrides"] = _ro
+    if preset in ("kyc", "screening"):
         out["web_egress"] = "ask"
     else:  # kyc_local
         out["background_pii_action"] = "swap_to_local"
