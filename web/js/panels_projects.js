@@ -407,6 +407,12 @@ async function loadProjectDetail(agentId, projectName) {
     if (disableWebCb) {
       disableWebCb.checked = !!project.disable_web_search;
     }
+    // Render the GDPR preset (L7a) select state.
+    const gdprPresetSel = document.getElementById('project-gdpr-preset-select');
+    if (gdprPresetSel) {
+      gdprPresetSel.value = ['kyc', 'kyc_local'].includes(project.gdpr_preset)
+        ? project.gdpr_preset : '';
+    }
     // Code Mode is fixed at creation. For a code project: show the Code Mode
     // section (working-dir + init), hide the Sources/ingest tree. For a normal
     // project: hide the Code Mode section entirely. No toggle (immutable mode).
@@ -1676,6 +1682,38 @@ async function toggleProjectDisableWeb(enabled) {
     showToast('Einstellung konnte nicht geändert werden', true);
     const cb = document.getElementById('project-disable-web-checkbox');
     if (cb) cb.checked = !enabled;
+  }
+}
+
+// Set the project-level GDPR preset (L7a). '' = none, 'kyc' = scanner on +
+// auto-anonymise + web consent per value, 'kyc_local' = all turns on the
+// local fallback model (zero egress). Activating a preset also turns the
+// research mode on server-side (handover §L7a) — reflect that in the UI.
+async function setProjectGdprPreset(preset) {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  const prev = (state._projectDetail && state._projectDetail.gdpr_preset) || '';
+  try {
+    await API.updateProject(agentId, projectName, { gdpr_preset: preset || '' });
+    if (state._projectDetail) {
+      state._projectDetail.gdpr_preset = preset || '';
+      if (preset && !prev) state._projectDetail.research_mode = true;
+    }
+    if (preset && !prev) {
+      const cb = document.getElementById('project-research-mode-checkbox');
+      if (cb) cb.checked = true;
+      if (state._projectResearchModeCache) {
+        state._projectResearchModeCache[agentId + '::' + projectName] = true;
+      }
+    }
+    showToast(preset === 'kyc' ? 'KYC-Preset aktiviert — Chats dieses Projekts anonymisieren automatisch'
+      : preset === 'kyc_local' ? 'KYC lokal aktiviert — Chats dieses Projekts laufen auf dem lokalen Modell'
+      : 'KYC-Preset deaktiviert — globale Datenschutz-Einstellungen gelten');
+  } catch (e) {
+    showToast('Preset konnte nicht geändert werden', true);
+    const sel = document.getElementById('project-gdpr-preset-select');
+    if (sel) sel.value = prev;
   }
 }
 

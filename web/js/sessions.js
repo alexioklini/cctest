@@ -253,6 +253,12 @@ async function openSession(sessionId, agentId) {
     // already-anonymising session — once consent was given, every send
     // continues anonymising until the user clears the pref.
     chat.hasGdprMapping = !!data.has_gdpr_mapping;
+    // L7a: effective project GDPR preset ('' | 'kyc' | 'kyc_local'). A preset
+    // project made the GDPR decision at project level — sendMessage skips the
+    // per-send PII modal and forwards the preset action (the server enforces
+    // it regardless; this is UX parity).
+    chat.gdprProjectPreset = ['kyc', 'kyc_local']
+      .includes(data.gdpr_project_preset) ? data.gdpr_project_preset : '';
     // Sync state.currentProject to the loaded chat's project. Without this,
     // sticky values from a previous project-detail visit leak into chats
     // opened from the chats list (and vice versa) — every outgoing turn

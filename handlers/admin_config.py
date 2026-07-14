@@ -747,6 +747,14 @@ class AdminConfigHandlers:
                     self._send_json({"error": "background_anonymise_fail_action must be one of: swap_to_local, abort"}, 400)
                     return
                 gs["background_anonymise_fail_action"] = v
+            # Web-egress policy for anonymising sessions (L4/L7 GUI knob).
+            if "web_egress" in gs_in:
+                v = gs_in["web_egress"]
+                if v not in engine._WEB_EGRESS_MODES:
+                    self._send_json({"error": "web_egress must be one of: "
+                                     + ", ".join(engine._WEB_EGRESS_MODES)}, 400)
+                    return
+                gs["web_egress"] = v
 
             # Category actions — only accept known categories + valid actions.
             if "categories" in gs_in:

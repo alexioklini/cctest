@@ -528,6 +528,8 @@ function collectGdprFormConfig() {
   const allowlistRaw = document.getElementById('gdpr-email-allowlist')?.value || '';
   const email_allowlist = allowlistRaw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
+  const webEgress = document.getElementById('gdpr-web-egress')?.value || 'refuse';
+
   return {
     enabled, server_log: serverLog,
     confidence_lower: confLower, confidence_upper: confUpper,
@@ -535,6 +537,7 @@ function collectGdprFormConfig() {
     background_pii_action: bgPii,
     background_ask_action: bgAsk,
     background_anonymise_fail_action: bgFail,
+    web_egress: webEgress,
     categories, rule_overrides, count_points, email_allowlist,
   };
 }

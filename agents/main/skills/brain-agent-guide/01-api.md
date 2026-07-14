@@ -271,6 +271,13 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `POST /v1/agents/<id>/projects` — `{action, name, ...}`
   actions: `create | delete | archive | restore | rename | edit |
   set_research_mode`
+- Project update accepts `gdpr_preset: "" | "kyc" | "kyc_local"` (v9.341.0,
+  KYC preset — overlays the gdpr_scanner config for all turns of the
+  project; activating it also sets `research_mode: true` unless an explicit
+  research_mode is sent in the same update). `GET /v1/sessions/<id>/messages`
+  exposes the session's effective preset as `gdpr_project_preset`.
+  `POST /v1/services/server` accepts `gdpr_scanner.web_egress`
+  (`refuse|ask|block_group|allow`), surfaced back in the services GET.
 - `GET .../projects/<name>/notes` / `POST` — project notes
 - `GET .../projects/<name>/docs` — list ingested docs
 - `GET .../projects/<name>/sources` — flat list of the project's individual

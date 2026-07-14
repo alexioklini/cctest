@@ -1915,6 +1915,16 @@ async function _genTab_gdpr(C) {
             </select>
           </div>
           <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wird für Hintergrund-LLM-Aufrufe verwendet (Next-Prompt, Chat-Zusammenfassung, Memory-Classifier, Worker-Summariser, geplante Aufgaben) und für die automatische Umleitung im Eingabefeld, wenn ein blockierender Befund auf ein Cloud-Modell trifft. ${hasLocals?'':'<span style="color:var(--warning,#b45309)">Keine lokalen Modelle konfiguriert — fügen Sie zuerst eines unter Modelle hinzu.</span>'}</div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+            <span style="font-size:12px;color:var(--text-300);min-width:200px">Websuche in anonymisierten Chats</span>
+            <select class="form-select" id="gdpr-web-egress" style="flex:1">
+              <option value="refuse" ${(gs.web_egress||'refuse')==='refuse'?'selected':''}>Verweigern — Suchen mit geschützten Werten werden abgelehnt</option>
+              <option value="ask" ${gs.web_egress==='ask'?'selected':''}>Nachfragen — Freigabe pro Wert (empfohlen für KYC-Analysen)</option>
+              <option value="block_group" ${gs.web_egress==='block_group'?'selected':''}>Web-Tools ausblenden — das Modell plant ohne Websuche</option>
+              <option value="allow" ${gs.web_egress==='allow'?'selected':''}>Durchlassen — Originale gehen auditiert raus (Fakes bleiben blockiert)</option>
+            </select>
+          </div>
+          <div style="font-size:11px;color:var(--text-400);margin-top:2px">Gilt nur für Chats mit aktiver Anonymisierung: entscheidet, was passiert, wenn das Modell einen geschützten Wert (Name, Geburtsdatum, …) an eine Suchmaschine schicken will. Freigaben aus dem „Nachfragen“-Modus gelten pro Chat und sind im Datenschutz-Verlauf widerrufbar.</div>
         </div>
 
         ${SEC('NER-Modelle (Named Entity Recognition)')}

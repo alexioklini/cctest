@@ -1007,6 +1007,35 @@ function renderAssistantMessage(msg, idx) {
       </div>`;
   }
 
+  // L7b Degradations-Anzeige: one compact per-turn strip explaining WHY this
+  // answer may differ in an anonymising session (metadata.gdpr_degradation,
+  // tallied server-side at the web gate / doc_checks dispatch / PDF callback;
+  // counts only, never values — plus the unrestored count from
+  // metadata.gdpr_unrestored). An analyst must see that a gap is privacy-
+  // driven, not an analytic finding.
+  let gdprDegradationHtml = '';
+  {
+    const dg = msg.metadata?.gdpr_degradation || {};
+    const unre = msg.metadata?.gdpr_unrestored;
+    const parts = [];
+    const n = k => parseInt(dg[k]) || 0;
+    if (n('web_blocked')) parts.push(`Websuche ${n('web_blocked')}× nicht ausgeführt (geschützte Werte)`);
+    if (n('web_denied')) parts.push(`Websuche ${n('web_denied')}× blockiert (Freigabe verweigert)`);
+    if (n('web_released')) parts.push(`Websuche ${n('web_released')}× mit freigegebenen Werten`);
+    if (n('web_allowed')) parts.push(`Websuche ${n('web_allowed')}× mit Originalwerten (auditiert)`);
+    if (n('doc_checks')) parts.push(`Dokument-Prüfung serverseitig (${n('doc_checks')}×)`);
+    if (n('pdf_refused')) parts.push('PDF-Erzeugung abgelehnt (nicht rückübersetzbar) → HTML/MD');
+    if (unre && parseInt(unre.count)) parts.push(`${parseInt(unre.count)} Wert${parseInt(unre.count) === 1 ? '' : 'e'} nicht rückübersetzbar`);
+    if (parts.length) {
+      gdprDegradationHtml = `
+      <div style="font-size:11px;color:var(--text-400);margin:4px 0;display:flex;align-items:baseline;gap:6px;flex-wrap:wrap"
+           title="Diese Antwort entstand mit aktiver Anonymisierung. Eine datenschutzbedingte Einschränkung ist KEIN Analysebefund — als 'nicht prüfbar (Datenschutz)' werten.">
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.8" style="flex:none;align-self:center"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span>Datenschutz dieser Antwort:</span> ${parts.map(esc).join('<span style="color:var(--text-400)"> · </span>')}
+      </div>`;
+    }
+  }
+
   // Reference badges — split into Zitiert (always visible) and Durchsucht
   // (collapsed via <details>). Zitiert pulls from `[Quelle: <basename>...]`
   // markers in this assistant message's text; Durchsucht is the rest of the
@@ -1175,6 +1204,7 @@ function renderAssistantMessage(msg, idx) {
       ${filesHtml}
       ${pinnedSourcesHtml}
       ${webSourcesHtml}
+      ${gdprDegradationHtml}
       ${refsHtml}
       <div class="msg-actions-bar">
         ${turnStatsHtml}

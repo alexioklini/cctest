@@ -2140,13 +2140,14 @@ einen geschützten Wert der Sitzung (auch versteckt in einer Web-Adresse),
 wird der Aufruf angehalten. Der Assistent weist die betroffene Prüfung dann
 ehrlich als „nicht prüfbar (Datenschutz)" aus — er behauptet **nicht**
 fälschlich „keine Treffer". Rein technische Suchen (Gerätemodelle, Normen,
-Fehlermeldungen) laufen normal durch. Admins wählen das Verhalten unter
-`gdpr_scanner.web_egress` in der config.json: `refuse` (Standard), `ask`
-(Freigabe-Dialog, siehe nächste Frage), `block_group` (Web-Werkzeuge in
-anonymisierten Chats ganz ausblenden) oder `allow` (echte Werte dürfen raus,
-werden aber im Audit-Log protokolliert). Suchen mit **Ersatzwerten** (den
-Pseudonymen) werden immer verweigert — sie würden nichts finden oder fremde,
-echte Personen treffen.
+Fehlermeldungen) laufen normal durch. Admins wählen das Verhalten seit
+v9.341.0 direkt unter **Einstellungen → GDPR → Master-Schalter → „Websuche in
+anonymisierten Chats"** (vorher nur `gdpr_scanner.web_egress` in der
+config.json): `refuse`/Verweigern (Standard), `ask`/Nachfragen
+(Freigabe-Dialog, siehe nächste Frage), `block_group`/Web-Tools ausblenden
+oder `allow`/Durchlassen (echte Werte dürfen raus, werden aber im Audit-Log
+protokolliert). Suchen mit **Ersatzwerten** (den Pseudonymen) werden immer
+verweigert — sie würden nichts finden oder fremde, echte Personen treffen.
 
 **F: Kann ich die Web-Recherche für einzelne Werte freigeben?**
 A: Ja — seit v9.338.0 mit dem Freigabe-Modus (`gdpr_scanner.web_egress:
@@ -2235,6 +2236,35 @@ vollständig rückübersetzt); schreibt er dennoch ein PDF mit Ersatzwerten,
 erscheint eine deutliche Warnung an der Datei und der Assistent erhält den
 Hinweis, den Bericht als HTML/Markdown neu zu erzeugen. Ein PDF ohne
 geschützte Werte (z. B. ein rein technischer Anhang) bleibt unbeanstandet.
+
+**F: Was ist das KYC-Preset in den Projekt-Einstellungen?**
+A: Seit v9.341.0 können Projekte, in denen Sie personenbezogene Unterlagen
+prüfen (Ausweise, KYC-Akten, Betrugsanalysen), ihre Datenschutz-Haltung
+einmalig festlegen: **Projekt-Einstellungen → Projektmodus → „PII-Analyse
+(KYC-Preset)"**. Mit **KYC** ist der PII-Scanner in diesem Projekt immer
+aktiv — unabhängig von der globalen Einstellung —, Namen und Kenndaten
+werden ab der ersten Nachricht automatisch durch konsistente Ersatzwerte
+geschützt (ohne den Rückfrage-Dialog pro Chat), Websuchen zu geschützten
+Werten nutzen den Freigabe-Dialog (siehe oben), die serverseitigen
+Dokument-Prüfwerkzeuge (`doc_checks`: MRZ-Prüfziffern, Datums-Abgleiche,
+Identitäts-Konsistenz) stehen dem Assistenten direkt zur Verfügung, und der
+Recherche-Modus (Quellenpflicht) wird mit eingeschaltet. Mit **KYC lokal**
+laufen alle Chats des Projekts stattdessen komplett auf dem lokalen
+Fallback-Modell — nichts verlässt den Rechner, dafür geringere
+Modellqualität (das Fallback-Modell muss unter Einstellungen → GDPR
+konfiguriert sein). Ein bewusster Opt-out per Schild-Symbol im Eingabefeld
+gewinnt weiterhin über das Preset.
+
+**F: Was bedeutet die Zeile „Datenschutz dieser Antwort: …" unter einer Antwort?**
+A: In anonymisierten Chats zeigt diese Zeile (seit v9.341.0), was bei dieser
+Antwort aus Datenschutzgründen anders lief als in einem ungeschützten Chat —
+z. B. „Websuche 2× nicht ausgeführt (geschützte Werte)", „Websuche 1× mit
+freigegebenen Werten", „Dokument-Prüfung serverseitig (3×)", „PDF-Erzeugung
+abgelehnt" oder „1 Wert nicht rückübersetzbar". Sie hilft, eine
+datenschutzbedingte Lücke von einem echten Prüfungsbefund zu unterscheiden:
+Wenn dort steht, dass eine Websuche nicht ausgeführt wurde, heißt „kein
+Web-Treffer erwähnt" eben **nicht** „im Web gibt es nichts". Die Zeile nennt
+nur Anzahlen, nie die geschützten Werte selbst.
 
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an

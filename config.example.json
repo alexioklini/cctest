@@ -6012,7 +6012,8 @@
     },
     "confidence_lower": 0.5,
     "confidence_upper": 0.85,
-    "background_ask_action": "anonymise"
+    "background_ask_action": "anonymise",
+    "web_egress": "refuse"
   },
   "quotas": {
     "enabled": true,

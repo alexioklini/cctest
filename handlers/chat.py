@@ -2307,6 +2307,12 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                 _warns = _ctx._gdpr_file_warnings or []
                 _warns.append(warn)
                 _ctx._gdpr_file_warnings = _warns
+                # L7b: tally for the per-turn degradation strip.
+                _dg = _ctx._gdpr_degradation
+                if _dg is None:
+                    _dg = {}
+                    _ctx._gdpr_degradation = _dg
+                _dg["pdf_refused"] = int(_dg.get("pdf_refused", 0)) + 1
             except Exception:
                 pass
             if engine._audit_log:
@@ -3562,8 +3568,14 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             # pending anonymise action this turn.
             _gdpr_web_block = False
             try:
+                # Runs BEFORE apply_domain_context sets the context preset →
+                # resolve the project's GDPR preset (L7a) explicitly here.
                 _gdpr_web_block = (
-                    (engine._get_gdpr_scanner_config().get("web_egress")
+                    (engine._get_gdpr_scanner_config(
+                        preset=engine._gdpr_project_preset_for(
+                            session.agent_id,
+                            project_name or session.project or "")
+                     ).get("web_egress")
                      or "refuse") == "block_group"
                     and bool(getattr(session, "_gdpr_mapping_id", None)
                              or getattr(session, "_gdpr_pending_action", "")))
@@ -5334,6 +5346,20 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     "model": _local_swap,
                                     "active": True,
                                 }
+                        # L7b Degradations-Anzeige: drain the per-turn privacy
+                        # tallies (web gate refusals/consents, server-side
+                        # doc_checks, refused PDFs) into the assistant turn's
+                        # metadata so the UI can explain WHY this answer
+                        # differs (a privacy-driven gap must never read as an
+                        # analytic finding). Counts only, never values. The
+                        # unrestored count lives in metadata.gdpr_unrestored.
+                        try:
+                            _degr = engine.get_request_context()._gdpr_degradation
+                            if isinstance(_degr, dict) and _degr:
+                                msg_metadata["gdpr_degradation"] = dict(_degr)
+                            engine.get_request_context()._gdpr_degradation = None
+                        except Exception:
+                            pass
                         # ── Experten-Gremium: Executor-Post-Verifikation ──
                         # (v9.286.0, INTERACTIVE delegate turns only) BEFORE
                         # persisting the answer, the PLANNER audits it against
@@ -7364,6 +7390,14 @@ class ChatHandlerMixin:
         # ignore the user's opt-out. The flag is in-memory only — a reload
         # resets it to False, at which point a fresh PII find re-prompts.
         _opted_out = bool(getattr(session, "_gdpr_skip_auto", False))
+        # L7a: per-project KYC preset — the project declares its GDPR posture
+        # so nobody is re-asked per session. Resolved here (HTTP thread, no
+        # request context yet) and passed into every config read below.
+        try:
+            _kyc_preset = engine._gdpr_project_preset_for(
+                session.agent_id, session.project or "")
+        except Exception:
+            _kyc_preset = ""
         # A LOCAL model never sends data off the machine, so anonymisation is
         # pointless there — the sticky "session anonymised once → keep
         # anonymising" rule must NOT fire when this turn runs on a local model
@@ -7379,17 +7413,29 @@ class ChatHandlerMixin:
         try:
             _is_local_turn = bool(engine.is_model_local(session.model))
             if not _is_local_turn and gdpr_action == "local_model":
-                _fb = (engine._get_gdpr_scanner_config().get(
+                _fb = (engine._get_gdpr_scanner_config(preset=_kyc_preset).get(
                     "default_local_fallback_model") or "").strip()
                 _is_local_turn = bool(_fb and engine.is_model_local(_fb))
         except Exception:
             _is_local_turn = False
+        # kyc_local preset: the whole project runs on the local fallback —
+        # force the swap for any non-local turn unless the user made an
+        # explicit choice THIS turn (explicit choice wins; the swap below is
+        # session-sticky via session.model anyway, so turn 2 is local-native).
+        if _kyc_preset == "kyc_local" and not _is_local_turn and not gdpr_action:
+            gdpr_action = "local_model"
         if _is_local_turn and not gdpr_action:
             pass  # local model + no explicit choice → no auto-anonymise
         elif not gdpr_action and _pref == "anonymise":
             gdpr_action = "anonymise"
         elif (not gdpr_action and _had_prior_mapping and not _opted_out
               and _pref not in ("local_model", "continue")):
+            gdpr_action = "anonymise"
+        elif (not gdpr_action and _kyc_preset == "kyc" and not _opted_out
+              and _pref not in ("local_model", "continue")):
+            # KYC preset (L7a): anonymise from turn 1 — the preset is the
+            # standing consent, no per-session modal needed. An explicit
+            # user opt-out (shield) or explicit pref still wins above.
             gdpr_action = "anonymise"
         # Clear in-memory state only when we're NOT continuing an anonymise
         # session. When we are, rehydrate so the worker's anonymise branch
@@ -7420,7 +7466,7 @@ class ChatHandlerMixin:
         session._gdpr_pending_action = gdpr_action if gdpr_action == "anonymise" else ""
 
         if gdpr_action == "local_model":
-            _fallback = (engine._get_gdpr_scanner_config().get(
+            _fallback = (engine._get_gdpr_scanner_config(preset=_kyc_preset).get(
                 "default_local_fallback_model") or "").strip()
             if not _fallback:
                 self._send_json(
@@ -7472,7 +7518,7 @@ class ChatHandlerMixin:
         if gdpr_action in ("continue", "local_model") and isinstance(message, str) and message.strip():
             try:
                 import re as _re_pii
-                _cfg = engine._get_gdpr_scanner_config()
+                _cfg = engine._get_gdpr_scanner_config(preset=_kyc_preset)
                 if _cfg.get("enabled", True):
                     _findings = engine._pii_scan_text(message, cfg=_cfg, max_findings=100)
                     _seen_vals = set()

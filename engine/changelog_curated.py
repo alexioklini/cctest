@@ -29,6 +29,29 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.341.0",
+        "date": "2026-07-14",
+        "title": "KYC-Preset für Projekte mit sensiblen Personendaten",
+        "body": "Projekte, in denen Sie Ausweise, KYC-Akten oder andere "
+                "personenbezogene Unterlagen prüfen, können jetzt in den "
+                "Projekt-Einstellungen das Preset „PII-Analyse (KYC)“ "
+                "aktivieren: Namen und Kenndaten werden ab der ersten "
+                "Nachricht automatisch durch konsistente Ersatzwerte "
+                "geschützt (ohne Rückfrage-Dialog), Websuchen zu geschützten "
+                "Werten fragen einzeln um Ihre Freigabe, und "
+                "Dokument-Prüfungen laufen serverseitig auf den Originalen. "
+                "Alternativ hält „KYC lokal“ das gesamte Projekt auf dem "
+                "lokalen Modell — nichts verlässt den Rechner. Unter jeder "
+                "Antwort zeigt eine neue Datenschutz-Zeile, was aus "
+                "Datenschutzgründen anders lief (z. B. nicht ausgeführte "
+                "Websuchen), damit eine Schutz-Lücke nie wie ein "
+                "Prüfungsbefund aussieht. Admins steuern das Verhalten der "
+                "Websuche in anonymisierten Chats jetzt direkt in den "
+                "GDPR-Einstellungen.",
+        "audience": "user",
+        "versions": ["9.341.0"],
+    },
+    {
         "version": "9.340.0",
         "date": "2026-07-14",
         "title": "Warnung bei nicht rückübersetzbaren Berichten",

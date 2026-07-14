@@ -1590,6 +1590,29 @@ preamble goes in first-user-message instead.
   refuse. Releases are visible + revocable in the GDPR history modal
   (statuses "Web freigegeben"/"Web verweigert", per-row toggle). Audit:
   `pii_web_egress` with `match=released` for every executed released call.
+- **KYC project preset + degradation strip (9.341.0, L7)**: a project can
+  declare its GDPR posture once — `project.json → gdpr_preset` ('' | 'kyc' |
+  'kyc_local'), editable in the project settings ("PII-Analyse (KYC-Preset)"
+  select in the Projektmodus section). The preset OVERLAYS the global
+  `gdpr_scanner` config for every turn/background call of that project on a
+  COPY (the global config + cache stay untouched; resolution: explicit
+  `preset=` param > request-context `gdpr_project_preset` set by
+  `apply_domain_context` > global). `kyc`: scanner always ON in this project,
+  `web_egress='ask'`, the `name` rule is lifted out of the default
+  contact=ignore hole (only-strengthen — an admin's stronger setting wins),
+  the three doc_checks tools are surfaced in-prompt, auto-anonymise starts at
+  TURN 1 without the per-session modal (the preset IS the standing consent;
+  the composer shield opt-out still wins), and activating the preset turns
+  the project's research/citation mode on once. `kyc_local`: the honest
+  zero-egress alternative — every non-local turn of the project is swapped to
+  the local fallback model (clear 400 if none is configured); background PII
+  calls swap local too. The per-turn **degradation strip** (a shield line
+  under the reply, `metadata.gdpr_degradation` + `metadata.gdpr_unrestored`)
+  tells the analyst WHY the answer differs: refused/denied/released web
+  searches, server-side document checks, refused PDFs, unrestorable values —
+  counts only, never values; a privacy-driven gap must never read as an
+  analytic finding. The `web_egress` mode also gained a GUI knob
+  (Settings → GDPR → Master-Schalter, saved via `POST /v1/services/server`).
 - **SERVER-ONLY detection (9.200.0)**: the browser-side `PIIScanner` (the
   ~70 JS regex rules + Luhn/Mod11 validators) was DELETED. PII is detected
   exclusively in Python (`engine/pii_ner.py → _pii_rules` + `_pii_scan_text` +

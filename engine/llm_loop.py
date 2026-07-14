@@ -754,6 +754,17 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
                 elif isinstance(raw, dict):
                     raw = dict(raw)
                     raw["gdpr_warning"] = " | ".join(_fw)
+            # L7b: tally deterministic doc_checks verdicts for the per-turn
+            # degradation strip ("Dokument-Prüfung serverseitig") — only
+            # meaningful in anonymising sessions (mapping active).
+            if (_ctx._gdpr_mapping_id
+                    and name in ("mrz_verify", "doc_dates_check",
+                                 "identity_consistency")):
+                _dg = _ctx._gdpr_degradation
+                if _dg is None:
+                    _dg = {}
+                    _ctx._gdpr_degradation = _dg
+                _dg["doc_checks"] = int(_dg.get("doc_checks", 0)) + 1
         except Exception:
             pass
         if isinstance(raw, str):

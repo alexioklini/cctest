@@ -170,6 +170,7 @@ def _apply_bg_context(ctx: dict) -> None:
     tl.plan_mode = bool(ctx.get("plan_mode", False))
     tl.helpdesk_mode = bool(ctx.get("helpdesk_mode", False))
     tl.research_mode_override = ctx.get("research_mode_override", None)
+    tl.gdpr_project_preset = ctx.get("gdpr_project_preset", "") or ""
     tl.execution_overrides = ctx.get("execution_overrides") or {}
     tl.attachment_image_model = ctx.get("attachment_image_model") or ""
     tl._current_model = ctx.get("model") or None
@@ -687,6 +688,9 @@ def background_call(
         "workflow_run_id": "",
         "plan_mode": False,
         "research_mode_override": None,
+        # Inherit the caller's project GDPR preset (L7a) — a background call
+        # spawned from a KYC-project turn keeps the overlaid scanner config.
+        "gdpr_project_preset": engine.get_request_context().gdpr_project_preset or "",
         "execution_overrides": {},
         "attachment_image_model": "",
         "caveman_chat": 0,

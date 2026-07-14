@@ -98,6 +98,16 @@ class RequestContext:
     # python_exec after its changed-files loop so the MODEL sees the warning
     # in the same round. List[str] or None.
     _gdpr_file_warnings: object = None
+    # L7a: per-project GDPR preset ('' | 'kyc' | 'kyc_local'), resolved from
+    # project.json by apply_domain_context. _get_gdpr_scanner_config overlays
+    # the preset onto a COPY of the global config when this is set.
+    gdpr_project_preset: str = ""
+    # L7b: per-turn degradation tallies (dict or None) — counts of privacy-
+    # driven behavior changes (web_blocked/web_denied/web_released/doc_checks/
+    # pdf_refused), incremented at the gate/callback choke points, drained by
+    # the chat worker into the assistant turn's metadata.gdpr_degradation so
+    # the UI can explain WHY the output differs. Counts only, never values.
+    _gdpr_degradation: object = None
     # --- tracing / audit ---
     trace_id: object = None
     current_trace_span: object = None
