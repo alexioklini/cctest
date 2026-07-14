@@ -7393,9 +7393,11 @@ class ChatHandlerMixin:
         # L7a: per-project KYC preset — the project declares its GDPR posture
         # so nobody is re-asked per session. Resolved here (HTTP thread, no
         # request context yet) and passed into every config read below.
+        # `project_name` (body) covers the FIRST send of a fresh project
+        # session — session.project is only stamped later in the worker.
         try:
             _kyc_preset = engine._gdpr_project_preset_for(
-                session.agent_id, session.project or "")
+                session.agent_id, project_name or session.project or "")
         except Exception:
             _kyc_preset = ""
         # A LOCAL model never sends data off the machine, so anonymisation is
