@@ -2194,6 +2194,22 @@ Zeitabstände exakt erhalten bleiben. Analysen über mehrere Dokumente liefern
 so dieselben Zusammenhänge wie ohne Anonymisierung — im Chat sehen Sie
 weiterhin die echten Werte, nur das Cloud-Modell sieht die Ersatzwerte.
 
+**F: Sind fotografierte Ausweise in anonymisierten Chats geschützt?**
+A: Ja, seit v9.339.0 auch der automatisch erkannte Text. Wenn Sie ein Bild
+anhängen, liest Brain den Inhalt lokal per OCR aus (damit auch Modelle ohne
+Bildverständnis den Inhalt kennen). Dieser erkannte Text lief früher an der
+Anonymisierung vorbei — Name, Passnummer und Geburtsdatum eines
+fotografierten Ausweises konnten roh an das Cloud-Modell gehen. Jetzt wird
+er wie Ihr getippter Text anonymisiert. Zusätzlich liest Brain die
+maschinenlesbare Zone (MRZ) des Dokuments strukturiert und prüfziffern-
+validiert aus und legt die Ersatz-Identität schon **vor** der ersten Antwort
+an — dadurch werden auch schwer lesbare Schreibweisen aus schlechten Fotos
+und ungewöhnliche Namensfolgen konsistent ersetzt. Beachten Sie: die
+**Bild-Pixel selbst** sind nicht anonymisierbar — wenn ein bildfähiges
+Cloud-Modell aktiv ist, sieht es das Foto; nutzen Sie für Ausweisprüfungen
+im Zweifel ein lokales Modell oder die `doc_checks`-Werkzeuge (serverseitige
+Prüfung, es verlassen nur Prüf-Verdikte den Rechner).
+
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
 `ask_user_for_file` / `ask_user` (geplante Aufgaben können nicht

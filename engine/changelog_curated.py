@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.339.0",
+        "date": "2026-07-14",
+        "title": "Fotografierte Ausweise jetzt mitanonymisiert",
+        "body": "Bisher konnte der automatisch erkannte Text eines "
+                "Bild-Anhangs (z. B. ein fotografierter Ausweis) in "
+                "anonymisierten Chats unverändert an das Cloud-Modell gehen. "
+                "Jetzt wird er wie Ihr getippter Text geschützt — und die "
+                "maschinenlesbare Zone des Dokuments sorgt zusätzlich dafür, "
+                "dass Name, Passnummer und Geburtsdatum von Anfang an in "
+                "allen Schreibweisen (auch bei schlechter Fotoqualität) "
+                "konsistent durch dieselbe Ersatz-Identität ersetzt werden. "
+                "Die Analysequalität bleibt erhalten, ohne dass Klardaten "
+                "das System verlassen.",
+        "audience": "user",
+        "versions": ["9.339.0"],
+    },
+    {
         "version": "9.338.0",
         "date": "2026-07-14",
         "title": "Web-Recherche in anonymisierten Chats — mit Ihrer Freigabe",

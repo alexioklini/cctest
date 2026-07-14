@@ -1517,6 +1517,25 @@ preamble goes in first-user-message instead.
   timestamps are recognised. A word-bounded known-values sweep in the
   tool-result seam replaces registered names/e-mails even where the German
   NER misses them (English names in mempalace drawers, web results).
+- **OCR preamble + MRZ entity seed (9.339.0, L5)**: the automatic OCR text
+  of image attachments (the "[Bild-Anhänge — …]" block a text-only model
+  receives) is now placed in the SCANNABLE half of the message instead of
+  inside the scan-exempt path notice — a photographed ID card no longer
+  sends its MRZ/name/DOB raw to a cloud model in anonymising sessions
+  (legacy history is covered too: the split moves old blocks into the
+  scanned half on the wire). Additionally, attached ID documents seed the
+  entity map BEFORE the turn's scan: a checksum-validated MRZ read
+  (whitelist tesseract pass + ICAO-9303 parse; best-verified read first)
+  registers the person, the passport number (both forms) and the DOB's
+  surface forms, so every later occurrence — including OCR garble
+  ('BONNT DCMARTE'), reordered forms ('Stark Bonnie …') and mixed-case
+  file-name headings — maps onto ONE consistent fake identity from turn 1.
+  A conservative fuzzy entity sweep (never learns from garble, registers
+  what it replaces so path fragments round-trip through the args-deanon)
+  plus the word-bounded exact sweep now also run on the user-message half.
+  File PATHS in the attachment notice stay verbatim by design; image
+  PIXELS sent to a multimodal cloud model remain out of scope (use a local
+  vision model for that).
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,

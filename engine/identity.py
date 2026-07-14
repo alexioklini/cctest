@@ -356,6 +356,11 @@ def standard_variant_pairs(sur: str, givens: list[str],
             if len(glued_real) >= 8:
                 _add(glued_real, glued_fake)
     _add(sur.title(), fake_sur)
+    # Standalone ALLCAPS surname (VIZ surname line of a passport reads as a
+    # bare 'STARK' line) — single tokens are invisible to the fuzzy entity
+    # sweep, so the exact pair must exist; word-bounded sweep keeps
+    # 'STARKSTROM' safe like the Title-case pair.
+    _add(sur.upper(), fake_sur.upper())
     return pairs
 
 

@@ -1,6 +1,6 @@
 # PII-Analyse-Parität — Handover (L1–L7)
 
-**Stand:** 2026-07-14 (aktualisiert nach Session 4) · Basis-VERSION: `9.338.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 + L2 + L4 Phase 2 GELIEFERT (v9.334.0–v9.338.0). L5/L6/L7 offen — nächster Baustein L5 (OCR-Preamble scannen + MRZ-Entity-Seed; Reihenfolge §3).**
+**Stand:** 2026-07-14 (aktualisiert nach Session 5) · Basis-VERSION: `9.339.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 + L2 + L4 Phase 2 + L5 GELIEFERT (v9.334.0–v9.339.0). L6/L7 offen — nächster Baustein L6 (Report-Fidelity; Reihenfolge §3).**
 
 ---
 
@@ -13,8 +13,8 @@
 | **L3** Dispatch-Symmetrie | ✅ GELIEFERT | v9.336.0 |
 | **L2** Entitäts-Map + MRZ-Fakes + Datums-Offset | ✅ GELIEFERT | v9.337.0 |
 | **L4 Phase 2** (`ask`/Consent/`release_web`) | ✅ GELIEFERT | v9.338.0 |
-| **L5** OCR-Preamble | ⬜ NÄCHSTER Baustein | — |
-| **L6** Report-Fidelity | ⬜ offen | — |
+| **L5** OCR-Preamble + MRZ-Entity-Seed | ✅ GELIEFERT | v9.339.0 |
+| **L6** Report-Fidelity | ⬜ NÄCHSTER Baustein | — |
 | **L7** KYC-Preset | ⬜ offen | — |
 
 ### Was v9.334.0 (Web-Egress-Gate) konkret enthält
@@ -61,6 +61,15 @@
 - **(g) Audit:** `pii_web_egress` mit `match=released` je ausgeführtem freigegebenem Call; `pii_web_blocked` mit `match=denied`.
 - Tests: `tests/test_web_egress_gate.py` 17→28 (Consent granted/denied/Timeout-einmal-pro-Turn, Übersetzung dispatch-only + Slug, Variant-Intersection, Teilfreigabe, non-interactive, unreleased-nie-übersetzt). 221 Nachbar-Tests + js_gate grün.
 - **NICHT gebaut (bewusst):** kein GUI-Knob für `web_egress` (kommt mit L7-Preset); Websuche-Basket als implizite Freigabe (§4.3f, Hin-Übersetzungs-Teil) war schon durch L3b/F5-Teilschließung abgedeckt — der Basket-Prefetch läuft user-kuratiert und rück-anonymisiert, eine explizite release_web-Registrierung der Basket-URLs steht NICHT an (der Prefetch umgeht den Dispatch-Gate ohnehin nicht: `_build_web_sources` ruft `tool_web_fetch` direkt, ohne Mapping-Args — verifizieren, falls L7 das ändern will).
+
+### Was v9.339.0 (L5 — OCR-Preamble scannen + MRZ-Entity-Seed) konkret enthält
+
+- **L5a:** Der OCR-Block wird jetzt VOR der Pfad-Notice in die Nachricht gebaut (`_OCR_BLOCK_MARKER` in chat.py, bewusst NICHT in `_ATTACH_NOTICE_PREFIXES`) → er landet in der scannbaren typed-Hälfte. `_split_attachment_notice` behandelt LEGACY-History (Block noch innerhalb der Notice): der OCR-Teil wird in die typed-Hälfte gezogen (wire-only Reorder) — damit decken Scan UND Ledger-Rewrite (L3c) auch alte Nachrichten. Pfad-Liste bleibt exempt. Der im Handover vorgeschlagene NEUE Marker war unnötig — der bestehende Block-Header ist der Marker; nur die POSITION war das Problem.
+- **L5b:** `brain._gdpr_seed_entities_from_attachments` (Worker, Anonymise-Branch, VOR dem Text-Scan; Bilder+PDFs): `_ocr_mrz_strip` + `parse_mrz` je Anhang → `pseudonymizer.seed_identity_from_mrz`. Seeds: Entität+Standard-Varianten (Name braucht **≥2 verifizierende Prüfziffern** — die Namenszeile hat keine eigene; ein 1-Prüfziffern-Foto las `BONNTIMARTI`), Passnummer (bare + 10er-Form, Registrierung wie `_fake_mrz`), DOB-Oberflächenformen (ISO/EU/US/`05 FEB 1947`/`05 Feb 1947`, konsistent zu `_fake_date`). **Beste-Lesung-zuerst-Invariante:** Parses nach Anzahl verifizierter Checksummen sortiert (Dateinamen-Sortierung ließ am echten Material das Garble-Foto die Entität vergiften — dieselbe Failure-Klasse wie das L2-Text-Order-Seeding); Zweitlesung derselben Dokumentnummer darf attachen, NIE neu anlegen (`allow_new_entity=False`). Audit `pii_mrz_seed` (Extension+Kinds, nie Dateiname — der trägt den Klarnamen). Kosten: ~15s für 10 JPGs, einmalig pro Anhang-Turn.
+- **L5-Sweep (die eigentliche Schließung):** NEU `pseudonymizer.apply_entity_variants` — Fuzzy-Fenster-Sweep (2-5 Uppercase-Initial-Tokens; Separatoren Space/Komma/Hyphen/`<`, **Unterstrich/Slash bewusst nicht** → Dateinamen-Formen in Pfaden bleiben verbatim). Entscheidet per `entity_attach` (konservativ), rendert per `render_variant`, **lernt NIE aus dem Span** (Garble darf die Entität nicht anreichern) und **registriert jede Ersetzung als echtes forward/reverse-Paar** (L3a übersetzt gefakte Pfad-Anteile zurück; Ledger-Rewrite kennt die Form ab dann). Stufe 3 NUR in `<<`-Zeilen: ALLCAPS-Substring der Entitäts-Tokens (Lowercase-Bleed `peUEASTARK<<800"1`). Verdrahtet VOR `apply_known_values` an BEIDEN Stellen — `_gdpr_anon_tool_text` UND **neu der Worker-typed-Pfad** (vorher hatte nur der Tool-Result-Seam einen Sweep → die getippte Form `Stark Bonnie KO Kunde` (NER-Wortstellungs-Lücke, Session 3) blieb roh; damit GESCHLOSSEN). `apply_known_values`-Default-Kategorien um `passport`/`dob` erweitert; `standard_variant_pairs` registriert zusätzlich den ALLCAPS-Nachnamen allein (VIZ-Zeile `STARK`).
+- **Gemessen am echten 10-JPG-Satz** (kompletter Wire-Pfad: echter Degrade-OCR-Block via GLM-OCR+tesseract, Seed, Scan, Sweeps): **NULL Klarwerte in der typed-Hälfte** (vorher Name ×13, Passnummer, DOB mehrfach roh); 10 fuzzy + 20 exakte Ersetzungen; Pfade unverändert. Einziger verbleibender Namens-Träger: der Dateiname im exempten Pfad (per Design; die 8 F1-Formen inkl. `BONNT DCMARTE`, `Stark Bonnie M`, `STARK, Bonnie M Mrs.`-Heading und `peUEASTARK<<` sind alle gedeckt). `SOSTARKT` (Einzeltoken-Extremgarble ohne MRZ-Kontext) bliebe theoretisch stehen — trat im gemessenen Wire nicht mehr auf (die Quelle war der interne Strip-Text, der den Wire nicht erreicht).
+- Tests: NEU `tests/test_mrz_entity_seed.py` (17 — Split beide Ordnungen, Ledger-Deckung, Golden-MRZ-Seed, Ehrlichkeits-Gates, Anti-Poisoning, FP-Negativliste `Starkstrom`/`Anna Weber`/Unterstrich-Pfadform, MRZ-Zeilen-Stufe). 221 Nachbar-Tests grün. Kein neues Tool → kein Warmup-Reprime.
+- **Für L6/L7 relevant:** die vom Fuzzy-Sweep registrierten Paare erscheinen als `anonymise`-Zeilen im Ledger/GDPR-Panel (turn-Ende-Recording aus dem kompletten Mapping — Bestandsmechanik). Der L4-P2-Live-E2E (Browser-Rundlauf `web_egress:"ask"`) steht WEITER aus — beim L7-Test mit erledigen; ebenso ein L5-Live-E2E (echte UI-Session mit Ausweis-Foto im Projekt ko-kunden).
 
 ### Nebenbefunde aus Session 4 (für die Weiterarbeit relevant)
 - **Live-E2E steht noch aus** (Regel 12, ehrlich): Unit-Suite deckt Consent-Mechanik + Übersetzung + Ledger; der interaktive Rundlauf (echte anonymisierende Session, `web_egress:"ask"`, Frage-Karte im Browser beantworten, searxng läuft rückübersetzt, Ergebnis rück-anonymisiert, Widerruf im Modal) braucht eine echte UI-Session im Projekt `ko-kunden` — **beim L5- oder L7-Test mit erledigen** (Config danach exakt revertieren, Test-Sessions löschen, [[feedback_cleanup_test_sessions]]).
@@ -260,8 +269,8 @@ Drei Hebel, die zusammen Parität herstellen:
 | 2 | **L3** — Dispatch-Symmetrie (Args-Deanon + Results-Anon) | **F3**, F5 (mempalace + web-inbound) | M | ✅ v9.336.0 |
 | 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** | ✅ v9.337.0 |
 | 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L | Phase 1 ✅ v9.334.0 · Phase 2 ✅ v9.338.0 |
-| 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M | ⬜ **NÄCHSTER** |
-| 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M | ⬜ |
+| 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M | ✅ v9.339.0 |
+| 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M | ⬜ **NÄCHSTER** |
 | 7 | **L7** — KYC-Preset + Degradations-Transparenz | UX/Vertrauen | S | ⬜ |
 
 **Begründung der Reihenfolge:** L1 eliminiert den gefährlichsten Schaden (falsche Fälschungsindizien) mit kleinstem Eingriff und etabliertem Muster. L3 repariert Retrieval/Pfade und schließt die zwei größten Leaks — und liefert die Infrastruktur, auf der L2 aufsetzt. L2 ist der größte Qualitätshebel, aber auch der aufwendigste; er profitiert davon, dass L1/L3 schon stehen. L4 braucht L2/L3 für die Rück-/Hinübersetzung in Phase 2. L5 speist L2. L6/L7 sind Vertrauens-Schicht.
@@ -547,7 +556,7 @@ Turn 1: 3 technische Queries laufen **frei** durch · erste Personen-Query → *
 
 ---
 
-## L5 — OCR-Preamble scannen + als Entity-Seed nutzen
+## L5 — OCR-Preamble scannen + als Entity-Seed nutzen — ✅ GELIEFERT (v9.339.0; Details §0.0)
 
 **Zwei Fliegen:** Das größte verbliebene Leck schließen **und** L2 mit sauberen Ankerwerten füttern.
 

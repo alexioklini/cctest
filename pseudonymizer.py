@@ -1003,6 +1003,104 @@ _ENTITY_GENERATORS: dict[str, Callable[[str, "Mapping"], str | None]] = {
 }
 
 
+def _dob_surface_forms(d: _dt.date) -> list[str]:
+    """Expected surface forms of a DOB in a KYC dossier (measured on the
+    reference material): ISO, EU dot, US slash, textual EN month ('05 FEB
+    1947' passport VIZ / '5 Feb 1947' OCR read). All parseable by
+    _DATE_PATTERNS, so the fake side comes from _fake_date and stays
+    consistent with scanner-minted fakes of the same date."""
+    ab = _MONTHS_EN_AB[d.month - 1]
+    forms = [
+        f"{d.year:04d}-{d.month:02d}-{d.day:02d}",
+        f"{d.day:02d}.{d.month:02d}.{d.year:04d}",
+        f"{d.month:02d}/{d.day:02d}/{d.year:04d}",
+    ]
+    for mon in (ab.upper(), ab.title()):
+        forms.append(f"{d.day:02d} {mon} {d.year:04d}")
+        forms.append(f"{d.day} {mon} {d.year:04d}")
+    seen: list[str] = []
+    for f in forms:
+        if f not in seen:
+            seen.append(f)
+    return seen
+
+
+def seed_identity_from_mrz(mapping: Mapping, parsed: dict,
+                           *, allow_new_entity: bool = True) -> dict:
+    """L5b — seed the entity map from a STRUCTURED, checksum-plausible MRZ
+    parse (engine.tools.doc_checks.parse_mrz over the _ocr_mrz_strip read of
+    an attached document photo). The MRZ is the cleanest machine-readable
+    identity source in a KYC dossier: seeding the name (entity + standard
+    variants), the document number (bare + 10-char check-digit form, same
+    registration _fake_mrz uses) and the DOB's expected surface forms BEFORE
+    the turn's text scan makes every occurrence — incl. OCR garble caught by
+    the fuzzy attach and forms the German NER misses ('Stark Bonnie',
+    file-name forms) — map onto ONE fake identity from turn 1 instead of
+    leaking raw or fragmenting into per-string fakes (handover L5b: the gap
+    turns from leak into anchor). Per-field honesty gates below; the NAME
+    additionally needs ≥2 verifying checksums (the name line has no checksum
+    of its own — a photo whose data line is half-garbled tends to carry a
+    garbled name too; measured on the reference set, where the 1-checksum
+    photo read 'BONNTIMARTI' and would have poisoned the entity).
+    `allow_new_entity=False` permits attaching/enriching an EXISTING entity
+    but never creates one — the orchestrator passes it for a second read of
+    an already-seeded document number (same doc ⇒ same person; a divergent
+    name form there is OCR garble, not a new person).
+    Returns {"name": bool, "passport": bool, "dob": bool}.
+    """
+    out = {"name": False, "passport": False, "dob": False}
+    checks = parsed.get("checks") or {}
+    n_verified = sum(1 for v in checks.values() if v)
+
+    sur = (parsed.get("surname") or "").strip()
+    giv = (parsed.get("givens") or "").strip()
+    if sur and giv and n_verified >= 2:
+        # Both name halves required: a lone surname seeds an ambiguous
+        # entity (first-come fake for a whole family, handover Session-3
+        # Nebenbefund) with near-zero variant value.
+        form = " ".join(t.title() for t in f"{giv} {sur}".split())
+        try:
+            ent = _entity_find(mapping, form)
+            if ent is None:
+                if not allow_new_entity:
+                    raise ValueError("re-read of a seeded document")
+                ent = _entity_create(mapping, form)
+            else:
+                _entity_learn(mapping, ent, form)
+            _register_entity_variants(mapping, ent)
+            out["name"] = True
+        except Exception:
+            pass
+
+    number = (parsed.get("document_number") or "").strip()
+    if number and checks.get("document_number"):
+        try:
+            from engine.tools.doc_checks import mrz_check_digit
+            fake = _registered_id_fake(number, mapping, "passport")
+            if len(fake) == len(number):
+                ten_real = number + str(mrz_check_digit((number + "<" * 9)[:9]))
+                ten_fake = fake + str(mrz_check_digit((fake + "<" * 9)[:9]))
+                if ten_real not in mapping.forward \
+                        and ten_fake not in mapping.reverse:
+                    mapping.record(ten_real, ten_fake, "passport", count=False)
+            out["passport"] = True
+        except Exception:
+            pass
+
+    dob = parsed.get("dob")
+    if isinstance(dob, _dt.date) and checks.get("dob"):
+        # Unreadable date field ⇒ checks["dob"] is None ⇒ no seed — the same
+        # honesty invariant doc_checks applies (never guess from garble).
+        for real in _dob_surface_forms(dob):
+            fake = _fake_date(real, mapping.salt)
+            if fake == real or real in mapping.forward \
+                    or fake in mapping.reverse:
+                continue
+            mapping.record(real, fake, "dob", count=False)
+            out["dob"] = True
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Mapping
 # ---------------------------------------------------------------------------
@@ -1257,14 +1355,20 @@ def deanonymize_text(text: str, *, mapping: Mapping) -> tuple[str, int]:
 
 
 def apply_known_values(text: str, *, mapping: Mapping,
-                       categories: tuple = ("name", "email")) -> tuple[str, int]:
+                       categories: tuple = ("name", "email",
+                                            "passport", "dob")
+                       ) -> tuple[str, int]:
     """Replace REMAINING occurrences of already-mapped originals (default:
-    entity-derived names/emails) with their registered fakes — word-bounded,
-    longest-first. Complements the scanner pass in `_gdpr_anon_tool_text`:
-    the German spaCy NER often misses English names in mempalace drawers or
-    web results, so a registered variant would otherwise reach the cloud raw
-    (F5). Only values ≥4 chars; boundary check prevents mid-word hits
-    ('Stark' never rewrites 'Starkstrom'). Returns (text, n_replaced)."""
+    entity-derived names/emails plus the MRZ-seeded document numbers and
+    DOB surface forms, L5b) with their registered fakes — word-bounded,
+    longest-first. Complements the scanner pass in `_gdpr_anon_tool_text`
+    and the chat worker's typed-text scan: the German spaCy NER often misses
+    English names in mempalace drawers or web results, and a bare passport
+    number / date has no context keyword for the regex rules — a registered
+    value would otherwise reach the cloud raw (F5). Only values ≥4 chars;
+    boundary check prevents mid-word hits ('Stark' never rewrites
+    'Starkstrom'; `\\w` boundaries keep underscore-joined filename forms in
+    paths intact). Returns (text, n_replaced)."""
     if not text or not mapping.forward:
         return text, 0
     keys = [k for k in mapping.forward
@@ -1281,6 +1385,89 @@ def apply_known_values(text: str, *, mapping: Mapping,
         pat = re.compile(r"(?<!\w)" + re.escape(k) + r"(?!\w)")
         text, c = pat.subn(lambda _m, _f=fake: _f, text)
         n += c
+    return text, n
+
+
+# Candidate windows for the fuzzy entity sweep: runs of 2-5 uppercase-initial
+# tokens joined by space/comma/hyphen/'<' (MRZ). Underscore and slash are
+# deliberately NOT separators — filename/path forms must stay verbatim (path
+# integrity is L3a's job; a rewritten path in a tool result would break the
+# read_document roundtrip). Lone tokens are excluded (single-surname
+# ambiguity); trailing dots cover initials ('M.') and titles ('Mrs.').
+_ENTITY_SWEEP_RUN_RE = re.compile(
+    r"[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿß'\-]{0,24}\.?"
+    r"(?:[ ,<\-]{1,4}[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿß'\-]{0,24}\.?){1,4}")
+
+_ENTITY_SWEEP_TOKEN_RE = re.compile(
+    r"[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿß'\-]{0,24}\.?")
+
+
+def apply_entity_variants(text: str, *, mapping: Mapping) -> tuple[str, int]:
+    """Fuzzy entity sweep (L5): find name-like token windows and replace the
+    ones that plausibly belong to a KNOWN entity with the form-matching fake
+    variant. This is the mop-up behind `apply_known_values` — exact
+    registration can never enumerate OCR garble ('PSUSASTARK<<BONNT
+    DCMARTE'), reordered forms ('Stark Bonnie M' — the NER word-order gap)
+    or mixed-case file-name headings ('STARK, Bonnie M Mrs.'); the tested
+    conservative `entity_attach` (≥2 tokens, distinct partners, anchored)
+    decides, `render_variant` renders form-true, and nothing is ever LEARNED
+    from a swept span (garble must not enrich the entity). Every replacement
+    is registered as a real forward/reverse pair so the args-deanon (L3a)
+    can translate a faked span back (path roundtrip) and the ledger rewrite
+    covers the form on later turns. Returns (text, n_replaced)."""
+    if not text or not mapping.entities:
+        return text, 0
+    replacements: list[tuple[int, int, str]] = []
+    for run in _ENTITY_SWEEP_RUN_RE.finditer(text):
+        toks = [(m.start() + run.start(), m.end() + run.start(), m.group(0))
+                for m in _ENTITY_SWEEP_TOKEN_RE.finditer(run.group(0))]
+        if len(toks) < 2:
+            continue
+        # Longest window first, leftmost first; accepted spans don't overlap.
+        claimed: list[tuple[int, int]] = []
+        for width in range(len(toks), 1, -1):
+            for i in range(0, len(toks) - width + 1):
+                s, e = toks[i][0], toks[i + width - 1][1]
+                if any(s < ce and e > cs for cs, ce in claimed):
+                    continue
+                span = text[s:e]
+                if span in mapping.forward or span in mapping.reverse:
+                    continue  # exact sweep / prior mint owns this form
+                ent = _entity_find(mapping, span)
+                if ent is None:
+                    continue
+                fake = _identity.render_variant(
+                    span, ent["sur"], ent["givens"],
+                    ent["fake_sur"], ent["fake_givens"])
+                if fake == span:
+                    continue
+                claimed.append((s, e))
+                replacements.append((s, e, fake))
+                if span not in mapping.forward and fake not in mapping.reverse:
+                    mapping.record(span, fake, "name", count=False)
+    n = len(replacements)
+    for s, e, fake in sorted(replacements, key=lambda r: -r[0]):
+        text = text[:s] + fake + text[e:]
+    # Stage 3 — MRZ-garble lines: tesseract lowercase-bleed glues the
+    # surname into non-window tokens ('peUEASTARK<<800"1' on the reference
+    # set). Scoped HARD to lines containing '<<' (MRZ context — no German
+    # compounds live there), ALLCAPS substring of entity tokens only.
+    if "<<" in text:
+        subs: list[tuple[str, str]] = []
+        for ent in mapping.entities.values():
+            for real, fake in zip([ent["sur"]] + ent["givens"],
+                                  [ent["fake_sur"]] + ent["fake_givens"]):
+                if real and len(real) >= 4:
+                    subs.append((real.upper(), fake.upper()))
+        out_lines = []
+        for line in text.split("\n"):
+            if "<<" in line:
+                for real_u, fake_u in subs:
+                    if real_u in line:
+                        line = line.replace(real_u, fake_u)
+                        n += 1
+            out_lines.append(line)
+        text = "\n".join(out_lines)
     return text, n
 
 

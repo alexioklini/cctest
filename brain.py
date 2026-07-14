@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.338.0"
+VERSION = "9.339.0"
 VERSION_DATE = "2026-07-14"
 CHANGELOG = [
+    ("9.339.0", "2026-07-14", "feat(OCR-Preamble scannen + MRZ-Entity-Seed — L5 aus PII_ANALYSIS_PARITY_HANDOVER.md: das größte verbliebene Roh-PII-Leck wird zum Entitäts-Anker). PROBLEM (F5, verifiziert): der deterministische Bild-Anhang-Block ('[Bild-Anhänge — automatisch, ohne KI erkannt …]', 9.293.3) wurde ans ENDE der Attachment-Notice gehängt und fiel damit unter deren Scan-Ausnahme (_split_attachment_notice) — MRZ, Name, Passnummer, DOB eines fotografierten Ausweises gingen ROH in die Cloud, auch im Anonymise-Modus. NEU: (L5a) der OCR-Block ist CONTENT, kein Boilerplate — er wird jetzt VOR der Pfad-Notice in die Nachricht gebaut (chat.py, eigener Marker _OCR_BLOCK_MARKER, bewusst NICHT in _ATTACH_NOTICE_PREFIXES) und landet damit in der scannbaren Hälfte; _split_attachment_notice zieht bei LEGACY-History (Block noch innerhalb der Notice) den OCR-Teil in die typed-Hälfte (wire-only Reorder) → Scan UND Ledger-Rewrite (L3c) decken ihn; die Pfad-Liste bleibt exempt (read_document braucht sie verbatim). (L5b) MRZ-ENTITY-SEED: bei Anonymise-Turns mit Bild/PDF-Anhängen läuft VOR dem Text-Scan brain._gdpr_seed_entities_from_attachments — doc_checks._ocr_mrz_strip (Zeichen-Whitelist-tesseract) + parse_mrz je Anhang, checksummen-validiert, dann pseudonymizer.seed_identity_from_mrz: Entität (Name+Standard-Varianten, ≥2 verifizierende Prüfziffern nötig — die Namenszeile hat keine eigene), Passnummer (bare + 10er-Prüfziffern-Form, dieselbe Registrierung wie _fake_mrz) und DOB-Oberflächenformen (ISO/EU-Punkt/US-Slash/'05 FEB 1947'/'05 Feb 1947', konsistent zum _fake_date-Offset). BESTE LESUNG ZUERST (am echten Material gemessen: Dateinamen-Sortierung ließ das 1-Prüfziffern-Foto 'BONNTIMARTI' die Entität vor dem 5-Prüfziffern-CF-Scan vergiften — Parses nach verifizierten Checksummen sortiert; Zweitlesung derselben Dokumentnummer darf attachen, nie neu anlegen). Audit pii_mrz_seed (Extension+Kinds, NIE Dateiname — der trägt oft den Klarnamen). (L5-SWEEP, die eigentliche Schließung) NEU pseudonymizer.apply_entity_variants — Fuzzy-Fenster-Sweep über namensartige Token-Läufe (2-5 Uppercase-Initial-Tokens; Separatoren Space/Komma/Hyphen/'<', UNTERSTRICH bewusst nicht → Dateinamen-Formen in Pfaden bleiben verbatim): entscheidet per konservativem entity_attach, rendert formtreu per render_variant, LERNT NIE aus dem Span (Garble darf die Entität nicht anreichern) und REGISTRIERT jede Ersetzung als echtes forward/reverse-Paar (L3a kann gefakte Pfad-Anteile zurückübersetzen; der Ledger-Rewrite kennt die Form ab dann exakt). Stufe 3 nur in Zeilen mit '<<' (MRZ-Kontext): ALLCAPS-Substring-Ersetzung der Entitäts-Tokens (fängt Lowercase-Bleed-Garble 'peUEASTARK<<800\"1'). Verdrahtet VOR apply_known_values an BEIDEN Sweep-Stellen (Chat-Worker typed-Text NEU — vorher hatte nur der Tool-Result-Seam einen Sweep, womit 'Stark Bonnie KO Kunde' (NER-Wortstellungs-Lücke, Session-3-Nebenbefund) im User-Text roh blieb; brain._gdpr_anon_tool_text). apply_known_values-Default-Kategorien um passport/dob erweitert (geseedete Werte ohne Kontext-Keyword — bare Nummer im Drawer — wurden sonst nur vom Zufall der Regex-Regeln gefangen); standard_variant_pairs registriert zusätzlich den ALLCAPS-Nachnamen allein (VIZ-Nachnamenszeile 'STARK'; Einzeltokens sind für den Fenster-Sweep unsichtbar; Wortgrenze hält 'STARKSTROM' heil). GEMESSEN AM ECHTEN 10-JPG-SATZ (Handover-§8-Pflicht): Seed 2 Dokumente → EINE Entität (bonnie/marie/stark) + 20 forward-Einträge in 15,7s; kompletter Wire-Pfad (echter Degrade-OCR-Block + Scan + Sweeps): NULL Klarwerte in der typed-Hälfte (vorher: Name×13, Passnummer, DOB in mehreren Formaten roh), 10 fuzzy + 20 exakte Sweep-Ersetzungen, Pfade in der Notice unverändert (einziger verbleibender Namens-Träger = der Dateiname im exempten Pfad — per Design, L3a schließt den Roundtrip). Rest-Risiko ehrlich: die 8-Sekunden-OCR-Strip-Kosten fallen einmalig pro Anhang-Turn an; Vision-PIXEL an multimodale Cloud-Modelle bleiben ungeschützt (F5-Rest, L7/lokal). NEU tests/test_mrz_entity_seed.py (17: Split beide Ordnungen + Ledger-Rewrite-Deckung, Golden-MRZ-Seed, Ehrlichkeits-Gates, Garble-attacht-nie-lernt, Best-Read-First-Anti-Poisoning, Sweep-FP-Negativliste inkl. Starkstrom/Anna-Weber/Unterstrich-Pfadform, MRZ-Zeilen-Stufe). 221 Nachbar-Tests grün. py_compile OK. Schema unverändert (kein neues Tool) → kein Warmup-Reprime. Server-Restart nötig. KURATIERTER Eintrag (user). L6/L7 offen (Handover §0.0)."),
     ("9.338.0", "2026-07-14", "feat(Web-Egress-Consent — L4 Phase 2 aus PII_ANALYSIS_PARITY_HANDOVER.md: der 'ask'-Modus holt die Web-Evidenzklasse E4 zurück). PROBLEM (F4): in anonymisierenden Sessions war Web-Korroboration bisher ganz weg ('ask' verhielt sich wie 'refuse') — der Original-Chat 58e3c521438a zog aus ~15 Personen-Queries das Positiv-Signal (Adresse+Alter öffentlich konsistent) UND das Negativ-Signal (kein Obituary); ohne Web fehlt beides. NEU: (a) CONSENT-DIALOG PER WERT, nicht per Query (brain._web_consent_ask): der erste geblockte Call öffnet EIN AskUserQuestion-Batch über alle geschützten Werte des Calls ('„Bonnie M Stark“ (Name) für die Web-Recherche freigeben?' — Freigeben/Nicht freigeben je Wert; die ~15 Queries des Original-Chats hätten EINEN Dialog gekostet). Nutzt die ask_user-Blocking-Mechanik (_ask_user_register + Event, Antwort via POST /v1/chat/answer, bestehende Frage-Karte im Chat — null neue UI dafür); Slot wird VOR dem Emit registriert (race-frei); nicht-interaktive Turns (Background/Scheduler, kein event_callback) können nicht fragen → refuse mit eigenem Hint. Ein unbeantworteter Dialog pro Turn: Timeout landet im asked-Set auf dem RequestContext, Retry-Calls im selben Turn refusen ohne zweites Modal; Timeout/Abbruch persistiert NICHTS (nächster Turn fragt neu). (b) FREIGABE→LEDGER: Antworten werden als pii_decisions-Zeilen mit turn_action release_web/deny_web persistiert — session-sticky, append-only, latest-row-wins = Widerruf ist einfach eine neuere deny_web-Zeile. WICHTIG: value-only NAMESPACED Hash (brain._web_release_hash = sha256('web|'+norm), NICHT sha256(rule_id|value)) — sonst würde die Consent-Zeile die anonymise-Zeile desselben Werts in get_session_pii_decisions shadowen und der deterministische Wire-Rewrite verlöre den fake_value (Leak in die History). Neuer Reader ChatDB.get_session_web_releases. (c) HIN-ÜBERSETZUNG AM GATE (_web_release_translate_args): sucht das Modell mit dem FAKE eines freigegebenen Werts, trägt der AUSGEHENDE Request das Original (case-insensitiv + aligned URL-Slug-Formen: 'erika-muster'→'bonnie-m-stark') — Rückgabe ist eine NEUE Args-Struktur nur für den Dispatch, Wire/History behalten die Fakes; _gdpr_guard_web_args gibt jetzt (refusal, args) zurück (Callsite engine/llm_loop.py:dispatch_tool angepasst). Das Modell sieht das Original NIE: (d) die Ergebnis-Rück-Anonymisierung ist der bestehende L3b-Seam (web_fetch/searxng/exa → _gdpr_anon_tool_text) — Web-Treffer über die echte Person mappen auf DIESELBE Fake-Identität wie die Akten, der Web-Join funktioniert Ende-zu-Ende ohne Klarnamen im Modell. (e) TEILFREIGABE natürlich: verweigerte Werte refusen mit 'Freigabe verweigert'-Hint (Modell soll umformulieren, nie erneut fragen), Variant-Intersection lässt die Freigabe von 'Bonnie M Stark' auch die L2-registrierte Variante 'Bonnie Stark' decken (first+last-Slug-Schnitt; Deny gewinnt bei Überlappung verschiedener Consents); Fakes ohne Freigabe werden weiterhin in JEDEM Modus refused (nie still übersetzt — der Sicherheits-Negativtest). (f) WIDERRUF IM GDPR-PANEL: die Consent-Zeilen erscheinen im Datenschutz-Verlaufs-Modal als eigene Status 'Web freigegeben'/'Web verweigert' (pii-decisions-view mappt release_web/deny_web; panels_gdpr.js: Chips, Filter, Verlaufs-Labels, je Zeile ein Freigeben/Widerrufen-Umschalter statt der unpassenden Bulk-Aktionen; Speichern schreibt release_web/deny_web-Zeilen über den bestehenden POST /v1/gdpr/decisions — kein neuer Endpoint, keine neuen JS-Globals). (g) AUDIT: pii_web_egress-Zeilen mit match=released für ausgeführte freigegebene Calls, pii_web_blocked mit match=denied für Verweigerungen (kinds, nie Werte). Tests: test_web_egress_gate 17→28 (Consent granted/denied/timeout-einmal-pro-Turn, Fake-Übersetzung dispatch-only + Slug, Variant-Intersection, Teilfreigabe, non-interactive, unreleased-nie-übersetzt); Bestandssuiten dispatch_symmetry/pseudonymizer(+persistence+entities)/gdpr_*/chat_worker_helpers/request_context_isolation/llm_loop_stream_stability/pii_ner/doc_checks/websearch_escalation_gating grün (221). js_gate GRÜN (eslint clean, net-globals 1995 unverändert, Smoke 5/5). py_compile OK. Schema unverändert (kein neues Tool) → kein Warmup-Reprime. Server-Restart nötig. KURATIERTER Eintrag (user)."),
     ("9.337.0", "2026-07-14", "feat(Entitäts-konsistente Pseudonymisierung — L2 aus PII_ANALYSIS_PARITY_HANDOVER.md, der größte Qualitätshebel: das Mapping steigt von String- auf Entitäts-Ebene). PROBLEM (Failure F1/F2, verifiziert am Chat 58e3c521438a): das Mapping war exakt-String-gekeyt — dieselbe Person in ≥8 Oberflächenformen ('STARK, BONNIE MARIE', 'Bonnie M Stark', 'Bonnie N. Stark' (OCR), MRZ-Form, Dateinamen-Form, E-Mail-Localpart, OCR-Garble) bekam pro Variante einen ANDEREN Fake → das Modell sah 3-5 verschiedene Personen, der Kernbefund 'Personalien konsistent über 34 Jahre' wurde unmöglich, stattdessen ERFUNDENE Betrugssignale; MRZ-Prüfziffern-Mathematik auf zerschriebenen Strings ergab falsche Fälschungsindizien; der Tag-Jitter in _fake_date invertierte Datums-Relationen (Ausstellung-vor-Ablauf, '10 Jahre − 1 Tag'). NEU: (L2a) Entitäts-Schicht in pseudonymizer.py — EINE Fake-Identität pro Person (Mapping.entities, rückwärtskompatibel persistiert), Alias-Resolver 3-stufig via engine/identity.py (names_match → Initialen-tolerant ('Bonnie N. Stark') → Garble-Rescue mit konservativen Schwellen GARBLE_FLOOR=0.60/ANCHOR=0.72, 'Bonnie MASE' attacht, 'Anna Weber' nie), formtreues Rendering (render_variant: Reihenfolge/Komma/Initialen/ALLCAPS/MRZ/Unterstriche/Ziffern-Tokens verbatim), erwartbare Varianten-PAARE werden als ECHTE forward/reverse-Einträge registriert (standard_variant_pairs; §7.9-Invariante — dadurch werden L3a-Args-Deanon und Web-Egress-Gate automatisch entitäts-fähig, null Code-Änderung dort), Entitäts-Seeding läuft in TEXT-Reihenfolge vor dem end-absteigenden Splice-Pass (sonst seedet das Garble-Duplikat am Dokumentende die Entität — am echten 10-JPG-Satz gemessen); E-Mail-Localparts joinen die Entität (kbstark@… → Fake-Identitäts-Mail). (L2b) passport/passport_ctx_loose in SHAPE_PRESERVING (Keyword-Prefix bleibt, nur Nummer wird per-Zeichen-klassen-treuer Fake; bare Nummer + 10er-Form mit Prüfziffer als eigene Einträge registriert → VIZ und MRZ tragen DENSELBEN Fake); NEUE Scanner-Regel 'mrz' (zeilenanker + Struktur-Validator, Checksummen-Vertrauensstufe) + _fake_mrz baut die komplette Zeile konsistent neu — Fake-Nummer, DOB mit Session-Offset, Expiry UNVERÄNDERT (Dokument-Lebenszyklus), Nationalität/Sex verbatim, ALLE ICAO-9303-Prüfziffern (inkl. Composite) NEU GERECHNET (Rechner aus doc_checks wiederverwendet) → die LLM-eigene MRZ-Mathematik stimmt wieder; opake Fremd-Tokens (cz_rc-Kollision auf 9-Steller) werden nie in MRZ gespleißt. (L2c) _fake_date: konstanter salz-abgeleiteter Session-Offset (±5..25 Tage, echte Kalender-Arithmetik) statt Tag-Jitter → Ordnung, Deltas, Renewal-Gaps, EXIF-Abstände EXAKT erhalten (Test: 27.01.2017→26.01.2027 bleibt 3651 Tage); dob-Spans behalten den Keyword-Prefix, nur das Datum shiftet; Jahr-only-Fallback entfernt (reverse['1947'] hätte jedes Jahres-Vorkommen zerschrieben) → unparsebar = opaker Token. (L2d) Datumsformate vervollständigt in _DATE_PATTERNS UND Scanner-date/dob-Regeln: textuelle Monate EN/DE ('5 FEB 1947', '26. Jan 2027') + EXIF ('2026:07:02 14:24:48', Zeit verbatim) — sonst existiert dasselbe Datum in zwei Wahrheiten im selben Kontext. PLUS: apply_known_values-Sweep im _gdpr_anon_tool_text-Seam (wortgegrenzt, exakt bekannte Werte) — die deutsche spaCy-NER taggt englische Namen in mempalace-Drawern/Web-Results oft nicht, registrierte Varianten werden jetzt trotzdem ersetzt ('Stark' zerschreibt nie 'Starkstrom'); Audit-Event trägt known_values_swept. Gemessen am echten Material: CF-Scan-OCR-Strip → 1 Entität, 6 MRZ-Zeilen erkannt (inkl. Garble-Zeilen mit Trailing-Müll), Fake-MRZ parst mit 5/5 gültigen Prüfziffern, geklebte VIZ-Zeilen ('BONNIEMARIE') via Glued-Varianten-Sweep gefangen; verbleibender Extremgarble ('SOSTARKT') ist L5-Territorium (der interne OCR-Strip erreicht den Wire heute nicht). Tests: tests/test_pseudonymizer_entities.py (15: F1-Join, §7.9-forward/reverse-Invariante, Golden-MRZs beider echter Pässe, Opaque-Token-Spleiß-Guard, Datums-Deltas, Persistenz-Roundtrip); 185 GDPR-nahe Bestandstests grün. L4 Phase 2 / L5 / L6 / L7 offen (Handover §0.0)."),
     ("9.336.0", "2026-07-14", "feat(Dispatch-Symmetrie — L3 aus PII_ANALYSIS_PARITY_HANDOVER.md: das Modell denkt in Fakes, die Tools arbeiten auf Rohdaten, ohne dass eines vom anderen weiß). PROBLEM (Failure F3/F5 des Katalogs, verifiziert am Chat 58e3c521438a): in anonymisierenden Sessions liefen Tool-ARGS wörtlich mit Fakes ins Tool — mempalace_query('<Fake-Name> KO Kunde') = Embedding-Suche über Drawer mit ECHTNAMEN = null Treffer ('keine historischen Aufzeichnungen'), read_document mit Fake-Pfad = File not found SYSTEMATISCH, Python-Skripte mit Fake-Konstanten gegen echte Bytes = 0 Treffer = falsche Schlüsse. Umgekehrt lieferten mempalace_query/mempalace_kg_* ROH-PII ans Cloud-Modell (einziger Read-Tool-Pfad ohne Seam, bewusste v9.96.0-Entscheidung — hiermit revidiert) und Web-Results kamen ungescannt rein. NEU: (1) L3a ARGS-DEANONYMISIERUNG am Live-Dispatch-Choke-Point (engine/llm_loop.py:dispatch_tool, NACH dem Web-Egress-Gate — Reihenfolge ist Invariante: der Gate prüft die Args des MODELLS, nie rückübersetzte): brain._gdpr_deanon_tool_args übersetzt Fakes/Tokens rekursiv (Strings/Listen/Dicts) zurück auf Echtwerte, NUR für die Whitelist lokal ausführender Tools GDPR_ARGS_DEANON_TOOLS (mempalace_query, mempalace_kg_*, read_document, read_file, list_directory, search_files, execute_command, python_exec, ocr_*, xlsx_*, text_diff, doc_checks-Tools = 24). WICHTIGSTE L3-INVARIANTE: Web-Tools stehen NIEMALS in der Whitelist (Args-Deanon für web_fetch/searxng/exa wäre STILLER EGRESS — genau was L4 regelt); per Test gesichert (Whitelist ∩ WEB_SEARCH_TOOLS = ∅). Liefert eine NEUE Args-Struktur — Wire/History behalten die Fakes. Fail-Richtung bei jedem Fehler: Tool läuft mit Fakes (findet ggf. nichts, kann nie leaken). HÄRTUNG ÜBER DEN HANDOVER HINAUS: execute_command/python_exec können selbst das Netz erreichen (curl/wget/urllib/requests) — Strings mit Netzwerk-Markern (_DEANON_NETWORK_MARKER_RE) behalten ihre Fakes (semantisch leerer Netz-Call = Status quo, kein neues Leak), marker-freie Strings (grep, pandas, Pfade) werden normal übersetzt. (2) L3b RESULTS-ANONYMISIERUNG vervollständigt, konsistent zum Per-Tool-Muster (KEIN generischer Post-Hook — Doppel-Anon-Gefahr bei den 12 Tools, die _gdpr_anon_tool_text schon selbst rufen): engine/mempalace_glue.py tool_mempalace_query + tool_mempalace_kg_query/search/neighbors (finale _ok-JSONs durch den Seam; Namen in read_path werden mit-pseudonymisiert — L3a übersetzt sie beim Folge-read_document zurück, der Roundtrip schließt), engine/tools/misc_tools.py: tool_web_fetch jetzt Wrapper um _tool_web_fetch_impl + _web_result_anon (NUR das content-Feld; deckt auch Cache-Hit/academic/YouTube/Audio/File-Pfade), _searxng_query (beide content-Returns; deckt alle 5 searxng-Tools) + exa_search. NEBENEFFEKT (erwünscht, Grundlage L4-Phase-2): Web-Treffer über die echte Person mappen auf DIESELBE Fake-Identität wie die Akten — der Web-Join funktioniert, ohne dass die Cloud den Klarnamen sieht. VERHALTENSÄNDERUNG (Release-Note-Pflicht aus dem Handover): der in _gdpr_anon_tool_text VORGESCHALTETE _classification_gate_tool_text greift damit auch für mempalace-Drawer und Web-Inhalte (konsistent zu read_file/read_document; Daemon-Aufrufe wie der web-url-Miner sind safe — ohne Session-Modell no-opt der Gate). _build_web_sources (Websuche-Prefetch) fängt GDPRBlockedError jetzt pro Quelle ab (Fehler-Quelle statt Turn-Crash) — und läuft als tool_web_fetch-Caller automatisch durch den neuen Result-Seam (F5 teilgeschlossen: Basket-Prefetch-Content wird bei aktivem Mapping anonymisiert). (3) L3c NOTICE-SPLIT IM LEDGER-REWRITE: _apply_pii_decisions_to_wire wendet jetzt _split_attachment_notice an wie der Scan-Pfad — vorher zerschrieb der Ledger-Replace Werte AUCH in den Attachment-Notice-Pfaden der History (Kundennr. im Dateinamen → Folge-Turn-read_document kaputt, das 'perfider noch' aus F3). NEU tests/test_dispatch_symmetry.py (16): Whitelist∩Web=∅-Invariante + Whitelist-Namen∈TOOL_DISPATCH, Deanon nested/non-mutating, Web-Tools-nie-Deanon-Negativtest (alle 7), Netzwerk-Marker-Guard beide Richtungen, Gate-vor-Deanon-Reihenfolge end-to-end via dispatch_tool, _web_result_anon-JSON-Mechanik, L3c Notice-Erhalt (str + Block-Content). Bestandssuiten web_egress_gate/request_context_isolation/chat_worker_helpers/pseudonymizer(+persistence)/gdpr_audit/gdpr_clamp/gdpr_decision_wire/llm_loop_stream_stability/pii_ner/websearch_escalation_gating/doc_checks grün (195 Tests). py_compile OK. Schema unverändert (kein neues Tool) → kein Warmup-Reprime. Brain-Neustart nötig."),
@@ -3193,12 +3194,16 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
         if findings:
             out = _ps.pseudonymize_text(text, findings, mapping=mapping,
                                         source=source or "tool_output")
-        # Known-values sweep (L2, v9.337.0): registered entity variants
-        # (names/emails) that the scanner pass missed — the German spaCy NER
-        # regularly skips English names in mempalace drawers / web results —
-        # are still replaced with their mapped fakes. Scanner-independent,
-        # word-bounded, exact known strings only.
+        # Entity + known-values sweep (L2 v9.337.0, fuzzy stage L5): forms
+        # the scanner pass missed — the German spaCy NER regularly skips
+        # English names in mempalace drawers / web results, and OCR garble /
+        # reordered forms are never exact-registered — are still replaced
+        # with their mapped fakes. Fuzzy window sweep first (conservative
+        # entity_attach, renders whole forms, registers what it replaced),
+        # then the word-bounded exact sweep.
+        out, _fuzzy = _ps.apply_entity_variants(out, mapping=mapping)
         out, _swept = _ps.apply_known_values(out, mapping=mapping)
+        _swept += _fuzzy
         if not findings and not _swept:
             return text
         _tokens_added = len(mapping.forward) - _tokens_before
@@ -3909,6 +3914,92 @@ def _gdpr_deanon_tool_args(tool_name: str, args: dict):
         print(f"[args_deanon] failed for {tool_name}, running with fakes: {e}",
               flush=True)
         return args
+
+
+# L5b: attachment types worth an MRZ-targeted OCR pass (photographed/scanned
+# ID documents arrive as images or scan-PDFs; _load_pages handles both).
+_MRZ_SEED_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp",
+                  ".webp", ".gif", ".pdf")
+
+
+def _gdpr_seed_entities_from_attachments(paths: list[str], mapping) -> int:
+    """L5b — MRZ entity seed. For each image/PDF attached THIS turn, run the
+    MRZ-targeted OCR pass (doc_checks._ocr_mrz_strip: char-whitelist
+    tesseract — the generic OCR yields zero parseable MRZ data lines on
+    photos) and, when the parse carries at least one VERIFYING ICAO-9303
+    checksum, seed the pseudonymizer entity map: name + standard variants,
+    document number (bare + 10-char check-digit form), DOB surface forms.
+    Runs BEFORE the turn's text scan so the OCR preamble block (L5a) and
+    every later read_document/tool result render onto ONE consistent fake
+    identity — incl. OCR-garble forms that only the fuzzy entity attach
+    catches. Returns the number of documents that seeded anything; never
+    raises (a failed seed just means scan-only anonymisation, as before).
+    """
+    parses: list[tuple[int, str, dict]] = []
+    for p in paths or []:
+        try:
+            if os.path.splitext(p)[1].lower() not in _MRZ_SEED_EXTS:
+                continue
+            from engine.tools.doc_checks import _ocr_mrz_strip, parse_mrz
+            strip = _ocr_mrz_strip(p)
+            parsed = parse_mrz(strip) if strip.strip() else None
+            if not parsed:
+                continue
+            checks = parsed.get("checks") or {}
+            n_ok = sum(1 for v in checks.values() if v)
+            if not n_ok:
+                continue  # no verifying checksum → don't trust the read
+            parses.append((n_ok, p, parsed))
+        except Exception as e:
+            print(f"[mrz_seed] skipped {os.path.basename(p)}: {e}", flush=True)
+            continue
+    # Best-verified read FIRST: the entity must come from the cleanest scan,
+    # never from a garbled photo of the same document (measured on the
+    # reference set: sorted-by-filename order let a 1-checksum photo seed
+    # 'BONNTIMARTI' before the 5-checksum CF scan — same failure class the
+    # L2 text-order seeding fixed). A second read of an already-seeded
+    # document NUMBER may enrich but never create an entity.
+    parses.sort(key=lambda t: -t[0])
+    seeded = 0
+    seen_numbers: set[str] = set()
+    for _n_ok, p, parsed in parses:
+        try:
+            num = (parsed.get("document_number") or "").strip()
+            import pseudonymizer as _ps
+            res = _ps.seed_identity_from_mrz(
+                mapping, parsed,
+                allow_new_entity=num not in seen_numbers)
+            if num and (parsed.get("checks") or {}).get("document_number"):
+                seen_numbers.add(num)
+            if any(res.values()):
+                seeded += 1
+                if _audit_log:
+                    try:
+                        _audit_log.log_action(
+                            agent=(get_request_context().current_agent.agent_id
+                                   if get_request_context().current_agent
+                                   else "main"),
+                            action_type="pii_mrz_seed",
+                            tool_name="",
+                            # kinds + extension only — an attachment FILENAME
+                            # often carries the real name (audit rows never
+                            # hold values, same rule as the web gate).
+                            args_summary=(
+                                f"file=*{os.path.splitext(p)[1].lower()} "
+                                f"seeded="
+                                f"{sorted(k for k, v in res.items() if v)}"),
+                            result_summary="",
+                            result_status="success",
+                            session_id=(get_request_context().current_session_id
+                                        or None),
+                            source="mrz_entity_seed",
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"[mrz_seed] skipped {os.path.basename(p)}: {e}", flush=True)
+            continue
+    return seeded
 
 
 def _route_to_node(tool_name: str, args: dict) -> str | None:

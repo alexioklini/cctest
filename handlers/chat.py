@@ -160,6 +160,14 @@ _ATTACH_NOTICE_PREFIXES = (
     "\n\n[User attached image(s)",
 )
 
+# L5a: header of the deterministic OCR block for disk-routed images. This
+# block is CONTENT, not boilerplate — it carries the machine-read text of
+# photographed documents (MRZ, names, DOB, passport numbers) and MUST go
+# through the PII scan like typed text. It is deliberately NOT in
+# _ATTACH_NOTICE_PREFIXES; new messages place it BEFORE the path notice so
+# the split below lands it in the scannable half.
+_OCR_BLOCK_MARKER = "\n\n[Bild-Anhänge — automatisch, ohne KI erkannt "
+
 
 def _split_attachment_notice(text: str) -> tuple[str, str]:
     """Split a user message into (typed_part, attachment_notice).
@@ -170,13 +178,25 @@ def _split_attachment_notice(text: str) -> tuple[str, str]:
     breaks `read_document` (the model receives a fake path and can't find
     the file). Match by stable prefix anchored at the start of the notice.
     Returns ("", "") for the notice half when no notice is present.
+
+    The OCR content block (_OCR_BLOCK_MARKER) is exempt from the exemption:
+    pre-L5 history appended it INSIDE the notice (after the path list) where
+    it escaped every scan (Failure F5 — raw MRZ/DOB of a photographed ID in
+    the wire). When found inside the notice half it is moved into the typed
+    half so the scan and the ledger-rewrite cover it; the paths stay exempt.
+    Wire-side reorder only (paths then follow the OCR block) — callers
+    reassemble as typed + notice.
     """
     if not isinstance(text, str) or not text:
         return text or "", ""
     for prefix in _ATTACH_NOTICE_PREFIXES:
         idx = text.rfind(prefix)
         if idx >= 0:
-            return text[:idx], text[idx:]
+            typed, notice = text[:idx], text[idx:]
+            ocr = notice.find(_OCR_BLOCK_MARKER)
+            if ocr > 0:
+                typed, notice = typed + notice[ocr:], notice[:ocr]
+            return typed, notice
     return text, ""
 
 
@@ -3660,6 +3680,17 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     ]
                     _anon_ok = False
                     try:
+                        # L5b: MRZ entity seed BEFORE this turn's text scan —
+                        # attached ID-document photos are read structurally
+                        # (checksum-validated MRZ strip) and seed the entity
+                        # map, so the OCR preamble block (L5a), the typed
+                        # text and every later read render onto ONE
+                        # consistent fake identity incl. garble variants.
+                        _mrz_seeded = 0
+                        if saved_paths:
+                            _mrz_seeded = \
+                                engine._gdpr_seed_entities_from_attachments(
+                                    saved_paths, _mapping)
                         _scanner_cfg = engine._get_gdpr_scanner_config()
                         # Scan ONLY the user-typed slice. The trailing
                         # attachment notice (`[User attached files saved to
@@ -3686,6 +3717,23 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             _pseudo = pseudonymizer.pseudonymize_text(
                                 _typed, _findings,
                                 mapping=_mapping, source="chat_text")
+                        else:
+                            _pseudo = _typed
+                        # L5: entity + known-values sweep over the typed
+                        # half (incl. the L5a OCR block) — the German NER
+                        # misses garbled ('PSUSASTARK<<BONNT DCMARTE'),
+                        # reordered ('Stark Bonnie …', the word-order gap)
+                        # and mixed-case forms the MRZ seed / entity
+                        # variants already know. Fuzzy window sweep first
+                        # (renders whole forms), then the word-bounded
+                        # exact sweep; the notice (paths) is out of reach.
+                        # Same complement the tool-result seam applies.
+                        _pseudo, _fuzzy_n = pseudonymizer.apply_entity_variants(
+                            _pseudo, mapping=_mapping)
+                        _pseudo, _swept_n = pseudonymizer.apply_known_values(
+                            _pseudo, mapping=_mapping)
+                        _swept_n += _fuzzy_n
+                        if _pseudo != _typed:
                             _anonymised = _pseudo + _notice
                             if isinstance(nonlocal_user_content, str):
                                 nonlocal_user_content = _anonymised
@@ -3741,6 +3789,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             "pending_on_read": _pending_attachments,
                             "mapping": "reused" if _mapping_reused else "new",
                             "mapping_id": _mapping.mapping_id,
+                            "mrz_seeded_docs": _mrz_seeded,
+                            "known_values_swept": _swept_n,
                         }
                         # Stash the per-turn outcome so the worker can surface
                         # the feedback modal on the assistant turn. `restored`
@@ -7114,20 +7164,25 @@ class ChatHandlerMixin:
             else:
                 notice = f"\n\n[User attached files saved to disk:]\n{paths_list}"
 
-            # Append deterministic image descriptions (OCR + features) for any
+            # Deterministic image descriptions (OCR + features) for any
             # disk-routed image, so a text-only model gets the real content
-            # instead of just a path it can only read metadata from.
+            # instead of just a path it can only read metadata from. Placed
+            # BEFORE the path notice (L5a): _split_attachment_notice keeps
+            # the notice exempt from PII scanning, but the OCR block is real
+            # document content (MRZ, names, DOB) and must land in the
+            # scannable half — appending it inside the notice was Failure F5.
+            ocr_block = ""
             if image_descs:
-                notice += ("\n\n[Bild-Anhänge — automatisch, ohne KI erkannt "
-                           "(Text via OCR + deterministische Merkmale):]\n\n"
-                           + "\n\n".join(image_descs))
-            message = message + notice
+                ocr_block = (_OCR_BLOCK_MARKER
+                             + "(Text via OCR + deterministische Merkmale):]\n\n"
+                             + "\n\n".join(image_descs))
+            message = message + ocr_block + notice
             if isinstance(user_content, str):
-                user_content = user_content + notice
+                user_content = user_content + ocr_block + notice
             else:
                 for block in user_content:
                     if block.get("type") == "text":
-                        block["text"] = block["text"] + notice
+                        block["text"] = block["text"] + ocr_block + notice
                         break
 
         # ── Transparent anonymisation (pre-headers branch) ──
