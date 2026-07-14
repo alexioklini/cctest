@@ -91,6 +91,13 @@ class RequestContext:
     # (set in the chat worker at the anonymise / local-fallback decision points,
     # read when assembling the assistant turn's metadata.gdpr). Dict or None.
     _gdpr_turn_outcome: object = None
+    # L6a report-fidelity: model-directed warnings collected by the GDPR
+    # after-file-write callback (e.g. "PDF written in an anonymise session
+    # carries N fake values and cannot be de-anonymised — regenerate as
+    # .html/.md"). Appended by the callback, drained into the tool result by
+    # python_exec after its changed-files loop so the MODEL sees the warning
+    # in the same round. List[str] or None.
+    _gdpr_file_warnings: object = None
     # --- tracing / audit ---
     trace_id: object = None
     current_trace_span: object = None

@@ -2183,6 +2183,37 @@ class PseudonymizeError(Exception):
         self.sources = sources or []
 
 
+# Extensions the reverse walkers can NOT rewrite but whose text we can
+# extract and lint for fake substance (L6a report fidelity). A .pdf written
+# by reportlab in an anonymise session used to sail through silently — the
+# report then carried plausible fake passport numbers / names with no
+# marking (F6).
+_GDPR_LINT_ONLY_EXTS = frozenset({".pdf"})
+# Plain-text extensions linted by direct read (no parser subprocess needed).
+_GDPR_PLAIN_LINT_EXTS = frozenset({".txt", ".md", ".log", ".html", ".htm",
+                                   ".json", ".csv"})
+_GDPR_LINT_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _lint_written_file(path: str, ext: str, mapping) -> list:
+    """Extract a just-written file's text and run the residual-fake linter
+    (L6b). Best-effort: any extraction failure returns [] — the linter is a
+    warning layer and must never break the write path."""
+    try:
+        if os.path.getsize(path) > _GDPR_LINT_MAX_BYTES:
+            return []
+        if ext in _GDPR_PLAIN_LINT_EXTS:
+            with open(path, "rb") as f:
+                text = f.read().decode("utf-8", errors="replace")
+        else:
+            text, kind = engine.extract_attachment_text(path)
+            if kind != "text" or not text:
+                return []
+        return pseudonymizer.lint_residual_fakes(text, mapping=mapping)
+    except Exception:
+        return []
+
+
 def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                                   agent_id: str):
     """Build a `_after_file_write` callback for a session with active
@@ -2209,8 +2240,8 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
             return
         ext = os.path.splitext(path)[1].lower()
         from engine.file_pseudonymize import SUPPORTED_EXTS
-        if ext not in SUPPORTED_EXTS:
-            return  # Image / binary / unknown — nothing to restore.
+        if ext not in SUPPORTED_EXTS and ext not in _GDPR_LINT_ONLY_EXTS:
+            return  # Image / binary / unknown — nothing to restore or lint.
 
         mapping = pseudonymizer.get_mapping(mapping_id)
         if mapping is None:
@@ -2237,6 +2268,67 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
         t0 = time.time()
         tool_use_id = f"deanon_file_{mapping_id[:8]}_{int(t0 * 1000) % 1000000}"
         fname = os.path.basename(path)
+
+        if ext in _GDPR_LINT_ONLY_EXTS:
+            # L6a: non-reversible format (.pdf). We can't restore values, but
+            # we CAN detect fake substance in the extracted text and fail
+            # LOUD — synthetic row + audit for the user, and a drained-at-
+            # dispatch warning (engine/llm_loop.dispatch_tool) so the model
+            # regenerates the report as .html/.md (both reversible).
+            residues = _lint_written_file(path, ext, mapping)
+            if not residues:
+                return  # No fake substance — the PDF is fine as delivered.
+            warn = (f"{fname}: PDF enthält {len(residues)} pseudonymisierte "
+                    "Werte und kann als PDF NICHT in Echtwerte "
+                    "zurückübersetzt werden. Erzeuge den Report stattdessen "
+                    "als .html oder .md — diese Formate werden automatisch "
+                    "zurückübersetzt.")
+            if live is not None:
+                try:
+                    _emit_synthetic_tool_event(
+                        live=live, sid=session_id, kind="deanonymise_file",
+                        tool_use_id=tool_use_id, phase="dispatch",
+                        args={"file": fname, "mapping_id": mapping_id},
+                    )
+                    _emit_synthetic_tool_event(
+                        live=live, sid=session_id, kind="deanonymise_file",
+                        tool_use_id=tool_use_id, phase="done",
+                        result={"file": fname, "restored": 0,
+                                "unrestored": len(residues),
+                                "warning": warn,
+                                "mapping_id": mapping_id},
+                        status="error",
+                        duration_ms=int((time.time() - t0) * 1000),
+                    )
+                except Exception:
+                    pass
+            try:
+                _ctx = engine.get_request_context()
+                _warns = _ctx._gdpr_file_warnings or []
+                _warns.append(warn)
+                _ctx._gdpr_file_warnings = _warns
+            except Exception:
+                pass
+            if engine._audit_log:
+                try:
+                    _kinds = ",".join(sorted({r.get("kind", "?")
+                                              for r in residues}))
+                    engine._audit_log.log_action(
+                        agent=agent_id, session_id=session_id,
+                        action_type="pii_report_fidelity",
+                        tool_name="gdpr_scanner",
+                        args_summary=fname,
+                        result_summary=(f"unrestored={len(residues)} "
+                                        f"kinds={_kinds} "
+                                        f"mapping_id={mapping_id}"),
+                        result_status="error",
+                        duration_ms=int((time.time() - t0) * 1000),
+                        source="chat",
+                    )
+                except Exception:
+                    pass
+            return
+
         if live is not None:
             try:
                 _emit_synthetic_tool_event(
@@ -2267,6 +2359,18 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
             err = result["error"]
             restored = 0
 
+        # L6b: lint the RESTORED file's extracted text for residual fake
+        # substance the per-run walkers can't see (a fake split across docx
+        # runs, skipped xlsx formulas, reformatted dates). Fail loud in the
+        # synthetic row instead of silently delivering fake data (F6).
+        unrestored = 0
+        if status == "ok":
+            residues = _lint_written_file(path, ext, mapping)
+            if residues:
+                unrestored = len(residues)
+                result["unrestored"] = unrestored
+                result["residues"] = [r.get("value", "") for r in residues[:5]]
+
         if live is not None:
             try:
                 _emit_synthetic_tool_event(
@@ -2285,7 +2389,9 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                     action_type="pii_deanonymise_file",
                     tool_name="gdpr_scanner",
                     args_summary=fname,
-                    result_summary=(f"restored={restored} mapping_id={mapping_id}"
+                    result_summary=(f"restored={restored} "
+                                    f"unrestored={unrestored} "
+                                    f"mapping_id={mapping_id}"
                                     if status == "ok"
                                     else f"error={err} mapping_id={mapping_id}"),
                     result_status=status if status == "ok" else "error",
@@ -5091,6 +5197,17 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             if _mapping is not None:
                                 _deanon_reply, _restored = pseudonymizer.deanonymize_text(
                                     reply, mapping=_mapping)
+                                # Reverse-Linter (L6b, fail loud): residual
+                                # fake substance the exact-string reverse pass
+                                # can't catch — reformatted dates, declined /
+                                # initialled names, mangled tokens. Runs on
+                                # the FINAL de-anonymised text; values in the
+                                # findings are fakes only, safe to surface.
+                                try:
+                                    _residues = pseudonymizer.lint_residual_fakes(
+                                        _deanon_reply, mapping=_mapping)
+                                except Exception:
+                                    _residues = []
                                 _t1 = time.time()
                                 _deanon_tool_id = f"deanon_{_gdpr_mapping_id[:12]}"
                                 _emit_synthetic_tool_event(
@@ -5103,6 +5220,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     live=live, sid=sid, kind="deanonymise_text",
                                     tool_use_id=_deanon_tool_id, phase="done",
                                     result={"restored": int(_restored),
+                                            "unrestored": len(_residues),
                                             "mapping_id": _gdpr_mapping_id},
                                     status="ok",
                                     duration_ms=int((time.time() - _t1) * 1000),
@@ -5116,6 +5234,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                             args_summary="assistant_reply",
                                             result_summary=(
                                                 f"restored={_restored} "
+                                                f"unrestored={len(_residues)} "
                                                 f"mapping_id={_gdpr_mapping_id}"),
                                             result_status="success",
                                             duration_ms=0, source="chat",
@@ -5134,6 +5253,32 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 reply = _deanon_reply
                                 msg_metadata["gdpr_mapping_id"] = _gdpr_mapping_id
                                 msg_metadata["gdpr_restored"] = int(_restored)
+                                # L6b fail loud: leftover fake substance gets
+                                # a persistent, user-visible warning appended
+                                # to the reply (same pattern as the nudge
+                                # hint) instead of silently reading as real
+                                # data in a compliance report (F6).
+                                if _residues:
+                                    msg_metadata["gdpr_unrestored"] = {
+                                        "count": len(_residues),
+                                        "items": _residues[:10],
+                                    }
+                                    _res_vals = ", ".join(
+                                        f"`{r['value']}`"
+                                        for r in _residues[:5])
+                                    _more = (f" (+{len(_residues) - 5} weitere)"
+                                             if len(_residues) > 5 else "")
+                                    reply = reply + (
+                                        "\n\n---\n\n"
+                                        f"> ⚠️ **Datenschutz-Hinweis**: "
+                                        f"{len(_residues)} pseudonymisierte "
+                                        "Werte konnten nicht in die Echtwerte "
+                                        "zurückübersetzt werden (z. B. "
+                                        "umformatierte Datums- oder "
+                                        "Namensformen). Die betroffenen "
+                                        f"Stellen zeigen Ersatzwerte: "
+                                        f"{_res_vals}{_more}."
+                                    )
                                 # Per-span highlight payload so the UI can mark
                                 # each restored value in the assistant reply with
                                 # a tooltip ("email — alice@… was anonymised as

@@ -792,9 +792,22 @@ function renderSyntheticGdprCall(msg, idx) {
     summary = `${result.source || 'Tool-Ausgabe'}: ${n} Treffer · ${minted} neue${minted === 1 ? 's' : ''} Token${catLabel}`;
   } else if (kind === 'deanonymise_text') {
     const n = result.restored ?? 0;
+    const un = result.unrestored ?? 0;
     summary = `${n} Token wiederhergestellt`;
+    if (un > 0) summary += ` · ⚠️ ${un} nicht rückübersetzbar`;
   } else if (kind === 'deanonymise_file') {
-    summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' wiederhergestellt';
+    const un = result.unrestored ?? 0;
+    if (result.warning) {
+      // L6a: non-reversible format (PDF) carrying fake substance.
+      summary = (result.file || '') + ' · ⚠️ ' + String(result.warning).slice(0, 200);
+    } else {
+      summary = (result.file || '') + ' · ' + (result.restored ?? 0) + ' wiederhergestellt';
+      if (un > 0) {
+        const res = Array.isArray(result.residues) && result.residues.length
+          ? ` (${result.residues.slice(0, 3).join(', ')})` : '';
+        summary += ` · ⚠️ ${un} nicht rückübersetzbar${res}`;
+      }
+    }
   } else if (kind === 'moa_verify') {
     // Post-verification: the planner audited the executor's answer. The done
     // result carries the verdict (ok = passed / insufficient = re-round was

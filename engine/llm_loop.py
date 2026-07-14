@@ -737,6 +737,25 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
                 "error": f"tool crashed: {type(e).__name__}: {e}",
                 "traceback": traceback.format_exc()[-2000:],
             }, ensure_ascii=False), True)
+        # Report-fidelity warnings (L6a): the GDPR after-file-write callback
+        # flags files it CANNOT de-anonymise (a .pdf written in an anonymise
+        # session). Drain them here — the one choke point every file-writing
+        # tool (write_document, python_exec, execute_command) passes through —
+        # and append to the result so the MODEL learns in the same round and
+        # can regenerate as .html/.md.
+        try:
+            _ctx = engine.get_request_context()
+            _fw = _ctx._gdpr_file_warnings
+            if _fw:
+                _ctx._gdpr_file_warnings = None
+                if isinstance(raw, str):
+                    raw = raw + "\n\n" + "\n".join(
+                        f"⚠️ GDPR: {w}" for w in _fw)
+                elif isinstance(raw, dict):
+                    raw = dict(raw)
+                    raw["gdpr_warning"] = " | ".join(_fw)
+        except Exception:
+            pass
         if isinstance(raw, str):
             return raw, _looks_like_error(raw)
         return json.dumps(raw, ensure_ascii=False), _looks_like_error_dict(raw)

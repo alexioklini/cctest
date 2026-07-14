@@ -1536,6 +1536,24 @@ preamble goes in first-user-message instead.
   File PATHS in the attachment notice stay verbatim by design; image
   PIXELS sent to a multimodal cloud model remain out of scope (use a local
   vision model for that).
+- **Report fidelity (9.340.0, L6)**: de-anonymisation now FAILS LOUD instead
+  of lying silently. A reverse linter (`pseudonymizer.lint_residual_fakes`)
+  runs on the final de-anonymised assistant reply AND on every file the
+  model writes, and reports fake substance the exact-string reverse pass
+  cannot restore: mangled placeholder tokens, fakes split across docx runs
+  or hiding in xlsx formulas, a fake DATE rewritten into another format
+  ("17. Februar 1947" instead of "17.02.1947"), declined or initialled fake
+  names ("Webers", "E. M."). Findings surface as "⚠️ N nicht
+  rückübersetzbar" on the privacy row, as a persistent warning block under
+  the reply, and in the audit log. PDFs are special: they cannot be
+  de-anonymised at all, so a PDF written in an anonymising session that
+  carries fake values produces a LOUD error row + audit entry
+  (`pii_report_fidelity`) and the model itself receives a warning in the
+  tool result telling it to regenerate the report as .html/.md (both fully
+  reversible); the system prompt clamp additionally steers anonymised
+  sessions away from generating PDFs and from reformatting protected
+  values ("compute with them: yes — rewrite their form: no"). A PDF
+  without fake content stays untouched and silent.
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,

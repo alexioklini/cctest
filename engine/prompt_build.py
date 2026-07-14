@@ -718,7 +718,19 @@ _GDPR_ANON_CLAMP = (
     "refused because a protected value is in the query or URL, report that "
     "check in your answer as 'nicht prüfbar (Datenschutz)'. NEVER present a "
     "refused or unexecuted search as 'no results found' — the absence of "
-    "results from a search that never ran is not evidence."
+    "results from a search that never ran is not evidence.\n\n"
+    "Report fidelity: when you WRITE protected values into your reply or "
+    "into a report/file, reproduce each value EXACTLY in the surface form "
+    "you received it — never reformat a date into another notation or "
+    "language, never shorten a name to initials, inflect or decline it, and "
+    "never present values you DERIVED from shape-preserving fakes (day "
+    "differences, check digits, ages) as source data. Computing WITH the "
+    "values for your analysis is fine and expected; changing their written "
+    "form breaks the automatic restoration and the user would silently see "
+    "fake data.\n\n"
+    "Do NOT generate PDF files in this session — PDF content cannot be "
+    "restored to the real values. Write reports as .html or .md instead "
+    "(both are restored automatically before the user sees them)."
 )
 
 

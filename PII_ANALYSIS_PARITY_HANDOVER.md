@@ -1,6 +1,6 @@
 # PII-Analyse-Parität — Handover (L1–L7)
 
-**Stand:** 2026-07-14 (aktualisiert nach Session 5) · Basis-VERSION: `9.339.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 + L2 + L4 Phase 2 + L5 GELIEFERT (v9.334.0–v9.339.0). L6/L7 offen — nächster Baustein L6 (Report-Fidelity; Reihenfolge §3).**
+**Stand:** 2026-07-14 (aktualisiert nach Session 6) · Basis-VERSION: `9.340.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 + L2 + L4 Phase 2 + L5 + L6 GELIEFERT (v9.334.0–v9.340.0). Nur noch L7 offen (KYC-Preset + Degradations-Anzeige; dabei die aufgelaufenen Live-E2Es L4-P2 + L5 + L6 bündeln).**
 
 ---
 
@@ -14,8 +14,8 @@
 | **L2** Entitäts-Map + MRZ-Fakes + Datums-Offset | ✅ GELIEFERT | v9.337.0 |
 | **L4 Phase 2** (`ask`/Consent/`release_web`) | ✅ GELIEFERT | v9.338.0 |
 | **L5** OCR-Preamble + MRZ-Entity-Seed | ✅ GELIEFERT | v9.339.0 |
-| **L6** Report-Fidelity | ⬜ NÄCHSTER Baustein | — |
-| **L7** KYC-Preset | ⬜ offen | — |
+| **L6** Report-Fidelity | ✅ GELIEFERT | v9.340.0 |
+| **L7** KYC-Preset | ⬜ NÄCHSTER Baustein | — |
 
 ### Was v9.334.0 (Web-Egress-Gate) konkret enthält
 - `brain._gdpr_guard_web_args(tool_name, args)` (brain.py, direkt hinter `_gdpr_anon_tool_text`), aufgerufen am Anfang von `engine/llm_loop.py:dispatch_tool` — **der einzige Live-Dispatch-Choke-Point**, deckt Chat + Background + Scheduler. Aktiv nur bei `get_request_context()._gdpr_mapping_id`.
@@ -70,6 +70,18 @@
 - **Gemessen am echten 10-JPG-Satz** (kompletter Wire-Pfad: echter Degrade-OCR-Block via GLM-OCR+tesseract, Seed, Scan, Sweeps): **NULL Klarwerte in der typed-Hälfte** (vorher Name ×13, Passnummer, DOB mehrfach roh); 10 fuzzy + 20 exakte Ersetzungen; Pfade unverändert. Einziger verbleibender Namens-Träger: der Dateiname im exempten Pfad (per Design; die 8 F1-Formen inkl. `BONNT DCMARTE`, `Stark Bonnie M`, `STARK, Bonnie M Mrs.`-Heading und `peUEASTARK<<` sind alle gedeckt). `SOSTARKT` (Einzeltoken-Extremgarble ohne MRZ-Kontext) bliebe theoretisch stehen — trat im gemessenen Wire nicht mehr auf (die Quelle war der interne Strip-Text, der den Wire nicht erreicht).
 - Tests: NEU `tests/test_mrz_entity_seed.py` (17 — Split beide Ordnungen, Ledger-Deckung, Golden-MRZ-Seed, Ehrlichkeits-Gates, Anti-Poisoning, FP-Negativliste `Starkstrom`/`Anna Weber`/Unterstrich-Pfadform, MRZ-Zeilen-Stufe). 221 Nachbar-Tests grün. Kein neues Tool → kein Warmup-Reprime.
 - **Für L6/L7 relevant:** die vom Fuzzy-Sweep registrierten Paare erscheinen als `anonymise`-Zeilen im Ledger/GDPR-Panel (turn-Ende-Recording aus dem kompletten Mapping — Bestandsmechanik). Der L4-P2-Live-E2E (Browser-Rundlauf `web_egress:"ask"`) steht WEITER aus — beim L7-Test mit erledigen; ebenso ein L5-Live-E2E (echte UI-Session mit Ausweis-Foto im Projekt ko-kunden).
+
+### Was v9.340.0 (L6 — Report-Fidelity) konkret enthält
+
+- **L6b Reverse-Linter:** NEU `pseudonymizer.lint_residual_fakes(text, mapping)` — läuft auf dem FINALEN (post-deanonymize) Text und findet 4 Klassen Fake-Substanz: `token_remnant` (salt-matched mangled + saltlose `<KIND_N>`-Reste NUR für geminte KINDs), `exact_fake` (wortgegrenzt ≥4 Zeichen; nach `deanonymize_text` unmöglich (Fixpunkt), fängt auf DATEIEN die Walker-Lücken: docx-Run-Splits, xlsx-Formeln; Token-förmige reverse-Keys sind Check-1-Sache — kein Doppel-Report), `reformatted_date` (Fake-Datum via `_parse_date_surface` geparst, Alternativ-Oberflächenformen numerisch±Padding + textuelle Monate DE/EN gesucht), `name_genitive`/`name_initials` (aus `Mapping.entities`; Genitiv nur wenn Nachname+s KEIN reverse-Key — der Substring-Replace von deanonymize restauriert den registrierten Fall korrekt von allein). Cap 50; Findings tragen NUR Fakes (safe anzuzeigen); read-only, bricht nie den Pfad.
+- **Seam-Verdrahtung:** Reply-Seam (chat.py nach `deanonymize_text`): `unrestored` im synthetic `deanonymise_text`-Result + Audit, `metadata.gdpr_unrestored {count, items≤10}`, bei Befund persistenter „⚠️ Datenschutz-Hinweis"-Block ans Reply (Nudge-Muster, kein neues UI). File-Seam (`make_gdpr_after_file_write_cb`): nach `deanonymize_file` wird der EXTRAHIERTE Text gelintet (`_lint_written_file`: plain-Exts Direkt-Read, Office/PDF via `extract_attachment_text`, 20MB-Cap, best-effort) → `unrestored` + `residues≤5` in der Synthetic Row.
+- **L6a-Entscheidung (offene §7-Frage GEFÄLLT): Steuern+Fail-loud, NICHT HTML→PDF-Server-Render.** Begründung: die §7-Empfehlung „Render-Weg" beruhte auf `report_html.py` — das ist Markdown→HTML; ein HTML→PDF-Renderer existiert NICHT (weasyprint/wkhtmltopdf nirgends; crawl4ai-Chromium wäre möglich, ist aber optional/per-machine-config — als einzige Garantie zu fragil). „Blocken" geht post-hoc ohnehin nicht (python_exec-Dateien existieren schon, wenn der Callback sie sieht). Umsetzung: `.pdf` ist LINT-ONLY im Callback (`_GDPR_LINT_ONLY_EXTS`); bei Fake-Substanz → Synthetic Row `status=error` + Warnung, Audit `pii_report_fidelity` (kinds, nie Werte), UND Modell-Warnung via NEUES RequestContext-Feld `_gdpr_file_warnings`, gedraint in `engine/llm_loop.py:dispatch_tool` nach `fn(args)` in den Result-String („⚠️ GDPR: …") — der EINE Choke-Point aller drei PDF-Quellen (`write_document` kann direkt .pdf!, `python_exec`, `execute_command`). Sauberes PDF ohne Fakes bleibt still (rein technische Anhänge unbeanstandet).
+- **L6c Clamp:** `_GDPR_ANON_CLAMP` + „Report fidelity"-Absatz (Werte EXAKT in erhaltener Oberflächenform; rechnen ja — reformatieren nein; kein Widerspruch zum Shape-Fake-Satz, sorgfältig formuliert) + „Do NOT generate PDF files … write .html or .md instead". Wire-only für Anonymise-Turns (post-cache), KV-Prefix unberührt.
+- **UI:** `renderSyntheticGdprCall` zeigt „⚠️ N nicht rückübersetzbar" (+Residue-Beispiele) bzw. die PDF-Warnung; `esc()` deckt Token-Werte. js_gate grün.
+- **Golden am echten Material:** 67KB-Gesamtbericht-HTML → Scan (22 Findings) → forward → reverse → **Linter 0** ✓; dieselbe Datei anonymisiert (PDF-Simulation) → **12 Findings** (exact_fake/reformatted_date/token_remnant) ✓. Handover-§L6-Verifikation damit erfüllt (reformatierter Fake schlägt an: Unit-Tests).
+- **Nebenbefund (vorbestehend, L2-Edge, bewusst NICHT hier gefixt):** `5 FEB 1947` und `05 FEB 1947` kollidieren auf DENSELBEN Fake, wenn der Offset den Tag zweistellig macht (`_fake_date` rendert beide als z. B. `10 FEB 1947`) → `reverse` behält einen der beiden Originale, Roundtrip stellt einheitlich diese Form her. Wert korrekt, reine Padding-Kosmetik; bei Bedarf in L7-Aufräumarbeiten mitnehmen.
+- Tests: NEU `tests/test_report_fidelity.py` (20 — alle 4 Linter-Klassen + FP-Negativliste (Starkstrom-Analog fake-seitig, Fremd-Salt, `<ITEM_1>`, restauriertes Original-Datum), File-Seam .md reformatted+clean, PDF-fail-loud mit echtem fitz-PDF (Row status=error + Warning + Context-Queue) + PDF-clean-still, dispatch_tool-Drain append+clear, Clamp-Sätze). 273 Nachbar-Tests grün. Kein neues Tool → kein Warmup-Reprime.
+- **Für L7 relevant:** der L6-Live-E2E (echte Anonymise-Session, Modell reformatiert ein Datum → Hinweisblock erscheint; write_document .pdf → Warnung + Modell weicht auf HTML aus) steht aus — **mit dem L4-P2- und L5-Live-E2E beim L7-Test bündeln.** L7b (Degradations-Anzeige) kann `metadata.gdpr_unrestored` + die `pii_report_fidelity`-Audit-Zeilen direkt als Datenquelle nutzen.
 
 ### Nebenbefunde aus Session 4 (für die Weiterarbeit relevant)
 - **Live-E2E steht noch aus** (Regel 12, ehrlich): Unit-Suite deckt Consent-Mechanik + Übersetzung + Ledger; der interaktive Rundlauf (echte anonymisierende Session, `web_egress:"ask"`, Frage-Karte im Browser beantworten, searxng läuft rückübersetzt, Ergebnis rück-anonymisiert, Widerruf im Modal) braucht eine echte UI-Session im Projekt `ko-kunden` — **beim L5- oder L7-Test mit erledigen** (Config danach exakt revertieren, Test-Sessions löschen, [[feedback_cleanup_test_sessions]]).
@@ -270,8 +282,8 @@ Drei Hebel, die zusammen Parität herstellen:
 | 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** | ✅ v9.337.0 |
 | 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L | Phase 1 ✅ v9.334.0 · Phase 2 ✅ v9.338.0 |
 | 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M | ✅ v9.339.0 |
-| 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M | ⬜ **NÄCHSTER** |
-| 7 | **L7** — KYC-Preset + Degradations-Transparenz | UX/Vertrauen | S | ⬜ |
+| 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M | ✅ v9.340.0 |
+| 7 | **L7** — KYC-Preset + Degradations-Transparenz | UX/Vertrauen | S | ⬜ **NÄCHSTER** |
 
 **Begründung der Reihenfolge:** L1 eliminiert den gefährlichsten Schaden (falsche Fälschungsindizien) mit kleinstem Eingriff und etabliertem Muster. L3 repariert Retrieval/Pfade und schließt die zwei größten Leaks — und liefert die Infrastruktur, auf der L2 aufsetzt. L2 ist der größte Qualitätshebel, aber auch der aufwendigste; er profitiert davon, dass L1/L3 schon stehen. L4 braucht L2/L3 für die Rück-/Hinübersetzung in Phase 2. L5 speist L2. L6/L7 sind Vertrauens-Schicht.
 
@@ -583,7 +595,7 @@ Die MRZ ist die **sauberste maschinenlesbare Identitätsquelle** im ganzen Mater
 
 ---
 
-## L6 — Report-Fidelity (Deanonymisierung, die man merkt)
+## L6 — Report-Fidelity (Deanonymisierung, die man merkt) — ✅ GELIEFERT (v9.340.0; Details §0.0)
 
 ### L6a — PDF-Pfad
 `engine/file_pseudonymize.py` kann **kein PDF** (`:283-286`: unsupported → unverändert durchreichen). Der Original-Chat erzeugte **2 PDF-Reports** → sie enthielten Fake-Werte, **ohne Kennzeichnung** (F6).
@@ -675,9 +687,10 @@ Diese wurden **getroffen** (nicht neu aufrollen, außer es gibt neue Evidenz):
 9. **(Session 2) L2a-Varianten landen in forward/reverse**, nicht nur im `entities`-Feld — sonst bleiben L3a und der Web-Gate blind für sie (Begründung im L2-Session-2-Update).
 
 **Wirklich offen:**
-- **L6a:** HTML→Server-Render **oder** PDF-Write-Block? (Empfehlung: Render-Weg, weil `report_html.py` schon existiert.)
-- **L2a Persistenz-Schema:** `entities` als neues Feld in `Mapping` — Migrationspfad für bestehende `pseudonym_maps`-Zeilen festlegen (Vorschlag: fehlendes Feld = leer, kein Migrations-Script nötig).
-- **Fuzzy-Schwelle** für OCR-Garble-Matching (L2a/L5b): konservativ starten, am echten 10-JPG-Satz kalibrieren.
+- ~~**L6a:** HTML→Server-Render **oder** PDF-Write-Block?~~ **ENTSCHIEDEN (Session 6): Steuern+Fail-loud** — die Render-Empfehlung beruhte auf `report_html.py`, das ist aber Markdown→HTML; ein HTML→PDF-Renderer existiert nicht und crawl4ai ist optional/per-machine. Begründung + Umsetzung §0.0 (v9.340.0). Nicht neu aufrollen, außer ein echter HTML→PDF-Renderer wird Infrastruktur.
+- ~~**L2a Persistenz-Schema**~~ erledigt (v9.337.0: fehlendes Feld = leer, kein Migrations-Script).
+- ~~**Fuzzy-Schwelle**~~ erledigt (v9.337.0/9.339.0: GARBLE_FLOOR 0.60 / ANCHOR 0.72, am echten Material kalibriert).
+- **L7:** einziger offener Baustein — KYC-Preset (§L7a) + Degradations-Anzeige (§L7b; Datenquellen existieren jetzt: `metadata.gdpr_unrestored`, `pii_report_fidelity`-/`pii_web_*`-Audit). Beim L7-Test die Live-E2Es L4-P2 + L5 + L6 bündeln (echte UI-Session im Projekt `ko-kunden`, Config danach exakt revertieren, Test-Sessions löschen).
 
 ---
 

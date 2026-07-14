@@ -2210,6 +2210,32 @@ Cloud-Modell aktiv ist, sieht es das Foto; nutzen Sie für Ausweisprüfungen
 im Zweifel ein lokales Modell oder die `doc_checks`-Werkzeuge (serverseitige
 Prüfung, es verlassen nur Prüf-Verdikte den Rechner).
 
+**F: Was bedeutet „⚠️ N Werte konnten nicht zurückübersetzt werden"?**
+A: In anonymisierten Chats ersetzt Brain die Ersatzwerte in der Antwort und
+in geschriebenen Dateien automatisch wieder durch Ihre echten Daten. Das
+funktioniert nur, wenn das Modell die Ersatzwerte **exakt so** wiedergibt,
+wie es sie erhalten hat. Formuliert es einen Wert um — etwa das Ersatzdatum
+„17.02.1947" als „17. Februar 1947", einen Namen als Initialen oder im
+Genitiv —, kann die Rückübersetzung diese Stelle nicht mehr erkennen. Seit
+v9.340.0 prüft Brain jede fertige Antwort und jede geschriebene Datei
+darauf und warnt deutlich (Hinweisblock unter der Antwort bzw. Warnung an
+der Datenschutz-Zeile), statt Ihnen unbemerkt Ersatzwerte in einem Bericht
+zu liefern. Die gezeigten Werte in der Warnung sind immer die
+**Ersatzwerte**, nie Ihre echten Daten. Betroffene Stellen im Text bitte
+manuell prüfen oder die Antwort neu anfordern.
+
+**F: Warum soll der Assistent in anonymisierten Chats kein PDF erzeugen?**
+A: PDF-Dateien lassen sich nachträglich nicht zuverlässig verändern — die
+automatische Rückübersetzung der Ersatzwerte kann sie deshalb nicht
+bearbeiten. Ein PDF aus einem anonymisierten Chat enthielte also plausibel
+aussehende, aber falsche Werte (Ersatz-Namen, Ersatz-Passnummern) ohne
+Kennzeichnung. Seit v9.340.0 wird der Assistent angewiesen, Berichte in
+solchen Chats als **HTML oder Markdown** zu erzeugen (beide werden
+vollständig rückübersetzt); schreibt er dennoch ein PDF mit Ersatzwerten,
+erscheint eine deutliche Warnung an der Datei und der Assistent erhält den
+Hinweis, den Bericht als HTML/Markdown neu zu erzeugen. Ein PDF ohne
+geschützte Werte (z. B. ein rein technischer Anhang) bleibt unbeanstandet.
+
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
 `ask_user_for_file` / `ask_user` (geplante Aufgaben können nicht

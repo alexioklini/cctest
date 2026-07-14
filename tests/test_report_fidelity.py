@@ -1,0 +1,324 @@
+"""L6 — Report fidelity (handover F6: 'der Report lügt leise').
+
+Covers the three L6 layers:
+
+  * L6b linter — `pseudonymizer.lint_residual_fakes`: residual fake
+    substance in FINAL (post-deanonymise) text: mangled tokens, exact
+    reverse keys (docx run-splits on files), reformatted fake dates,
+    declined/initialled fake names. Warning layer — recall over precision,
+    but the negative cases (Starkstrom-style mid-word, foreign salt,
+    generic placeholders) must never fire.
+  * L6a/L6b file seam — `make_gdpr_after_file_write_cb`: reversible files
+    get linted after the reverse walk (result carries `unrestored`);
+    a .pdf (non-reversible) with fake substance emits a LOUD error row and
+    queues a model-directed warning on the RequestContext, drained by
+    `engine/llm_loop.dispatch_tool` into the tool result.
+  * L6c clamp — the new report-fidelity + no-PDF instructions in
+    `_GDPR_ANON_CLAMP`.
+
+Run: python3 -m unittest tests.test_report_fidelity -v
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import pseudonymizer as ps  # noqa: E402
+
+
+def _mk_mapping():
+    m = ps.new_mapping()
+    return m
+
+
+class TestLintResidualFakes(unittest.TestCase):
+    def setUp(self):
+        self.m = _mk_mapping()
+
+    def tearDown(self):
+        ps.close_mapping(self.m.mapping_id)
+
+    def test_clean_text_returns_empty(self):
+        self.m.record("Bonnie Stark", "Sam Mitchell", "name")
+        out = ps.lint_residual_fakes(
+            "Bonnie Stark wurde geprüft, alles konsistent.", mapping=self.m)
+        self.assertEqual(out, [])
+
+    def test_empty_mapping_or_text_noop(self):
+        self.assertEqual(ps.lint_residual_fakes("", mapping=self.m), [])
+        self.assertEqual(ps.lint_residual_fakes("text", mapping=self.m), [])
+
+    def test_token_remnant_same_salt_flagged(self):
+        tok = self.m.next_token("passport")
+        self.m.record("560683707", tok, "passport")
+        out = ps.lint_residual_fakes(f"Nummer: {tok}", mapping=self.m)
+        self.assertEqual([f["reason"] for f in out], ["token_remnant"])
+        self.assertEqual(out[0]["value"], tok)
+
+    def test_token_remnant_foreign_salt_ignored(self):
+        self.m.record("x@y.de", self.m.next_token("email"), "email")
+        out = ps.lint_residual_fakes(
+            "Fremd: <EMAIL_1_ffff9999>", mapping=self.m)
+        self.assertEqual(out, [])
+
+    def test_saltless_token_flagged_only_for_minted_kinds(self):
+        self.m.record("x@y.de", self.m.next_token("email"), "email")
+        out = ps.lint_residual_fakes(
+            "Rest <EMAIL_1> und Platzhalter <ITEM_1>.", mapping=self.m)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(out[0]["value"], "<EMAIL_1>")
+        self.assertEqual(out[0]["reason"], "token_remnant")
+
+    def test_exact_fake_word_bounded(self):
+        self.m.record("Bonnie Stark", "Sam Mitchell", "name")
+        out = ps.lint_residual_fakes(
+            "Kunde Sam Mitchell erschien persönlich.", mapping=self.m)
+        self.assertEqual([f["reason"] for f in out], ["exact_fake"])
+        # Mid-word never fires (the 'Starkstrom' guard, fake side).
+        out2 = ps.lint_residual_fakes(
+            "Die Sam Mitchellson GmbH liefert.", mapping=self.m)
+        self.assertEqual(out2, [])
+
+    def test_reformatted_date_german_long_form(self):
+        fake = ps._fake_date("05.02.1947", self.m.salt)
+        self.assertNotEqual(fake, "05.02.1947")
+        self.m.record("05.02.1947", fake, "dob")
+        d = ps._parse_date_surface(fake)
+        long_de = f"{d.day}. {ps._MONTHS_DE[d.month - 1].title()} {d.year}"
+        out = ps.lint_residual_fakes(
+            f"Die Person wurde am {long_de} geboren.", mapping=self.m)
+        self.assertEqual([f["reason"] for f in out], ["reformatted_date"])
+
+    def test_reformatted_date_iso_variant(self):
+        fake = ps._fake_date("05.02.1947", self.m.salt)
+        self.m.record("05.02.1947", fake, "dob")
+        d = ps._parse_date_surface(fake)
+        iso = f"{d.year:04d}-{d.month:02d}-{d.day:02d}"
+        out = ps.lint_residual_fakes(f"DOB: {iso}", mapping=self.m)
+        self.assertEqual([f["reason"] for f in out], ["reformatted_date"])
+
+    def test_restored_original_date_not_flagged(self):
+        fake = ps._fake_date("05.02.1947", self.m.salt)
+        self.m.record("05.02.1947", fake, "dob")
+        # Post-deanonymise text carries the ORIGINAL — clean.
+        out = ps.lint_residual_fakes(
+            "geboren am 05.02.1947 (5. Februar 1947)", mapping=self.m)
+        self.assertEqual(out, [])
+
+    def test_non_date_categories_skip_date_check(self):
+        # A name entry whose fake happens to contain digits must not go
+        # through date parsing.
+        self.m.record("K-107625", "K-204817", "bare_identifier")
+        out = ps.lint_residual_fakes("Ref K-999999", mapping=self.m)
+        self.assertEqual(out, [])
+
+    def test_name_genitive_and_initials(self):
+        self.m.record("Bonnie Stark", "Sam Mitchell", "name")
+        self.m.entities["e1"] = {
+            "sur": "stark", "givens": ["bonnie"],
+            "fake_sur": "Mitchell", "fake_givens": ["Sam"],
+        }
+        out = ps.lint_residual_fakes(
+            "Mitchells Unterlagen; Rückfragen an S. M. bitte.",
+            mapping=self.m)
+        reasons = sorted(f["reason"] for f in out)
+        self.assertEqual(reasons, ["name_genitive", "name_initials"])
+
+    def test_genitive_skipped_when_registered_variant(self):
+        # If surname+s is itself a registered reverse key, deanonymize
+        # already handles it — no warning.
+        self.m.record("Bonnie Stark", "Sam Mitchell", "name")
+        self.m.record("Starks", "Mitchells", "name")
+        self.m.entities["e1"] = {
+            "sur": "stark", "givens": ["bonnie"],
+            "fake_sur": "Mitchell", "fake_givens": ["Sam"],
+        }
+        out = ps.lint_residual_fakes("kein Genitiv hier", mapping=self.m)
+        self.assertEqual(out, [])
+
+    def test_finding_cap(self):
+        tok = self.m.next_token("email")
+        self.m.record("a@b.de", tok, "email")
+        # 60 distinct saltless remnants → capped at 50.
+        text = " ".join(f"<EMAIL_{i}>" for i in range(2, 62))
+        out = ps.lint_residual_fakes(text, mapping=self.m)
+        self.assertEqual(len(out), 50)
+
+
+# ---------------------------------------------------------------------------
+# File seam — reuses the fake-session/DB scaffolding from
+# tests/test_chat_worker_helpers.py.
+# ---------------------------------------------------------------------------
+
+from tests.test_chat_worker_helpers import (  # noqa: E402
+    FakeChatDB, _FakeSession, _FakeSessions)
+
+
+class TestFileSeamLint(unittest.TestCase):
+    def setUp(self):
+        from handlers import chat as chat_mod
+        self.chat_mod = chat_mod
+        self.fake_db = FakeChatDB()
+        self._orig_chatdb = getattr(chat_mod, "ChatDB", None)
+        chat_mod.ChatDB = self.fake_db
+        self._orig_sessions = getattr(chat_mod, "sessions", None)
+        self.fake_sessions = _FakeSessions()
+        chat_mod.sessions = self.fake_sessions
+
+        import brain
+        self._orig_iap = brain._is_artifact_path
+        brain._is_artifact_path = lambda _p: True
+
+        self.m = ps.new_mapping()
+        self.fake_date = ps._fake_date("05.02.1947", self.m.salt)
+        self.m.record("05.02.1947", self.fake_date, "dob")
+        self.m.record("Bonnie Stark", "Sam Mitchell", "name")
+
+    def tearDown(self):
+        if self._orig_chatdb is not None:
+            self.chat_mod.ChatDB = self._orig_chatdb
+        if self._orig_sessions is not None:
+            self.chat_mod.sessions = self._orig_sessions
+        import brain
+        brain._is_artifact_path = self._orig_iap
+        ps.close_mapping(self.m.mapping_id)
+
+    def _cb(self, sid):
+        sess = _FakeSession(sid)
+        self.fake_sessions.add(sid, sess)
+        cb = self.chat_mod.make_gdpr_after_file_write_cb(
+            mapping_id=self.m.mapping_id, session_id=sid, agent_id="main")
+        return cb, sess
+
+    def test_md_with_reformatted_date_reports_unrestored(self):
+        cb, sess = self._cb("sid-l6-md")
+        d = ps._parse_date_surface(self.fake_date)
+        long_de = f"{d.day}. {ps._MONTHS_DE[d.month - 1].title()} {d.year}"
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "report.md")
+            with open(path, "w") as f:
+                f.write(f"KYC-Bericht\n\nGeboren am {long_de}.\n")
+            cb(path, "created", "main")
+        result = json.loads(self.fake_db.rows[1]["content"])["result"]
+        self.assertEqual(result.get("unrestored"), 1)
+        self.assertIn(long_de, result.get("residues", []))
+
+    def test_md_clean_has_no_unrestored_field(self):
+        cb, sess = self._cb("sid-l6-clean")
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "report.md")
+            with open(path, "w") as f:
+                f.write("Bericht: Bonnie Stark, geboren 05.02.1947.\n")
+            cb(path, "created", "main")
+        result = json.loads(self.fake_db.rows[1]["content"])["result"]
+        self.assertNotIn("unrestored", result)
+
+    def _write_pdf(self, path, text):
+        import fitz
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), text)
+        doc.save(path)
+        doc.close()
+
+    def test_pdf_with_fake_substance_fails_loud(self):
+        import engine
+        cb, sess = self._cb("sid-l6-pdf")
+        from engine.context import request_context, get_request_context
+        with request_context():
+            with tempfile.TemporaryDirectory() as td:
+                path = os.path.join(td, "report.pdf")
+                self._write_pdf(
+                    path, "Bericht: Sam Mitchell, geprueft und echt.")
+                cb(path, "created", "main")
+            warns = get_request_context()._gdpr_file_warnings
+        # Loud synthetic pair with error status + warning text.
+        kinds = [t for (t, _) in sess.live_stream.events]
+        self.assertEqual(kinds,
+                         ["synthetic_tool_use", "synthetic_tool_result"])
+        result = json.loads(self.fake_db.rows[1]["content"])["result"]
+        self.assertEqual(result.get("restored"), 0)
+        self.assertGreaterEqual(result.get("unrestored", 0), 1)
+        self.assertIn("NICHT", result.get("warning", ""))
+        self.assertEqual(self.fake_db.rows[1].get("status")
+                         or json.loads(self.fake_db.rows[1]["content"]).get(
+                             "status"), "error")
+        # Model-directed warning queued on the RequestContext.
+        self.assertTrue(warns and "report.pdf" in warns[0])
+
+    def test_pdf_without_fake_substance_is_silent(self):
+        cb, sess = self._cb("sid-l6-pdf-clean")
+        from engine.context import request_context, get_request_context
+        with request_context():
+            with tempfile.TemporaryDirectory() as td:
+                path = os.path.join(td, "clean.pdf")
+                self._write_pdf(path, "Technischer Anhang ohne Namen.")
+                cb(path, "created", "main")
+            warns = get_request_context()._gdpr_file_warnings
+        self.assertEqual(sess.live_stream.events, [])
+        self.assertEqual(self.fake_db.rows, [])
+        self.assertFalse(warns)
+
+
+class TestDispatchDrainsFileWarnings(unittest.TestCase):
+    """dispatch_tool appends queued report-fidelity warnings to the tool
+    result string (the model-visible half of L6a) and clears the queue."""
+
+    def test_drain_appends_and_clears(self):
+        import brain
+        from engine import llm_loop
+        from engine.context import request_context, get_request_context
+
+        def _fake_tool(args):
+            ctx = get_request_context()
+            ctx._gdpr_file_warnings = ["report.pdf: PDF enthält 2 Werte …"]
+            return json.dumps({"ok": True})
+
+        brain.TOOL_DISPATCH["_l6_test_tool"] = _fake_tool
+        try:
+            with request_context():
+                out, is_err = llm_loop.dispatch_tool("_l6_test_tool", {})
+                self.assertIn("⚠️ GDPR: report.pdf", out)
+                self.assertFalse(is_err)
+                self.assertIsNone(
+                    get_request_context()._gdpr_file_warnings)
+        finally:
+            brain.TOOL_DISPATCH.pop("_l6_test_tool", None)
+
+    def test_no_warnings_leaves_result_untouched(self):
+        import brain
+        from engine import llm_loop
+        from engine.context import request_context
+
+        brain.TOOL_DISPATCH["_l6_test_tool2"] = lambda args: '{"ok": true}'
+        try:
+            with request_context():
+                out, _ = llm_loop.dispatch_tool("_l6_test_tool2", {})
+                self.assertEqual(out, '{"ok": true}')
+        finally:
+            brain.TOOL_DISPATCH.pop("_l6_test_tool2", None)
+
+
+class TestClampReportFidelity(unittest.TestCase):
+    def test_clamp_carries_l6c_instructions(self):
+        import brain
+        out = brain._apply_system_prompt_postprocess(
+            "BASE", caveman_system=0, caveman_chat=0, plan_mode=False,
+            gdpr_anon=True)
+        self.assertIn("Report fidelity", out)
+        # rechnen ja — reformatieren nein
+        self.assertIn("Computing WITH the values", out)
+        self.assertIn("EXACTLY in the surface form", out)
+        # PDF steering
+        self.assertIn("Do NOT generate PDF files", out)
+        self.assertIn(".html or .md", out)
+
+
+if __name__ == "__main__":
+    unittest.main()

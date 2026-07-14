@@ -1532,6 +1532,192 @@ def find_restored_spans(text: str, *, mapping: Mapping) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Residual-fake linter — fail-loud reverse check (L6b)
+# ---------------------------------------------------------------------------
+
+
+def _parse_date_surface(raw: str) -> "_dt.date | None":
+    """Parse one date surface form (any _DATE_PATTERNS shape) to a date.
+    Mirrors the parse half of `_fake_date` without the reassembly."""
+    raw = (raw or "").strip()
+    for pat, fmt in _DATE_PATTERNS:
+        m = pat.match(raw)
+        if not m:
+            continue
+        if fmt in ("iso", "exif"):
+            y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        elif fmt == "dd_mon_yyyy":
+            d, y = int(m.group(1)), int(m.group(4))
+            mo, _cat = _parse_month_token(m.group(3))
+            if mo is None:
+                continue
+        elif fmt in ("eu_dot", "eu_dash", "eu_dot_yy"):
+            d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if fmt == "eu_dot_yy":
+                y = 2000 + y if y < 50 else 1900 + y
+        elif fmt in ("us_slash", "us_slash_yy"):
+            mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            if fmt == "us_slash_yy":
+                y = 2000 + y if y < 50 else 1900 + y
+        else:  # pragma: no cover
+            continue
+        if not (1 <= mo <= 12 and 1 <= d <= 31 and 1900 <= y <= 2100):
+            continue
+        try:
+            return _dt.date(y, mo, d)
+        except ValueError:
+            continue
+    return None
+
+
+def _date_alt_surface_forms(d: _dt.date) -> list[str]:
+    """Surface forms a model plausibly REWRITES a fake date into (F6:
+    'Reformatierung schlägt Reverse'): numeric styles plus textual months
+    EN/DE, long and abbreviated, with and without day padding / ordinal
+    dot. Case-insensitive matching happens at the caller."""
+    forms = [
+        f"{d.year:04d}-{d.month:02d}-{d.day:02d}",
+        f"{d.day:02d}.{d.month:02d}.{d.year:04d}",
+        f"{d.day}.{d.month}.{d.year:04d}",
+        f"{d.day:02d}-{d.month:02d}-{d.year:04d}",
+        f"{d.month:02d}/{d.day:02d}/{d.year:04d}",
+        f"{d.month}/{d.day}/{d.year:04d}",
+    ]
+    months = {_MONTHS_EN[d.month - 1], _MONTHS_EN_AB[d.month - 1],
+              _MONTHS_DE[d.month - 1], _MONTHS_DE_AB[d.month - 1]}
+    for mon in months:
+        for mon_s in (mon.title(), mon.upper()):
+            forms += [
+                f"{d.day} {mon_s} {d.year:04d}",
+                f"{d.day:02d} {mon_s} {d.year:04d}",
+                f"{d.day}. {mon_s} {d.year:04d}",
+                f"{d.day:02d}. {mon_s} {d.year:04d}",
+            ]
+    forms.append(f"{_MONTHS_EN[d.month - 1].title()} {d.day}, {d.year:04d}")
+    out: list[str] = []
+    for f in forms:
+        if f not in out:
+            out.append(f)
+    return out
+
+
+# Bare `<KIND_N>` remnant — a token whose salt the model DROPPED entirely.
+# Only flagged when KIND is a kind this mapping actually minted (counters),
+# so generic placeholders in technical text ("<ITEM_1>") never fire.
+_TOKEN_RE_SALTLESS = re.compile(r"<\s*([A-Za-z][A-Za-z0-9_]*)_(\d+)\s*>")
+
+_LINT_MAX_FINDINGS = 50
+
+
+def lint_residual_fakes(text: str, *, mapping: Mapping) -> list[dict]:
+    """Fail-loud reverse linter (L6b, handover F6: 'der Report lügt leise').
+
+    Scans FINAL user-facing text — the assistant reply AFTER
+    `deanonymize_text`, or a written file's EXTRACTED text after
+    `deanonymize_file` — for fake substance that survived the reverse pass:
+
+      * ``token_remnant``     — `<KIND_N_SALT>`-shaped strings carrying this
+        mapping's salt (mangled beyond the tolerant pass) or a minted KIND
+        with the salt dropped. The user would see a placeholder.
+      * ``exact_fake``        — a reverse-map key still present verbatim.
+        Cannot happen right after `deanonymize_text` (fixed-point replace),
+        but DOES happen on files: the per-run OOXML walkers miss a fake
+        split across `<w:t>` runs, and xlsx formulas are skipped — linting
+        the concatenated EXTRACTED text catches both.
+      * ``reformatted_date``  — a fake date rewritten into another surface
+        form ('17.02.1947' → '17. Februar 1947'): semantically the fake,
+        no longer an exact reverse key.
+      * ``name_genitive`` / ``name_initials`` — declined fake surname
+        ('Mitchells' where surname-alone is not a registered variant) or
+        the fake identity's initials pair ('S. M.').
+
+    Returns up to 50 findings ``[{kind, value, reason}]`` — `value` is the
+    FAKE substance found (safe to show: fakes only, never originals). An
+    empty list means the reverse pass is clean. Purely read-only; the
+    caller decides how loudly to warn (chat badge, synthetic row, audit).
+    """
+    if not text or not mapping.reverse:
+        return []
+    findings: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(kind: str, value: str, reason: str) -> bool:
+        key = (value, reason)
+        if key in seen or len(findings) >= _LINT_MAX_FINDINGS:
+            return False
+        seen.add(key)
+        findings.append({"kind": kind, "value": value, "reason": reason})
+        return True
+
+    # 1) Token remnants. The tolerant deanonymize pass already restored
+    #    everything restorable — whatever still matches here is unrecoverable
+    #    (wrong N, foreign form) and would render as a placeholder.
+    salt = mapping.salt.lower()
+    for m in _TOKEN_RE_TOLERANT.finditer(text):
+        if m.group(3).lower() == salt:
+            _add(m.group(1).lower(), m.group(0), "token_remnant")
+    minted_kinds = {k.upper() for k in mapping.counters}
+    if minted_kinds:
+        for m in _TOKEN_RE_SALTLESS.finditer(text):
+            if m.group(1).upper() in minted_kinds:
+                _add(m.group(1).lower(), m.group(0), "token_remnant")
+
+    # 2) Exact fakes (word-bounded, ≥4 chars — same guards as
+    #    apply_known_values so 'Starkstrom'-style mid-word hits never fire).
+    #    Opaque-token keys are check 1's job — skipping them here keeps one
+    #    surviving token from being reported twice.
+    for fake in sorted(mapping.reverse.keys(), key=len, reverse=True):
+        if len(fake) < 4 or fake not in text:
+            continue
+        if _TOKEN_RE_TOLERANT.fullmatch(fake):
+            continue
+        if re.search(r"(?<!\w)" + re.escape(fake) + r"(?!\w)", text):
+            rule = mapping.categories.get(mapping.reverse[fake], "unknown")
+            _add(rule, fake, "exact_fake")
+
+    # 3) Reformatted fake dates. Only date-kinded entries; the fake's date
+    #    part is parsed and its ALTERNATE surface forms searched — the exact
+    #    form is check 2's job (and normally already restored).
+    lower_text = text.lower()
+    for fake, orig in mapping.reverse.items():
+        if mapping.categories.get(orig) not in ("date", "dob"):
+            continue
+        dm = _DATE_SEARCH_RE.search(fake)
+        if not dm:
+            continue
+        fake_date = _parse_date_surface(dm.group(0))
+        if fake_date is None:
+            continue
+        exact = dm.group(0).lower()
+        for form in _date_alt_surface_forms(fake_date):
+            fl = form.lower()
+            if fl == exact or fl not in lower_text:
+                continue
+            if re.search(r"(?<!\w)" + re.escape(form) + r"(?!\w)",
+                         text, re.IGNORECASE):
+                _add("date", form, "reformatted_date")
+                break
+
+    # 4) Fuzzy name residues from the entity layer (L2): genitive of the
+    #    fake surname and the fake identity's initials pair. Both survive
+    #    deanonymize_text because they are not exact reverse keys.
+    for ent in mapping.entities.values():
+        fsur = (ent.get("fake_sur") or "").strip()
+        fgivens = [g for g in (ent.get("fake_givens") or []) if g]
+        if fsur and len(fsur) >= 4 and f"{fsur}s" not in mapping.reverse:
+            if re.search(r"(?<!\w)" + re.escape(fsur) + r"s(?!\w)", text):
+                _add("name", f"{fsur}s", "name_genitive")
+        if fsur and fgivens:
+            pat = (re.escape(fgivens[0][0].upper()) + r"\.\s?"
+                   + re.escape(fsur[0].upper()) + r"\.")
+            m = re.search(r"(?<![\w.])" + pat + r"(?![\w.])", text)
+            if m:
+                _add("name", m.group(0), "name_initials")
+
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Convenience: one-shot scan-and-pseudonymize
 # ---------------------------------------------------------------------------
 
@@ -1755,6 +1941,7 @@ __all__ = [
     "deanonymize_text",
     "pseudonymize_with_scanner",
     "find_restored_spans",
+    "lint_residual_fakes",
     "apply_known_values",
     "date_offset_days",
     # Persistence

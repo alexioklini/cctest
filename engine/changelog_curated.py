@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.340.0",
+        "date": "2026-07-14",
+        "title": "Warnung bei nicht rückübersetzbaren Berichten",
+        "body": "In anonymisierten Chats werden Ersatzwerte in der Antwort "
+                "automatisch wieder durch Ihre echten Daten ersetzt. Wenn "
+                "das nicht vollständig möglich ist — etwa weil ein Datum "
+                "umformatiert wurde oder eine erzeugte PDF-Datei sich "
+                "nachträglich nicht mehr ändern lässt —, sehen Sie jetzt "
+                "eine deutliche Warnung direkt an der Antwort bzw. an der "
+                "Datei, statt unbemerkt Ersatzwerte in einem Bericht zu "
+                "erhalten. Der Assistent wird zudem angeleitet, Berichte in "
+                "solchen Chats als HTML oder Markdown zu erzeugen, die "
+                "vollständig rückübersetzbar sind.",
+        "audience": "user",
+        "versions": ["9.340.0"],
+    },
+    {
         "version": "9.339.0",
         "date": "2026-07-14",
         "title": "Fotografierte Ausweise jetzt mitanonymisiert",
