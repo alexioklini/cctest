@@ -1,0 +1,365 @@
+<title>Bildverarbeitung in Brain — Prüfbericht</title>
+<style>
+  :root {
+    --bg:        #F6F7F9;
+    --surface:   #FFFFFF;
+    --ink:       #1B1F26;
+    --ink-soft:  #5A6472;
+    --ink-faint: #8A93A0;
+    --rule:      #DDE1E7;
+    --rule-soft: #EBEEF2;
+    --accent:    #2C5F7C;
+    --accent-bg: #E8F0F4;
+    --local:     #55702A;
+    --local-bg:  #EDF2E2;
+    --cloud:     #9A6420;
+    --cloud-bg:  #F8EFE0;
+    --check:     #A63D40;
+    --check-bg:  #FAEBEB;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: "Source Sans 3", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    --serif: "Newsreader", "Iowan Old Style", Palatino, Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#12151A; --surface:#191D24; --ink:#E4E8ED; --ink-soft:#9AA4B2;
+      --ink-faint:#6B7683; --rule:#2C333D; --rule-soft:#232932;
+      --accent:#7FB4D4; --accent-bg:#1B2A34;
+      --local:#A8C468; --local-bg:#1F2718;
+      --cloud:#D9A65C; --cloud-bg:#2B2113;
+      --check:#DE8285; --check-bg:#2E1B1D;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#12151A; --surface:#191D24; --ink:#E4E8ED; --ink-soft:#9AA4B2;
+    --ink-faint:#6B7683; --rule:#2C333D; --rule-soft:#232932;
+    --accent:#7FB4D4; --accent-bg:#1B2A34;
+    --local:#A8C468; --local-bg:#1F2718;
+    --cloud:#D9A65C; --cloud-bg:#2B2113;
+    --check:#DE8285; --check-bg:#2E1B1D;
+  }
+  :root[data-theme="light"] {
+    --bg:#F6F7F9; --surface:#FFFFFF; --ink:#1B1F26; --ink-soft:#5A6472;
+    --ink-faint:#8A93A0; --rule:#DDE1E7; --rule-soft:#EBEEF2;
+    --accent:#2C5F7C; --accent-bg:#E8F0F4;
+    --local:#55702A; --local-bg:#EDF2E2;
+    --cloud:#9A6420; --cloud-bg:#F8EFE0;
+    --check:#A63D40; --check-bg:#FAEBEB;
+  }
+
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--sans); font-size:16px; line-height:1.65;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap { max-width:60rem; margin:0 auto; padding:3.5rem 1.5rem 6rem; }
+
+  header { border-bottom:2px solid var(--ink); padding-bottom:1.5rem; margin-bottom:2.5rem; }
+  .eyebrow {
+    font-family:var(--mono); font-size:.7rem; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--ink-faint); margin:0 0 .75rem;
+  }
+  h1 {
+    font-family:var(--serif); font-weight:600; font-size:2.4rem; line-height:1.15;
+    margin:0 0 .6rem; text-wrap:balance; letter-spacing:-.01em;
+  }
+  .sub { color:var(--ink-soft); margin:0; max-width:44rem; }
+  .meta {
+    display:flex; flex-wrap:wrap; gap:1.25rem; margin-top:1.25rem;
+    font-family:var(--mono); font-size:.75rem; color:var(--ink-faint);
+  }
+
+  h2 {
+    font-family:var(--serif); font-size:1.55rem; font-weight:600;
+    margin:3.5rem 0 .4rem; padding-top:1.25rem; border-top:1px solid var(--rule);
+    text-wrap:balance;
+  }
+  h2:first-of-type { margin-top:2rem; }
+  h3 {
+    font-size:1.02rem; font-weight:650; margin:2rem 0 .5rem;
+    letter-spacing:.005em;
+  }
+  .lede { color:var(--ink-soft); margin:.25rem 0 1.5rem; max-width:46rem; }
+  p { margin:0 0 1rem; max-width:46rem; }
+
+  code {
+    font-family:var(--mono); font-size:.86em;
+    background:var(--rule-soft); padding:.1em .35em; border-radius:3px;
+  }
+
+  /* Ablauf-Ketten: echte Sequenz, daher nummeriert */
+  .chain { list-style:none; margin:1.25rem 0 1.75rem; padding:0; counter-reset:step; }
+  .chain > li {
+    position:relative; counter-increment:step;
+    padding:.85rem 0 .85rem 3rem; border-bottom:1px solid var(--rule-soft);
+  }
+  .chain > li:last-child { border-bottom:none; }
+  .chain > li::before {
+    content:counter(step); position:absolute; left:0; top:.85rem;
+    width:1.7rem; height:1.7rem; border-radius:50%;
+    background:var(--accent-bg); color:var(--accent);
+    font-family:var(--mono); font-size:.75rem; font-weight:600;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .chain strong { font-weight:650; }
+  .chain .note { display:block; color:var(--ink-soft); font-size:.92rem; margin-top:.15rem; }
+
+  table { width:100%; border-collapse:collapse; margin:1.25rem 0 1.75rem; font-size:.92rem; }
+  .scroll { overflow-x:auto; }
+  th, td { text-align:left; padding:.6rem .8rem .6rem 0; vertical-align:top; }
+  th {
+    font-family:var(--mono); font-size:.68rem; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--ink-faint);
+    border-bottom:1px solid var(--rule); white-space:nowrap;
+  }
+  td { border-bottom:1px solid var(--rule-soft); }
+  td code { white-space:nowrap; }
+  tbody tr:last-child td { border-bottom:none; }
+  .num { font-variant-numeric:tabular-nums; }
+
+  .tag {
+    display:inline-block; font-family:var(--mono); font-size:.68rem;
+    letter-spacing:.04em; padding:.15em .5em; border-radius:3px; white-space:nowrap;
+  }
+  .t-local { background:var(--local-bg); color:var(--local); }
+  .t-cloud { background:var(--cloud-bg); color:var(--cloud); }
+  .t-none  { background:var(--rule-soft); color:var(--ink-soft); }
+
+  .check {
+    background:var(--check-bg); border-left:3px solid var(--check);
+    padding:1rem 1.15rem; margin:1.5rem 0; border-radius:0 4px 4px 0;
+  }
+  .check .hd {
+    font-family:var(--mono); font-size:.68rem; letter-spacing:.1em;
+    text-transform:uppercase; color:var(--check); margin:0 0 .4rem; font-weight:600;
+  }
+  .check p { margin:0; max-width:none; }
+  .check p + p { margin-top:.6rem; }
+
+  .callout {
+    background:var(--surface); border:1px solid var(--rule);
+    padding:1.1rem 1.25rem; margin:1.5rem 0; border-radius:4px;
+  }
+  .callout .hd { font-weight:650; margin:0 0 .35rem; }
+  .callout p { margin:0; max-width:none; color:var(--ink-soft); }
+
+  ul.plain { margin:0 0 1.25rem; padding-left:1.15rem; max-width:46rem; }
+  ul.plain li { margin-bottom:.4rem; }
+
+  footer {
+    margin-top:4rem; padding-top:1.25rem; border-top:1px solid var(--rule);
+    font-family:var(--mono); font-size:.72rem; color:var(--ink-faint);
+  }
+</style>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow">Prüfbericht · Stand 9.331.0 · 14.07.2026</p>
+  <h1>Wie Brain Bilder verarbeitet</h1>
+  <p class="sub">Alle Wege, auf denen ein Bild oder ein gescanntes PDF in Brain gelangt: wer ruft was auf, was passiert bei Fehlschlag, und wo lässt sich das einstellen. Zum Nachprüfen der Verdrahtung.</p>
+  <div class="meta">
+    <span>engine/doc_convert.py</span>
+    <span>engine/mlx_ocr.py</span>
+    <span>engine/tools/ocr_tools.py</span>
+    <span>brain.py</span>
+  </div>
+</header>
+
+<h2>Die drei Motoren</h2>
+<p class="lede">Alles unten benutzt genau diese drei. Wer sie wann ruft, ist der Rest des Berichts.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Motor</th><th>Was er tut</th><th>Wo er läuft</th><th>Stärke</th><th>Schwäche</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>Tesseract</strong><br><span class="tag t-local">lokal · kostenlos</span></td>
+      <td>Liest Zeichen von den Pixeln ab. Kein Sprachmodell.</td>
+      <td>Im Brain-Prozess, <code>pytesseract</code>, Sprache <code>deu+eng</code></td>
+      <td><strong>Erfindet nie etwas.</strong> Liefert pro Wort einen Sicherheitswert. Sehr schnell (~0,4 s).</td>
+      <td>Auf Fotos schwach. An 10 echten Pass-Scans las er die Passnummer nur <span class="num">1×</span>.</td>
+    </tr>
+    <tr>
+      <td><strong>GLM-OCR</strong><br><span class="tag t-local">lokal · kostenlos</span></td>
+      <td>Spezialisiertes Texterkennungs-Modell (0,9 Mrd. Parameter).</td>
+      <td>Im Brain-Prozess über <code>mlx-vlm</code> auf der Apple-GPU. <strong>Nicht</strong> über oMLX.</td>
+      <td>Liest auch schräge Fotos. Passnummer <span class="num">5×</span> von 10. Erkennt zusätzlich den <em>Dokumenttyp</em>.</td>
+      <td><strong>Kann erfinden.</strong> Bei unlesbaren Bildern entstanden Namen, die im Bild nicht vorkommen.</td>
+    </tr>
+    <tr>
+      <td><strong>Cloud-OCR</strong><br><span class="tag t-cloud">Cloud · kostenpflichtig</span></td>
+      <td>Mistrals OCR-Dienst.</td>
+      <td>HTTP an <code>mistral-direct</code></td>
+      <td>Schnell (~2 s), sehr genau auf sauberen Vorlagen.</td>
+      <td>Die Datei verlässt den Rechner. <strong>Zurzeit nicht aktiv.</strong></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <p class="hd">Aktuell eingestellt: <code>engine = mlx_ocr</code></p>
+  <p>Es läuft also GLM-OCR, lokal. Cloud-OCR und das allgemeine Vision-Modell sind über <code>ocr.engine</code> wählbar, aber gerade nicht im Einsatz.</p>
+</div>
+
+<h2>Die Sicherheitsprüfung gegen Erfindungen</h2>
+<p>Weil GLM-OCR erfinden kann, läuft vor jeder Übernahme eine Gegenprobe: <strong>Findet Tesseract im Bild kein einziges Wort, wird die Ausgabe von GLM-OCR verworfen.</strong> Begründung: Tesseract erfindet nie — wo es nichts liest, ist nichts Lesbares, und alles, was das Modell dann sagt, wäre frei erfunden.</p>
+<p>Ein <em>Schwellwert</em> auf den Sicherheitswert wäre falsch und wurde verworfen. Gemessen an den echten Scans: das Bild mit dem <strong>höchsten</strong> Wert (63 %) enthielt nur die Browserleiste, das Bild <strong>mit</strong> der Passnummer lag bei 43 %. Nur der Extremfall „null Wörter" trennt zuverlässig.</p>
+
+<h2>Weg 1 — Datei ins Projekt importieren</h2>
+<p class="lede">Upload oder Eingabeordner. Ziel: das Dokument durchsuchbar machen.</p>
+
+<h3>Bilddatei (.jpg .png .gif .webp .bmp)</h3>
+<ol class="chain">
+  <li><strong>Bildmerkmale auslesen</strong><span class="note">Größe, Format, EXIF — über Pillow, ohne Modell.</span></li>
+  <li><strong>GLM-OCR liest den Text</strong><span class="note">Bei <code>engine=mlx_ocr</code>. Kein Rückfall auf Cloud — schlägt es fehl, bleibt es beim Metadaten-Eintrag.</span></li>
+  <li><strong>Gegenprobe</strong><span class="note">Sieht Tesseract kein Wort → Text verwerfen.</span></li>
+  <li><strong>Füllzeichen kappen</strong><span class="note">Die <code>&lt;&lt;&lt;&lt;</code>-Polsterung eines Ausweises wird auf 8 Zeichen gekürzt (ein Scan bestand sonst zu 91 % daraus).</span></li>
+  <li><strong>Warnhinweis voranstellen</strong><span class="note">„Kann Lesefehler enthalten, nicht als belegte Tatsache verwenden." Der Hinweis wandert mit in den Wissensgraphen.</span></li>
+</ol>
+
+<h3>Gescanntes PDF</h3>
+<p>OCR läuft <strong>nur</strong>, wenn das PDF keine Textebene hat. Ein normales PDF wird direkt ausgelesen und rührt keinen Motor an.</p>
+<ol class="chain">
+  <li><strong>Textebene prüfen</strong><span class="note">Findet sich echter Text → fertig, keine OCR.</span></li>
+  <li><strong>Seite zu Bild rendern</strong><span class="note">200 dpi, danach auf 1600 px Kantenlänge begrenzt.</span></li>
+  <li><strong>GLM-OCR pro Seite</strong><span class="note">Danach dieselbe Gegenprobe und Kappung wie beim Bild.</span></li>
+</ol>
+
+<div class="check">
+  <p class="hd">Zu prüfen — Tesseract-Falle</p>
+  <p>Das PDF-Werkzeug <code>pymupdf4llm</code> schaltet bei einer Seite ohne Textebene <strong>von sich aus auf Tesseract um</strong> und gibt dessen Ergebnis zurück, als wäre es echter Text. Weil das als Erfolg zählte, wurde unsere OCR-Kette nie erreicht — jeder Scan bekam still das schlechtere Ergebnis (Tesseract las ein Geburtsjahr <span class="num">1847</span> statt <span class="num">1947</span>). <strong>Seit 9.329.0 abgestellt</strong>: Hat keine Seite eine Textebene, wird die Ausgabe verworfen und die richtige OCR läuft.</p>
+</div>
+
+<h2>Weg 2 — Bild an den Chat anhängen</h2>
+<p class="lede">Was passiert, hängt davon ab, ob das gewählte Modell Bilder versteht.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Modell</th><th>Weg des Bildes</th><th>Was das Modell bekommt</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>versteht Bilder</strong><br><span class="tag t-none">keine OCR</span></td>
+      <td>Als Pixel direkt in die Anfrage</td>
+      <td>Das Bild selbst. Bewusst ohne OCR — das Modell sieht mehr als jede Texterkennung.</td>
+    </tr>
+    <tr>
+      <td><strong>versteht keine Bilder</strong><br><span class="tag t-local">lokal</span></td>
+      <td>Auf Platte, Inhalt wird in Text übersetzt</td>
+      <td>Tesseract-Lesung <em>und</em> GLM-OCR-Lesung, getrennt ausgewiesen, plus Bildmerkmale.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Die Übersetzung für Text-Modelle im Einzelnen</h3>
+<ol class="chain">
+  <li><strong>Tesseract liest</strong><span class="note">Zeichengenau — das ist der Beleg.</span></li>
+  <li><strong>GLM-OCR liest ebenfalls</strong><span class="note">Zusätzlich, nicht ersetzend. Als <em>ungeprüft</em> gekennzeichnet. Begrenzt auf 1024 Tokens, weil der Nutzer wartet: 4096 Tokens brauchen 22,8 s und liefern nach der Kappung denselben Text wie 1024 Tokens in 4,7 s.</span></li>
+  <li><strong>Bildmerkmale</strong><span class="note">Maße, EXIF, Farben, Gesichter-Anzahl, QR-Codes — alles ohne Modell.</span></li>
+  <li><strong>Nur wenn nichts davon greift:</strong> allgemeines Vision-Modell<span class="note">Der Fall eines <em>textlosen</em> Fotos („zwei Personen am Strand"). Dort schlägt ein Modell, das <em>beschreibt</em>, eines das <em>abschreibt</em>.</span></li>
+</ol>
+
+<div class="check">
+  <p class="hd">Befund — das kostenlose lokale Modell verliert gegen die Cloud</p>
+  <p>Der Rückfall in Stufe 4 nimmt <code>attachment_image_model</code>. Dieser Wert ist <strong>nicht gesetzt</strong>, also sucht der Code selbst das <em>billigste</em> bildfähige Modell — und wählt <code>kimi-k2.6</code>, ein <strong>Cloud-Modell</strong>.</p>
+  <p>Ursache, im Code nachgewiesen: Das lokale <code>gemma-4-12B</code> ist bildfähig und steht in der Kandidatenliste, hat aber <code>cost_input: null</code>. Gelesen wird mit <code>cfg.get("cost_input", 1e9)</code> — der Ersatzwert greift nur bei einem <em>fehlenden</em> Schlüssel, nicht bei <code>null</code>. Das kostenlose Modell wird damit mit <span class="num">1 000 000 000</span> bewertet und landet auf Platz <span class="num">9</span> von <span class="num">10</span>. Die Sortierung „billigstes zuerst" wählt also ausgerechnet das teure.</p>
+  <p>Wirkung: Ein <em>textloses</em> Foto an ein Text-Modell geht in die Cloud. Ausweis-Scans sind nicht betroffen (dort liefern die Stufen 1–3 genug, Stufe 4 läuft gar nicht an). <strong>Zwei Abhilfen:</strong> <code>attachment_image_model</code> ausdrücklich auf das lokale Modell setzen — und den Standardwert so lesen, dass <code>null</code> ebenfalls greift.</p>
+</div>
+
+<h2>Weg 3 — Der Agent ruft die OCR-Werkzeuge</h2>
+<p class="lede">Fünf Werkzeuge, die das Sprachmodell selbst aufrufen kann. Sie sind bewusst <strong>frei von Sprachmodellen</strong>: Das Modell soll Beträge und Nummern nicht abtippen, sondern sie abgelesen bekommen.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Werkzeug</th><th>Zweck</th><th>Motor</th></tr></thead>
+  <tbody>
+    <tr><td><code>ocr_inspect</code></td><td>Vorabprüfung ohne volle Erkennung: Seitenzahl, Ausrichtung, grobe Textmenge</td><td><span class="tag t-local">Tesseract</span></td></tr>
+    <tr><td><code>ocr_extract</code></td><td>Volltext, wahlweise mit Absatz- und Seitenstruktur</td><td><span class="tag t-local">Tesseract</span> + GLM-OCR daneben</td></tr>
+    <tr><td><code>ocr_region</code></td><td>Nur ein Ausschnitt — „der Stempel oben rechts"</td><td><span class="tag t-local">Tesseract</span></td></tr>
+    <tr><td><code>ocr_fields</code></td><td>Gezielte Felder über eigene Suchmuster — „Rechnungsnummer", „Betrag"</td><td><span class="tag t-local">Tesseract</span></td></tr>
+    <tr><td><code>ocr_tables</code></td><td>Tabellen: Spalten und Zeilen aus der Wortgeometrie</td><td><span class="tag t-local">Tesseract</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<h3>Warum <code>ocr_extract</code> zwei Lesungen zurückgibt</h3>
+<p>Tesseract allein scheitert auf Fotos <em>still</em> — es liest wenig und meldet nicht, dass es versagt hat. Deshalb liefert <code>ocr_extract</code> beide Lesungen, aber <strong>niemals vermischt</strong>:</p>
+<ul class="plain">
+  <li><code>text</code> — Tesseract. Zeichengenau abgelesen. <strong>Das ist der Beleg.</strong></li>
+  <li><code>model_read</code> — GLM-OCR. Ausdrücklich als <em>ungeprüft</em> markiert. <strong>Das ist ein Hinweis</strong>, keine Tatsache. Ein Name oder eine Zahl von hier darf nicht als Fakt zitiert werden.</li>
+</ul>
+<p>Wird die Modell-Lesung von der Gegenprobe verworfen, sagt das Feld das <strong>ausdrücklich</strong> — Schweigen würde bedeuten „das Modell stimmt zu". Mit <code>model_fallback: false</code> lässt sich die zweite Lesung ganz abschalten.</p>
+
+<h2>Weg 4 — Prüfung auf schützenswerte Daten</h2>
+<p class="lede">Läuft beim Hochladen eines Anhangs. Zwei voneinander unabhängige Prüfungen.</p>
+
+<h3>Textsuche nach personenbezogenen Daten</h3>
+<p>Hier werden <strong>beide</strong> Lesungen aneinandergehängt und gemeinsam durchsucht. Für einen Detektor zählt Vollständigkeit, nicht Genauigkeit: Ein übersehener Ausweis ist ein Datenleck, ein Fehlalarm kostet einen Bestätigungsklick. Keine der beiden Lesungen genügt allein — Tesseract verfehlt den Namen, das Modell könnte ihn erfinden.</p>
+
+<h3>Dokumenttyp erkennen</h3>
+<p>Der wichtigere Teil, und er hängt <strong>nicht</strong> am erkannten Text. GLM-OCR wird gefragt, <em>was</em> das Bild zeigt — ein Wort genügt. Daraus folgt automatisch eine Vertraulichkeitsstufe:</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Erkannter Typ</th><th>Stufe</th></tr></thead>
+  <tbody>
+    <tr><td>Reisepass · Personalausweis · Führerschein · medizinisches Dokument</td><td><strong>Streng Vertraulich</strong></td></tr>
+    <tr><td>Kontoauszug · Gehaltsabrechnung · Vertrag · Urkunde</td><td>Vertraulich</td></tr>
+    <tr><td>Rechnung · Beleg · Korrespondenz</td><td>Intern</td></tr>
+    <tr><td>Bildschirmfoto · Foto · Sonstiges</td><td>keine Anhebung</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p>Die Stufe kann dadurch nur <strong>steigen</strong>, nie sinken — sie tritt neben den Aufdruck im Dokument und die inhaltliche Einschätzung, und die höchste der drei gewinnt.</p>
+
+<div class="callout">
+  <p class="hd">Warum dieser Weg nötig war</p>
+  <p>Die Textsuche meldet auf einem Reisepass „tschechische Personenkennziffer" — ein Zufallstreffer auf einer neunstelligen Zahl — und erkennt den Namen nicht. Die Aufdruck-Erkennung greift auch nicht, denn ein abfotografierter Pass trägt keinen Vermerk. Den <em>Typ</em> zu erkennen ist dagegen zuverlässig: <span class="num">8</span> von <span class="num">8</span> Pässen richtig, auch das Bild, dessen Text völlig unlesbar ist und bei dem jede Textprüfung blind bleibt.</p>
+</div>
+
+<h2>Wo sich das einstellen lässt</h2>
+<p class="lede">Oberfläche: <em>Einstellungen → Service-Modelle → OCR</em>. Datei: <code>config.json</code>, Abschnitt <code>ocr</code>.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Schlüssel</th><th>Aktuell</th><th>Bedeutung</th></tr></thead>
+  <tbody>
+    <tr><td><code>engine</code></td><td><code>mlx_ocr</code></td><td><code>mlx_ocr</code> lokal · <code>mistral_ocr</code> Cloud · <code>local_vision</code> allgemeines Modell über oMLX · <code>auto</code> Cloud, dann lokal · <code>none</code> aus</td></tr>
+    <tr><td><code>mlx_ocr_model</code></td><td><code>mlx-community/GLM-OCR-8bit</code></td><td>Das Erkennungsmodell. Wird beim ersten Gebrauch geladen und im Speicher gehalten.</td></tr>
+    <tr><td><code>mlx_ocr_max_tokens</code></td><td class="num">4096</td><td>Höchstlänge der Ausgabe. Der Chat-Weg begrenzt selbst auf 1024.</td></tr>
+    <tr><td><code>mlx_ocr_max_edge_px</code></td><td class="num">1600</td><td>Gerenderte PDF-Seiten werden auf diese Kantenlänge verkleinert. <code>0</code> schaltet das ab.</td></tr>
+    <tr><td><code>local_vision_model</code></td><td><code>gemma-4-12B-it-qat-oQ4-fp16</code></td><td>Nur bei <code>engine=local_vision</code> oder <code>auto</code>. Läuft über oMLX.</td></tr>
+    <tr><td><code>provider</code> / <code>model</code></td><td><code>mistral-direct</code> / <code>mistral-ocr-latest</code></td><td>Nur bei <code>engine=mistral_ocr</code> oder <code>auto</code>. Zurzeit ohne Wirkung.</td></tr>
+    <tr><td><code>max_pages_per_cycle</code></td><td class="num">1000</td><td>Obergrenze je Durchlauf, damit ein riesiges PDF nichts blockiert.</td></tr>
+    <tr><td><code>attachment_image_model</code></td><td><strong>nicht gesetzt</strong></td><td>Modell für die Beschreibung textloser Fotos. <span style="color:var(--check)">Siehe Prüfpunkt oben.</span></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <p class="hd">Kein Rückfall bei <code>mlx_ocr</code></p>
+  <p>Schlägt GLM-OCR fehl, wird <strong>nicht</strong> auf Cloud oder das allgemeine Vision-Modell ausgewichen — das Bild behält seinen Metadaten-Eintrag. Das ist so gewollt: Wer OCR aus Datenschutzgründen auf lokal stellt, soll nicht stillschweigend in der Cloud landen. Wer eine Kette will, wählt <code>engine=auto</code>.</p>
+</div>
+
+<h2>Was wo nachschlagen</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>Frage</th><th>Datei</th></tr></thead>
+  <tbody>
+    <tr><td>Welcher Motor bei welcher Einstellung, alle Ketten</td><td><code>engine/doc_convert.py</code> — <code>_extract_image_ocr</code>, <code>_pdf_ocr_or_empty</code></td></tr>
+    <tr><td>GLM-OCR laden, Text lesen, Dokumenttyp erkennen</td><td><code>engine/mlx_ocr.py</code></td></tr>
+    <tr><td>Die fünf Agenten-Werkzeuge</td><td><code>engine/tools/ocr_tools.py</code></td></tr>
+    <tr><td>Bild in den Projektspeicher aufnehmen</td><td><code>engine/ingest.py</code> — <code>parse_image</code></td></tr>
+    <tr><td>Bild für ein Text-Modell übersetzen</td><td><code>brain.py</code> — <code>_describe_image_deterministic</code></td></tr>
+    <tr><td>Prüfung auf schützenswerte Daten</td><td><code>brain.py</code> — <code>extract_attachment_text</code></td></tr>
+    <tr><td>Typ → Vertraulichkeitsstufe</td><td><code>engine/classification.py</code> — <code>IMAGE_TYPE_LEVEL</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<footer>
+  Brain 9.331.0 · alle Angaben am laufenden System nachgemessen · Messwerte aus 10 echten Pass-Scans
+</footer>
+</div>
