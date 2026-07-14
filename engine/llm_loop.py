@@ -709,11 +709,14 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
     tool_result. (Ported from tool_mcp._dispatch; the context rebuild is gone —
     the worker thread already set the context via `with request_context()`.)
     """
-    # Web-egress gate (L4 Phase 1): in anonymising sessions, refuse web-tool
-    # calls whose args contain protected values / pseudonyms BEFORE anything
-    # leaves the machine. Never raises; returns None for non-web tools and
-    # non-anonymising sessions (the overwhelming common case).
-    guard = engine._gdpr_guard_web_args(name, args)
+    # Web-egress gate (L4): in anonymising sessions, refuse web-tool calls
+    # whose args contain protected values / pseudonyms BEFORE anything leaves
+    # the machine. Never raises; no-op for non-web tools and non-anonymising
+    # sessions (the overwhelming common case). In ask mode (Phase 2) the gate
+    # may block on a per-value consent dialog and returns args in which
+    # RELEASED fakes are translated back to originals — dispatch-only copy,
+    # the wire history keeps the model's fakes.
+    guard, args = engine._gdpr_guard_web_args(name, args)
     if guard is not None:
         return guard, True
 

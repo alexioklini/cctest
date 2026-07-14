@@ -65,6 +65,12 @@ class _GateTestBase(unittest.TestCase):
         brain._get_gdpr_scanner_config = lambda: cfg
 
     def _guard(self, tool, args, mapping=None):
+        """Refusal-only view of the gate (Phase-1 assertions). Phase 2 returns
+        (refusal, args) — tests that care about the translated args use
+        _guard_full."""
+        return self._guard_full(tool, args, mapping=mapping)[0]
+
+    def _guard_full(self, tool, args, mapping=None):
         with request_context():
             ctx = get_request_context()
             ctx._gdpr_mapping_id = mapping.mapping_id if mapping else ""
@@ -237,16 +243,16 @@ class TestLedgerValues(_GateTestBase):
                 ctx._gdpr_mapping_id = m.mapping_id
                 ctx.current_session_id = "test-session"
                 # Ledger-Original → refuse
-                out = brain._gdpr_guard_web_args(
+                out, _ = brain._gdpr_guard_web_args(
                     "searxng_search", {"query": "born 05.02.1947 person"})
                 self.assertIsNotNone(out)
                 # Ledger-Fake → refuse (Fake-Pfad)
-                out = brain._gdpr_guard_web_args(
+                out, _ = brain._gdpr_guard_web_args(
                     "searxng_search", {"query": "born 17.02.1947 person"})
                 self.assertIsNotNone(out)
                 self.assertIn("semantisch leer", json.loads(out)["hint"])
                 # FP-Wert → pass
-                out = brain._gdpr_guard_web_args(
+                out, _ = brain._gdpr_guard_web_args(
                     "searxng_search", {"query": "Max Beispielmann"})
                 self.assertIsNone(out)
         finally:
@@ -262,6 +268,231 @@ class TestNestedArgs(_GateTestBase):
              "extra": {"queries": ["harmless", "Bonnie M Stark file"]}},
             mapping=m)
         self.assertIsNotNone(out)
+
+
+class _AskModeBase(_GateTestBase):
+    """L4 Phase 2 (ask mode): per-value consent, release/deny ledger,
+    fake→original translation for the outgoing request only."""
+
+    SID = "web-egress-ask-test"
+
+    def setUp(self):
+        super().setUp()
+        from server_lib.db import ChatDB
+        self._ChatDB = ChatDB
+        self._orig_decisions = ChatDB.get_session_pii_decisions
+        self._orig_releases = ChatDB.get_session_web_releases
+        self._orig_record = ChatDB.record_pii_decisions
+        self.recorded = []   # (turn_action, decisions)
+        ChatDB.get_session_pii_decisions = staticmethod(lambda sid: {})
+        ChatDB.get_session_web_releases = staticmethod(lambda sid: {})
+        ChatDB.record_pii_decisions = staticmethod(
+            lambda sid, uid, tid, ta, ds: self.recorded.append((ta, ds)) or len(ds))
+        self._set_mode("ask")
+
+    def tearDown(self):
+        self._ChatDB.get_session_pii_decisions = self._orig_decisions
+        self._ChatDB.get_session_web_releases = self._orig_releases
+        self._ChatDB.record_pii_decisions = self._orig_record
+        super().tearDown()
+
+    def _set_releases(self, *entries):
+        """entries: (value, rule_id, status)."""
+        rel = {brain._web_release_hash(v): {"value": v, "rule_id": rid,
+                                            "status": st, "created_at": 0,
+                                            "user_id": "u1"}
+               for v, rid, st in entries}
+        self._ChatDB.get_session_web_releases = staticmethod(lambda sid: rel)
+
+    def _guard_ask(self, tool, args, mapping, cb=None):
+        with request_context():
+            ctx = get_request_context()
+            ctx._gdpr_mapping_id = mapping.mapping_id if mapping else ""
+            ctx.current_session_id = self.SID
+            ctx.current_user_id = "u1"
+            if cb is not None:
+                ctx.event_callback = cb
+            return brain._gdpr_guard_web_args(tool, args)
+
+    def _answering_cb(self, option, seen):
+        """Event-callback stub: answers the consent dialog synchronously with
+        `option` for every question (the pending slot is registered BEFORE the
+        emit, so a synchronous deliver is race-free)."""
+        def cb(event_type, payload):
+            seen.append((event_type, payload))
+            if event_type != "user_input_needed":
+                return
+            answers = {q["question"]: option
+                       for q in (payload.get("questions") or [])}
+            self.assertTrue(
+                brain.deliver_ask_user_answer(self.SID, answers=answers))
+        return cb
+
+
+class TestAskModeReleases(_AskModeBase):
+    def test_released_original_passes(self):
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        self._set_releases(("Bonnie M Stark", "name", "released"))
+        out, args = self._guard_ask(
+            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m)
+        self.assertIsNone(out)
+        self.assertEqual(args["query"], "Bonnie M Stark Oregon City")
+
+    def test_released_covers_registered_variant(self):
+        """Die Freigabe von 'Bonnie M Stark' deckt die L2-registrierte
+        Variante 'Bonnie Stark' (Variant-Intersection über den
+        first+last-Slug 'bonnie-stark')."""
+        m = self._mapping(("Bonnie M Stark", "Erika M Muster", "name"),
+                          ("Bonnie Stark", "Erika Muster", "name"))
+        self._set_releases(("Bonnie M Stark", "name", "released"))
+        out, _ = self._guard_ask(
+            "searxng_search", {"query": "Bonnie Stark obituary"}, m)
+        self.assertIsNone(out)
+
+    def test_denied_value_refused_without_dialog(self):
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        self._set_releases(("Bonnie M Stark", "name", "denied"))
+        seen = []
+        out, args = self._guard_ask(
+            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m,
+            cb=self._answering_cb("Freigeben (für diese Sitzung)", seen))
+        self.assertIsNotNone(out)
+        data = json.loads(out)
+        self.assertIn("verweigert", data["hint"])
+        self.assertEqual(seen, [])  # kein Dialog für verweigerte Werte
+
+    def test_released_fake_translated_for_dispatch_only(self):
+        """Step (c): Modell sucht mit dem Fake → ausgehende Args tragen das
+        Original (auch als URL-Slug); die Eingabe-Args bleiben unverändert."""
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        self._set_releases(("Bonnie M Stark", "name", "released"))
+        query_args = {"query": "Erika Muster Oregon City obituary"}
+        out, args = self._guard_ask("searxng_search", query_args, m)
+        self.assertIsNone(out)
+        self.assertIn("Bonnie M Stark", args["query"])
+        self.assertNotIn("Erika Muster", args["query"])
+        # Eingabestruktur (Wire) unangetastet
+        self.assertIn("Erika Muster", query_args["query"])
+        # URL-Slug-Form des Fakes
+        out, args = self._guard_ask(
+            "web_fetch",
+            {"url": "https://www.bizapedia.com/people/erika-muster.html"}, m)
+        self.assertIsNone(out)
+        self.assertNotIn("erika-muster", args["url"])
+        self.assertIn("bonnie", args["url"])
+
+    def test_unreleased_fake_never_translated(self):
+        """Sicherheits-Negativtest: ohne Freigabe wird NIE übersetzt — der
+        Refusal trägt die unveränderten Args (Fake bleibt Fake)."""
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        out, args = self._guard_ask(
+            "searxng_search", {"query": "Erika Muster Oregon City"}, m)
+        self.assertIsNotNone(out)
+        self.assertNotIn("Bonnie", args["query"])
+
+    def test_non_interactive_refuses_no_consent(self):
+        """Background/Scheduler (kein event_callback) kann nicht fragen →
+        refuse, nichts wird persistiert."""
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        out, _ = self._guard_ask(
+            "searxng_search", {"query": "Bonnie M Stark"}, m)
+        self.assertIsNotNone(out)
+        self.assertIn("nicht möglich", json.loads(out)["hint"])
+        self.assertEqual(self.recorded, [])
+
+
+class TestAskModeConsentDialog(_AskModeBase):
+    def test_consent_granted_records_and_passes(self):
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        seen = []
+        out, args = self._guard_ask(
+            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m,
+            cb=self._answering_cb("Freigeben (für diese Sitzung)", seen))
+        self.assertIsNone(out)
+        # Dialog wurde emittiert und beantwortet
+        kinds = [e for e, _ in seen]
+        self.assertIn("user_input_needed", kinds)
+        self.assertIn("user_input_received", kinds)
+        # Wert im Dialog sichtbar (der User ist Dateneigner), Ledger-Zeile da
+        payload = seen[0][1]
+        self.assertIn("Bonnie M Stark", payload["questions"][0]["question"])
+        self.assertEqual(len(self.recorded), 1)
+        action, ds = self.recorded[0]
+        self.assertEqual(action, "release_web")
+        self.assertEqual(ds[0]["value"], "Bonnie M Stark")
+        self.assertEqual(ds[0]["value_hash"],
+                         brain._web_release_hash("Bonnie M Stark"))
+
+    def test_consent_granted_translates_matched_fake(self):
+        """Konsent auf Basis einer FAKE-Query: Grant übersetzt den Fake im
+        ausgehenden Request auf das Original."""
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        seen = []
+        out, args = self._guard_ask(
+            "searxng_search", {"query": "Erika Muster Oregon City"}, m,
+            cb=self._answering_cb("Freigeben (für diese Sitzung)", seen))
+        self.assertIsNone(out)
+        self.assertIn("Bonnie M Stark", args["query"])
+        self.assertNotIn("Erika Muster", args["query"])
+
+    def test_consent_denied_records_and_refuses(self):
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        seen = []
+        out, args = self._guard_ask(
+            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m,
+            cb=self._answering_cb("Nicht freigeben", seen))
+        self.assertIsNotNone(out)
+        self.assertIn("verweigert", json.loads(out)["hint"])
+        self.assertEqual(self.recorded[0][0], "deny_web")
+        # Args unangetastet (keine Übersetzung bei Verweigerung)
+        self.assertEqual(args["query"], "Bonnie M Stark Oregon City")
+
+    def test_consent_timeout_refuses_and_no_second_dialog(self):
+        """Timeout: refuse ohne Ledger-Zeile; im SELBEN Turn kein zweites
+        Modal (asked-Set auf dem RequestContext)."""
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        orig_timeout = brain._WEB_CONSENT_TIMEOUT_S
+        brain._WEB_CONSENT_TIMEOUT_S = 1
+        seen = []
+
+        def silent_cb(event_type, payload):
+            seen.append((event_type, payload))
+
+        try:
+            with request_context():
+                ctx = get_request_context()
+                ctx._gdpr_mapping_id = m.mapping_id
+                ctx.current_session_id = self.SID
+                ctx.event_callback = silent_cb
+                out1, _ = brain._gdpr_guard_web_args(
+                    "searxng_search", {"query": "Bonnie M Stark"})
+                out2, _ = brain._gdpr_guard_web_args(
+                    "searxng_search", {"query": "Bonnie M Stark again"})
+        finally:
+            brain._WEB_CONSENT_TIMEOUT_S = orig_timeout
+        self.assertIsNotNone(out1)
+        self.assertIsNotNone(out2)
+        self.assertEqual(self.recorded, [])
+        dialogs = [e for e, _ in seen if e == "user_input_needed"]
+        self.assertEqual(len(dialogs), 1)  # nur EIN Modal pro Turn
+
+    def test_partial_release_denied_dob_refuses(self):
+        """Teilfreigabe (§4.3e): Name released, DOB denied → die kombinierte
+        Query wird refused (deny gewinnt), der Hinweis leitet zum
+        Umformulieren an."""
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"),
+                          ("05.02.1947", "17.02.1947", "dob"))
+        self._set_releases(("Bonnie M Stark", "name", "released"),
+                           ("05.02.1947", "dob", "denied"))
+        out, _ = self._guard_ask(
+            "searxng_search",
+            {"query": "Bonnie M Stark born 05.02.1947"}, m)
+        self.assertIsNotNone(out)
+        self.assertIn("verweigert", json.loads(out)["hint"])
+        # Nur der Name released → Query ohne DOB läuft durch
+        out2, _ = self._guard_ask(
+            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m)
+        self.assertIsNone(out2)
 
 
 if __name__ == "__main__":

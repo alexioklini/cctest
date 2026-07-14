@@ -1,6 +1,6 @@
 # PII-Analyse-Parität — Handover (L1–L7)
 
-**Stand:** 2026-07-14 (aktualisiert nach Session 3) · Basis-VERSION: `9.337.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 + L2 GELIEFERT (v9.334.0–v9.337.0). L4-Phase-2/L5/L6/L7 offen — nächster Baustein L4 Phase 2 (`ask`/Consent/`release_web`; Reihenfolge §3).**
+**Stand:** 2026-07-14 (aktualisiert nach Session 4) · Basis-VERSION: `9.338.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 + L2 + L4 Phase 2 GELIEFERT (v9.334.0–v9.338.0). L5/L6/L7 offen — nächster Baustein L5 (OCR-Preamble scannen + MRZ-Entity-Seed; Reihenfolge §3).**
 
 ---
 
@@ -12,8 +12,8 @@
 | **L1** doc_checks-Toolset | ✅ GELIEFERT | v9.335.0, `e2395b97` |
 | **L3** Dispatch-Symmetrie | ✅ GELIEFERT | v9.336.0 |
 | **L2** Entitäts-Map + MRZ-Fakes + Datums-Offset | ✅ GELIEFERT | v9.337.0 |
-| **L4 Phase 2** (`ask`/Consent/`release_web`) | ⬜ NÄCHSTER Baustein ('ask' verhält sich bis dahin wie 'refuse'; Ergebnis-Rück-Anon 2d existiert schon als L3b-Seam) | — |
-| **L5** OCR-Preamble | ⬜ offen | — |
+| **L4 Phase 2** (`ask`/Consent/`release_web`) | ✅ GELIEFERT | v9.338.0 |
+| **L5** OCR-Preamble | ⬜ NÄCHSTER Baustein | — |
 | **L6** Report-Fidelity | ⬜ offen | — |
 | **L7** KYC-Preset | ⬜ offen | — |
 
@@ -49,6 +49,24 @@
 - **Known-Values-Sweep:** `apply_known_values` (wortgegrenzt, registrierte Namen/Mails ≥4 Zeichen) im `_gdpr_anon_tool_text`-Seam nach dem Scan-Pass — die deutsche NER taggt englische Namen in Drawern/Web-Results oft nicht. Pfade bleiben intakt (`STARK_Bonnie…` — Wortgrenze; Pfad-Integrität ist L3a-Sache), `Starkstrom` nie zerschrieben. Audit-Event: `known_values_swept`.
 - **Live verifiziert (Session 3, echte Auto-Anonymise-Session im Projekt ko-kunden, glm-5.2):** Wire trug `"Sam Mitchell KO Kunde"`, `mempalace_query` fand die STARK-Drawer (L3a-Deanon wirkt), `read_document` auf Klarnamen-Pfad lesbar (74 Zeilen); Haupt-Person konsistent auf EINER Fake-Identität (`Bonnie Stark`→`Sam Mitchell`, `Bonnie M Stark`→`Sam M Mitchell`, `Stark`→`Mitchell`), die Stark-FAMILIE (Kimberlee/Jerry/Kenneth/Lori) + Lubeck-Brüder als DISTINKTE Entitäten mit distinkten Fake-Nachnamen. **Damit ist auch die offene L3-Live-Verifikation aus Session 2 erledigt.** Test-Sessions gelöscht, Config exakt revertiert (Scanner steht weiter auf `enabled:false`).
 - Tests: `tests/test_pseudonymizer_entities.py` (15) — F1-Join (7 Formen), §7.9-Invariante, Golden-MRZs beider Pässe, Opaque-Spleiß-Guard, Datums-Deltas, Persistenz. 185 Bestandstests grün.
+
+### Was v9.338.0 (L4 Phase 2 — Web-Egress-Consent, `ask`-Modus) konkret enthält
+
+- **Signatur-Änderung:** `_gdpr_guard_web_args` gibt jetzt `(refusal, args)` zurück — die zurückgegebenen Args sind die DISPATCH-Kopie (Wire/History behalten die Fakes); Callsite `engine/llm_loop.py:dispatch_tool` angepasst. Alle anderen Modi verhalten sich exakt wie Phase 1.
+- **(a) Consent per WERT** (`brain._web_consent_ask`): erster geblockter Call öffnet EIN AskUserQuestion-Batch (eine Frage pro Wert, Optionen „Freigeben (für diese Sitzung)"/„Nicht freigeben"), über die bestehende ask_user-Mechanik (`_ask_user_register` + Event, Antwort via `POST /v1/chat/answer`, bestehende Frage-Karte — null neue UI). Slot wird VOR dem Emit registriert (race-frei). Nicht-interaktiv (kein `event_callback` / `current_bg_task`) → refuse mit eigenem `no_consent`-Hint. EIN unbeantworteter Dialog pro Turn (`_web_consent_asked`-Set auf dem RequestContext); Timeout/Cancel persistiert nichts.
+- **(b) Ledger:** `turn_action=release_web/deny_web`-Zeilen in `pii_decisions` mit **value-only NAMESPACED Hash** (`_web_release_hash` = sha256(`web|`+norm)) — NICHT sha256(rule_id|value), sonst shadowt die Consent-Zeile die anonymise-Zeile desselben Werts in `get_session_pii_decisions` und der Wire-Rewrite verliert den `fake_value` (Leak). Reader: `ChatDB.get_session_web_releases` (latest-per-hash; Widerruf = neuere deny_web-Zeile).
+- **(c) Hin-Übersetzung** (`_web_release_translate_args`): Fake eines freigegebenen Werts → Original NUR im ausgehenden Request (case-insensitiv + aligned Slug-Formen `erika-muster`→`bonnie-m-stark`). **(d)** Rück-Anonymisierung = bestehender L3b-Seam, nichts Neues nötig — das Modell sieht das Original nie.
+- **(e) Teilfreigabe:** verweigerte Werte refusen mit „Freigabe verweigert"-Hint (Modell fragt nie erneut); Released-Matching per **Variant-Intersection** (Freigabe von `Bonnie M Stark` deckt die L2-Variante `Bonnie Stark` via first+last-Slug; Deny gewinnt bei Überlappung VERSCHIEDENER Consents). Unreleased Fakes werden weiter in JEDEM Modus refused — nie still übersetzt.
+- **(f) GDPR-Panel:** Consent-Zeilen erscheinen im Verlaufs-Modal als Status `web_released`/`web_denied` (`pii-decisions-view` mappt die turn_actions; `panels_gdpr.js`: Chips/Filter/Trail-Labels + per-Zeile Freigeben/Widerrufen-Umschalter, von Bulk-Aktionen ausgenommen; Speichern via bestehendem `POST /v1/gdpr/decisions` — kein neuer Endpoint, keine neuen JS-Globals).
+- **(g) Audit:** `pii_web_egress` mit `match=released` je ausgeführtem freigegebenem Call; `pii_web_blocked` mit `match=denied`.
+- Tests: `tests/test_web_egress_gate.py` 17→28 (Consent granted/denied/Timeout-einmal-pro-Turn, Übersetzung dispatch-only + Slug, Variant-Intersection, Teilfreigabe, non-interactive, unreleased-nie-übersetzt). 221 Nachbar-Tests + js_gate grün.
+- **NICHT gebaut (bewusst):** kein GUI-Knob für `web_egress` (kommt mit L7-Preset); Websuche-Basket als implizite Freigabe (§4.3f, Hin-Übersetzungs-Teil) war schon durch L3b/F5-Teilschließung abgedeckt — der Basket-Prefetch läuft user-kuratiert und rück-anonymisiert, eine explizite release_web-Registrierung der Basket-URLs steht NICHT an (der Prefetch umgeht den Dispatch-Gate ohnehin nicht: `_build_web_sources` ruft `tool_web_fetch` direkt, ohne Mapping-Args — verifizieren, falls L7 das ändern will).
+
+### Nebenbefunde aus Session 4 (für die Weiterarbeit relevant)
+- **Live-E2E steht noch aus** (Regel 12, ehrlich): Unit-Suite deckt Consent-Mechanik + Übersetzung + Ledger; der interaktive Rundlauf (echte anonymisierende Session, `web_egress:"ask"`, Frage-Karte im Browser beantworten, searxng läuft rückübersetzt, Ergebnis rück-anonymisiert, Widerruf im Modal) braucht eine echte UI-Session im Projekt `ko-kunden` — **beim L5- oder L7-Test mit erledigen** (Config danach exakt revertieren, Test-Sessions löschen, [[feedback_cleanup_test_sessions]]).
+- Die Frage-Karte rendert `user_input_needed` generisch (chat_send.js) — der Consent-Dialog brauchte KEINE UI-Änderung. Antwort-Shape: Batch `answers` keyed by Frage-Text; Single-Question kommt als `answer`-String (beide Pfade im Gate behandelt).
+- `_status_of` in `pii-decisions-view` mappte unbekannte turn_actions bisher auf `open` — release_web/deny_web hätten dort als Phantom-„Offen" gerendert; jetzt explizit gemappt. Wer künftig neue turn_actions erfindet: IMMER dort mitziehen.
+- Der `history_edit`-Save-Pfad des Modals sendet turn_action call-weit (`record_pii_decisions` ignoriert per-Decision-turn_action) — deshalb schreiben die Web-Toggles EIGENE Calls (`release_web`/`deny_web` je Gruppe). Bestandsverhalten unangetastet.
 
 ### Nebenbefunde aus Session 3 (für die Weiterarbeit relevant)
 - **NER-Wortstellungs-Lücke:** die deutsche spaCy-NER taggt `"Stark Bonnie KO Kunde"` (Nachname zuerst, wie Aktenzeichen) nur als `Stark` → der Vorname bleibt im User-Text ROH (Halb-Hybrid, F1-Rest). `"Bonnie Stark …"` wird voll getaggt. KEIN L2-Bug (vor L2 identisch, nur mit inkonsistentem Fake) — Kandidat für L5b-Seed (Entität aus MRZ speist Varianten, dann fängt der Ledger-Rewrite/Sweep auch die getippte Form) oder NER-Upgrade (`de_core_news_lg`).
@@ -241,8 +259,8 @@ Drei Hebel, die zusammen Parität herstellen:
 | 1 | **L1** — Deterministische Verifikations-Tools (`doc_checks`) | **F2** komplett, F1 teilweise | M | ✅ v9.335.0 |
 | 2 | **L3** — Dispatch-Symmetrie (Args-Deanon + Results-Anon) | **F3**, F5 (mempalace + web-inbound) | M | ✅ v9.336.0 |
 | 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** | ✅ v9.337.0 |
-| 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L | Phase 1 ✅ v9.334.0 · Phase 2 ⬜ **NÄCHSTER** |
-| 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M | ⬜ |
+| 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L | Phase 1 ✅ v9.334.0 · Phase 2 ✅ v9.338.0 |
+| 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M | ⬜ **NÄCHSTER** |
 | 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M | ⬜ |
 | 7 | **L7** — KYC-Preset + Degradations-Transparenz | UX/Vertrauen | S | ⬜ |
 
@@ -410,7 +428,7 @@ Konsequente Fortsetzung der bestehenden Philosophie (IBAN mod-97-gültig, Kredit
 
 ---
 
-## L4 — Web-Egress-Policy (Phase 1 ✅ v9.334.0 · Phase 2 ⬜)
+## L4 — Web-Egress-Policy (Phase 1 ✅ v9.334.0 · Phase 2 ✅ v9.338.0; Details §0.0)
 
 **Der einzige Punkt mit echtem Zielkonflikt:** Personensuche im offenen Web mit Klarnamen **ist** inhärent Preisgabe. Es gibt keine Lösung, die beides hat — nur eine **ehrliche, auditierbare Entscheidung**.
 

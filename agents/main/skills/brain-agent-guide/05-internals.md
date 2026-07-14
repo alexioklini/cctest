@@ -1532,11 +1532,27 @@ preamble goes in first-user-message instead.
   structured `web_query_blocked_pii` error (value KINDS only, never values)
   telling it to report the check as "nicht prüfbar (Datenschutz)" instead of
   claiming "no results". Admin knob `config.json → gdpr_scanner.web_egress`:
-  `refuse` (default) | `ask` (like refuse until the consent flow ships) |
+  `refuse` (default) | `ask` (per-value consent, see next bullet) |
   `block_group` (web tools hidden entirely in anonymising sessions) | `allow`
   (real values pass but are audited; fakes still refused). Audit rows:
   `pii_web_blocked` / `pii_web_egress`. Non-anonymising sessions are
   completely unaffected.
+- **Web-Egress-Consent — the `ask` mode (9.338.0)**: brings web corroboration
+  back behind ONE user consent. The first blocked web call opens a single
+  question card in the chat with one question **per protected VALUE** (not per
+  query): "„Bonnie M Stark“ (Name) für die Web-Recherche freigeben?" —
+  Freigeben / Nicht freigeben. The outcome is session-sticky in the
+  `pii_decisions` ledger (`turn_action=release_web`/`deny_web`, value-only
+  namespaced hash): released values pass every later query without a new
+  dialog; denied values refuse with a "Freigabe verweigert" hint and never
+  re-open the dialog. If the model searches with the PSEUDONYM of a released
+  value, the gate translates it back to the original **for the outgoing
+  request only** (URL slugs included) — the results are re-anonymised through
+  the tool-result seam, so the cloud model never sees the real value even
+  though the search engine did. Background/scheduler turns can't ask →
+  refuse. Releases are visible + revocable in the GDPR history modal
+  (statuses "Web freigegeben"/"Web verweigert", per-row toggle). Audit:
+  `pii_web_egress` with `match=released` for every executed released call.
 - **SERVER-ONLY detection (9.200.0)**: the browser-side `PIIScanner` (the
   ~70 JS regex rules + Luhn/Mod11 validators) was DELETED. PII is detected
   exclusively in Python (`engine/pii_ner.py → _pii_rules` + `_pii_scan_text` +

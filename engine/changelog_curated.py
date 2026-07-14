@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.338.0",
+        "date": "2026-07-14",
+        "title": "Web-Recherche in anonymisierten Chats — mit Ihrer Freigabe",
+        "body": "In anonymisierten Chats war die Web-Recherche zu geschützten "
+                "Werten bisher komplett gesperrt. Im neuen Freigabe-Modus "
+                "fragt Sie der Agent einmal pro Wert (z. B. einen Namen), ob "
+                "er ihn für die Web-Suche verwenden darf — ein einziger "
+                "Dialog statt einer Rückfrage pro Suche. Freigaben gelten nur "
+                "für die jeweilige Sitzung, sind im Datenschutz-Verlauf "
+                "(Schild-Symbol) sichtbar und dort jederzeit widerrufbar; die "
+                "Suchergebnisse werden vor der Übergabe an das Cloud-Modell "
+                "wieder anonymisiert, nicht freigegebene Werte verlassen den "
+                "Rechner weiterhin nicht.",
+        "audience": "user",
+        "versions": ["9.338.0"],
+    },
+    {
         "version": "9.337.0",
         "date": "2026-07-14",
         "title": "Anonymisierung erkennt Personen statt Zeichenketten",

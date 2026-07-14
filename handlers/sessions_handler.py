@@ -1485,6 +1485,12 @@ class SessionsHandlerMixin:
                 return "local"
             if a in ("send", "continue"):
                 return "accepted"
+            # Web-egress consent rows (L4 Phase 2) — own namespaced hash, so
+            # they appear as separate items next to the value's anonymise row.
+            if a == "release_web":
+                return "web_released"
+            if a == "deny_web":
+                return "web_denied"
             return "open"
 
         items = []

@@ -2141,11 +2141,29 @@ wird der Aufruf angehalten. Der Assistent weist die betroffene Prüfung dann
 ehrlich als „nicht prüfbar (Datenschutz)" aus — er behauptet **nicht**
 fälschlich „keine Treffer". Rein technische Suchen (Gerätemodelle, Normen,
 Fehlermeldungen) laufen normal durch. Admins wählen das Verhalten unter
-`gdpr_scanner.web_egress` in der config.json: `refuse` (Standard),
-`block_group` (Web-Werkzeuge in anonymisierten Chats ganz ausblenden) oder
-`allow` (echte Werte dürfen raus, werden aber im Audit-Log protokolliert).
-Suchen mit **Ersatzwerten** (den Pseudonymen) werden immer verweigert — sie
-würden nichts finden oder fremde, echte Personen treffen.
+`gdpr_scanner.web_egress` in der config.json: `refuse` (Standard), `ask`
+(Freigabe-Dialog, siehe nächste Frage), `block_group` (Web-Werkzeuge in
+anonymisierten Chats ganz ausblenden) oder `allow` (echte Werte dürfen raus,
+werden aber im Audit-Log protokolliert). Suchen mit **Ersatzwerten** (den
+Pseudonymen) werden immer verweigert — sie würden nichts finden oder fremde,
+echte Personen treffen.
+
+**F: Kann ich die Web-Recherche für einzelne Werte freigeben?**
+A: Ja — seit v9.338.0 mit dem Freigabe-Modus (`gdpr_scanner.web_egress:
+"ask"`). Möchte der Assistent mit einem geschützten Wert im Web suchen,
+erscheint **einmal** eine Frage-Karte im Chat — eine Frage **pro Wert**, nicht
+pro Suche: „‚Bonnie M Stark' (Name) für die Web-Recherche freigeben?" Sie
+entscheiden je Wert mit „Freigeben (für diese Sitzung)" oder „Nicht
+freigeben". Freigegebene Werte darf der Assistent ab dann in Web-Suchen
+verwenden; die Suchergebnisse werden vor der Übergabe an das Cloud-Modell
+wieder anonymisiert. Nicht freigegebene Werte verlassen den Rechner weiterhin
+nicht — die betroffene Prüfung wird als „nicht prüfbar (Datenschutz)"
+ausgewiesen. Ihre Entscheidungen gelten nur für die aktuelle Sitzung und
+stehen im Datenschutz-Verlauf (Schild-Symbol → Übersicht) als „Web
+freigegeben" / „Web verweigert" — dort können Sie jede Freigabe jederzeit
+widerrufen oder eine Verweigerung nachträglich freigeben. In automatischen
+Läufen (geplante Aufgaben, Hintergrund-Analysen) gibt es niemanden, der
+freigeben könnte — dort bleibt die Suche gesperrt.
 
 **F: Findet ein anonymisierter Chat meine Projektdaten und Dateien noch?**
 A: Ja — seit v9.336.0. Vorher liefen Suchen im Projektgedächtnis und

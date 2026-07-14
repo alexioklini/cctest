@@ -1159,6 +1159,9 @@ const _PII_STATUS_META = {
   accepted: { label: 'Klartext gesendet', color: '#b91c1c', bg: '#fee2e2' },
   local:    { label: 'Lokal gesendet', color: '#3f6212', bg: '#ecfccb' },
   fp:       { label: 'Falschtreffer',  color: '#525252', bg: '#e5e5e5' },
+  // Web-Egress-Consent (L4 Phase 2): eigener Ledger-Namespace, je Wert.
+  web_released: { label: 'Web freigegeben', color: '#1d4ed8', bg: '#dbeafe' },
+  web_denied:   { label: 'Web verweigert',  color: '#9a3412', bg: '#ffedd5' },
 };
 // Map a stored decision's turn_action/false_positive to a status (for history
 // rows) + a short German verb for the trail.
@@ -1170,6 +1173,8 @@ function _piiActionLabel(ev) {
   if (a === 'send') return 'im Klartext gesendet';
   if (a === 'continue') return 'zurückgesetzt';
   if (a === 'history_edit') return 'in der Übersicht geändert';
+  if (a === 'release_web') return 'für die Web-Recherche freigegeben';
+  if (a === 'deny_web') return 'Web-Freigabe verweigert/widerrufen';
   return a || 'entschieden';
 }
 function _piiFmtWhen(ts) {
@@ -1246,6 +1251,8 @@ async function openPiiHistoryModal() {
             <option value="accepted">Klartext gesendet</option>
             <option value="local">Lokal gesendet</option>
             <option value="fp">Falschtreffer</option>
+            <option value="web_released">Web freigegeben</option>
+            <option value="web_denied">Web verweigert</option>
           </select>
         </div>
       </div>
@@ -1322,7 +1329,8 @@ function _piiHistRender() {
   const fStatus = overlay.querySelector('.pii-hist-filter-status').value || '';
 
   // Summary chips (over the FULL set, not the filtered view).
-  const tally = { open: 0, anon: 0, accepted: 0, local: 0, fp: 0 };
+  const tally = { open: 0, anon: 0, accepted: 0, local: 0, fp: 0,
+    web_released: 0, web_denied: 0 };
   for (const it of S.items) tally[_piiHistEffectiveStatus(it)]++;
   const sumEl = overlay.querySelector('.pii-hist-summary');
   const chip = (n, meta) => n ? '<span class="pii-hist-chip" style="background:' + meta.bg + ';color:' + meta.color + '">' + n + ' ' + esc(meta.label) + '</span>' : '';
@@ -1333,6 +1341,8 @@ function _piiHistRender() {
     chip(tally.accepted, _PII_STATUS_META.accepted) +
     chip(tally.local, _PII_STATUS_META.local) +
     chip(tally.fp, _PII_STATUS_META.fp) +
+    chip(tally.web_released, _PII_STATUS_META.web_released) +
+    chip(tally.web_denied, _PII_STATUS_META.web_denied) +
     (S.truncated ? '<span class="pii-hist-note">(Liste gekürzt — sehr viele Funde)</span>' : '');
 
   const shown = S.items.filter((it) => {
@@ -1418,12 +1428,24 @@ function _piiHistRowHtml(it) {
   const sevClass = it.action === 'block' ? ' is-block' : '';
   const trailBtn = '<button class="pii-hist-trailbtn" data-idx="' + it.idx + '">' +
     (it.expanded ? '▾' : '▸') + ' Verlauf' + (hasTrail ? ' (' + it.history.length + ')' : '') + '</button>';
+  // Web-Egress-Consent-Zeilen (L4 Phase 2): eigene Umschalt-Aktion statt der
+  // Bulk-Aktionen (fp/Klartext/Reset passen nicht auf eine Web-Freigabe).
+  const isWeb = it.baseStatus === 'web_released' || it.baseStatus === 'web_denied';
+  const webBtn = isWeb
+    ? '<button class="pii-btn pii-btn-secondary pii-hist-webtoggle" data-idx="' + it.idx +
+      '" style="font-size:11px;padding:2px 8px">' +
+      (st === 'web_released' ? 'Widerrufen' : 'Freigeben') + '</button>'
+    : '';
+  const selBox = isWeb
+    ? '<span style="display:inline-block;width:13px"></span>'
+    : '<input type="checkbox" class="pii-hist-row-sel" data-idx="' + it.idx + '"' + (it.sel ? ' checked' : '') + '>';
   let row = '<div class="pii-finding pii-finding-row pii-hist-row' + (changed ? ' pii-hist-changed' : '') + '" data-idx="' + it.idx + '">' +
-    '<input type="checkbox" class="pii-hist-row-sel" data-idx="' + it.idx + '"' + (it.sel ? ' checked' : '') + '>' +
+    selBox +
     '<span class="pii-finding-sev' + sevClass + '"></span>' +
     '<span class="pii-finding-label">' + esc(it.label) + '</span>' +
     '<span class="pii-finding-val">' + esc(shownVal) + fakeBit + '</span>' +
     '<span class="pii-hist-status" style="background:' + meta.bg + ';color:' + meta.color + '">' + esc(meta.label) + (changed ? ' *' : '') + '</span>' +
+    webBtn +
     trailBtn +
   '</div>';
   if (it.expanded) {
@@ -1460,6 +1482,18 @@ function _piiHistWireRows(bodyEl, forceOpen) {
       e.stopPropagation();
       const it = S.items[+btn.dataset.idx];
       if (it) { it.expanded = !it.expanded; _piiHistRender(); }
+    };
+  }
+  for (const btn of bodyEl.querySelectorAll('.pii-hist-webtoggle')) {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const it = S.items[+btn.dataset.idx];
+      if (!it) return;
+      const st = _piiHistEffectiveStatus(it);
+      it.pending = (st === 'web_released') ? 'web_denied' : 'web_released';
+      if (it.pending === it.baseStatus) it.pending = null;
+      _piiHistRender();
+      _piiHistUpdateFooter();
     };
   }
   for (const more of bodyEl.querySelectorAll('.pii-hist-more')) {
@@ -1507,6 +1541,11 @@ function _piiHistWireToolbar() {
       const act = b.dataset.act; // fp | accepted | reset
       for (const it of S.items) {
         if (!it.sel) continue;
+        // Web-Consent-Zeilen haben eigene Aktionen (Freigeben/Widerrufen) —
+        // Gruppen-Auswahl darf sie nicht in fp/Klartext/Reset ziehen.
+        if (it.baseStatus === 'web_released' || it.baseStatus === 'web_denied') {
+          it.sel = false; continue;
+        }
         if (act === 'reset') it.pending = it.baseStatus === 'open' ? null : 'open';
         else if (act === 'fp') it.pending = 'fp';
         else if (act === 'accepted') it.pending = 'accepted';
@@ -1525,10 +1564,17 @@ async function _piiHistSave() {
   if (!changed.length) return;
   const saveBtn = S.overlay.querySelector('.pii-hist-save');
   saveBtn.disabled = true; saveBtn.textContent = 'Wird gespeichert…';
+  // Web-Consent-Zeilen (L4 Phase 2) werden als eigene release_web/deny_web-
+  // Ledger-Zeilen persistiert (turn_action ist call-weit → eigene Calls);
+  // der value_hash der bestehenden Zeile bleibt erhalten (namespaced Hash
+  // aus dem Gate), damit latest-row-wins den Widerruf greifen lässt.
+  const webChanged = changed.filter((it) =>
+    it.pending === 'web_released' || it.pending === 'web_denied');
+  const normal = changed.filter((it) => webChanged.indexOf(it) === -1);
   // Map modal status → persisted turn_action/false_positive. 'reset' (→ open)
   // records a neutral 'continue' row with FP cleared so latest-row-wins drops
   // the prior verdict. Persisted by value_hash (no cleartext for undecided).
-  const decisions = changed.map((it) => {
+  const decisions = normal.map((it) => {
     const st = it.pending;
     const fp = st === 'fp';
     const turn_action = (st === 'accepted') ? 'send' : 'continue';
@@ -1542,14 +1588,32 @@ async function _piiHistSave() {
       turn_action,
     };
   });
+  const mkWebDec = (it) => ({
+    rule_id: it.rule_id,
+    value: (it.decision && it.decision.value) || '',
+    value_hash: it.value_hash,
+    source: 'web_egress_gate',
+    disposition: 'history-modal',
+  });
   try {
-    await API.recordPiiDecisions(S.sid, 'history_edit', decisions);
-    for (const it of changed) {
+    if (decisions.length) await API.recordPiiDecisions(S.sid, 'history_edit', decisions);
+    const rel = webChanged.filter((it) => it.pending === 'web_released');
+    const den = webChanged.filter((it) => it.pending === 'web_denied');
+    if (rel.length) await API.recordPiiDecisions(S.sid, 'release_web', rel.map(mkWebDec));
+    if (den.length) await API.recordPiiDecisions(S.sid, 'deny_web', den.map(mkWebDec));
+    for (const it of normal) {
       it.baseStatus = it.pending;
       it.pending = null;
       it.decision = Object.assign({}, it.decision || {}, {
         false_positive: it.baseStatus === 'fp',
         turn_action: it.baseStatus === 'accepted' ? 'send' : 'continue',
+      });
+    }
+    for (const it of webChanged) {
+      it.baseStatus = it.pending;
+      it.pending = null;
+      it.decision = Object.assign({}, it.decision || {}, {
+        turn_action: it.baseStatus === 'web_released' ? 'release_web' : 'deny_web',
       });
     }
     if (S.chat) S.chat._piiDecisions = null;

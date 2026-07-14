@@ -3130,6 +3130,35 @@ class ChatDB:
         return out
 
     @staticmethod
+    @_db_safe(default=dict)
+    def get_session_web_releases(session_id):
+        """Latest web-egress consent per protected value (L4 Phase 2).
+
+        Consent rows live in the same append-only pii_decisions ledger but under
+        turn_action 'release_web'/'deny_web' and a value-only NAMESPACED hash
+        (sha256('web|'+normalized value), see brain._web_release_hash) — the
+        namespace keeps them from shadowing the value's 'anonymise' row in
+        get_session_pii_decisions (latest-row-per-hash wins there, and the wire
+        rewrite depends on that row's fake_value). Returns value_hash →
+        {value, rule_id, status: 'released'|'denied', created_at, user_id};
+        latest row per hash wins, so a revoke is just a newer deny_web row."""
+        out = {}
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT value_hash, rule_id, raw_value, turn_action, "
+                "created_at, user_id FROM pii_decisions "
+                "WHERE session_id = ? AND turn_action IN "
+                "('release_web','deny_web') ORDER BY created_at ASC",
+                (session_id,)).fetchall()
+        for r in rows:
+            out[r[0]] = {
+                "value": r[2] or "", "rule_id": r[1] or "",
+                "status": ("released" if r[3] == "release_web" else "denied"),
+                "created_at": r[4], "user_id": r[5] or "",
+            }
+        return out
+
+    @staticmethod
     @_db_safe(default=list)
     def pii_decision_stats():
         """Aggregate per-rule decision stats for global learning / evaluation:
