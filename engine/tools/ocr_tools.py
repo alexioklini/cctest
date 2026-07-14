@@ -344,7 +344,7 @@ def tool_ocr_extract(args: dict) -> str:
             preview = preview[:_PREVIEW_CHARS]
             truncated = True
 
-        return _ok({
+        payload = {
             "pages": len(results),
             "mean_confidence": mean,
             "lang": lang,
@@ -356,9 +356,80 @@ def tool_ocr_extract(args: dict) -> str:
                      f"full text in the artifact" if truncated and saved else
                      f"preview capped at {_PREVIEW_CHARS} of {len(full)} chars — "
                      f"pass out='text.txt' for the full extract" if truncated else None),
-        })
+        }
+        _attach_model_read(payload, path, full, args)
+        return _ok(payload)
     except Exception as e:
         return _err(f"ocr_extract failed: {e}")
+
+
+# Tesseract's own quality signal is UNUSABLE as a gate on this kind of input —
+# measured across the 10 real webcam passport photos:
+#     conf 63.5%, 134 chars  → useless (browser chrome only)
+#     conf 43.0%, 236 chars  → the one with the passport number
+#     conf 46.3%, 322 chars  → most text of all, no passport number
+# The highest-scoring image is the WORST read, and the char count is just as
+# blind (it counts window decorations). So neither a confidence threshold nor a
+# length threshold can separate "good enough" from "needs a second opinion" —
+# any cut-off that keeps the good image also keeps the useless ones. A first
+# attempt gated on <120 chars did exactly the wrong thing: it withheld the model
+# read on the very image where tesseract had returned nothing but browser chrome.
+# Therefore: ALWAYS offer the model read, and let the agent compare the two.
+# Both are labelled, so nothing is silently merged.
+
+
+def _attach_model_read(payload: dict, path: str, det_text: str,
+                       args: dict) -> None:
+    """Add the OCR MODEL's reading as a SEPARATE, explicitly-labelled field —
+    never merged into `text`.
+
+    Why this exists: the ocr_* tools are deliberately LLM-free, so a
+    Rechnungsbetrag is transcribed, not re-typed by a model. That is right for
+    numbers. But on photographed documents it fails silently: measured on 10
+    real webcam passport photos, tesseract read the passport number in 1/10
+    where the OCR model read it in 5/10 — and it does not KNOW it failed (see
+    the confidence table above). Returning only its own thin read leaves the
+    agent with garbage and no hint that a better one exists.
+
+    So: deterministic FIRST, always, in `text`. The model's reading rides along
+    in its own field, flagged unverified — the agent sees exactly which
+    characters a machine read off the pixels and which a model inferred, and
+    never has to guess which is which. Opt out with model_fallback=false for a
+    strictly deterministic result.
+    """
+    if args.get("model_fallback") is False:
+        return
+    try:
+        from engine.doc_convert import _extract_image_ocr
+        text, backend, _err = _extract_image_ocr(path)
+    except Exception:
+        return
+    if not text:
+        # Nothing came back — either OCR is off, or the tesseract sanity gate
+        # inside _extract_image_ocr discarded the model's output as unfounded
+        # (no legible word in the image at all). Say so: silence would read as
+        # "the model agrees with the deterministic result", which it does not.
+        payload["model_read"] = {
+            "engine": "", "text": "",
+            "warning": ("No model reading available for this image — either "
+                        "OCR is disabled, or the deterministic check found no "
+                        "legible text at all, in which case any model output "
+                        "would have been invented. Do not infer content here."),
+        }
+        return
+    payload["model_read"] = {
+        "engine": backend,
+        "text": _anon(text[:_PREVIEW_CHARS], f"ocr_extract.model:{path}"),
+        "warning": (
+            "UNVERIFIED — produced by a vision model, not read off the pixels "
+            "deterministically. It fills gaps tesseract could not read, but it "
+            "CAN INVENT plausible text on unreadable images (observed: a "
+            "fabricated given name and a passport holder that does not exist). "
+            "Treat `text` above as evidence and this as a lead. Do NOT quote a "
+            "name, date or number from here as fact — verify it against the "
+            "image (ocr_region) or say it is unconfirmed."
+        ),
+    }
 
 
 def tool_ocr_region(args: dict) -> str:

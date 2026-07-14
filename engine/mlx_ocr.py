@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import threading
 
 # GLM-OCR's task-prefixed prompt, plus an explicit do-not-guess clause. The bare
@@ -135,6 +136,44 @@ def unload() -> None:
         _run_on_worker(_drop)
     except Exception:
         pass
+
+
+# ── Document-type classification ─────────────────────────────────────────────
+# Reading the CHARACTERS off a photographed ID is hard (see the measurements in
+# doc_convert); recognising THAT IT IS AN ID is easy — and it is the question
+# that actually decides how the file must be handled. Measured on the 10 real
+# webcam passport photos: 8/8 passports classified `passport`, both portrait
+# shots `photo`, ~1s each. Including the one image whose text OCR could not read
+# at all — which is exactly the case where a text-based PII scan is blind and a
+# passport would otherwise slip through unflagged.
+_TYPE_PROMPT = (
+    "Classify this document image. Answer with ONE word from this list only: "
+    "passport, id_card, drivers_license, bank_statement, invoice, receipt, "
+    "contract, payslip, medical, certificate, correspondence, screenshot, "
+    "photo, other. Answer with the single word, nothing else."
+)
+
+DOC_TYPES = (
+    "passport", "id_card", "drivers_license", "bank_statement", "invoice",
+    "receipt", "contract", "payslip", "medical", "certificate",
+    "correspondence", "screenshot", "photo", "other",
+)
+
+
+def classify_document(path: str, *, repo: str = "") -> str:
+    """Best-effort document-type of an image. "" when undecidable.
+
+    Cheap (one short generation, ~1s) and — unlike the OCR text — reliable on
+    exactly the bad photographs where it matters most.
+    """
+    text, err = extract(path, repo=repo, prompt=_TYPE_PROMPT, max_tokens=24)
+    if err or not text:
+        return ""
+    # The model occasionally answers with a short list ("passport, id_card,
+    # drivers_license") when the document could be several things — take the
+    # first, it is the most likely one.
+    word = re.split(r"[,\s]+", text.strip().lower())[0].strip(".:;\"'")
+    return word if word in DOC_TYPES else ""
 
 
 def extract(path: str, *, repo: str = "", prompt: str = "",

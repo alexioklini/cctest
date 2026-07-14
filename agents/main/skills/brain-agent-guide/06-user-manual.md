@@ -644,6 +644,15 @@ Codebasen, Forschungspapiere, …).
      Funktioniert, ist aber deutlich langsamer als `mlx_ocr` (~37 s statt ~1 s).
    - **`auto`** — Cloud zuerst, lokal als Rückfall. · **`none`** — OCR aus.
 
+   **Ausweise & sensible Unterlagen werden an ihrer ART erkannt:** Unabhängig
+   vom erkannten Text wird bei Bildern der **Dokumenttyp** bestimmt (Reisepass,
+   Personalausweis, Kontoauszug, Rechnung …) und daraus automatisch eine
+   **Vertraulichkeitsstufe** abgeleitet: Ausweisdokumente und medizinische
+   Unterlagen gelten als *Streng Vertraulich*, Kontoauszüge/Verträge als
+   *Vertraulich*, Rechnungen/Belege als *Intern*. Das greift **auch dann, wenn
+   die Texterkennung nichts lesen konnte** — genau der Fall, in dem eine reine
+   Textprüfung blind wäre. Die Stufe kann dadurch nur **steigen**, nie sinken.
+
    **Wie verlässlich ist der erkannte Text?** Er ist ein **Sucheinstieg, keine
    Datenquelle.** Bei sauberen Vorlagen (Dokumentenscan, Screenshot) stimmt er
    meist; bei schwierigen Bildern (abfotografierter Ausweis, schräg, gespiegelt,

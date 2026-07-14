@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.329.0"
+VERSION = "9.330.0"
 VERSION_DATE = "2026-07-14"
 CHANGELOG = [
+    ("9.330.0", "2026-07-14", "fix(OCR-Konsistenz über ALLE Wege) + feat(Bild-Typ-Klassifikation schliesst die PII-Lücke bei Foto-Ausweisen). ANLASS (User, zwei Einwände): (a) 'die OCR-Qualität hängt jetzt davon ab, WIE das Bild eingehängt wird — Ingest anders als Attachment anders als OCR-Tools, ist das sinnvoll?' (b) 'wäre es für den PII-Fall nicht besser, den TYP des Bildes abzufragen (Rechnung/Pass/Kontoauszug) und danach zu entscheiden?' BEFUND ZU (a) — die Landkarte war tatsächlich inkonsistent, FÜNF Wege mit VIER Verhalten: Projekt-Import und read_document teilen sich parse_image (LLM-OCR + Tesseract-Wächter + Warnhinweis) — die waren schon konsistent, weil der Fix am Choke-Point sass; ein multimodales Chat-Modell bekommt das Bild als Pixel und GAR KEINE OCR (bewusst so, das Modell sieht mehr als jede OCR); die ocr_*-Tools laufen strikt LLM-frei; und der PII-Scanner übersprang Bilder KOMPLETT ('return \"\", \"media\"'). Das Letzte war eine echte DSGVO-Lücke: ein fotografierter Ausweis ist eine .jpg und ging damit als der PII-DICHTESTE Anhangstyp überhaupt UNGEPRÜFT ans Modell. FIXES: (1) GEMEINSAMES FUNDAMENT doc_convert.tesseract_read(path) → {text, words, mean_conf}, gebaut auf ocr_tools' bestehenden Primitiven (_page_tsv/_words_to_text/_mean_conf) — EIN Tesseract-Aufruf-Shape im ganzen Code, statt drei. (2) PII-SCANNER liest Bilder jetzt — und zwar BEIDE Lesungen (Tesseract + Modell) konkateniert. Begründung (der User fragte explizit 'warum nicht immer beides?'): für einen DETEKTOR zählt Recall, nicht Präzision — ein verpasster Passnummer-Treffer ist ein Datenleck, ein Fehlalarm kostet einen Bestätigungsklick. Und KEINE der beiden Lesungen reicht allein: Tesseract liefert auf einem Foto-Pass Zeichensalat ('+ rer KEES 045584 FE RRS STE ZZ'), verfehlt den Namen komplett und löst mit seinem Müll sogar EINEN EIGENEN Fehlalarm aus (phantom 'Czech rodné číslo'); das Modell liest Name und Nummer, kann aber erfinden. Also Vereinigung, Detektoren entscheiden. (3) ocr_*-TOOLS bekommen ein model_read-FELD: deterministisch bleibt in `text` (unverändert, das ist der Zweck des Toolsets), die Modell-Lesung kommt SEPARAT daneben, explizit als UNVERIFIED markiert, plus Opt-out model_fallback=false. Warum überhaupt: gemessen an den 10 echten Scans las Tesseract die Passnummer in 1/10, das OCR-Modell in 5/10 — und Tesseract WEISS NICHT, dass es versagt hat. Nur den dünnen Read zurückzugeben lässt den Agenten mit Müll UND ohne Hinweis stehen, dass es besser geht. ERSTER ANSATZ WAR FALSCH und wurde von der Messung widerlegt: ich hatte den model_read hinter eine Schwelle (<120 Zeichen) gehängt — aber Tesseracts eigene Qualitätssignale sind auf diesem Material UNBRAUCHBAR als Gate: conf 63,5%/134 Zeichen = nutzlos (nur Browser-Chrome), conf 43,0%/236 Zeichen = das Bild MIT der Passnummer, conf 46,3%/322 Zeichen = die meisten Zeichen, KEINE Passnummer. Das bestbewertete Bild ist der schlechteste Read; jede Schwelle, die das gute Bild durchlässt, lässt auch die nutzlosen durch. Daher: model_read IMMER anbieten (User: 'warum nicht immer beides'), Agent vergleicht. Kommt nichts zurück (Wächter hat verworfen), sagt das Feld das AUSDRÜCKLICH — Schweigen würde 'das Modell stimmt zu' bedeuten. BEFUND ZU (b) — der User hat recht, und mein eigener Test belegt es: der PII-Regex meldet auf einem REISEPASS 'tschechische Personenkennziffer' (Zufallstreffer auf einer 9-stelligen Zahl) und erkennt 'Bonnie Stark' NICHT. Regex auf OCR-Zeichensalat ist strukturell der falsche Ansatz. Die bestehende ARL-Klassifikation hilft auch nicht: sie ist ein MARKER-Detektor (sucht den Aufdruck 'Streng vertraulich') — ein abfotografierter Pass trägt keinen. NEU: mlx_ocr.classify_document(path) — EIN Wort Dokumenttyp (passport/id_card/bank_statement/invoice/…), ~1s, dasselbe schon geladene GLM-OCR-8bit, nur anderer Prompt. Den TYP eines Bildes zu erkennen ist ungleich leichter als seine ZEICHEN zu lesen: 8/8 Pässe korrekt erkannt — INKLUSIVE des Bildes, dessen Text unlesbar ist und bei dem folglich JEDER textbasierte Ansatz blind ist. GEGENGETESTET gegen gemma-4-12B (allgemeines Vision-Modell, gleicher Prompt): nur 4/8 — es antwortet bei der Hälfte 'screenshot', beschreibt also die FORM (Browserfenster) statt den INHALT. GLM-OCR gewinnt und ist ohnehin schon im Speicher. Kein blosses Ablesen des Wortes 'PASSPORT': bei dem Bild mit unlesbarem Text sagen BEIDE Modelle 'passport' — echtes Bildverständnis. VERDRAHTUNG: classification.IMAGE_TYPE_LEVEL mappt Typ → ARL-Stufe (passport/id_card/drivers_license/medical → strict; bank_statement/payslip/contract/certificate → confidential; invoice/receipt/correspondence → internal; screenshot/photo/other → keine Anhebung). Der Typ wird DRITTER Kandidat in _classification_action_level, das schon das MAXIMUM aus marker_level und heuristic_level bildet — die Stufe kann also nur STEIGEN, nie eine bestehende senken. handlers/chat.py klassifiziert Bilder jetzt AUCH OHNE extrahierten Text (das 'if full_text'-Gate hätte genau die Datei übersprungen, die es am nötigsten hat). ERGEBNIS am härtesten Fall (Bild 7, OCR liest 0 Zeichen, Regex blind, kein Marker): Typ='passport' → STUFE=STRICT. Vorher: völlig ungeprüft durchgelassen. Portrait-Fotos: 'photo' → PUBLIC, keine falsche Anhebung. Alle vier Wege am selben Bild gegengeprüft: Ingest/read_document liefern Passnr+Warnhinweis, ocr_extract trennt deterministisch von model_read, PII+Klassifikation greift. py_compile OK; 4-Site-Regel geprüft (5 ocr_*-Tools in Schema UND TOOL_DISPATCH). Brain-Neustart nötig. Skills + kuratierter Eintrag im selben Commit."),
     ("9.329.0", "2026-07-14", "fix(Bild-OCR: HALLUZINATION): GLM-OCR-8bit + Anti-Rate-Prompt + Tesseract-Gegenprobe + Warnhinweis + MRZ-Füllzeichen-Kappung — Halluzinationen auf NULL. ANLASS: Der User stellte die 10 ECHTEN Pass-Scans aus dem ko-kunden-Chat bereit (Browser-Screenshots eines per Webcam gehaltenen US-Passes: schräg, in der Hand, Spiegelungen, ein Bild nur 420x160px). Mein bisheriger Beleg war ein SYNTHETISCHER, sauber gerenderter Scan — der war NICHT aussagekräftig, und genau das flog hier auf ([[feedback_depth_over_speed]]: erst am echten Material messen). BEFUND am echten Material: das Modell HALLUZINIERT, wo das Bild unlesbar ist — es erfindet lieber Text als eine Lücke zu lassen: Vorname 'Sarah M. Stark' bzw. 'Gina M. Stark' (die Person heisst BONNIE), ein Passinhaber 'Pham Van Pham', ein 'Type of Airport: New York City' — steht alles NIRGENDS im Bild; dazu Geburtsdatum mal 05 Feb 1947 (richtig), mal 25 Feb 1947, und Ablauf 24 statt 26 Jan 2027. In einer Compliance-Akte ist ein erfundenes Geburtsdatum GEFÄHRLICHER als eine Lücke. VIER-WEGE-VERGLEICH, alle an denselben 10 echten Scans (Zeit/Bild · Passnr erkannt · halluziniert): Tesseract (kein LLM) 0,3s · 1/10 · 0/10 — erfindet nie, liest aber kaum etwas (Konfidenz 30-55%, 2x exakt 0%); gemma-4-12B via oMLX 50,4s · 1/10 · 0/10 — halluziniert nicht, weil es fast nichts ausliest: ein teurer Verweigerer; GLM-OCR-4bit 4,6s · 5/10 · 2/10; GLM-OCR-8bit 10,9s · 5/10 · 1/10. MASSNAHMEN (alle vier gemessen, nicht vermutet): (1) DEFAULT AUF GLM-OCR-8bit (statt 4bit): gleiche Erkennung (5/10), HALBE Erfindungsrate (2->1), Preis ~2x Zeit. Auf dem sauberen Testbild waren 4/8bit ununterscheidbar — nur das echte Material trennt sie. (2) ANTI-RATE-PROMPT als DEFAULT_PROMPT ('Transcribe ONLY text that is clearly and legibly visible … do NOT guess, do NOT invent names, dates or numbers … omit it'): entfernte messbar die erfundenen Vornamen. Reicht ALLEIN aber nicht (Bild 7 halluzinierte weiter). (3) TESSERACT-GEGENPROBE (_tesseract_sees_text in doc_convert, am Choke-Point _mlx_ocr_extract): findet die DETERMINISTISCHE OCR im Bild KEIN EINZIGES Wort, ist alles, was das Sprachmodell dazu sagt, unbelegt -> Ausgabe VERWERFEN. Tesseract erfindet nie; wo es nichts liest, ist nichts Lesbares. Traf im Test exakt die 2 schlimmsten Bilder (0 Wörter, 0% Konfidenz) — darunter das mit 'Pham Van Pham'. BEWUSST NUR dieser Extremfall: eine Konfidenz-SCHWELLE wäre falsch, denn das zweite Halluzinations-Bild lag mit 53% völlig im Normalbereich — ein Schwellwert würde gute Lesungen wegwerfen, ohne die schlechten zu treffen. Fehlt/bricht Tesseract -> None -> Text bleibt (fail-open). ERGEBNIS: halluziniert 0/10; Preis: Passnr 5/10 -> 4/10 (Bild 7 ENTHIELT die Nummer, aber zusammen mit erfundenen Namen — der richtige Tausch). (4) WARNHINWEIS _IMAGE_OCR_CAVEAT: jeder Bild-OCR-Body trägt jetzt einen Vermerk ('per OCR aus einem Bild gewonnen, kann Lesefehler enthalten … nicht als belegte Tatsache verwenden'). Er fährt IN DEN TEXT (nicht in die Metadaten) und damit in den Drawer UND in die KG-Extraktions-Eingabe — sonst zöge der Tripel-Extraktor 'Sarah M. Stark' als Entität ein. (5) BEIFANG _collapse_ocr_filler: die MRZ-Zeile eines Passes ist mit '<' gepolstert, und das Modell verlängert den Lauf — ein realer Chunk bestand zu 91% aus '<'-Zeichen (8620 Zeichen, davon 7864 Füllzeichen): ein ganzer Drawer aus Padding, der embedded und bei JEDER Suche mitgeschleppt wird. Läufe von 8+ Wiederholzeichen (<>._-=*#~) werden auf 8 gekappt: derselbe Scan jetzt 716 statt 8313 Zeichen, EIN Chunk statt DREI, MRZ als 'P<USASTARK<<BONNIE<MARIE<<<<<<<<' erhalten, alle Kernfelder (560683707/STARK/BONNIE MARIE/05 Feb 1947) korrekt. NB zur Frage des Users 'hatten wir nicht auch eine OCR ohne LLM?': JA — engine/tools/ocr_tools.py (ocr_inspect/ocr_extract/ocr_region/ocr_fields/ocr_tables, pytesseract, mit Wort-Konfidenzen) existiert und bleibt UNVERÄNDERT das deterministische Agenten-Toolset. Es ersetzt die Extraktions-OCR NICHT (1/10 auf diesem Material), liefert aber genau das Signal, das (3) nutzt. E2E am laufenden Server verifiziert. py_compile OK. Skills + kuratierter Eintrag im selben Commit."),
     ("9.328.0", "2026-07-14", "feat(OCR): eigener IN-PROCESS-MLX-Pfad mit dediziertem OCR-Modell (GLM-OCR) + fix(GRAVIEREND): pymupdf4llm schob gescannte PDFs heimlich durch TESSERACT und lieferte falsche Zeichen. ANLASS (User): 'wir brauchen ein brauchbares MLX-Modell für OCR, kleiner und schneller als gemma-4-12B'. (1) NEUE ENGINE mlx_ocr (engine/mlx_ocr.py, ~120 LOC): ein SPEZIALISIERTES OCR-Modell direkt via mlx_vlm IM BRAIN-PROZESS — dieselbe Bauform wie STT (mlx_whisper in-process), NICHT über oMLX. Begründung (User-Vorgabe): oMLX bleibt für gemma-4-12B + Cloud-Fallback reserviert (dort zahlt sich sein SSD-KV-Cache aus; OCR hat weder Konversation noch KV-Prefix, gewinnt dort also nichts und würde nur mit dem Chat um denselben Server konkurrieren). GEMESSEN am selben Pass-Scan auf M4: gemma-4-12B über oMLX 36,6s / ~7GB — GLM-OCR-4bit in-process 1,2s / 2,3GB Peak = 30x schneller, 3x kleiner, bei IDENTISCH korrektem Ergebnis (Name, Geburtsdatum, Passnummer, Ablaufdatum alle richtig). Ein 0,9B-Dokumentspezialist schlägt den 12B-Generalisten auf Dokumenten in JEDER Dimension — kein Trade-off. Default mlx-community/GLM-OCR-4bit (1,25GB; #1 auf OmniDocBench v1.5, vor Gemini 3 Pro/GPT-5.2); 4bit gegen 8bit gegengetestet: identisch korrekt, also das kleinere. mlx-vlm 0.4.4 → 0.6.4 aktualisiert (glm_ocr danach weiterhin lauffähig, verifiziert). Verdrahtet für BILDER (direkt) und gescannte PDFs (Seite → fitz-Render → OCR). (2) ABSTURZ-FIX, vom User gemeldet ('habe python abstürze'): MLX/Metal killte den Daemon mit SIGSEGV in libmlx.dylib. ZWEI Ursachen, beide reproduziert: (a) zwei Threads rechnen gleichzeitig → Crash in mlx::core::eval (Crash-Report: ingest_queue_0 UND ingest_queue_1 gleichzeitig in libmlx — beide Ingest-Worker bei parallelem Upload); (b) — die fiese — ein Thread, der MLX benutzt hat und dann ENDET, crasht in _pthread_tsd_cleanup beim Abbau von Metals Thread-Local-State. (b) schlägt AUCH ZU, wenn (a) per Lock serialisiert ist; ein Lock allein reicht also NICHT, und genau das war mein erster, falscher Fix. Unsere Aufrufer sind Pool-Threads (ingest_queue_*), die sterben. LÖSUNG: EIN langlebiger Daemon-Thread ('mlx-ocr') besitzt MLX; alle Aufrufer stellen Arbeit in eine Queue und blocken auf das Ergebnis (_run_on_worker). Kostet real nichts — es gibt EINE GPU, parallele OCR wäre ohnehin nicht schneller. unload() (Modellwechsel in der GUI) läuft ebenfalls auf dem Worker, weil auch das Freigeben von MLX-Arrays aus einem Fremd-Thread crasht. Verifiziert: 4 parallele Threads, die danach beenden (exakt der Crash-Fall) → 4x korrekt, kein Absturz; E2E 4 gleichzeitige Uploads gegen den echten Server → Server lebt, alle 4 korrekt, KEINE neuen Crash-Reports. (3) TESSERACT-BEIFANG (vorbestehend, GRAVIEREND, beim Testen aufgedeckt): pymupdf4llm schaltet bei einer Seite OHNE Textebene SELBSTTÄTIG auf Tesseract um ('Using Tesseract for OCR processing') und gibt dessen Ausgabe zurück, als wäre sie extrahierter Text. Weil ein nicht-leeres Ergebnis als Erfolg gilt, wurde die konfigurierte OCR-Kette (Mistral-OCR bzw. jetzt GLM-OCR) NIE ERREICHT — jeder gescannte PDF im Korpus bekam still den schlechteren Text. Und Tesseract liegt hier real daneben: am Test-Pass las es '05.02.1847' (Jahrhundert falsch!) und 'S6068370F' als Passnummer, wo GLM-OCR beides korrekt liest. FIX in _extract_pdf_pymupdf4llm: neuer _pdf_has_no_text_layer(path) (billig — page.get_text() liest vorhandene Textobjekte, rendert/OCRt nicht); hat KEINE Seite eine echte Textebene, IST die Ausgabe zwangsläufig Tesseract → verwerfen und an die echte OCR-Kette übergeben. PDFs MIT Textebene bleiben unangetastet (gegengetestet: Text-PDF → weiterhin fitz/fast, kein OCR). (4) BILD-KANTENLIMIT mlx_ocr_max_edge_px (Default 1600, 0=aus): eine 200-DPI-Seite ist ~2500px breit und die Modell-Laufzeit skaliert mit der Pixelzahl — GEMESSEN am selben Scan: 2500px 14,7s / 1600px 2,9s / 1200px 1,5s, bei jeweils byte-identisch korrektem Text. Der große Render ist also reine Verschwendung; wir kappen (statt die DPI zu senken), weil fitz schärfer rendert als ein Downscale und dichte Textseiten die Details noch brauchen. Gilt nur für gerenderte PDF-Seiten — eine Bilddatei geht unverändert rein. (5) SETTINGS-GUI (settings_general_tabs.js + handlers/admin_observability.py): 'mlx_ocr' als vierte Engine im bestehenden OCR-Block, mit eigenem Abschnitt (Modell-Repo + max. Tokens + Empfehlungen); Status-Pille meldet fehlendes mlx-vlm mit Installationsbefehl statt still zu scheitern; ein Modellwechsel ruft mlx_ocr.unload(), damit nicht die ALTEN Gewichte weiterantworten (kein Neustart nötig). config.json → ocr: engine='mlx_ocr', mlx_ocr_model, mlx_ocr_max_tokens, mlx_ocr_max_edge_px. (6) WHISPER-CACHE (User-Frage 'warum nicht auch ein Cache für Whisper?'): NICHT NÖTIG — mlx_whisper bringt bereits einen mit (transcribe.ModelHolder: hält ein Modell, lädt nur bei Modellwechsel neu; im Quelltext verifiziert). Ein eigener Cache davor wäre ein wirkungsloses Duplikat. Genau dieses Ein-Slot-Muster habe ich für mlx-vlm übernommen, das KEINEN Cache hat (Reload ~0,7s + 1,25GB Lesen pro Bild). py_compile OK; js_gate: ESLint 0 Fehler, net-globals 1995 UNVERÄNDERT (keine neuen Globals); die 2 Playwright-Smoke-Ausfälle sind VORBESTEHENDE Flakiness — auf der ungeänderten Baseline gegengeprüft (derselbe Test dort 'flaky'), kein Regress. Brain-Neustart nötig (engine). Skills + kuratierter Eintrag im selben Commit."),
     ("9.327.0", "2026-07-13", "feat(Projekt-Import): hochgeladene ORIGINALE werden behalten + Bilder werden per OCR inhaltlich erschlossen. ANLASS (User-Frage): 'stimmt es, dass beim Ingesten die Originaldateien nach dem Minen nicht mehr vorhanden sind, z.B. jpgs oder die mp3?' — JA, und beim Nachsehen war der Schaden größer als die Frage vermutete. (1) ORIGINALE: IngestQueue._run_job rief nach erfolgreicher Extraktion _cleanup(staged, meta_path) — die Roh-Bytes wurden GELÖSCHT (ingest-staging/ war leer, in ko-kunden lagen 0 Originale zu 10 Bild-Dokumenten). Staging war als Durchlauf-Puffer gedacht, nicht als Archiv; das machte jeden Extraktionsverlust PERMANENT und die Datei aus der UI weder ansehbar noch nachverarbeitbar. NEU: _ORIGINALS_DIRNAME='originals' (Sibling von ingested/, wie ingest-staging/) + IngestQueue.originals_dir()/original_path(); bei Erfolg os.replace(staged → originals/<key><ext>) statt unlink (_keep_original, best-effort — ein fehlgeschlagener Archiv-Move darf den bereits extrahierten Ingest nie kippen; Re-Ingest überschreibt in place, gleiche Semantik wie die Chunks). Abgebrochene/fehlgeschlagene Jobs werden weiterhin GELÖSCHT (sie haben keine Doc-Row, ein behaltenes Original wäre unerreichbarer Müll). delete_ingested räumt das Original mit weg (sonst Waisen für immer; beim Mid-Extraction-Cancel ist es ein No-op, da noch keins existiert). originals/ ist BEWUSST keiner der Miner-Roots — der Daemon walkt eine EXPLIZITE Root-Liste (ingested/, input_folders, web-urls/), nicht pdir rekursiv, also können Roh-Binaries nicht in den Palace gelangen (verifiziert an server_daemons.py:118 + 1209). (2) BILD-OCR: parse_image lieferte NUR Pillow-Metadaten (Dimensions/Format/Mode) — ein gescannter Reisepass landete als '821 x 852 JPEG' im Korpus, mit NULL Inhalt; die KG-Extraktion zog aus genau diesen Dateien konsequent triples=0 (im Log belegt). Es gab weder OCR noch Vision auf dem Projekt-Import-Pfad, obwohl Brain BEIDES besitzt (mistral-ocr für gescannte PDFs, local_vision_model für den GDPR-Fall). NEU: doc_convert._extract_image_ocr(path) — das Gegenstück zu _pdf_ocr_or_empty, geroutet über DENSELBEN config.json->ocr-Block (engine: mistral_ocr|local_vision|auto|none), damit ein Betreiber, der OCR aus Datenschutzgründen auf ein lokales Modell pinnt, das automatisch auch für Bilder bekommt — was hier der Punkt ist, denn die texttragenden Bilder sind Ausweis-Scans. _extract_with_mistral_ocr nimmt jetzt einen mime-Parameter: das /ocr-Endpoint frisst ein PDF als document_url und ein Bild als image_url (gleicher Call, anderer Dokumenttyp) — der PDF-Default bleibt byte-identisch. Für den lokalen Pfad wurden aus _extract_with_local_vision zwei GETEILTE Helfer herausgelöst (_vision_provider_cfg + _vision_ocr_round: EINE Wire-Shape für gerenderte PDF-Seite UND Einzelbild, damit die zwei Pfade nicht auseinanderdriften); beim Bild entfällt das fitz-Rendern komplett — die Bytes SIND schon ein Bild. parse_image hängt den OCR-Text an die Metadaten (best-effort: OCR-Fehler behält das Metadaten-Dokument) und strippt Mistrals '## Page 1'-Überschrift, weil DocumentChunker die erste Überschrift als chunk-title nimmt (sonst hieße jeder Scan '## Page 1' — dieselbe Falle wie beim Audio-Header in 9.326.0). E2E am LAUFENDEN Server verifiziert (Wegwerf-Projekt, danach gelöscht): synthetischer Pass-Scan → Upload → originals/pass_probe.jpg liegt byte-identisch (24211 B), ingest-staging/ leer, Chunk trägt Dimensions+Format+'**OCR:** mistral-ocr (1p)' UND den vollständig gelesenen Ausweistext (Name STARK, Vorname BONNIE M, Geburtsdatum, Passnummer, Ablaufdatum), title='pass_probe.jpg - Chunk 1'; Dokument löschen entfernt das Original mit (0 Dateien in originals/). NICHT REPARIERBAR: die 10 bestehenden Bild-Dokumente in ko-kunden haben keinen Text UND kein Original mehr — die Bytes sind fort und müssen neu hochgeladen werden; der User ist informiert. Reiner Server-Fix (engine/ingest.py + engine/doc_convert.py). py_compile OK; Brain-Neustart nötig (engine). Skills + kuratierter Eintrag im selben Commit."),
@@ -3006,8 +3007,37 @@ def extract_attachment_text(path: str) -> tuple[str, str]:
     with the text.
     """
     ext = os.path.splitext(path)[1].lower()
-    # Accepted gaps — same coverage as the upfront text scanner.
-    if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg",
+    # Images are NO LONGER an accepted gap. A photographed ID card is a .jpg,
+    # and skipping it meant the single most PII-dense attachment type reached
+    # the model completely UNSCANNED.
+    #
+    # We scan BOTH readings — deterministic AND model — concatenated. For a
+    # DETECTOR (unlike a citation, where an invented name would be a lie) recall
+    # is what counts: a scan that misses a real passport number is a data breach,
+    # a scan that flags one name too many costs the user one confirmation click.
+    # Neither reader alone is sufficient, measured on the real scans:
+    #   - tesseract returns character soup on a photographed passport
+    #     ("+ rer KEES 045584 FE RRS STE ZZ") — it misses the actual name, and
+    #     its garbage even trips a false detector hit on its own.
+    #   - the model reads the name and the number, but can invent one.
+    # A false positive here is CHEAP (the user confirms), a false negative is
+    # not. So: union of both, and let the detectors decide.
+    if ext in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
+        parts = []
+        try:
+            from engine.doc_convert import tesseract_read, _extract_image_ocr
+            r = tesseract_read(path)
+            if r and (r.get("text") or "").strip():
+                parts.append(r["text"])
+            model_text, _backend, _err = _extract_image_ocr(path)
+            if model_text:
+                parts.append(model_text)
+        except Exception:
+            pass
+        if parts:
+            return "\n\n".join(parts), "text"
+        return "", "media"
+    if ext in (".svg",
                ".mp3", ".wav", ".ogg", ".flac", ".m4a",
                ".mp4", ".mov", ".webm", ".mkv", ".avi"):
         return "", "media"
@@ -11185,29 +11215,35 @@ def _classification_action_level(result: dict) -> str:
     """Pick the level that the enforcement action should follow for a
     detector result.
 
-    Two independent signals come out of `detect_classification`:
+    Three independent signals come out of `detect_classification`:
       - marker_level   = what's written in the document (or None)
       - heuristic_level = what the content analysis arrived at (PII +
                           keywords; defaults to 'public')
+      - image_type_level = the floor implied by an IMAGE's document type
+                          (passport → strict, …); absent for non-images
 
-    Neither overrides the other. The action follows the HIGHER of the
-    two so:
+    None overrides the others. The action follows the HIGHEST so:
       - a "public"-marked PDF whose content reads confidential is still
         treated confidential (no security regression by trusting a low
         marker over high-signal content),
       - a "strict"-marked PDF whose content looks bland is still treated
         strict (no security regression by trusting bland content over a
-        deliberate marker).
+        deliberate marker),
+      - a photographed passport is treated strict even when neither of the
+        other two signals fires — a photo carries no printed marker, and its
+        OCR text is too poor for the content heuristic. This is the ONLY
+        signal that catches it.
 
     Returns one of: 'public' / 'internal' / 'confidential' / 'strict' /
-    'unmarked' (unmarked only when both signals are missing, which only
+    'unmarked' (unmarked only when all signals are missing, which only
     happens on a completely empty / unreadable document).
     """
     from engine.classification import LEVEL_RANK as _LR
     marker_lvl = (result or {}).get("marker_level") or None
     heuristic = ((result or {}).get("content_signals") or {}).get(
         "heuristic_level") or None
-    candidates = [lvl for lvl in (marker_lvl, heuristic) if lvl]
+    image_lvl = (result or {}).get("image_type_level") or None
+    candidates = [lvl for lvl in (marker_lvl, heuristic, image_lvl) if lvl]
     if not candidates:
         return "unmarked"
     return max(candidates, key=lambda x: _LR.get(x, 0))
@@ -11226,8 +11262,16 @@ from engine.classification import (  # noqa: E402
 
 
 def _classification_scan_text(text: str, *, filename: str = "",
-                               pdf_path: str = "") -> dict | None:
+                               pdf_path: str = "",
+                               image_path: str = "") -> dict | None:
     """Run the classification detector against text.
+
+    `image_path`: when the source is an IMAGE, its document type is recognised
+    (passport / bank statement / …) and sets a classification FLOOR. This is
+    the only signal that works on a photographed ID: the ARL detector looks for
+    a printed marker (a photo has none) and the PII regex runs on OCR text
+    (which, on a webcam passport photo, is character soup). Recognising the
+    type, by contrast, is reliable — see engine/classification.IMAGE_TYPE_LEVEL.
 
     Returns the result dict (see engine.classification.detect_classification)
     or None if the scanner is disabled / errors. Never raises.
@@ -11247,14 +11291,43 @@ def _classification_scan_text(text: str, *, filename: str = "",
                 _srv_cfg = getattr(_srv_mod, "server_config", None) or {}
         except Exception:
             pass
-        return _detect(text, filename=filename, pdf_path=pdf_path,
-                       cfg=_srv_cfg)
+        result = _detect(text, filename=filename, pdf_path=pdf_path,
+                         cfg=_srv_cfg)
+        if image_path and result is not None:
+            _classification_add_image_type(result, image_path)
+        return result
     except Exception as e:
         try:
             print(f"[classification] scan failed: {e}", flush=True)
         except Exception:
             pass
         return None
+
+
+def _classification_add_image_type(result: dict, image_path: str) -> None:
+    """Recognise an image's document type and record the level floor it implies.
+
+    Best-effort: a failure leaves the result untouched (the text-based signals
+    still stand). Writes `image_type` + `image_type_level` onto the result;
+    `_classification_action_level` then folds the floor into the action.
+    """
+    try:
+        from engine import mlx_ocr as _mlx
+        from engine.classification import image_type_level
+        if not _mlx.is_available():
+            return
+        doc_type = _mlx.classify_document(image_path)
+        if not doc_type:
+            return
+        result["image_type"] = doc_type
+        lvl = image_type_level(doc_type)
+        if lvl:
+            result["image_type_level"] = lvl
+            print(f"[classification] image type '{doc_type}' → {lvl}: "
+                  f"{os.path.basename(image_path)}", flush=True)
+    except Exception as e:
+        print(f"[classification] image-type detection failed: "
+              f"{type(e).__name__}: {e}", flush=True)
 
 
 # classification_pick_model_for_background extracted to

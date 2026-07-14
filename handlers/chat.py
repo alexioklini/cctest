@@ -7862,9 +7862,17 @@ class ChatHandlerMixin:
             cfg_cls = engine._get_classification_config()
             if cfg_cls.get("enabled", True):
                 pdf_path = fpath if fpath.lower().endswith(".pdf") else ""
+                img_path = (fpath if os.path.splitext(fpath)[1].lower() in
+                            (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")
+                            else "")
+                # An IMAGE is classified even with NO extracted text: a
+                # photographed passport whose OCR fails is exactly the case the
+                # image-type floor exists for — gating on `full_text` here would
+                # skip the one file that most needs classifying.
                 result = engine._classification_scan_text(
                     full_text, filename=name, pdf_path=pdf_path,
-                ) if full_text else None
+                    image_path=img_path,
+                ) if (full_text or img_path) else None
                 if result:
                     from engine.classification import (
                         LEVEL_LABEL_DE as _LL,

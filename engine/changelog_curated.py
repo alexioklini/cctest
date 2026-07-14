@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.330.0",
+        "date": "2026-07-14",
+        "title": "Ausweise werden als solche erkannt und geschützt",
+        "body": "Fotografierte Ausweise, Kontoauszüge und ähnliche Unterlagen "
+                "werden jetzt an ihrer Art erkannt und automatisch entsprechend "
+                "eingestuft — ein Reisepass gilt als »Streng Vertraulich«, "
+                "auch wenn das Foto so unscharf ist, dass sich kein einziges "
+                "Zeichen daraus lesen lässt. Bisher rutschte genau ein solches "
+                "Bild ungeprüft durch, weil die Prüfung auf schützenswerte "
+                "Daten nur den erkannten Text durchsuchte und Bilder "
+                "übersprang. Beides ist behoben: Bilder werden jetzt geprüft, "
+                "und die Einstufung hängt nicht mehr davon ab, ob die "
+                "Texterkennung Erfolg hatte.",
+        "audience": "user",
+        "versions": ["9.330.0"],
+    },
+    {
         "version": "9.329.0",
         "date": "2026-07-14",
         "title": "Texterkennung erfindet nichts mehr",

@@ -33,6 +33,51 @@ LEVEL_LABEL_DE = {
 }
 LEVEL_RANK = {"public": 0, "internal": 1, "confidential": 2, "strict": 3}
 
+# ── Image document type → classification floor ────────────────────────────
+# The ARL detector is a MARKER detector: it looks for "Streng vertraulich"
+# printed on the page. A photographed passport carries no such marking, so the
+# detector sees nothing — and the PII regex, running on OCR output, is no help
+# either: on a real passport photo it read character soup, missed the holder's
+# name entirely, and raised a phantom "Czech rodné číslo" off a number it could
+# not parse. Yet the file is obviously highly sensitive.
+#
+# Recognising the TYPE of an image is far easier than reading its characters
+# (measured: 8/8 passports identified, ~1s each — including the image whose text
+# was unreadable). So the type sets a FLOOR on the classification: a passport is
+# strictly confidential whether or not the OCR could read a single digit.
+#
+# Only sensitive types appear here. Everything else (screenshot, photo, other)
+# raises nothing — the floor can only ever RAISE the level, never lower one that
+# a marker or the content heuristic already established.
+IMAGE_TYPE_LEVEL = {
+    "passport": "strict",
+    "id_card": "strict",
+    "drivers_license": "strict",
+    "medical": "strict",
+    "bank_statement": "confidential",
+    "payslip": "confidential",
+    "contract": "confidential",
+    "certificate": "confidential",
+    "invoice": "internal",
+    "receipt": "internal",
+    "correspondence": "internal",
+}
+
+IMAGE_TYPE_LABEL_DE = {
+    "passport": "Reisepass", "id_card": "Personalausweis",
+    "drivers_license": "Führerschein", "medical": "Medizinisches Dokument",
+    "bank_statement": "Kontoauszug", "payslip": "Gehaltsabrechnung",
+    "contract": "Vertrag", "certificate": "Urkunde/Zeugnis",
+    "invoice": "Rechnung", "receipt": "Beleg/Quittung",
+    "correspondence": "Korrespondenz", "screenshot": "Bildschirmfoto",
+    "photo": "Foto", "other": "Sonstiges",
+}
+
+
+def image_type_level(doc_type: str) -> str:
+    """Classification floor implied by an image's document type ('' = none)."""
+    return IMAGE_TYPE_LEVEL.get((doc_type or "").strip().lower(), "")
+
 # Plain-language (German) rationale per classification level — surfaced as the
 # tooltip on a classification marker / mismatch in the document reviewer.
 LEVEL_WHY_DE = {

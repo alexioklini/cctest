@@ -1297,7 +1297,13 @@ TOOL_DEFINITIONS = [
             "an artifact (the chat preview is capped). For digital PDFs with "
             "real selectable text, use read_document — OCR is for scans/photos. "
             "For structured values (invoice no., total) prefer ocr_fields; for "
-            "gridded tables prefer ocr_tables."
+            "gridded tables prefer ocr_tables. "
+            "If the deterministic read comes back nearly empty (a photographed "
+            "document, a blurred phone snap), the result ALSO carries a "
+            "`model_read` field: the same image as read by a vision OCR model. "
+            "That one is UNVERIFIED and can invent plausible names/numbers — "
+            "`text` is evidence, `model_read` is a lead. Never quote a value "
+            "from `model_read` as fact without confirming it."
         ),
         "input_schema": {
             "type": "object",
@@ -1307,6 +1313,7 @@ TOOL_DEFINITIONS = [
                 "lang": {"type": "string", "description": "Tesseract language(s), e.g. 'deu+eng' (default)"},
                 "pages": {"type": "string", "description": "For PDFs: '1-3,5' (default: all pages, capped at 50)"},
                 "out": {"type": "string", "description": "Optional relative .txt filename — saves the FULL text to your artifact folder"},
+                "model_fallback": {"type": "boolean", "description": "Default true. When the deterministic read is nearly empty, also return a vision-model reading as a separate, clearly-flagged `model_read` field. Set false for a strictly deterministic result."},
             },
             "required": ["path"],
         },

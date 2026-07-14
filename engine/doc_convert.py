@@ -709,30 +709,46 @@ def _cap_image_edge(path: str, max_edge: int) -> None:
               f"{type(e).__name__}: {e}", flush=True)
 
 
-def _tesseract_sees_text(path: str) -> bool | None:
-    """Does a DETERMINISTIC OCR find any word at all? None = can't tell.
+def tesseract_read(path: str) -> dict | None:
+    """DETERMINISTIC OCR of one image. None = tesseract unavailable/broken.
 
-    The sanity gate on the LLM's output. Tesseract never invents text — where
-    it reads nothing, there is nothing legible. The vision model does invent:
-    on a 420x160 unreadable crop of a passport it produced a holder named
-    "Pham Van Pham" and a "Type of Airport: New York City", neither of which is
-    in the image. Measured over the 10 real scans, Tesseract returned ZERO words
-    on exactly the worst one — so "Tesseract sees nothing" is a clean signal
-    that anything the model says about this image is unfounded.
-    Only that extreme is used: mid-range confidence does NOT predict a
-    hallucination (the other bad scan scored a perfectly normal 53%), so we do
-    not gate on a confidence threshold — that would throw away good reads.
+    Returns {"text", "words", "mean_conf"}. THE shared primitive: every caller
+    that wants a machine-faithful read of an image goes through here — the
+    ingest/read_document image OCR (as its sanity gate), the PII scanner, and
+    the ocr_* agent toolset. Reuses ocr_tools' word/geometry/confidence table
+    so there is exactly one tesseract call shape in the codebase.
+
+    Why it matters: tesseract NEVER invents text. Where it reads nothing there
+    is nothing legible. The vision model does invent — on a 420x160 unreadable
+    passport crop it produced a holder "Pham Van Pham" and a "Type of Airport:
+    New York City", neither in the image.
     """
     try:
         import pytesseract
         from PIL import Image
+        from engine.tools.ocr_tools import (_page_tsv, _words_to_text,
+                                            _mean_conf, _DEFAULT_LANG)
         with Image.open(path) as im:
-            d = pytesseract.image_to_data(
-                im, output_type=pytesseract.Output.DICT)
-        return any(t.strip() and int(c) > 0
-                   for t, c in zip(d["text"], d["conf"]))
+            words = _page_tsv(pytesseract, im, _DEFAULT_LANG)
+        return {"text": _words_to_text(words), "words": words,
+                "mean_conf": _mean_conf(words)}
     except Exception:
-        return None      # tesseract absent/broken → no opinion, keep the text
+        return None      # tesseract absent/broken → no opinion
+
+
+def _tesseract_sees_text(path: str) -> bool | None:
+    """Sanity gate on the LLM's output: did the deterministic OCR see ANY word?
+
+    Only this extreme is used. A mid-range confidence does NOT predict a
+    hallucination — over the 10 real passport scans the second fabricating
+    image scored a perfectly normal 53% — so gating on a confidence THRESHOLD
+    would discard good reads without catching the bad ones. Zero words, on the
+    other hand, was an exact hit on the worst image.
+    """
+    r = tesseract_read(path)
+    if r is None:
+        return None
+    return bool(r["words"])
 
 
 def _mlx_ocr_extract(path: str, cfg: dict) -> tuple[str, str | None]:

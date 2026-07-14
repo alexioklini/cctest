@@ -362,9 +362,18 @@ OCR is for scans/photos.**
 - `ocr_inspect(path, lang?, pages?)` — profile WITHOUT full OCR: page count,
   pixel size, orientation/script (tesseract OSD), rough word-count/confidence.
   Call FIRST to pick the language and confirm OCR is worthwhile.
-- `ocr_extract(path, mode?, lang?, pages?, out?)` — full text; `mode='text'|
-  'layout'|'markdown'`; preview capped, `out='text.txt'` saves the full extract
-  as an artifact. Returns `mean_confidence`.
+- `ocr_extract(path, mode?, lang?, pages?, out?, model_fallback?)` — full text;
+  `mode='text'|'layout'|'markdown'`; preview capped, `out='text.txt'` saves the
+  full extract as an artifact. Returns `mean_confidence`.
+  **Also returns `model_read`** — the same image as read by the vision OCR
+  model, in a SEPARATE field. `text` is deterministic (tesseract, machine-read
+  off the pixels); `model_read` is UNVERIFIED and **can invent** plausible
+  names/numbers on unreadable images. Rationale: on photographed documents
+  tesseract silently under-reads (measured: passport number read 1/10 vs 5/10
+  for the model) and does not know it failed — so both are offered and never
+  merged. `text` = evidence, `model_read` = lead; never quote a value from
+  `model_read` as fact. `model_fallback=false` for a strictly deterministic
+  result.
 - `ocr_region(path, bbox=[x,y,w,h], unit?, page?, lang?)` — OCR only a rectangle
   ('just the stamp', 'only the footer'); `unit='px'` (default) or `'pct'`.
 - `ocr_fields(path, fields=[{name,pattern}], lang?, pages?)` — STRUCTURED
