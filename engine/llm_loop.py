@@ -709,6 +709,14 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
     tool_result. (Ported from tool_mcp._dispatch; the context rebuild is gone —
     the worker thread already set the context via `with request_context()`.)
     """
+    # Web-egress gate (L4 Phase 1): in anonymising sessions, refuse web-tool
+    # calls whose args contain protected values / pseudonyms BEFORE anything
+    # leaves the machine. Never raises; returns None for non-web tools and
+    # non-anonymising sessions (the overwhelming common case).
+    guard = engine._gdpr_guard_web_args(name, args)
+    if guard is not None:
+        return guard, True
+
     fn = engine.TOOL_DISPATCH.get(name)
     if fn is not None:
         try:

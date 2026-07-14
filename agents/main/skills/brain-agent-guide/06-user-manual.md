@@ -2131,6 +2131,22 @@ lokales Modell wechseln (Daten bleiben auf dem Gerät) oder — als Admin —
 die Kategorie-Aktion unter Einstellungen → GDPR von `block` auf `warn`
 ändern.
 
+**F: Warum meldet der Assistent bei einer Web-Recherche „nicht prüfbar (Datenschutz)"?**
+A: Der Chat arbeitet mit anonymisierten personenbezogenen Daten (Schild-Symbol
+aktiv). Damit die echten Werte — Name, Geburtsdatum, Passnummer, Adresse —
+nicht an externe Suchmaschinen gelangen, prüft Brain seit v9.334.0 jede
+Web-Suchanfrage und jede abzurufende URL **vor dem Versand**: enthält sie
+einen geschützten Wert der Sitzung (auch versteckt in einer Web-Adresse),
+wird der Aufruf angehalten. Der Assistent weist die betroffene Prüfung dann
+ehrlich als „nicht prüfbar (Datenschutz)" aus — er behauptet **nicht**
+fälschlich „keine Treffer". Rein technische Suchen (Gerätemodelle, Normen,
+Fehlermeldungen) laufen normal durch. Admins wählen das Verhalten unter
+`gdpr_scanner.web_egress` in der config.json: `refuse` (Standard),
+`block_group` (Web-Werkzeuge in anonymisierten Chats ganz ausblenden) oder
+`allow` (echte Werte dürfen raus, werden aber im Audit-Log protokolliert).
+Suchen mit **Ersatzwerten** (den Pseudonymen) werden immer verweigert — sie
+würden nichts finden oder fremde, echte Personen treffen.
+
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
 `ask_user_for_file` / `ask_user` (geplante Aufgaben können nicht

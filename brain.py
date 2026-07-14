@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.333.0"
+VERSION = "9.334.0"
 VERSION_DATE = "2026-07-14"
 CHANGELOG = [
+    ("9.334.0", "2026-07-14", "feat(Web-Egress-Gate für anonymisierte Sessions — L4 Phase 1 aus PII_ANALYSIS_PARITY_HANDOVER.md, die dort als Sofortmaßnahme markierte Lücke). PROBLEM (verifiziert am Chat 58e3c521438a): die Kombination heutige Config + Auto-Anonymise (`contact=ignore` → Klarname bleibt roh im Wire; Web-Tools komplett ungeschützt) schickte den Klarnamen einer geprüften Person KOMMENTARLOS an externe Suchmaschinen (searxng/exa/web_fetch — im Original-Chat ~15 Personen-Queries inkl. Name+Adresse+Geburtsjahr und der Name im URL-Slug bizapedia.com/people/bonnie-stark.html). Umgekehrt liefern Suchen mit gefakten Werten (Shape-Fakes sind REALE Namen!) Treffer über fremde echte Personen als Gift-Evidenz — oder null Treffer, die das Modell als 'kein Obituary gefunden' = Negativ-Befund ausgibt (Negative-Evidenz-Lüge). NEU: (1) `brain._gdpr_guard_web_args(tool_name, args)` — Web-Egress-Gate am EINZIGEN Live-Dispatch-Choke-Point (`engine/llm_loop.py:dispatch_tool`, VOR TOOL_DISPATCH-Lookup; deckt interaktive, Background- und Scheduler-Turns). Aktiv NUR bei aktivem Anonymise-Mapping (`get_request_context()._gdpr_mapping_id`); Nicht-Anonymise-Sessions unverändert. Geprüft werden ALLE String-Args rekursiv (bei web_fetch auch die URL) gegen die BEKANNTEN geschützten Werte der Session — mapping.forward (Originale), mapping.reverse (Fakes/Tokens), pii_decisions-Ledger (raw_value+fake_value, FP-Werte ausgenommen) — mit Normalisierung lowercase + Space→-/_/+/%20 (URL-Slugs) + Erst/Letzt-Token-Paar für Mehrwort-Namen ('Bonnie M Stark' fängt 'bonnie-stark'). NICHT primär per Scanner-Findings: mit `contact=ignore` stünde der NAME weder im Mapping noch actionable — der Gate fragt 'was IST PII' via Zusatz-Scan mit gate-eigener Kategorien-Policy (business_id/network = durchlassen, damit technische Queries wie 'Samsung S23 EXIF'/'ICAO 9303 check digit' — über die Hälfte der Queries im Original-Chat — NIE blocken; Rest = gaten; rule_overrides ignoriert; user-deklarierte FP-Werte unterdrücken Frisch-Scan-Refunde). FAKES → IMMER refuse in JEDEM Modus (Suche semantisch leer oder Fremdpersonen-Gift). Fail-CLOSED bei Gate-Crash mit aktivem Mapping. (2) Config-Knob `gdpr_scanner.web_egress`: refuse (DEFAULT) | ask (verhält sich bis L4-Phase-2 wie refuse) | block_group | allow (Originale passieren auditiert, Fakes trotzdem refused). (3) `block_group`: der Chat-Worker exkludiert bei aktivem Mapping die komplette Web-Gruppe via exclude_tools (WEB_SEARCH_TOOLS, gleiche Mechanik wie Websuche-Basket-Lockout) — das Modell PLANT ohne Web statt gegen Refusals zu laufen; der Dispatch-Gate bleibt als Defense-in-Depth. (4) Strukturierter, handlungsleitender Tool-Error `web_query_blocked_pii` mit `value_kind` (NIE der Wert selbst — der Error geht ans Modell zurück!) + Hint: als 'nicht prüfbar (Datenschutz)' ausweisen, NIE als 'keine Treffer'; Call nicht unverändert wiederholen (verhindert Retry-Schleifen). (5) `_GDPR_ANON_CLAMP` (engine/prompt_build.py) um den Websuche-Satz ergänzt — repariert die Negative-Evidenz-Lüge an der Wurzel. (6) Audit: `pii_web_blocked` (refuse) / `pii_web_egress` (allow-Modus) Zeilen mit kinds+mode, nie Werten. NEBENBEFUND dokumentiert: `_check_tool_dedup` wird im Live-Dispatch-Pfad seit v9.247.0 nicht mehr aufgerufen (nur im toten `_execute_tool_inner`) — engine/CLAUDE.md-Doku-Drift, hier NICHT angefasst. NEU tests/test_web_egress_gate.py (17): Slug-Erkennung, Fake-refuse-in-allow, FP-Test technische Queries, Ledger+FP-Pfad, verschachtelte Args, alle 4 Modi. Bestandssuiten gdpr_clamp/gdpr_decision_wire/gdpr_audit/websearch_escalation_gating/request_context_isolation/chat_worker_helpers/llm_loop_stream_stability/pseudonymizer/pii_ner grün. py_compile OK. Schema unverändert (kein neues Tool) → kein Warmup-Reprime."),
     ("9.333.0", "2026-07-14", "feat(ocr_fields + ocr_region bekommen die zweite Lesung — bisher hing das eine Werkzeug für die SCHWEREN Fälle am schwächeren Leser). ANLASS (User): 'warum rufen ocr_region, ocr_fields und ocr_tables nicht auch GLM-OCR auf — bzw. ist das fest verdrahtet oder geht das über engine/mlx_ocr_model?' ZWEI FRAGEN, zwei Antworten. (A) NICHTS IST FEST VERDRAHTET: ocr_extract.model_read ruft doc_convert._extract_image_ocr, und das folgt der ocr.engine-Einstellung — bei mistral_ocr käme Cloud-OCR, bei local_vision das Vision-Modell über oMLX, bei none bliebe das Feld leer. Am laufenden System belegt: engine=mlx_ocr + mlx_ocr_model=GLM-OCR-8bit → model_read meldet sich selbst als engine:'mlx-ocr (1p)'. Die Kette engine → mlx_ocr_model/local_vision_model gilt also AUCH für die Werkzeuge. NUR `text` ist unveränderlich Tesseract, und das ist Absicht: es ist die Instanz, die nie erfindet — wäre sie konfigurierbar, verlöre der Vergleich seinen Sinn. (B) DIE ANDEREN DREI: der Grund ist pro Werkzeug verschieden, und bei einem war es eine echte Lücke. ocr_fields wendet nur SUCHMUSTER AUF TEXT an — und der kam allein von Tesseract. Auf einem fotografierten Beleg/Ausweis findet der nichts, also meldete das Werkzeug 'nicht gefunden', obwohl das OCR-Modell den Wert einwandfrei gelesen hätte. GEMESSEN am echten Pass-Scan: alle vier abgefragten Felder (Passnummer/Nachname/Vorname/Geburtsdatum) kamen VORHER als null zurück — jetzt alle vier korrekt. FIX: das Suchmuster wird bei einem deterministischen Fehltreffer gegen die Modell-Lesung wiederholt; JEDER Treffer trägt seine Herkunft im neuen `source`-Feld ('ocr' = von den Pixeln abgelesen, Beleg — 'model_unverified' = vom Modell ergänzt, kann erfunden sein) + Sammelwarnung, wenn mindestens ein Feld aus dem Modell stammt. Ein deterministisch gefundener Wert bleibt 'ocr' und wird NIE überschrieben. ocr_region: das Modell kennt keine Wort-Koordinaten, kann also nicht nach 'der Region' gefragt werden — aber der Ausschnitt IST bereits ein Bild, also bekommt es dieses Bild (crop → Tempfile → _extract_image_ocr). Ohne das hing ausgerechnet das Werkzeug für die schweren Fälle ('lies nur den Stempel', 'nur die handschriftliche Zahl') am schwächeren Leser. Gemessen: Tesseract liest im Ausschnitt 'BONNTE SMART', GLM-OCR die korrekte MRZ 'BONNIE<<MARIE'. ocr_tables BEWUSST NICHT: es gruppiert Wörter nach x/y-Position zu Spalten und Zeilen — ohne Koordinaten gibt es nichts zu gruppieren. Ein Modell könnte man höchstens direkt nach einer Markdown-Tabelle fragen, das wäre ein ANDERER Ansatz, nicht dieselbe Mechanik; nicht heimlich mit eingebaut. ocr_inspect ebenfalls nicht (es ist die BILLIGE Vorabprüfung — ein Modellaufruf würde ihren Zweck zerstören). Alle drei erweiterten Werkzeuge haben model_fallback=false als Opt-out (strikt deterministisch, keine model_read/source/warning-Felder — Rückwärtskompatibilität für Aufrufer, die nur Belegbares wollen; verifiziert). Schemata erweitert, damit das Modell die Herkunft versteht und einen 'model_unverified'-Wert nicht als Tatsache zitiert. 4-Site-Regel geprüft (5 ocr_*-Tools in Schema UND TOOL_DISPATCH; model_fallback bei extract/region/fields). py_compile OK. Brain-Neustart nötig. Skills + Prüfbericht im selben Commit."),
     ("9.332.0", "2026-07-14", "feat(Bildbeschreibung LOKAL statt Cloud) + feat(GEMEINSAME Warteschlange für alle lokalen MLX-Modelle: OCR + Whisper) + fix(Foto einer Person wurde nie beschrieben) + fix(kostenloses lokales Modell verlor gegen die Cloud). ANLASS: der Prüfbericht (docs/bildverarbeitung.html) legte einen Verdrahtungsfehler offen, und der User zog zwei richtige Schlüsse daraus. (1) MEIN IRRTUM, vom User korrigiert: ich hatte behauptet, GLM-OCR könne nur transkribieren, nicht beschreiben — und mich dabei auf einen eigenen Test gestützt, der mit 'Describe this image' fragte. FALSCH: es lag am PROMPT, nicht am Modell. Bei vagem Auftrag fällt GLM-OCR in seinen Grundmodus (auf einem Webcam-Portrait gab es die Browser-Tableiste zurück und erwähnte die Person nie); mit klarem Auftrag ('describe what is VISIBLE … do NOT transcribe') antwortet DASSELBE Modell 'a woman in a room with a bookcase and an American flag'. Der User hatte es an meiner eigenen Typ-Erkennung gemerkt (8/8 Pässe erkannt — das IST Bildverständnis). Gegen gemma-4-12B gemessen: beide erfassen die Szene, gemma etwas detailreicher, GLM-OCR bis 7x schneller (0,6s vs 4,1s) und 13x kleiner. USER-ENTSCHEIDUNG: gemma-4-12B bleibt AUSSCHLIESSLICH Chat-Fallback; im Hintergrund läuft GLM-OCR. NEU: mlx_ocr.describe_image() + _DESCRIBE_PROMPT (bewusst modell-agnostisch formuliert — schadet gemma/mistral nicht, der Admin kann also das Modell tauschen, ohne den Prompt anzufassen) + config ocr.describe_model ('' = das OCR-Modell). brain._describe_image_with_local_model läuft VOR dem Chat-Modell-Fallback: eine Bildbeschreibung im Hintergrund verlässt damit nie mehr still den Rechner. (2) FOTO EINER PERSON WURDE NIE BESCHRIEBEN — der Kern des Ganzen: die Regel 'OCR-Text ≥20 Zeichen = starkes Signal = fertig' liess ein FOTO IN EINEM BROWSERFENSTER als 'Textdokument' durchgehen — die Menüleiste allein reisst die 20-Zeichen-Hürde. Folge: bei den Webcam-Portraits las Tesseract die Tableiste, der Code erklärte sich für erfolgreich, und das Text-Modell erfuhr NICHTS über die Frau auf dem Bild. FIX: zeigt das Bild GESICHTER (feat['faces'] — das verlässliche Signal; 'kind' ist oft leer), wird es beschrieben, AUCH wenn Text gefunden wurde. Mit Deckel: ist die Modell-Lesung LANG (>200 Zeichen), ist es ein DOKUMENT und keine Szene — gemessen trennt das sauber (Foto einer Person 99 Zeichen, derselbe Pass vor derselben Webcam 344), und ohne den Deckel transkribierte das Modell den Pass ein drittes Mal (8s für nichts). Ergebnis: Foto→Beschreibung ('blonde Frau, geblümtes Oberteil, Bücherregal, US-Flagge'), Pass→keine Beschreibung, nur der Text. (3) WARTESCHLANGE für lokale Modelle (User: 'parallele User-Aufrufe schiessen das Mac Studio tot'). BEFUND: die bestehende LocalProviderQueue schützt NUR den oMLX-Chat (provider Lokal, max_concurrent=1). GLM-OCR hatte eine EIGENE Ein-Thread-Serialisierung (aus dem Segfault-Fix 9.328.0) — die aber nichts von Whisper weiss; und mlx_whisper.transcribe() lief KOMPLETT ungebremst: fünf gleichzeitige Transkriptionen = fünf Whisper-Läufe auf EINER GPU. NEU engine/mlx_runner.py: EINE Bahn für ALLE in-process-MLX-Modelle (OCR + Whisper). Der bisherige mlx_ocr-Worker wurde dorthin gehoben (kein zweites Konstrukt), Whisper hängt sich daran. USER-ENTSCHEIDUNG zum Umfang: bewusst NICHT mit dem oMLX-Chat zusammengelegt — ein Chat-Turn hält seinen Slot über den GANZEN Turn INKLUSIVE Tool-Aufrufen, ein Turn der ein OCR-Tool ruft würde also auf sich selbst warten (dieselbe Deadlock-Klasse wie 9.321.0). Zwei Bahnen, kein solcher Rand. Der Ein-Thread bleibt ohnehin zwingend (Metal crasht, wenn ein Thread MLX benutzt und dann ENDET). VERIFIZIERT: 5 gleichzeitige OCR-Aufrufe → max. 1 gleichzeitig auf der GPU (per Spy auf _get gemessen), 5/5 erfolgreich, kein Absturz; 2×OCR + 2×Whisper gleichzeitig → sauber serialisiert, 9,9s, alle Ergebnisse korrekt. mlx_runner.stats() liefert Tiefe + Wartezeiten für die Admin-Ansicht. (4) BEIFANG aus dem Prüfbericht: die Auto-Auswahl des Vision-Fallbacks nahm kimi-k2.6 (CLOUD), obwohl das lokale gemma-4-12B bereitstand. Ursache: gemma trägt cost_input: null, gelesen wurde mit cfg.get('cost_input', 1e9) — der Ersatzwert greift nur bei FEHLENDEM Schlüssel, nicht bei null. Das kostenlose Modell wurde also mit einer Milliarde bewertet und landete auf Platz 9 von 10; 'billigstes zuerst' wählte ausgerechnet das teure. Auf `or 0.0` umgestellt (nur lokale Modelle tragen null — geprüft). Der Pfad wird durch (1) ohnehin kaum noch erreicht, der Fehler ist trotzdem weg. py_compile OK. Brain-Neustart nötig. Skills + kuratierter Eintrag + Prüfbericht aktualisiert im selben Commit."),
     ("9.331.0", "2026-07-14", "feat(Bild an TEXT-ONLY-Modell): GLM-OCR liest jetzt auch im Degrade-Pfad mit — bisher sah ein nicht-multimodales Modell nur Tesseract-Zeichensalat. + fix(MRZ-Kappung sass beim AUFRUFER statt am Choke-Point) + perf(20,7s → 6,1s). ANLASS (User-Frage): 'fungiert GLM-OCR damit als lokales Vision-Modell für nicht-multimodale LLMs?' — NEIN, tat es nicht, und beim Nachsehen war der Bestand schlechter als gedacht. BEFUND: _describe_image_deterministic (der Degrade-Choke-Point aus 9.293.2, gerufen wenn ein Bild an ein Modell ohne Bildfähigkeit geht) nutzte NUR _ocr_image_bytes (Tesseract) + Bildmerkmale + QR-Codes. Was ein Text-Modell vom echten Pass-Scan zu sehen bekam: '„0 X 7) WeblD Solutions GmbH [Pe © X + - a x / PSUSASTARK<<BONNT DCMARTE << em CR RR ERE KERR ERLE / 5606837 078USA4 SGOTOPSACBOTTIO' — Browser-Leiste plus verstümmelte MRZ; der NAME BONNIE fehlt komplett, die Passnummer nur zufällig und mit Leerzeichen zerrissen. GLM-OCR liest auf denselben Pixeln '560683707 / STARK / BONNIE MARIE / 05 Feb 1947'. PERFIDE: weil Tesseract 475 Zeichen MÜLL produziert, galt das als 'starkes Signal' (strong=True, Schwelle ≥20 Zeichen) → der Code erklärte sich für erfolgreich und sah nie weiter nach. Gemessen an allen 10 echten Scans: 10/10 'stark' → der Vision-Fallback feuerte NIE (meine Sorge, die Cloud würde bei Ausweisen gerufen, war unbegründet — aber das Ergebnis war trotzdem Müll). FIX: der Degrade-Pfad hängt die GLM-OCR-Lesung ADDITIV daneben (nicht als Ersatz), klar getrennt und als UNGEPRÜFT gekennzeichnet ('kann bei unscharfen Bildern Namen/Zahlen erfinden; die zeichengenaue Lesung oben ist der Beleg') — dieselbe Trennung wie bei ocr_extract.model_read in 9.330.0. Der Vision-LLM-Fallback für TEXTLOSE Szenenfotos bleibt unangetastet: dort schlägt ein Modell, das BESCHREIBT, eines das TRANSKRIBIERT. Ergebnis: das Text-Modell bekommt jetzt Passnummer, Name UND Geburtsdatum statt Browser-Chrome. (2) MRZ-KAPPUNG AM FALSCHEN ORT — genau der Fehler, den ich sonst anmahne ([[feedback_single_fix_point]]): _collapse_ocr_filler sass in ingest.parse_image, also beim AUFRUFER. Folge: derselbe Pass kam über den Projekt-Import gekappt zurück (716 Zeichen) und über den Chat-Anhang voll gepolstert (8865 Zeichen, die '<<<<'-Kette wieder da). Nach doc_convert.collapse_ocr_filler verschoben und in _extract_image_ocr gezogen = DER OCR-Choke-Point; ingest-Kopie gelöscht. Gegengeprüft: alle VIER Wege (Projekt-Import / read_document / ocr_extract.model_read / Chat-Degrade) liefern jetzt die Passnummer und 12-16 '<' statt Tausenden. (3) PERF — 20,7s war für einen Chat-Anhang inakzeptabel (der Nutzer wartet). Ursache: das Modell SPULT die MRZ-Polsterung aus, bevor wir sie wegwerfen — 8196 Zeichen Rohausgabe. Gemessen: max_tokens 4096 → 22,8s / 1024 → 4,7s / 512 → 2,8s, und der Text NACH der Kappung ist bei allen dreien BYTE-IDENTISCH (344 Zeichen, Passnr+Name+Datum überall drin). Die Extra-Tokens erzeugen ausschliesslich Padding. Der Degrade-Pfad cappt daher auf 1024 (_extract_image_ocr nimmt jetzt ein optionales cfg-Override) → 20,7s → 6,1s bei identischem Inhalt. Projekt-Mining behält das volle Budget: dort sind ganze Textseiten der Normalfall, keine Ausweise. ABGRENZUNG (die eigentliche Antwort auf die User-Frage): GLM-OCR ist damit das lokale TEXT-Auge für Text-Modelle — es TRANSKRIBIERT. Ein allgemeines Vision-Modell, das ein Bild BESCHREIBT ('zwei Personen an einem Strand'), ersetzt es nicht und bleibt der Fallback für textlose Bilder. py_compile OK. Brain-Neustart nötig. Skills + kuratierter Eintrag im selben Commit."),
@@ -3223,6 +3224,255 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
         # silently hide content). The recovery-modal path in the worker
         # already covered the "fail-closed" stance for the user message.
         return text
+
+
+# ── Web-Egress-Gate (L4 Phase 1, v9.334.0) ──────────────────────────────────
+# Guards the args of every web-reaching tool (WEB_SEARCH_TOOLS) in sessions
+# with an active transparent-anonymisation mapping. Called from the ONE live
+# dispatch choke point (engine/llm_loop.py:dispatch_tool), so interactive,
+# background and scheduler turns are all covered. Without this gate the
+# combination "auto-anonymise + contact=ignore" ships the real NAME verbatim
+# to external search engines (see PII_ANALYSIS_PARITY_HANDOVER.md §5).
+
+# Opaque-token shape minted by pseudonymizer (tolerant of LLM mangling —
+# mirrors pseudonymizer's reverse regex).
+_PII_WEB_TOKEN_RE = re.compile(r"<\s*\w+_\d+_\w+\s*>")
+
+# Categories the gate does NOT act on. The gate asks "what IS PII", not "what
+# is actionable" — the session config may set contact=ignore, which would make
+# a findings-driven gate blind to the NAME, the most identifying value.
+# business_id (organisation) + network pass so technical queries ("Samsung
+# Galaxy S23 EXIF", "ICAO 9303 check digit") never trip the gate — over half
+# the queries in the reference chat (58e3c521438a) were technical.
+_WEB_GATE_PASS_CATEGORIES = {"business_id", "network"}
+
+_WEB_EGRESS_MODES = ("refuse", "ask", "block_group", "allow")
+
+
+def _web_gate_strings(obj, out=None) -> list:
+    """Collect every string in args, recursively through lists/dicts."""
+    if out is None:
+        out = []
+    if isinstance(obj, str):
+        out.append(obj)
+    elif isinstance(obj, dict):
+        for v in obj.values():
+            _web_gate_strings(v, out)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            _web_gate_strings(v, out)
+    return out
+
+
+def _web_gate_value_variants(value: str) -> set:
+    """Normalised surface forms of a protected value for substring matching
+    against outgoing web args — lowercase, plus URL-slug separators
+    (space → -/_/+/%20; the reference chat leaked the name in a URL SLUG:
+    bizapedia.com/people/bonnie-stark.html). For multi-word values the
+    first+last token pair is added in both orders so "Bonnie M Stark"
+    still catches the slug "bonnie-stark". Values <4 chars are skipped
+    (substring noise on house numbers / short IDs)."""
+    v = re.sub(r"\s+", " ", (value or "").strip().lower())
+    if len(v) < 4:
+        return set()
+    out = {v}
+    if " " in v:
+        for sep in ("-", "_", "+", "%20"):
+            out.add(v.replace(" ", sep))
+        toks = [t for t in re.split(r"[\s,]+", v) if len(t) >= 3]
+        if len(toks) >= 2:
+            for a, b in ((toks[0], toks[-1]), (toks[-1], toks[0])):
+                for sep in ("-", "_", "+", "%20"):
+                    out.add(f"{a}{sep}{b}")
+    return out
+
+
+def _web_gate_refusal(blocked_kinds: list, *, fakes: bool) -> str:
+    """Structured, handlungsleitender Tool-Error. Contains value KINDS only —
+    the error string goes back to the model, never the values themselves."""
+    if fakes:
+        hint = (
+            "Die Query enthält pseudonymisierte Werte (Platzhalter/Shape-Fakes). "
+            "Eine Websuche damit wäre semantisch leer oder träfe echte FREMDE "
+            "Personen (Fake-Namen sind reale Namen) — deren Daten würden die "
+            "Analyse vergiften. Suche NIE mit diesen Werten. Optionen: "
+            "(1) Die Prüfung im Bericht als 'nicht prüfbar (Datenschutz)' "
+            "ausweisen — NIE als 'keine Treffer'. "
+            "(2) Die Query ohne den geschützten Wert umformulieren, falls "
+            "sinnvoll. Wiederhole den Call NICHT unverändert.")
+    else:
+        hint = (
+            "Geschützter Wert in Web-Query. Optionen: "
+            "(1) Die Prüfung im Bericht als 'nicht prüfbar (Datenschutz)' "
+            "ausweisen — NIE als 'keine Treffer'. "
+            "(2) Die Query ohne den geschützten Wert umformulieren, falls "
+            "sinnvoll. Wiederhole den Call NICHT unverändert.")
+    seen, blocked = set(), []
+    for k in blocked_kinds:
+        if k not in seen:
+            seen.add(k)
+            blocked.append({"value_kind": k, "released": False})
+    return json.dumps({
+        "error": "web_query_blocked_pii",
+        "blocked": blocked,
+        "hint": hint,
+    }, ensure_ascii=False)
+
+
+def _gdpr_guard_web_args(tool_name: str, args: dict) -> str | None:
+    """Web-egress gate: refuse a web-tool call whose args contain protected
+    session values (originals), pseudonyms/tokens (fakes), or fresh person-PII.
+
+    Returns an error-JSON string to send back to the model (blocked), or None
+    (proceed). NEVER raises. Inactive when no anonymisation mapping is active
+    on the current request context — non-anonymising sessions are untouched.
+
+    Primary check is against the KNOWN protected values of the session
+    (mapping.forward/reverse + pii_decisions ledger), NOT the scanner's
+    actionable findings — see _WEB_GATE_PASS_CATEGORIES. A fresh scan with a
+    gate-own category policy catches third-person PII never minted before.
+
+    Modes (config.json → gdpr_scanner.web_egress, default 'refuse'):
+      refuse / block_group — block originals + fakes (block_group additionally
+        hides the web group via exclude_tools at turn setup; this dispatch-side
+        refusal stays as defense in depth for paths that skip the worker).
+      ask — Phase 2 (per-value consent → release_web ledger) is NOT built yet;
+        behaves like refuse until then.
+      allow — originals pass (audited), fakes are STILL refused (a fake search
+        is never useful — it poisons evidence with strangers' data).
+    """
+    try:
+        if tool_name not in WEB_SEARCH_TOOLS:
+            return None
+        try:
+            mapping_id = get_request_context()._gdpr_mapping_id or ""
+        except Exception:
+            mapping_id = ""
+        if not mapping_id:
+            return None  # no anonymisation active → gate inactive
+    except Exception:
+        return None
+    try:
+        import pseudonymizer as _ps
+        mapping = _ps.get_mapping(mapping_id)
+        cfg = _get_gdpr_scanner_config()
+        mode = cfg.get("web_egress") or "refuse"
+        if mode not in _WEB_EGRESS_MODES:
+            mode = "refuse"
+
+        raw_haystack = "\n".join(_web_gate_strings(args))
+        if not raw_haystack.strip():
+            return None
+        haystack = raw_haystack.lower()
+
+        # ── 1) Fakes / opaque tokens → ALWAYS refuse (every mode) ────────
+        fake_kinds: list = []
+        if _PII_WEB_TOKEN_RE.search(raw_haystack):
+            fake_kinds.append("pseudonym_token")
+        known_fakes = {}   # fake value → rule_id
+        known_origs = {}   # original value → rule_id
+        if mapping is not None:
+            for orig, fake in mapping.forward.items():
+                rid = mapping.categories.get(orig, "unknown")
+                known_origs[orig] = rid
+                known_fakes[fake] = rid
+        # Ledger: every value the session EVER decided on (survives restarts
+        # and mapping rehydration gaps). FP values are NOT protected — they
+        # also suppress fresh-scan re-detection below (the user already said
+        # "this is not PII"; the gate must not overrule that per web call).
+        fp_norms: set = set()
+        try:
+            from server_lib.db import ChatDB
+            sid = get_request_context().current_session_id or ""
+            if sid:
+                for rec in (ChatDB.get_session_pii_decisions(sid) or {}).values():
+                    if rec.get("false_positive"):
+                        v = re.sub(r"\s+", " ", (rec.get("value") or "").strip().lower())
+                        if v:
+                            fp_norms.add(v)
+                        continue
+                    if rec.get("value"):
+                        known_origs.setdefault(rec["value"], rec.get("rule_id") or "unknown")
+                    if rec.get("fake_value"):
+                        known_fakes.setdefault(rec["fake_value"], rec.get("rule_id") or "unknown")
+        except Exception:
+            pass  # mapping-only coverage is still correct
+
+        for fake, rid in known_fakes.items():
+            if any(v in haystack for v in _web_gate_value_variants(fake)):
+                fake_kinds.append(rid)
+        if fake_kinds:
+            _web_gate_audit(tool_name, fake_kinds, mode, kind="fake")
+            return _web_gate_refusal(fake_kinds, fakes=True)
+
+        # ── 2) Known originals → policy decides ──────────────────────────
+        orig_kinds: list = []
+        for orig, rid in known_origs.items():
+            if any(v in haystack for v in _web_gate_value_variants(orig)):
+                orig_kinds.append(rid)
+
+        # ── 3) Fresh PII (third persons, never-minted values) ────────────
+        # Gate-own category policy: "what IS PII", ignoring the session's
+        # per-category actions (contact=ignore must not blind the gate to
+        # names). Pass-categories stay ignore so technical queries never
+        # trip; rule_overrides are dropped for the same reason.
+        try:
+            gate_cfg = dict(cfg)
+            gate_cfg["categories"] = {
+                cat: {"action": ("ignore" if cat in _WEB_GATE_PASS_CATEGORIES
+                                 else "warn")}
+                for cat in cfg.get("categories", {})}
+            gate_cfg["rule_overrides"] = {}
+            for f in _pii_scan_text(raw_haystack, cfg=gate_cfg):
+                if f.get("category") in _WEB_GATE_PASS_CATEGORIES:
+                    continue
+                matched = re.sub(r"\s+", " ", raw_haystack[
+                    f.get("start", 0):f.get("end", 0)].strip().lower())
+                if matched and matched in fp_norms:
+                    continue  # user-declared false positive
+                orig_kinds.append(f.get("rule_id") or "unknown")
+        except Exception:
+            pass
+
+        if not orig_kinds:
+            return None
+        if mode == "allow":
+            _web_gate_audit(tool_name, orig_kinds, mode, kind="allowed")
+            return None
+        _web_gate_audit(tool_name, orig_kinds, mode, kind="original")
+        return _web_gate_refusal(orig_kinds, fakes=False)
+    except Exception as e:
+        # Fail CLOSED: a mapping is active (checked above), so an unexpected
+        # gate crash must not silently open the egress path (CLAUDE.md rule 12).
+        print(f"[web_egress_gate] gate error, failing closed: {e}", flush=True)
+        return json.dumps({
+            "error": "web_query_blocked_pii",
+            "blocked": [{"value_kind": "gate_error", "released": False}],
+            "hint": "Interner Fehler im Web-Egress-Gate — Web-Zugriff für "
+                    "diesen Call vorsorglich verweigert. Weise die Prüfung im "
+                    "Bericht als 'nicht prüfbar (Datenschutz)' aus.",
+        }, ensure_ascii=False)
+
+
+def _web_gate_audit(tool_name: str, kinds: list, mode: str, *, kind: str) -> None:
+    """Audit row per gate decision — kinds only, never values."""
+    if not _audit_log:
+        return
+    try:
+        _audit_log.log_action(
+            agent=(get_request_context().current_agent.agent_id
+                   if get_request_context().current_agent else "main"),
+            action_type=("pii_web_egress" if kind == "allowed"
+                         else "pii_web_blocked"),
+            tool_name=tool_name,
+            args_summary=f"kinds={sorted(set(kinds))} mode={mode} match={kind}",
+            result_summary="",
+            result_status=("warning" if kind == "allowed" else "blocked"),
+            session_id=get_request_context().current_session_id or None,
+            source="web_egress_gate",
+        )
+    except Exception:
+        pass
 
 
 def _route_to_node(tool_name: str, args: dict) -> str | None:
@@ -10555,6 +10805,10 @@ def _get_gdpr_scanner_config() -> dict:
                                          # there's no user to prompt (background calls).
        "background_anonymise_fail_action": str,  # swap_to_local | abort
        "block_unscannable_on_cloud": bool,  # audio/etc → local fallback (default False)
+       "web_egress": str,                # refuse | ask | block_group | allow —
+                                         # web-tool args gate in anonymising
+                                         # sessions (L4 Phase 1; 'ask' behaves
+                                         # like 'refuse' until Phase 2 lands)
        "categories": {<cat>: {"action": "ignore|warn|block"}},  # governs HIGH band only
        "rule_overrides": {<rule_id>: "ignore|warn|block"},
        "email_allowlist": [str, ...],    # full addresses or "@domain" patterns
@@ -10578,6 +10832,7 @@ def _get_gdpr_scanner_config() -> dict:
         "background_ask_action": "anonymise",
         "background_anonymise_fail_action": "swap_to_local",
         "block_unscannable_on_cloud": False,
+        "web_egress": "refuse",
         "categories": {cat: {"action": act} for cat, act in PII_DEFAULT_CATEGORY_ACTIONS.items()},
         "rule_overrides": {},
         # Legacy seed for count_points migration (no longer a detection gate).
@@ -10621,6 +10876,8 @@ def _get_gdpr_scanner_config() -> dict:
             cfg["background_ask_action"] = loaded["background_ask_action"]
         if loaded.get("background_anonymise_fail_action") in ("swap_to_local", "abort"):
             cfg["background_anonymise_fail_action"] = loaded["background_anonymise_fail_action"]
+        if loaded.get("web_egress") in _WEB_EGRESS_MODES:
+            cfg["web_egress"] = loaded["web_egress"]
         cats_in = loaded.get("categories") or {}
         if isinstance(cats_in, dict):
             for cat, entry in cats_in.items():

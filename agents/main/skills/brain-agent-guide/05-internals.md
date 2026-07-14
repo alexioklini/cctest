@@ -1476,6 +1476,26 @@ preamble goes in first-user-message instead.
 
 ## GDPR / PII scanner
 
+- **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
+  anonymisation (a live pseudonym mapping), the args of every web-reaching
+  tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,
+  `dev_search`, `image_search`, `news_search`) are checked at tool dispatch
+  BEFORE anything leaves the machine (`brain._gdpr_guard_web_args`, called in
+  `engine/llm_loop.py:dispatch_tool` — covers chat, background and scheduler
+  turns). Checked against the session's KNOWN protected values (pseudonym
+  mapping + `pii_decisions` ledger; user-marked false positives are exempt),
+  including URL slugs (`…/people/bonnie-stark.html`), plus a fresh scan with a
+  gate-own category policy (organisations/network values pass, so technical
+  queries never block). Queries containing PSEUDONYMS are refused in every
+  mode (a fake search finds nothing — or real strangers). The model receives a
+  structured `web_query_blocked_pii` error (value KINDS only, never values)
+  telling it to report the check as "nicht prüfbar (Datenschutz)" instead of
+  claiming "no results". Admin knob `config.json → gdpr_scanner.web_egress`:
+  `refuse` (default) | `ask` (like refuse until the consent flow ships) |
+  `block_group` (web tools hidden entirely in anonymising sessions) | `allow`
+  (real values pass but are audited; fakes still refused). Audit rows:
+  `pii_web_blocked` / `pii_web_egress`. Non-anonymising sessions are
+  completely unaffected.
 - **SERVER-ONLY detection (9.200.0)**: the browser-side `PIIScanner` (the
   ~70 JS regex rules + Luhn/Mod11 validators) was DELETED. PII is detected
   exclusively in Python (`engine/pii_ner.py → _pii_rules` + `_pii_scan_text` +

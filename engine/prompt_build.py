@@ -713,7 +713,12 @@ _GDPR_ANON_CLAMP = (
     "The system will restore the original values before showing your reply "
     "to the user. If you mangle a token (different case, extra spaces inside "
     "the brackets, dropped salt) the restoration will fail and the user will "
-    "see the placeholder instead of their data."
+    "see the placeholder instead of their data.\n\n"
+    "Web searches involving protected values: if a web search or fetch is "
+    "refused because a protected value is in the query or URL, report that "
+    "check in your answer as 'nicht prüfbar (Datenschutz)'. NEVER present a "
+    "refused or unexecuted search as 'no results found' — the absence of "
+    "results from a search that never ran is not evidence."
 )
 
 

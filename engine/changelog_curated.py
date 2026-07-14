@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.334.0",
+        "date": "2026-07-14",
+        "title": "Kein Datenabfluss bei Web-Recherchen",
+        "body": "Arbeitet ein Chat mit anonymisierten personenbezogenen Daten, "
+                "konnten Web-Suchen die echten Werte bisher unbemerkt an "
+                "externe Suchmaschinen weitergeben. Solche Suchanfragen werden "
+                "jetzt vor dem Versand geprüft und bei geschützten Werten "
+                "angehalten — auch wenn der Wert in einer Web-Adresse steckt. "
+                "Nicht durchführbare Prüfungen weist der Assistent ehrlich als "
+                "„nicht prüfbar (Datenschutz)“ aus, statt fälschlich „keine "
+                "Treffer“ zu melden. Rein technische Suchen laufen unverändert "
+                "durch; Administratoren wählen das Verhalten über die neue "
+                "Einstellung web_egress (verweigern, ganz ausblenden oder "
+                "zulassen).",
+        "audience": "user",
+        "versions": ["9.334.0"],
+    },
+    {
         "version": "9.333.0",
         "date": "2026-07-14",
         "title": "Werte aus Fotos von Belegen und Ausweisen",
