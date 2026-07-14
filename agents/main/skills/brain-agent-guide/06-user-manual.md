@@ -2160,6 +2160,22 @@ Cloud-Modelle anonymisiert. Web-Suchanfragen selbst werden dabei **nie**
 zurückübersetzt — dafür gilt weiterhin das Web-Egress-Gate (siehe vorherige
 Frage).
 
+**F: Warum ist im anonymisierten Chat dieselbe Person überall gleich benannt?**
+A: Seit v9.337.0 arbeitet die Anonymisierung auf Personen-Ebene statt auf
+Zeichenketten-Ebene. Früher bekam jede Schreibweise desselben Namens (Akte,
+Ausweis, E-Mail-Adresse, Scan mit Lesefehlern) einen anderen Ersatzwert — das
+Sprachmodell sah dadurch mehrere scheinbar verschiedene Personen und konnte
+z. B. bei einer Dokumentenprüfung falsche Widersprüche „finden". Jetzt erhält
+jede Person genau **eine** Ersatz-Identität, die in allen Schreibweisen
+konsistent auftaucht (auch in der maschinenlesbaren Ausweiszone und in
+E-Mail-Adressen); verschiedene echte Personen bekommen immer verschiedene
+Ersatznamen. Passnummern und die Ausweiszone werden als stimmige Ersatzwerte
+mit **gültigen Prüfziffern** erzeugt, und Datumsangaben verschieben sich um
+einen konstanten Betrag, sodass Reihenfolgen, Gültigkeitsspannen und
+Zeitabstände exakt erhalten bleiben. Analysen über mehrere Dokumente liefern
+so dieselben Zusammenhänge wie ohne Anonymisierung — im Chat sehen Sie
+weiterhin die echten Werte, nur das Cloud-Modell sieht die Ersatzwerte.
+
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
 `ask_user_for_file` / `ask_user` (geplante Aufgaben können nicht

@@ -22,6 +22,7 @@ store; step 3 wires it into the chat worker.
 
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import json
 import os
@@ -31,6 +32,9 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from typing import Callable
+
+# Pure stdlib module (difflib) — no brain import, safe at module level.
+from engine import identity as _identity
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +85,16 @@ SHAPE_PRESERVING: frozenset[str] = frozenset({
     "organisation",
     "email",
     "date",
+    # L2 (Entitäts-Schicht, PII_ANALYSIS_PARITY_HANDOVER.md): Geburtsdaten
+    # behalten ihren Keyword-Prefix und bekommen den Session-Datums-Offset;
+    # Passnummern werden formgleiche Fakes (wie IBAN mod-97 / CC Luhn schon
+    # immer); MRZ-Zeilen werden komplett konsistent neu gebaut, mit GÜLTIGEN
+    # ICAO-9303-Prüfziffern — sonst produziert die LLM-eigene MRZ-Mathematik
+    # falsche Fälschungsindizien (Failure F2).
+    "dob",
+    "passport",
+    "passport_ctx_loose",
+    "mrz",
 })
 
 
@@ -419,11 +433,60 @@ def _fake_email(original: str, salt: str) -> str:
     return f"{local_fake}@example.{tld}"
 
 
+# Month-name catalogs for textual date formats ('5 FEB 1947', '26. Jan 2027').
+# EN + DE, full + abbreviated; rendering preserves language, abbreviation
+# style and case of the original token.
+_MONTHS_EN = ("january", "february", "march", "april", "may", "june", "july",
+              "august", "september", "october", "november", "december")
+_MONTHS_DE = ("januar", "februar", "märz", "april", "mai", "juni", "juli",
+              "august", "september", "oktober", "november", "dezember")
+_MONTHS_EN_AB = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug",
+                 "sep", "oct", "nov", "dec")
+_MONTHS_DE_AB = ("jan", "feb", "mär", "apr", "mai", "jun", "jul", "aug",
+                 "sep", "okt", "nov", "dez")
+
+
+def _parse_month_token(tok: str):
+    """Month-name token → (month_1_12, catalog) or (None, None)."""
+    t = tok.lower().rstrip(".")
+    for cat in (_MONTHS_EN, _MONTHS_DE):
+        if t in cat:
+            return cat.index(t) + 1, cat
+    for cat in (_MONTHS_EN_AB, _MONTHS_DE_AB):
+        if t[:3] in cat and len(t) <= 4:
+            return cat.index(t[:3]) + 1, cat
+    return None, None
+
+
+def _render_month_like(tok: str, month: int, catalog: tuple) -> str:
+    """Render `month` in the same style as the original token `tok`
+    (language via catalog, abbreviation length, case)."""
+    name = catalog[month - 1]
+    if catalog in (_MONTHS_EN_AB, _MONTHS_DE_AB):
+        out = name
+    elif len(tok.rstrip(".")) <= 4:
+        out = name[:len(tok.rstrip("."))]
+    else:
+        out = name
+    if tok.isupper():
+        out = out.upper()
+    elif tok[0].isupper():
+        out = out.title()
+    if tok.endswith("."):
+        out += "."
+    return out
+
+
 # Date formats we recognise. Order matters: longest/most-specific first.
 # Each entry is (compiled_regex, "format_id"). Format id drives reconstruction.
 _DATE_PATTERNS: tuple = (
     # ISO 8601: 2026-05-19
     (re.compile(r"^(\d{4})-(\d{2})-(\d{2})$"), "iso"),
+    # EXIF: 2026:07:02 [14:24:48] — time part (if any) passes through verbatim.
+    (re.compile(r"^(\d{4}):(\d{2}):(\d{2})(\s+\d{2}:\d{2}:\d{2})?$"), "exif"),
+    # Textual month: 5 FEB 1947 / 05 Feb 1947 / 26. Jan 2027 / 19 JAN 2007
+    (re.compile(r"^(\d{1,2})(\.?)[ ]([A-Za-zÄÖÜäöüß]{3,9}\.?)[ ](\d{4})$"),
+     "dd_mon_yyyy"),
     # European: 19.05.2026 / 19.5.2026 / 19-05-2026
     (re.compile(r"^(\d{1,2})\.(\d{1,2})\.(\d{4})$"), "eu_dot"),
     (re.compile(r"^(\d{1,2})-(\d{1,2})-(\d{4})$"), "eu_dash"),
@@ -435,66 +498,116 @@ _DATE_PATTERNS: tuple = (
 )
 
 
+def date_offset_days(salt: str) -> int:
+    """Constant per-mapping day offset (L2c). Derived from the salt →
+    deterministic, survives persistence with zero schema change. Range
+    ±5..25, never 0 — a CONSTANT offset keeps ordering, deltas ('10y − 1d'),
+    renewal gaps and EXIF distances EXACT, which the old per-value day
+    jitter destroyed (Failure F2: inverted issue-before-expiry, broken
+    validity spans → false forgery indications)."""
+    seed = _seed_int("__date_offset__", salt, n=4)
+    days = 5 + (seed % 21)
+    return days if (seed >> 24) & 1 else -days
+
+
 def _fake_date(original: str, salt: str) -> str:
-    """Generate a fake date that preserves the original's format AND its
-    year/month (so seasonality + age-bracket stay intact). Day jitters by
-    a deterministic offset within the same month — avoids leaking exact DOB
-    while preserving "born in 1987-May" signal."""
+    """Shift a date by the mapping's constant day offset, preserving the
+    original's exact format (separator style, zero-padding, month-name
+    language/abbreviation/case, EXIF time suffix). Year/month may drift at
+    month boundaries — accepted trade-off (handover decision L2c) in
+    exchange for exact relational arithmetic. Document-lifecycle dates
+    (issue/expiry) never reach this generator: the scanner only emits
+    `date` findings with birth-/life-event context."""
     raw = original.strip()
     for pat, fmt in _DATE_PATTERNS:
         m = pat.match(raw)
         if not m:
             continue
-        # Parse fields based on the format. All formats give us (year, month, day)
-        # in some order.
-        if fmt == "iso":
+        mon_cat = None
+        suffix = ""
+        if fmt in ("iso", "exif"):
             y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        elif fmt in ("eu_dot", "eu_dash"):
+            if fmt == "exif":
+                suffix = m.group(4) or ""
+        elif fmt == "dd_mon_yyyy":
+            d, y = int(m.group(1)), int(m.group(4))
+            mo, mon_cat = _parse_month_token(m.group(3))
+            if mo is None:
+                continue  # not a month name — let other patterns try
+        elif fmt in ("eu_dot", "eu_dash", "eu_dot_yy"):
             d, mo, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        elif fmt == "us_slash":
+            if fmt == "eu_dot_yy":
+                y = 2000 + y if y < 50 else 1900 + y
+        elif fmt in ("us_slash", "us_slash_yy"):
             mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-        elif fmt == "eu_dot_yy":
-            d, mo, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            y = 2000 + yy if yy < 50 else 1900 + yy
-        elif fmt == "us_slash_yy":
-            mo, d, yy = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            y = 2000 + yy if yy < 50 else 1900 + yy
+            if fmt == "us_slash_yy":
+                y = 2000 + y if y < 50 else 1900 + y
         else:  # pragma: no cover
             continue
-        # Validate
         if not (1 <= mo <= 12 and 1 <= d <= 31 and 1900 <= y <= 2100):
             continue
-        # Jitter day within the same month. Days-in-month is approximate
-        # (28 covers every month); good enough — we never need to emit Feb 30.
-        seed = _seed_int(original, salt, n=4)
-        new_d = 1 + (seed % 28)
+        try:
+            shifted = (_dt.date(y, mo, d)
+                       + _dt.timedelta(days=date_offset_days(salt)))
+        except ValueError:
+            continue
+        ny, nmo, nd = shifted.year, shifted.month, shifted.day
         # Reassemble in the original format.
         if fmt == "iso":
-            return f"{y:04d}-{mo:02d}-{new_d:02d}"
+            return f"{ny:04d}-{nmo:02d}-{nd:02d}"
+        if fmt == "exif":
+            return f"{ny:04d}:{nmo:02d}:{nd:02d}{suffix}"
+        if fmt == "dd_mon_yyyy":
+            d_pad = len(m.group(1)) == 2
+            d_s = f"{nd:02d}" if d_pad else str(nd)
+            mon_s = _render_month_like(m.group(3), nmo, mon_cat)
+            return f"{d_s}{m.group(2)} {mon_s} {ny:04d}"
         if fmt == "eu_dot":
-            # Preserve zero-padding choice from the original.
-            d_orig_padded = len(m.group(1)) == 2
-            mo_orig_padded = len(m.group(2)) == 2
-            d_s = f"{new_d:02d}" if d_orig_padded else str(new_d)
-            mo_s = f"{mo:02d}" if mo_orig_padded else str(mo)
-            return f"{d_s}.{mo_s}.{y:04d}"
+            d_pad = len(m.group(1)) == 2
+            mo_pad = len(m.group(2)) == 2
+            d_s = f"{nd:02d}" if d_pad else str(nd)
+            mo_s = f"{nmo:02d}" if mo_pad else str(nmo)
+            return f"{d_s}.{mo_s}.{ny:04d}"
         if fmt == "eu_dash":
-            return f"{new_d:02d}-{mo:02d}-{y:04d}"
+            return f"{nd:02d}-{nmo:02d}-{ny:04d}"
         if fmt == "us_slash":
-            d_orig_padded = len(m.group(2)) == 2
-            mo_orig_padded = len(m.group(1)) == 2
-            d_s = f"{new_d:02d}" if d_orig_padded else str(new_d)
-            mo_s = f"{mo:02d}" if mo_orig_padded else str(mo)
-            return f"{mo_s}/{d_s}/{y:04d}"
+            d_pad = len(m.group(2)) == 2
+            mo_pad = len(m.group(1)) == 2
+            d_s = f"{nd:02d}" if d_pad else str(nd)
+            mo_s = f"{nmo:02d}" if mo_pad else str(nmo)
+            return f"{mo_s}/{d_s}/{ny:04d}"
         if fmt == "eu_dot_yy":
-            return f"{new_d:02d}.{mo:02d}.{y % 100:02d}"
+            return f"{nd:02d}.{nmo:02d}.{ny % 100:02d}"
         if fmt == "us_slash_yy":
-            return f"{mo:02d}/{new_d:02d}/{y % 100:02d}"
-    # Unrecognised — return the original year if we can find one.
-    yr = re.search(r"\b(19|20)\d{2}\b", raw)
-    if yr:
-        return yr.group(0)
-    return raw  # Last-resort: pass through (caller falls back to opaque token)
+            return f"{nmo:02d}/{nd:02d}/{ny % 100:02d}"
+    # Unrecognised → pass through unchanged; _build_replacement detects the
+    # unchanged value and falls back to an opaque token. (The old behavior —
+    # returning just the year — put a bare '1947'→full-date entry into the
+    # reverse map, which would rewrite every occurrence of that year.)
+    return raw
+
+
+# Unanchored search version of the date shapes — used to locate the date
+# INSIDE a keyword-carrying span ('born 05.02.1947', 'DOB: 5 FEB 1947').
+_DATE_SEARCH_RE = re.compile(
+    r"\d{4}-\d{2}-\d{2}"
+    r"|\d{4}:\d{2}:\d{2}(?:\s+\d{2}:\d{2}:\d{2})?"
+    r"|\d{1,2}\.?[ ][A-Za-zÄÖÜäöüß]{3,9}\.?[ ]\d{4}"
+    r"|\d{1,2}[\./-]\d{1,2}[\./-]\d{2,4}"
+)
+
+
+def _fake_dob(original: str, salt: str) -> str:
+    """`dob` spans include the trigger keyword ('born …', 'Geburtsdatum: …').
+    Keep the keyword verbatim, shift only the date part — so the LLM still
+    understands WHAT the value is while the value itself is offset."""
+    m = _DATE_SEARCH_RE.search(original)
+    if not m:
+        return original  # → opaque-token fallback in _build_replacement
+    fake = _fake_date(m.group(0), salt)
+    if fake == m.group(0):
+        return original
+    return original[:m.start()] + fake + original[m.end():]
 
 
 _SHAPE_GENERATORS: dict[str, Callable[[str, str], str]] = {
@@ -506,6 +619,387 @@ _SHAPE_GENERATORS: dict[str, Callable[[str, str], str]] = {
     "organisation": _fake_organisation,
     "email": _fake_email,
     "date": _fake_date,
+    "dob": _fake_dob,
+}
+
+
+# ---------------------------------------------------------------------------
+# L2 — Entity layer (PII_ANALYSIS_PARITY_HANDOVER.md §L2)
+# ---------------------------------------------------------------------------
+#
+# ONE fake identity per person: every surface form of the same person
+# ("STARK, BONNIE MARIE" · "Bonnie M Stark" · "STARK<<BONNIE<MARIE" ·
+# "kbstark@…" · OCR garble) maps onto the FORM-MATCHING variant of the same
+# fake identity. Without this, each variant gets an independent fake and the
+# LLM sees 3-5 different persons — the identity join breaks and partial
+# anonymisation manufactures FALSE fraud signals (Failure F1).
+#
+# Matching/rendering logic lives in engine/identity.py (shared with the L1
+# doc_checks tools); this section owns the Mapping wiring.
+
+
+def _entity_find(mapping: Mapping, form: str) -> dict | None:
+    for ent in mapping.entities.values():
+        if _identity.entity_attach(form, ent["sur"], ent["givens"]):
+            return ent
+    return None
+
+
+def _pick_avoiding(seq: tuple, key: str, salt: str, kind: str,
+                   taken: set[str]) -> str:
+    """Deterministic pool pick that walks past collisions — two REAL persons
+    must never share a fake surname (that would merge them in the wire), and
+    a fake must never equal a real token of the mapping's entities."""
+    h = hashlib.sha256(f"{salt}:{kind}:{key}".encode("utf-8")).digest()
+    idx = int.from_bytes(h[:4], "big") % len(seq)
+    for i in range(len(seq)):
+        cand = seq[(idx + i) % len(seq)]
+        if cand.lower() not in taken:
+            return cand
+    return seq[idx]  # pool exhausted — accept the collision
+
+
+def _entity_taken_tokens(mapping: Mapping) -> set[str]:
+    taken: set[str] = set()
+    for ent in mapping.entities.values():
+        taken.add(ent["sur"])
+        taken.update(g for g in ent["givens"] if g)
+        taken.add(ent["fake_sur"].lower())
+        taken.update(f.lower() for f in ent["fake_givens"])
+    return taken
+
+
+# Plausibler Namens-Token (lowercase, wie name_tokens liefert): Buchstaben
+# inkl. Umlaute/Akzente, innen Apostroph/Bindestrich. Weist NER-Müll-Spans ab
+# ('n>', '[projekt-gruppe'), die sonst Garbage-Entitäten mit sinnlosen
+# Varianten-Registrierungen erzeugen (am Live-Material beobachtet).
+_NAME_TOKEN_OK_RE = re.compile(r"^[a-zà-öø-ÿß][a-zà-öø-ÿß'\-]{0,24}$")
+
+
+def _entity_create(mapping: Mapping, form: str) -> dict:
+    sur, givens = _identity.guess_structure(form)
+    if not sur or not _NAME_TOKEN_OK_RE.match(sur):
+        raise ValueError(f"no name structure in {form!r}")
+    givens = [g for g in givens if _NAME_TOKEN_OK_RE.match(g)]
+    if len(givens) > 3:
+        # >3 Vornamen = fast sicher ein Müll-Span (Markdown-Zeile o. Ä.) —
+        # kein Entitäts-Anker; der Aufrufer fällt auf den einfachen
+        # _fake_name-Shape-Fake zurück.
+        raise ValueError(f"implausible name form {form!r}")
+    taken = _entity_taken_tokens(mapping) | {sur} | set(givens)
+    key = " ".join(sorted([sur] + [g for g in givens if g]))
+    fake_sur = _pick_avoiding(_LAST_NAMES, key, mapping.salt, "last", taken)
+    taken.add(fake_sur.lower())
+    fake_givens: list[str] = []
+    for i, g in enumerate(givens):
+        f = _pick_avoiding(_FIRST_NAMES, key, mapping.salt, f"given{i}", taken)
+        taken.add(f.lower())
+        fake_givens.append(f)
+    ent = {"sur": sur, "givens": list(givens),
+           "fake_sur": fake_sur, "fake_givens": fake_givens}
+    mapping.entities[f"e{len(mapping.entities) + 1}"] = ent
+    return ent
+
+
+def _entity_learn(mapping: Mapping, ent: dict, form: str) -> bool:
+    """Upgrade initials to full given names when a richer form arrives
+    (entity knew 'm', form brings 'marie') and adopt genuinely new given
+    names. Returns True when the entity changed (→ re-register variants)."""
+    changed = False
+    toks = _identity.name_tokens(form)
+    if len(toks) > 4:
+        # Müll-Span (Markdown-Zeile, Tabellenzeile): attachen ja (der Fake
+        # bleibt konsistent), aber daraus keine 'Vornamen' adoptieren —
+        # sonst lernt die Entität 'free'/'publicreco' (Live-Befund).
+        return False
+    for t in toks:
+        if len(t) <= 1 or t == ent["sur"]:
+            continue
+        matched = False
+        for i, g in enumerate(ent["givens"]):
+            if t == g:
+                matched = True
+                break
+            if len(g) == 1 and t.startswith(g):
+                ent["givens"][i] = t   # initial → full name; fake stays stable
+                matched, changed = True, True
+                break
+            if len(t) >= 4 and len(g) >= 4 \
+                    and _identity._ratio(t, g) >= _identity.GARBLE_FLOOR:
+                matched = True         # OCR garble of a known given — no learn
+                break
+        if not matched and len(t) >= 4 \
+                and _identity._ratio(t, ent["sur"]) >= _identity.GARBLE_FLOOR:
+            matched = True             # garble of the surname
+        if (not matched and len(ent["givens"]) < 4
+                and _NAME_TOKEN_OK_RE.match(t)
+                and _identity.entity_attach(form, ent["sur"], ent["givens"])):
+            # New middle name ('Bonnie MARIE Stark' when entity has [bonnie]).
+            taken = _entity_taken_tokens(mapping) | {t}
+            key = " ".join(sorted([ent["sur"]] + ent["givens"] + [t]))
+            fake = _pick_avoiding(_FIRST_NAMES, key, mapping.salt,
+                                  f"given{len(ent['givens'])}", taken)
+            ent["givens"].append(t)
+            ent["fake_givens"].append(fake)
+            changed = True
+    return changed
+
+
+def _register_entity_variants(mapping: Mapping, ent: dict) -> None:
+    """Predictable surface-form PAIRS become REAL forward/reverse entries —
+    the args-deanon (L3a) and the web-egress gate read those tables, so
+    registered variants make both entity-aware without touching their code."""
+    pairs = _identity.standard_variant_pairs(
+        ent["sur"], ent["givens"], ent["fake_sur"], ent["fake_givens"])
+    for real, fake in pairs:
+        if real in mapping.forward or real in mapping.reverse:
+            continue
+        if fake in mapping.reverse:
+            continue
+        mapping.record(real, fake, "name", count=False)
+
+
+def _entity_fake_name(original: str, mapping: Mapping) -> str:
+    ent = _entity_find(mapping, original)
+    if ent is None:
+        ent = _entity_create(mapping, original)
+    else:
+        _entity_learn(mapping, ent, original)
+    fake = _identity.render_variant(
+        original, ent["sur"], ent["givens"],
+        ent["fake_sur"], ent["fake_givens"])
+    _register_entity_variants(mapping, ent)
+    return fake
+
+
+def _mrz_name_form(line: str) -> str | None:
+    """MRZ-Namenszeile → 'Vornamen Nachname'-Form (garble-bereinigt) für die
+    Entitäts-Maschinerie, sonst None."""
+    m = _MRZ_NAME_RE.match(line.strip())
+    if not m or "<<" not in m.group(2):
+        return None
+    sur, giv = _identity.parse_mrz_name(m.group(2))
+    if not sur:
+        return None
+    try:
+        from engine.tools.doc_checks import _strip_mrz_filler_garble
+        giv = _strip_mrz_filler_garble(giv)
+    except Exception:
+        pass
+    return f"{giv} {sur}".strip()
+
+
+def _seed_entities_in_text_order(text: str, findings: list[dict],
+                                 mapping: Mapping) -> None:
+    """Entitäten in TEXT-Reihenfolge anlegen, BEVOR der Splice-Pass (end-
+    absteigend) rendert. Echte Dokumente tragen den sauberen Scan vorn und
+    OCR-Garble-Duplikate hinten — würde der Splice-Pass seeden, entstünde
+    die Entität aus der schlechtesten Lesung und die saubere Form könnte
+    nur noch attachen (gemessen am Referenz-JPG-Satz: Entität 'bonniecmartes'
+    statt 'bonnie marie' → Glued-Varianten fehlen → Leak)."""
+    for f in sorted(findings, key=lambda x: x.get("start", 0)):
+        rid = f.get("rule_id")
+        if rid not in ("name", "mrz"):
+            continue
+        s, e = f.get("start", -1), f.get("end", -1)
+        if not (0 <= s < e <= len(text)):
+            continue
+        val = text[s:e]
+        if val in mapping.reverse or val in mapping.forward:
+            continue
+        try:
+            form = _mrz_name_form(val) if rid == "mrz" else val
+            if not form:
+                continue
+            ent = _entity_find(mapping, form)
+            if ent is None:
+                ent = _entity_create(mapping, form)
+            else:
+                _entity_learn(mapping, ent, form)
+            _register_entity_variants(mapping, ent)
+        except Exception:
+            continue
+
+
+def _entity_fake_email(original: str, mapping: Mapping) -> str | None:
+    """Email belonging to a known entity → fake identity's email, same
+    localpart shape ('kbstark@pacbell.net' → 'muster@example.net',
+    'bonnie.stark@…' → 'erika.muster@…'). Returns None when no entity
+    matches — caller falls back to the generic _fake_email."""
+    m = _EMAIL_RE.match(original.strip())
+    if not m:
+        return None
+    local, domain = m.group(1), m.group(2)
+    tld = domain.rsplit(".", 1)[-1].lower()[:6] if "." in domain else "org"
+    lp = local.lower()
+    for ent in mapping.entities.values():
+        sur = ent["sur"]
+        if len(sur) < 4 or sur not in lp:
+            continue
+        fake_local = _identity.render_variant(
+            local, sur, ent["givens"], ent["fake_sur"], ent["fake_givens"])
+        if fake_local.lower() == lp:
+            # Glued token ('kbstark') the token renderer couldn't split —
+            # surgical: initials prefix from the fake givens + fake surname.
+            idx = lp.find(sur)
+            prefix = local[:idx]
+            if prefix and prefix.isalpha():
+                inits = "".join(f[0].lower() for f in ent["fake_givens"])
+                prefix = (inits + "x" * len(prefix))[:len(prefix)]
+            fake_local = f"{prefix}{ent['fake_sur'].lower()}{local[idx + len(sur):]}"
+        return f"{fake_local.lower()}@example.{tld or 'org'}"
+    return None
+
+
+# ---------------------------------------------------------------------------
+# L2b — passport numbers + MRZ lines (shape fakes with VALID ICAO checksums)
+# ---------------------------------------------------------------------------
+
+
+def _fake_id_like(bare: str, salt: str) -> str:
+    """Same length, same per-position character class (letters stay letters,
+    digits stay digits, separators verbatim). Deterministic from salt+value."""
+    seed = hashlib.sha256(f"{salt}:idlike:{bare}".encode("utf-8")).digest()
+    out = []
+    for i, c in enumerate(bare):
+        b = seed[i % len(seed)]
+        if c.isdigit():
+            out.append(str(b % 10))
+        elif c.isalpha():
+            ch = chr(ord("A") + b % 26)
+            out.append(ch if c.isupper() else ch.lower())
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _registered_id_fake(bare: str, mapping: Mapping, rule_id: str) -> str:
+    """Stable fake for a bare document number, registered as its own
+    forward/reverse pair so the SAME number found bare elsewhere (VIZ line,
+    table cell, MRZ) maps to the SAME fake (Failure F2: '560683707' vs
+    '5606837078' must not become two unrelated tokens)."""
+    existing = mapping.forward.get(bare)
+    if existing is not None:
+        if len(existing) == len(bare) and existing.isalnum():
+            return existing
+        # The bare number was already claimed by another rule as an OPAQUE
+        # token (e.g. a national-ID checksum rule coincidentally matching a
+        # 9-digit passport number). That token must not be spliced into an
+        # MRZ line — emit a shape fake WITHOUT re-registering (the existing
+        # reverse entry stays authoritative for the bare form).
+        return _fake_id_like(bare, mapping.salt)
+    fake = _fake_id_like(bare, mapping.salt)
+    mapping.record(bare, fake, rule_id, count=False)
+    return fake
+
+
+_PASSPORT_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{4,13}[A-Za-z0-9]")
+
+
+def _fake_passport(original: str, mapping: Mapping) -> str:
+    """`passport` spans include the trigger keyword ('Passport No. C03005988').
+    Keep the keyword, fake only the number — per-char shape-preserving."""
+    cands = [m for m in _PASSPORT_TOKEN_RE.finditer(original)
+             if sum(ch.isdigit() for ch in m.group(0)) >= 2]
+    if not cands:
+        return original
+    m = cands[-1]
+    fake = _registered_id_fake(m.group(0), mapping, "passport")
+    return original[:m.start()] + fake + original[m.end():]
+
+
+# TD3/TD2 data line: number(9) chk nat(3) dob(6) chk sex expiry(6) chk [rest]
+_MRZ_DATA_RE = re.compile(
+    r"^([A-Z0-9<]{9})(\d)([A-Z<]{3})(\d{6})(\d)([MFX<])(\d{6})(\d)([A-Z0-9<]*)$")
+_MRZ_NAME_RE = re.compile(r"^([A-Z][A-Z<][A-Z<]{3})([A-Z<]+)$")
+
+
+def _mrz_yymmdd(s: str, *, dob: bool):
+    yy, mm, dd = int(s[:2]), int(s[2:4]), int(s[4:6])
+    century = 1900 if (dob and yy > _dt.date.today().year % 100) else 2000
+    try:
+        return _dt.date(century + yy, mm, dd)
+    except ValueError:
+        return None
+
+
+def _fake_mrz(original: str, mapping: Mapping) -> str:
+    """Rebuild an MRZ line as a CONSISTENT fake: fake document number (same
+    one the VIZ passport-number fake uses), DOB shifted by the mapping's
+    constant date offset, expiry UNCHANGED (document-lifecycle date, handover
+    decision L2c), nationality/sex verbatim — and ALL ICAO-9303 check digits
+    recomputed so they VERIFY. The LLM's own MRZ math then works again
+    instead of producing false forgery indications (F2). Name lines map the
+    surname/givens onto the same fake entity as the VIZ text."""
+    from engine.tools.doc_checks import mrz_check_digit  # pure helper
+
+    lead = original[:len(original) - len(original.lstrip())]
+    trail = original[len(original.rstrip()):]
+    line = original.strip()
+
+    m = _MRZ_DATA_RE.match(line)
+    if m:
+        number, _nchk, nat, dob_s, _dchk, sex, exp_s, exp_chk, rest = m.groups()
+        bare = number.strip("<")
+        fake_bare = _registered_id_fake(bare, mapping, "passport") if bare else ""
+        fake_number = (fake_bare + "<" * 9)[:9]
+        fake_nchk = str(mrz_check_digit(fake_number))
+        dob = _mrz_yymmdd(dob_s, dob=True)
+        if dob is None:
+            fake_dob = _fake_id_like(dob_s, mapping.salt)  # unparseable → digits
+        else:
+            shifted = dob + _dt.timedelta(days=date_offset_days(mapping.salt))
+            fake_dob = shifted.strftime("%y%m%d")
+        fake_dchk = str(mrz_check_digit(fake_dob))
+        # Also register the 10-char number+check form ('5606837078') so the
+        # VIZ occurrence with check digit maps consistently.
+        if bare and len(number.strip("<")) == len(fake_bare):
+            ten_real = bare + _nchk
+            ten_fake = fake_bare + fake_nchk
+            if ten_real not in mapping.forward:
+                mapping.record(ten_real, ten_fake, "passport", count=False)
+        prefix = fake_number + fake_nchk + nat + fake_dob + fake_dchk \
+            + sex + exp_s + exp_chk
+        if len(line) == 44 and len(rest) == 16:
+            personal, pchk, comp = rest[:14], rest[14], rest[15]
+            fake_personal = _fake_id_like(personal, mapping.salt) \
+                if personal.strip("<") else personal
+            fake_pchk = str(mrz_check_digit(fake_personal)) \
+                if pchk.isdigit() else pchk
+            wo_comp = prefix + fake_personal + fake_pchk
+            comp_src = wo_comp[0:10] + wo_comp[13:20] + wo_comp[21:43]
+            fake_comp = str(mrz_check_digit(comp_src)) if comp.isdigit() else comp
+            return lead + wo_comp + fake_comp + trail
+        fake_rest = _fake_id_like(rest, mapping.salt) if rest.strip("<") else rest
+        return lead + prefix + fake_rest + trail
+
+    m = _MRZ_NAME_RE.match(line)
+    if m and "<<" in m.group(2):
+        doc_prefix, field_ = m.group(1), m.group(2)
+        form = _mrz_name_form(line)
+        if not form:
+            return original
+        ent = _entity_find(mapping, form)
+        if ent is None:
+            ent = _entity_create(mapping, form)
+        else:
+            _entity_learn(mapping, ent, form)
+        _register_entity_variants(mapping, ent)
+        giv_fakes = [f.upper() for g, f in zip(ent["givens"], ent["fake_givens"])
+                     if g and len(g) > 1]
+        fake_field = ent["fake_sur"].upper() + "<<" + "<".join(giv_fakes)
+        fake_field = (fake_field + "<" * len(field_))[:len(field_)]
+        return lead + doc_prefix + fake_field + trail
+
+    return original  # unrecognised → opaque-token fallback
+
+
+_ENTITY_GENERATORS: dict[str, Callable[[str, "Mapping"], str | None]] = {
+    "name": _entity_fake_name,
+    "email": _entity_fake_email,
+    "passport": _fake_passport,
+    "passport_ctx_loose": _fake_passport,
+    "mrz": _fake_mrz,
 }
 
 
@@ -537,6 +1031,13 @@ class Mapping:
     # Optional — legacy mappings deserialised from disk won't have it; callers
     # tolerate a missing entry as "unknown" category.
     categories: dict[str, str] = field(default_factory=dict)
+    # L2 entity layer: entity_id → {sur, givens (real, lowercase),
+    # fake_sur, fake_givens (display case)}. The BOOKKEEPING of which surface
+    # variant belongs to which person; the forward/reverse string tables stay
+    # the working memory (handover §7.9 — registered variants make the L3a
+    # args-deanon and the web-egress gate entity-aware with zero code there).
+    # Legacy mappings without the field deserialise to {}.
+    entities: dict[str, dict] = field(default_factory=dict)
 
     def next_token(self, rule_id: str) -> str:
         kind = _rule_id_to_kind(rule_id)
@@ -544,10 +1045,15 @@ class Mapping:
         self.counters[kind] = n
         return f"<{kind}_{n}_{self.salt}>"
 
-    def record(self, original: str, replacement: str, rule_id: str) -> None:
+    def record(self, original: str, replacement: str, rule_id: str,
+               count: bool = True) -> None:
+        """count=False for derived entries (pre-registered entity variants,
+        bare passport numbers) so audit counts keep reflecting what was
+        actually FOUND, not what the entity layer prophylactically mapped."""
         self.forward[original] = replacement
         self.reverse[replacement] = original
-        self.finding_counts[rule_id] = self.finding_counts.get(rule_id, 0) + 1
+        if count:
+            self.finding_counts[rule_id] = self.finding_counts.get(rule_id, 0) + 1
         self.categories[original] = rule_id
 
 
@@ -616,6 +1122,10 @@ def pseudonymize_text(
     if source and source not in mapping.sources:
         mapping.sources.append(source)
 
+    # L2: Entitäten in Text-Reihenfolge seeden (saubere Lesung vor Garble),
+    # bevor der end-absteigende Splice-Pass rendert.
+    _seed_entities_in_text_order(text, findings, mapping)
+
     # Sort by start desc so splicing from the end keeps earlier offsets stable.
     # Then by end desc as tiebreaker (longer match wins on identical start —
     # though the scanner's overlap suppression already prevents this case).
@@ -647,15 +1157,29 @@ def pseudonymize_text(
 
 
 def _build_replacement(original: str, rule_id: str, mapping: Mapping) -> str:
-    """Pick shape-fake vs opaque token based on rule_id."""
-    gen = _SHAPE_GENERATORS.get(rule_id)
-    if gen is not None and rule_id in SHAPE_PRESERVING:
-        try:
-            return gen(original, mapping.salt)
-        except Exception:
-            # Defensive: shape-fake bug must never leak the original. Fall
-            # through to opaque token.
-            pass
+    """Pick shape-fake vs opaque token based on rule_id. Entity-aware
+    generators (L2: name/email/passport/mrz — they need the whole Mapping)
+    run first; the plain salt-based generators are the fallback. A generator
+    returning the input unchanged means 'could not fake this' → opaque token
+    (never silently pass the original through)."""
+    if rule_id in SHAPE_PRESERVING:
+        egen = _ENTITY_GENERATORS.get(rule_id)
+        if egen is not None:
+            try:
+                out = egen(original, mapping)
+                if out and out != original:
+                    return out
+            except Exception:
+                # Defensive: a shape-fake bug must never leak the original.
+                pass
+        gen = _SHAPE_GENERATORS.get(rule_id)
+        if gen is not None:
+            try:
+                out = gen(original, mapping.salt)
+                if out and out != original:
+                    return out
+            except Exception:
+                pass
     return mapping.next_token(rule_id)
 
 
@@ -725,6 +1249,39 @@ def deanonymize_text(text: str, *, mapping: Mapping) -> tuple[str, int]:
     out = _TOKEN_RE_TOLERANT.sub(_tolerant_sub, out)
 
     return out, restored
+
+
+# ---------------------------------------------------------------------------
+# Known-values sweep — scanner-independent consistency pass
+# ---------------------------------------------------------------------------
+
+
+def apply_known_values(text: str, *, mapping: Mapping,
+                       categories: tuple = ("name", "email")) -> tuple[str, int]:
+    """Replace REMAINING occurrences of already-mapped originals (default:
+    entity-derived names/emails) with their registered fakes — word-bounded,
+    longest-first. Complements the scanner pass in `_gdpr_anon_tool_text`:
+    the German spaCy NER often misses English names in mempalace drawers or
+    web results, so a registered variant would otherwise reach the cloud raw
+    (F5). Only values ≥4 chars; boundary check prevents mid-word hits
+    ('Stark' never rewrites 'Starkstrom'). Returns (text, n_replaced)."""
+    if not text or not mapping.forward:
+        return text, 0
+    keys = [k for k in mapping.forward
+            if len(k) >= 4 and mapping.categories.get(k) in categories]
+    if not keys:
+        return text, 0
+    n = 0
+    for k in sorted(keys, key=len, reverse=True):
+        if k not in text:
+            continue
+        fake = mapping.forward[k]
+        if not fake:
+            continue
+        pat = re.compile(r"(?<!\w)" + re.escape(k) + r"(?!\w)")
+        text, c = pat.subn(lambda _m, _f=fake: _f, text)
+        n += c
+    return text, n
 
 
 # ---------------------------------------------------------------------------
@@ -886,6 +1443,7 @@ def _serialize_mapping(m: Mapping) -> dict:
         "sources": m.sources,
         "finding_counts": m.finding_counts,
         "categories": m.categories,
+        "entities": m.entities,
     }
 
 
@@ -897,6 +1455,8 @@ def _deserialize_mapping(d: dict) -> Mapping:
     m.sources = list(d.get("sources") or [])
     m.finding_counts = dict(d.get("finding_counts") or {})
     m.categories = dict(d.get("categories") or {})
+    # L2 entity layer — legacy rows (pre-9.337.0) have no field → {}.
+    m.entities = dict(d.get("entities") or {})
     return m
 
 
@@ -1008,6 +1568,8 @@ __all__ = [
     "deanonymize_text",
     "pseudonymize_with_scanner",
     "find_restored_spans",
+    "apply_known_values",
+    "date_offset_days",
     # Persistence
     "encrypt_mapping",
     "decrypt_mapping",

@@ -1,6 +1,6 @@
 # PII-Analyse-Parität — Handover (L1–L7)
 
-**Stand:** 2026-07-14 (aktualisiert nach Session 2) · Basis-VERSION: `9.336.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 GELIEFERT (v9.334.0 / v9.335.0 / v9.336.0). L2/L4-Phase-2/L5/L6/L7 offen.**
+**Stand:** 2026-07-14 (aktualisiert nach Session 3) · Basis-VERSION: `9.337.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 + L2 GELIEFERT (v9.334.0–v9.337.0). L4-Phase-2/L5/L6/L7 offen — nächster Baustein L4 Phase 2 (`ask`/Consent/`release_web`; Reihenfolge §3).**
 
 ---
 
@@ -11,8 +11,8 @@
 | **§5 Sofortmaßnahme = L4 Phase 1** (Web-Egress-Gate, `refuse`) | ✅ GELIEFERT | v9.334.0, `2f1fa8ce` |
 | **L1** doc_checks-Toolset | ✅ GELIEFERT | v9.335.0, `e2395b97` |
 | **L3** Dispatch-Symmetrie | ✅ GELIEFERT | v9.336.0 |
-| **L2** Entitäts-Map | ⬜ NÄCHSTER Baustein (nutzt `engine/identity.py` aus L1!) | — |
-| **L4 Phase 2** (`ask`/Consent/`release_web`) | ⬜ offen ('ask' verhält sich bis dahin wie 'refuse') | — |
+| **L2** Entitäts-Map + MRZ-Fakes + Datums-Offset | ✅ GELIEFERT | v9.337.0 |
+| **L4 Phase 2** (`ask`/Consent/`release_web`) | ⬜ NÄCHSTER Baustein ('ask' verhält sich bis dahin wie 'refuse'; Ergebnis-Rück-Anon 2d existiert schon als L3b-Seam) | — |
 | **L5** OCR-Preamble | ⬜ offen | — |
 | **L6** Report-Fidelity | ⬜ offen | — |
 | **L7** KYC-Preset | ⬜ offen | — |
@@ -39,6 +39,22 @@
 - **L3c:** `_apply_pii_decisions_to_wire._rewrite` splittet jetzt via `_split_attachment_notice` (typed rewritten + notice verbatim). Für L5 gilt weiter: der neue OCR-Block braucht einen EIGENEN Marker außerhalb `_ATTACH_NOTICE_PREFIXES`.
 - Tests: `tests/test_dispatch_symmetry.py` (16) — inkl. Whitelist∩Web=∅-Invariante, Web-nie-Deanon-Negativtest, Gate-vor-Deanon end-to-end, Netzwerk-Marker beide Richtungen, L3c-Notice-Erhalt.
 - **Für L4 Phase 2 relevant:** die Ergebnis-Rück-Anonymisierung (Schritt 2d) existiert jetzt als web_fetch/searxng/exa-Seam; Phase 2 braucht nur noch Consent (`release_web`) + Hin-Übersetzung am Gate.
+
+### Was v9.337.0 (L2 Entitäts-konsistente Pseudonymisierung) konkret enthält
+
+- **L2a Entitäts-Schicht:** `Mapping.entities` (pseudonymizer.py, verschlüsselt mitpersistiert, Legacy-Zeilen laden als `{}`) = BUCHFÜHRUNG; forward/reverse bleiben ARBEITSSPEICHER. Matching/Rendering in `engine/identity.py` (mit L1 geteilt): `entity_attach` 3-stufig (names_match ≥0.84 → Initialen-tolerant für `Bonnie N. Stark` → Garble-Rescue `GARBLE_FLOOR=0.60`/`ANCHOR=0.72`, jedes Token bindet einen DISTINKTEN Entitäts-Token — `Bonnie MASE` attacht, `Anna Weber` nie), `render_variant` (token-weise, Separatoren/Ziffern/Titel verbatim, Case+Initialen-Stil erhalten → deckt Komma-/MRZ-/Dateinamen-/ALLCAPS-Formen mit EINEM Mechanismus), `standard_variant_pairs` registriert erwartbare Varianten-PAARE als ECHTE forward/reverse-Einträge (§7.9 ✓ — L3a + Web-Gate automatisch entitäts-fähig; inkl. Glued-Givens `BONNIEMARIE`, am echten Material nötig). E-Mail-Localparts joinen die Entität (`kbstark@…` → Fake-Mail derselben Identität). **Seeding-Reihenfolge-Invariante:** `_seed_entities_in_text_order` läuft VOR dem end-absteigenden Splice-Pass (sonst seedet das Garble-Duplikat am Dokumentende die Entität — am 10-JPG-Satz gemessen). **Garbage-Guards:** implausible Namensformen (Nicht-Namens-Tokens, >3 Vornamen) erzeugen NIE Entitäten (Fallback plain `_fake_name`); `_entity_learn` adoptiert aus >4-Token-Spans nichts (Live-Befund `free`/`publicreco`).
+- **L2b:** `passport`/`passport_ctx_loose`/`dob`/`mrz` in `SHAPE_PRESERVING`; Keyword-Spans behalten den Keyword-Prefix. Bare Passnummer + 10er-Form (mit Prüfziffer) als eigene Einträge → VIZ und MRZ tragen DENSELBEN Fake. NEUE Scanner-Regel `mrz` (nur zeilen-START-verankert — echte OCR-Zeilen tragen Trailing-Müll; Struktur-Validator `_mrz_line_ok`; in `_PII_CHECKSUM_RULES`). `_fake_mrz` baut die Zeile komplett neu: Fake-Nummer, DOB mit Session-Offset, **Expiry UNVERÄNDERT**, alle ICAO-Prüfziffern inkl. Composite via doc_checks-Rechner NEU. Opake Fremd-Tokens (cz_rc matcht bare 9-Steller!) werden NIE in MRZ gespleißt (`_registered_id_fake` prüft Form-Kompatibilität).
+- **L2c:** `_fake_date` = konstanter salt-abgeleiteter Offset (±5..25 Tage, echte Kalender-Arithmetik; `date_offset_days(salt)` — kein Schema-Feld nötig). Deltas EXAKT (Test: 3651 Tage = 10y−1d). Jahr-only-Fallback ENTFERNT (reverse[`1947`] hätte jedes Jahres-Vorkommen zerschrieben) → unparsebar = opaker Token.
+- **L2d:** textuelle Monate EN/DE + EXIF in `_DATE_PATTERNS` UND Scanner-`date`/`dob`-Regeln (Rendering erhält Sprache/Abkürzung/Case/Zeit-Suffix).
+- **Known-Values-Sweep:** `apply_known_values` (wortgegrenzt, registrierte Namen/Mails ≥4 Zeichen) im `_gdpr_anon_tool_text`-Seam nach dem Scan-Pass — die deutsche NER taggt englische Namen in Drawern/Web-Results oft nicht. Pfade bleiben intakt (`STARK_Bonnie…` — Wortgrenze; Pfad-Integrität ist L3a-Sache), `Starkstrom` nie zerschrieben. Audit-Event: `known_values_swept`.
+- **Live verifiziert (Session 3, echte Auto-Anonymise-Session im Projekt ko-kunden, glm-5.2):** Wire trug `"Sam Mitchell KO Kunde"`, `mempalace_query` fand die STARK-Drawer (L3a-Deanon wirkt), `read_document` auf Klarnamen-Pfad lesbar (74 Zeilen); Haupt-Person konsistent auf EINER Fake-Identität (`Bonnie Stark`→`Sam Mitchell`, `Bonnie M Stark`→`Sam M Mitchell`, `Stark`→`Mitchell`), die Stark-FAMILIE (Kimberlee/Jerry/Kenneth/Lori) + Lubeck-Brüder als DISTINKTE Entitäten mit distinkten Fake-Nachnamen. **Damit ist auch die offene L3-Live-Verifikation aus Session 2 erledigt.** Test-Sessions gelöscht, Config exakt revertiert (Scanner steht weiter auf `enabled:false`).
+- Tests: `tests/test_pseudonymizer_entities.py` (15) — F1-Join (7 Formen), §7.9-Invariante, Golden-MRZs beider Pässe, Opaque-Spleiß-Guard, Datums-Deltas, Persistenz. 185 Bestandstests grün.
+
+### Nebenbefunde aus Session 3 (für die Weiterarbeit relevant)
+- **NER-Wortstellungs-Lücke:** die deutsche spaCy-NER taggt `"Stark Bonnie KO Kunde"` (Nachname zuerst, wie Aktenzeichen) nur als `Stark` → der Vorname bleibt im User-Text ROH (Halb-Hybrid, F1-Rest). `"Bonnie Stark …"` wird voll getaggt. KEIN L2-Bug (vor L2 identisch, nur mit inkonsistentem Fake) — Kandidat für L5b-Seed (Entität aus MRZ speist Varianten, dann fängt der Ledger-Rewrite/Sweep auch die getippte Form) oder NER-Upgrade (`de_core_news_lg`).
+- **Einzel-Nachname ist inhärent ambig:** bei 4 Stark-Personen mappt die Surname-only-Variante `Stark`→Fake der ZUERST angelegten Entität (first-come). Bewusst akzeptiert; lone Vornamen werden NIE als Variante registriert (FP-Risiko).
+- **Extremgarble bleibt L5:** `SOSTARKT`, `BONNT DCMARTE` (standalone) attachen string-seitig nicht — der L5b-MRZ-Entity-Seed ist dafür designiert. Der interne `_ocr_mrz_strip`-Text erreicht den Wire heute nicht (kein akutes Leak).
+- Für die Live-Verifikation wurde `gdpr_scanner.enabled=true` + `rule_overrides.name=warn` TEMPORÄR gesetzt und exakt revertiert — `tests/test_pii_ner.py::test_action_resolves_from_contact_category` liest die LIVE-Config und schlägt fehl, solange `name` nicht ignore ist (kein Code-Bug; bei künftigen Live-Tests einplanen).
 
 ### Nebenbefunde aus Session 2 (für die Weiterarbeit relevant)
 - **Commit:** `21505fb9` (12 Dateien). Code-Orte für die Weiterarbeit: `GDPR_ARGS_DEANON_TOOLS` + `_DEANON_NETWORK_MARKER_RE` + `_gdpr_deanon_tool_args` in brain.py **direkt hinter `_web_gate_audit` / vor `_route_to_node`**; Dispatch-Hook in `engine/llm_loop.py:dispatch_tool` (zwischen Web-Gate und `TOOL_DISPATCH`-Lookup); `_web_result_anon` + `_tool_web_fetch_impl` in `engine/tools/misc_tools.py` (direkt vor `tool_web_fetch`); mempalace-Seams jeweils am finalen `_ok(...)`-Return.
@@ -224,8 +240,8 @@ Drei Hebel, die zusammen Parität herstellen:
 |---|---|---|---|---|
 | 1 | **L1** — Deterministische Verifikations-Tools (`doc_checks`) | **F2** komplett, F1 teilweise | M | ✅ v9.335.0 |
 | 2 | **L3** — Dispatch-Symmetrie (Args-Deanon + Results-Anon) | **F3**, F5 (mempalace + web-inbound) | M | ✅ v9.336.0 |
-| 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** | ⬜ **NÄCHSTER** |
-| 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L | Phase 1 ✅ v9.334.0 · Phase 2 ⬜ |
+| 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** | ✅ v9.337.0 |
+| 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L | Phase 1 ✅ v9.334.0 · Phase 2 ⬜ **NÄCHSTER** |
 | 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M | ⬜ |
 | 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M | ⬜ |
 | 7 | **L7** — KYC-Preset + Degradations-Transparenz | UX/Vertrauen | S | ⬜ |
@@ -335,7 +351,7 @@ Die fehlenden Seams nachziehen — **konsistent zum bestehenden Per-Tool-Muster*
 
 ---
 
-## L2 — Entitäts-konsistente Pseudonymisierung — ⬜ NÄCHSTER BAUSTEIN
+## L2 — Entitäts-konsistente Pseudonymisierung — ✅ GELIEFERT (v9.337.0; Details §0.0)
 
 > **Session-2-Update (nach L3-Lieferung):** L2 setzt jetzt auf fertiger Infrastruktur auf — vier konkrete Integrationspunkte:
 > 1. **Varianten MÜSSEN als echte `mapping.forward`/`reverse`-Einträge registriert werden** (nicht nur im neuen `entities`-Feld). Grund: L3a (Args-Deanon) und der Web-Egress-Gate arbeiten beide auf forward/reverse — registrierte Varianten machen beide automatisch entitäts-fähig, ohne dass dort Code angefasst wird. Das `entities`-Feld ist die BUCHFÜHRUNG (welche Variante gehört zu welcher Person), die String-Tabellen bleiben der ARBEITSSPEICHER.

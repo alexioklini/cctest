@@ -5106,6 +5106,36 @@
       "provider": "Lokal",
       "profile": "speed",
       "_caps_canonical": true
+    },
+    "stealth/gpt-5.6-sol": {
+      "enabled": false,
+      "shortname": "gpt-5.6-sol",
+      "display_name": "gpt-5.6-sol",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "meta/muse-spark-1.1": {
+      "enabled": false,
+      "shortname": "muse-spark-1.1",
+      "display_name": "muse-spark-1.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

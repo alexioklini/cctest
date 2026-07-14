@@ -133,6 +133,232 @@ def names_match(a: str, b: str, *, fuzzy: bool = False) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# L2 — Entitäts-Schicht (PII_ANALYSIS_PARITY_HANDOVER.md §L2a)
+#
+# Die Pseudonymisierung hebt Namen von String- auf Entitäts-Ebene: EINE
+# Fake-Identität pro Person, jede Oberflächenform mappt auf die FORMGLEICHE
+# Fake-Variante. Die Funktionen hier sind pure Analyse/Rendering-Logik;
+# das Mapping-Wiring (Registrierung in forward/reverse, Persistenz) lebt in
+# pseudonymizer.py.
+# ---------------------------------------------------------------------------
+
+# Garble-Rescue-Schwellen (Tier 3 in entity_attach): bewusst unter der
+# names_match-Schwelle, aber nur wirksam wenn JEDES Token einen distinkten
+# Entitäts-Partner findet UND mindestens eines exakt/nahe ist. Kalibriert am
+# echten 10-JPG-Satz ('Bonnie MASE' 0.667 zu 'marie'; 'BONNT' 0.727 zu
+# 'bonnie'); 'Anna Weber' vs 'Bonnie Stark' bleibt drunter (0.4).
+GARBLE_FLOOR = 0.60
+GARBLE_ANCHOR = 0.72
+
+_NAME_CHAR_RE = re.compile(r"^[A-Za-zÀ-ÖØ-öø-ÿ]+$")
+_NAME_SPLIT_RE = re.compile(r"([^A-Za-zÀ-ÖØ-öø-ÿ]+)")
+
+
+def _ratio(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def entity_attach(form: str, sur: str, givens: list[str]) -> bool:
+    """True, wenn die Oberflächenform `form` plausibel zur Entität
+    (sur, givens — lowercase-Tokens) gehört. Drei Stufen:
+      1. names_match (Reihenfolge/Initialen/fuzzy ≥0.84),
+      2. Initialen-tolerant: unzuordenbare EIN-Buchstaben-Tokens fallen weg
+         (OCR liest 'M.' als 'N.' — eine Initiale ist nicht verifizierbar),
+      3. Garble-Rescue: ≥2 volle Tokens, jedes fuzzy ≥GARBLE_FLOOR auf einen
+         DISTINKTEN Entitäts-Token, mindestens eines exakt/≥GARBLE_ANCHOR.
+    Konservativ: ein False-Merge zweier echter Personen wiegt schwerer als
+    ein Miss (der Miss erzeugt nur eine zweite Fake-Entität)."""
+    toks = name_tokens(form)
+    if not toks:
+        return False
+    ent = [t for t in ([sur] + list(givens)) if t]
+    canonical = " ".join([g for g in givens if g] + [sur])
+    if names_match(form, canonical, fuzzy=True):
+        return True
+    full = [t for t in toks if len(t) > 1]
+    if len(full) >= 2 and len(full) < len(toks):
+        # Stufe 2: Initialen verworfen, Rest muss voll matchen.
+        if names_match(" ".join(full), canonical, fuzzy=True):
+            return True
+    if len(full) >= 2:
+        left = list(ent)
+        anchored, ok = False, True
+        for t in full:
+            best, best_c = 0.0, None
+            for c in left:
+                if t == c:
+                    r = 1.0
+                elif len(t) >= 4 and len(c) >= 4:
+                    r = _ratio(t, c)
+                else:
+                    r = 0.0
+                if r > best:
+                    best, best_c = r, c
+            if best < GARBLE_FLOOR or best_c is None:
+                ok = False
+                break
+            if best >= GARBLE_ANCHOR:
+                anchored = True
+            left.remove(best_c)
+        if ok and anchored:
+            return True
+    return False
+
+
+def guess_structure(form: str) -> tuple[str, list[str]]:
+    """Zerlegt eine Namens-Oberflächenform in (surname, givens) — lowercase.
+    Heuristik: Komma-Form ('Stark, Bonnie M') und MRZ-Form ('STARK<<BONNIE')
+    tragen den Nachnamen VORN, sonst gilt das letzte Nicht-Initialen-Token
+    als Nachname ('Bonnie M Stark')."""
+    if "<<" in form:
+        sur, giv = parse_mrz_name(form.split("<<<")[0])
+        return sur.lower(), [t for t in name_tokens(giv)]
+    toks = name_tokens(form)
+    if not toks:
+        return "", []
+    if len(toks) == 1:
+        return toks[0], []
+    if "," in form:
+        # Nachname(n) vor dem Komma; alles danach sind Vornamen.
+        head = name_tokens(form.split(",", 1)[0])
+        tail = name_tokens(form.split(",", 1)[1])
+        if head and tail:
+            return head[-1], tail
+    # Nachname = letztes volles Token; einzelne Initiale am Ende zählt nicht.
+    sur_idx = len(toks) - 1
+    while sur_idx > 0 and len(toks[sur_idx]) == 1:
+        sur_idx -= 1
+    return toks[sur_idx], toks[:sur_idx] + toks[sur_idx + 1:]
+
+
+def render_variant(original: str, sur: str, givens: list[str],
+                   fake_sur: str, fake_givens: list[str],
+                   *, learn: list | None = None) -> str:
+    """Rendert die Fake-Identität in DERSELBEN Oberflächenform wie
+    `original`: Token-weise Ersetzung, alle Separatoren (Komma, Punkt,
+    Unterstrich, `<`), Ziffern-Tokens (Kundennummern) und Titel (Mrs., Dr.)
+    bleiben verbatim; Case (ALLCAPS/Title/lower) und Initialen-Stil werden
+    pro Token übernommen.
+
+    `learn`: optionale Liste — unbekannte volle Namens-Tokens werden als
+    (real_token,) appended, damit der Aufrufer die Entität erweitern und den
+    Fake-Token dafür minten kann (zweiter Aufruf rendert sie dann formtreu).
+    """
+    ent_real = [sur] + list(givens)
+    ent_fake = [fake_sur] + list(fake_givens)
+    used: set[int] = set()
+
+    def _fake_for(tok: str) -> str | None:
+        # Exakt → Initial-Upgrade (Entität kannte nur 'm', Form bringt
+        # 'marie') → fuzzy. Distinkt: jeder Entitäts-Slot nur einmal.
+        best, best_i = 0.0, None
+        for i, c in enumerate(ent_real):
+            if i in used or not c:
+                continue
+            if tok == c:
+                best, best_i = 1.0, i
+                break
+            if len(c) == 1 and tok.startswith(c):
+                best, best_i = 0.9, i
+                break
+            if len(tok) >= 4 and len(c) >= 4:
+                r = _ratio(tok, c)
+                if r >= GARBLE_FLOOR and r > best:
+                    best, best_i = r, i
+        if best_i is None:
+            return None
+        used.add(best_i)
+        return ent_fake[best_i]
+
+    def _initial_for(tok: str) -> str:
+        for i, c in enumerate(ent_real):
+            if i in used or not c:
+                continue
+            if c.startswith(tok):
+                used.add(i)
+                return ent_fake[i][0]
+        # OCR-Garble-Initiale ('N.' statt 'M.') → erste unverbrauchte
+        # Vornamens-Initiale, sonst Nachnamen-Initiale.
+        for i in range(1, len(ent_real)):
+            if i not in used and ent_real[i]:
+                used.add(i)
+                return ent_fake[i][0]
+        return ent_fake[0][0]
+
+    out = []
+    for part in _NAME_SPLIT_RE.split(original):
+        if not part or not _NAME_CHAR_RE.match(part):
+            out.append(part)
+            continue
+        low = part.lower()
+        if low.rstrip(".") in _TITLES:
+            out.append(part)
+            continue
+        if len(low) == 1:
+            rep = _initial_for(low)
+        else:
+            rep = _fake_for(low)
+            if rep is None:
+                if learn is not None:
+                    learn.append(low)
+                out.append(part)
+                continue
+        if part.isupper() and len(part) > 1:
+            rep = rep.upper()
+        elif not part[0].isupper():
+            rep = rep.lower()
+        out.append(rep)
+    return "".join(out)
+
+
+def standard_variant_pairs(sur: str, givens: list[str],
+                           fake_sur: str, fake_givens: list[str]
+                           ) -> list[tuple[str, str]]:
+    """Erwartbare Oberflächenformen-PAARE (real, fake) einer Person —
+    dieselben Templates auf beiden Seiten, damit pseudonymizer sie als echte
+    forward/reverse-Einträge registrieren kann (Handover §7.9: L3a-Args-Deanon
+    und der Web-Egress-Gate arbeiten auf diesen Tabellen). Real-Tokens kommen
+    lowercase, Fake-Tokens in Display-Case; nur Vornamens-Slots mit VOLLEM
+    realen Token (keine Initialen) werden in Volltext-Templates verwendet."""
+    giv_full = [(g, f) for g, f in zip(givens, fake_givens) if g and len(g) > 1]
+    pairs: list[tuple[str, str]] = []
+
+    def _add(real: str, fake: str):
+        if real and fake and real != fake and (real, fake) not in pairs:
+            pairs.append((real, fake))
+
+    def _both(tmpl) -> None:
+        _add(tmpl(sur.title(), [g.title() for g, _ in giv_full]),
+             tmpl(fake_sur, [f for _, f in giv_full]))
+
+    if giv_full:
+        _both(lambda s, g: f"{g[0]} {s}")
+        _both(lambda s, g: f"{s}, {g[0]}")
+        _both(lambda s, g: f"{g[0][0]}. {s}")
+        if len(giv_full) > 1:
+            _both(lambda s, g: f"{g[0]} {' '.join(g[1:])} {s}")
+            _both(lambda s, g: f"{s}, {g[0]} {' '.join(g[1:])}")
+            _both(lambda s, g: f"{g[0]} {' '.join(x[0] + '.' for x in g[1:])} {s}")
+            _both(lambda s, g: f"{g[0]} {' '.join(x[0] for x in g[1:])} {s}")
+        # MRZ-Namensform (füllzeichen-frei — die 44er-Padding-Form baut
+        # _fake_mrz) + ALLCAPS-Varianten.
+        _both(lambda s, g: f"{s.upper()}<<{'<'.join(x.upper() for x in g)}")
+        _both(lambda s, g: f"{g[0].upper()} {s.upper()}")
+        _both(lambda s, g: f"{s.upper()}, {' '.join(x.upper() for x in g)}")
+        if len(giv_full) > 1:
+            # VIZ-Vornamenszeile ('BONNIE MARIE') + OCR-geklebt
+            # ('BONNIEMARIE', am echten Material gemessen) — nur wenn die
+            # geklebte Form lang genug ist, um distinktiv zu bleiben.
+            _both(lambda s, g: " ".join(x.upper() for x in g))
+            glued_real = "".join(g.upper() for g, _ in giv_full)
+            glued_fake = "".join(f.upper() for _, f in giv_full)
+            if len(glued_real) >= 8:
+                _add(glued_real, glued_fake)
+    _add(sur.title(), fake_sur)
+    return pairs
+
+
 def match_score(a: str, b: str) -> float:
     """Grober Ähnlichkeits-Score 0..1 (token-sortiert, difflib) — für
     Diagnose/Ranking, NICHT als alleinige Match-Entscheidung nutzen."""

@@ -458,6 +458,7 @@ PII_RULE_CATEGORIES: dict[str, str] = {
 
     # Biographical / personal-document identifiers
     "passport": "personal", "dob": "personal", "date": "personal",
+    "mrz": "personal",
 
     # spaCy NER findings (Phase 1: German). Sit in the `contact` category
     # alongside email/phone — soft PII the user often includes deliberately
@@ -549,6 +550,7 @@ PII_RULE_LABELS: dict[str, str] = {
     "it_codicefiscale": "Italienische Codice Fiscale",
     "passport": "Reisepassnummer (heuristisch)", "dob": "Geburtsdatum",
     "date": "Datum (personenbezogen-gegated)",
+    "mrz": "MRZ (maschinenlesbare Ausweiszone)",
     "svnr_ctx": "Sozialversicherungsnummer (wahrscheinlich)",
     "ssn_ctx_loose": "Sozialversicherungsnummer (wahrscheinlich)",
     "tax_id_ctx": "Steueridentifikationsnummer (wahrscheinlich)",
@@ -640,6 +642,8 @@ PII_RULE_WHY: dict[str, str] = {
     "name":    "Personenname (NER erkannt) — personenbezogenes Datum.",
     "address": "Anschrift, einer Person zugeordnet — personenbezogenes Datum.",
     "dob":     "Geburtsdatum — besonders schützenswertes personenbezogenes Datum.",
+    "mrz":     "Maschinenlesbare Ausweiszone (ICAO 9303) — bündelt Name, "
+               "Geburtsdatum und Dokumentennummer in einer Zeile.",
     "ipv4":    "IPv4-Adresse — möglicher Netzwerk-/Personenbezug.",
     "ipv6":    "IPv6-Adresse — möglicher Netzwerk-/Personenbezug.",
 }
@@ -704,6 +708,16 @@ def _pii_rules() -> list[dict]:
     def _phone_ok(m: str) -> bool:
         d = _digits(m)
         return 8 <= len(d) <= 15
+
+    def _mrz_line_ok(m: str) -> bool:
+        # Structural validator (L2b): data line = number(9) chk nat(3)
+        # dob(6) chk sex expiry(6) chk …; name line = doc-type/issuer prefix
+        # then SURNAME<<GIVENS (letters + fillers only). A random ALL-CAPS
+        # heading matches neither shape.
+        s = m.strip()
+        if _re.match(r"^[A-Z0-9<]{9}\d[A-Z<]{3}\d{6}\d[MFX<]\d{6}\d", s):
+            return True
+        return bool(_re.match(r"^[A-Z][A-Z<][A-Z<]{3}[A-Z<]*<<[A-Z<]+$", s))
 
     def _ipv4_ok(m: str) -> bool:
         # The match string may carry a leading context keyword (e.g.
@@ -1202,11 +1216,26 @@ def _pii_rules() -> list[dict]:
          "re": _re.compile(r"(?:(?<![\w.])\+\d{1,3}[\s().-]?(?:\d[\s().-]?){7,14}\d|(?<!\d)\d{3}[\s.-]\d{3,4}[\s.-]\d{3,4}(?!\d))"),
          "ok": _phone_ok},
 
+        # ── Machine-readable zone (ICAO 9303) — L2b. Whole OCR line of MRZ
+        # alphabet; the structural validator (_mrz_line_ok) keeps only real
+        # name/data lines. Runs BEFORE the keyword-gated passport rules so
+        # the full line is claimed as ONE span and rebuilt consistently by
+        # pseudonymizer._fake_mrz (valid check digits) instead of digit
+        # groups being nibbled by other rules. ──
+        # Line-START anchored only: real OCR lines carry trailing garble
+        # ('… P', >44-char confusion tails) that a $-anchor would let escape
+        # entirely; the span stops at the MRZ alphabet edge and the trailing
+        # junk stays raw (harmless), while the structural validator keeps
+        # mid-prose ALLCAPS runs out.
+        {"id": "mrz", "label": "Machine-readable zone (ICAO 9303)",
+         "re": _re.compile(r"(?m)^[A-Z0-9<]{25,44}"),
+         "ok": _mrz_line_ok},
+
         # ── Context-gated heuristics ──
         {"id": "passport", "label": "Passport number",
          "re": _re.compile(r"passport[^\w\n]{0,20}([A-Z][0-9]{6,9}|[A-Z]{1,2}[0-9]{6,8})", _re.IGNORECASE)},
         {"id": "dob", "label": "Date of birth",
-         "re": _re.compile(r"(?:\b(?:DOB|born|date\s+of\s+birth|geboren|geburtsdatum|né|née|nacido)\b[^\n]{0,20}?(?:\d{1,2}[\/.\- ]\d{1,2}[\/.\- ]\d{2,4}|\d{4}-\d{2}-\d{2}))", _re.IGNORECASE)},
+         "re": _re.compile(r"(?:\b(?:DOB|born|date\s+of\s+birth|geboren|geburtsdatum|né|née|nacido)\b[^\n]{0,20}?(?:\d{1,2}[\/.\- ]\d{1,2}[\/.\- ]\d{2,4}|\d{4}-\d{2}-\d{2}|\d{1,2}\.?\s(?i:jan|feb|mar|mär|apr|may|mai|jun|jul|aug|sep|okt|oct|nov|dez|dec)[a-zäöüß]*\.?\s\d{2,4}))", _re.IGNORECASE)},
 
         # ── Context-fallback: fire on keyword + number-shape even if checksum
         # fails. Runs LAST — strict checksum rules above still win first. ──
@@ -1241,6 +1270,12 @@ def _pii_rules() -> list[dict]:
          "re": _re.compile(
              r"\b("
              r"(?:19|20)\d{2}-\d{1,2}-\d{1,2}"          # ISO 2026-05-19
+             # EXIF 2026:07:02 [14:24:48] — month/day validated in-pattern
+             r"|(?:19|20)\d{2}:(?:0[1-9]|1[0-2]):(?:0[1-9]|[12]\d|3[01])"
+             r"(?:\s\d{2}:\d{2}:\d{2})?"
+             # Textual month (EN/DE, abbrev or full): 5 FEB 1947 / 26. Jan 2027
+             r"|\d{1,2}\.?\s(?i:jan|feb|mar|mär|apr|may|mai|jun|jul|aug|sep"
+             r"|okt|oct|nov|dez|dec)[a-zäöüß]*\.?\s(?:19|20)\d{2}"
              r"|\d{1,2}\.\d{1,2}\.(?:19|20)\d{2}"        # 19.05.2026
              r"|\d{1,2}-\d{1,2}-(?:19|20)\d{2}"          # 19-05-2026
              r"|\d{1,2}/\d{1,2}/(?:19|20)\d{2}"          # 05/19/2026
@@ -1382,6 +1417,8 @@ _PII_CHECKSUM_RULES = {
     "no_fnr", "ch_ahv", "cz_rc", "ro_cnp", "hu_taj", "gr_amka", "bg_egn",
     "ie_pps", "at_svnr", "de_steuerid", "kr_rrn", "sg_nric", "tw_nid",
     "jp_mynumber", "mx_curp", "ar_dni", "uk_nino", "uk_nhs",
+    # Structural validator (ICAO-9303 line shape) — same trust tier.
+    "mrz",
 }
 # Context-keyword-anchored rules (the *_ctx family + keyword-gated ipv4/passport).
 _PII_CONTEXT_RULES = {

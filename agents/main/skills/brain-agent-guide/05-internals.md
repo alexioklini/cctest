@@ -1498,6 +1498,25 @@ preamble goes in first-user-message instead.
   follow-up document reads keep working. Non-anonymising sessions are
   unaffected; the document-classification gate now also covers mempalace
   and web reads (consistent with file reads).
+- **Entity-consistent pseudonymisation (9.337.0, L2)**: the mapping works on
+  PERSON level, not string level. One fake identity per person
+  (`Mapping.entities` in `pseudonymizer.py`; matching/rendering in
+  `engine/identity.py`, shared with doc_checks): every surface form —
+  "Bonnie M Stark", "STARK, BONNIE MARIE", the MRZ name line, the e-mail
+  localpart, OCR variants — maps onto the FORM-MATCHING variant of the SAME
+  fake identity, and the predictable variants are registered as real mapping
+  entries (which automatically makes the args-deanonymisation and the
+  web-egress gate entity-aware). Different real persons always get different
+  fake surnames. Passport numbers became shape fakes (VIZ and MRZ carry the
+  SAME fake number); a detected MRZ line is rebuilt completely with VALID
+  ICAO-9303 check digits — DOB shifted, expiry unchanged — so check-digit
+  math on the pseudonymised document still verifies instead of producing
+  false forgery indications. Dates shift by ONE constant per-session offset
+  (instead of per-value day jitter), so ordering, validity spans and renewal
+  gaps stay exact; textual months ("5 FEB 1947", "26. Jan 2027") and EXIF
+  timestamps are recognised. A word-bounded known-values sweep in the
+  tool-result seam replaces registered names/e-mails even where the German
+  NER misses them (English names in mempalace drawers, web results).
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,

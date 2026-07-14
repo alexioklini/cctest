@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.337.0",
+        "date": "2026-07-14",
+        "title": "Anonymisierung erkennt Personen statt Zeichenketten",
+        "body": "Bisher bekam dieselbe Person für jede Schreibweise ihres "
+                "Namens (Akte, Ausweis, E-Mail-Adresse, Scan mit Lesefehlern) "
+                "einen anderen Platzhalter — das Sprachmodell sah mehrere "
+                "scheinbar verschiedene Personen und zog falsche Schlüsse. "
+                "Jetzt erhält jede Person genau EINE konsistente Ersatz-"
+                "Identität in allen Schreibweisen, Passnummern und die "
+                "maschinenlesbare Ausweiszone werden als stimmige Ersatzwerte "
+                "mit gültigen Prüfziffern erzeugt, und Datumsangaben behalten "
+                "ihre exakten Abstände zueinander. Dokumenten-Analysen in "
+                "anonymisierten Chats liefern damit dieselben Zusammenhänge "
+                "wie ohne Anonymisierung — ohne dass echte Personendaten den "
+                "Rechner verlassen.",
+        "audience": "user",
+        "versions": ["9.337.0"],
+    },
+    {
         "version": "9.336.0",
         "date": "2026-07-14",
         "title": "Anonymisierte Chats finden ihre Daten wieder",
