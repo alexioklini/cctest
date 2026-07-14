@@ -56,17 +56,6 @@ _IMAGE_OCR_CAVEAT = (
 )
 
 
-def _collapse_ocr_filler(text: str) -> str:
-    """Cap runs of a repeated filler character (`<<<<…`, `....`, `____`).
-
-    A passport's machine-readable zone is padded with `<`, and the OCR model
-    happily extends that run: one real scan produced a chunk that was **91%
-    `<` characters** — a whole drawer of padding, embedded and dragged through
-    every search. The run carries no information beyond "there was padding
-    here", so 8 characters say it just as well."""
-    return re.sub(r"([<>._\-=*#~])\1{7,}", r"\1" * 8, text)
-
-
 class DocumentParser:
     """Parse various document formats to plain text."""
 
@@ -297,8 +286,9 @@ class DocumentParser:
                 # a single image that page number says nothing, and worse:
                 # DocumentChunker takes the first heading as the chunk title,
                 # so every scan would be titled "## Page 1".
+                # Filler collapse now happens inside _extract_image_ocr (the
+                # OCR choke point), so every consumer gets it.
                 text = re.sub(r"^\s*##\s*Page\s+\d+\s*\n+", "", text.strip())
-                text = _collapse_ocr_filler(text)
                 info_parts.append(f"**OCR:** {backend}")
                 info_parts.append("")
                 # Mark it UNRELIABLE, in the text itself. OCR of a photographed

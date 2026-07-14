@@ -392,9 +392,24 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   image features (`engine/image_features.py`: dimensions, EXIF camera/date/GPS,
   dominant colours, brightness, photo-vs-graphic heuristic, Haar-cascade face
   COUNT) + decoded QR/barcodes (OpenCV `QRCodeDetector`/`barcode` — NOT pyzbar,
-  which segfaults on Python 3.14). If that recovers something
-  substantive (real OCR text ≥20 chars, decoded codes, or a confident feature
-  read) the vision LLM is SKIPPED entirely — free, local, no cloud. Only when
+  which segfaults on Python 3.14).
+  **Plus the OCR MODEL's reading (v9.331.0)**, added ADDITIVELY beside the
+  tesseract text (never replacing it), labelled UNVERIFIED. Why: tesseract alone
+  is near-useless on a photographed document — on a real passport scan it handed
+  the model browser chrome and a mangled MRZ, with the holder's NAME missing
+  entirely, while GLM-OCR read `560683707 / STARK / BONNIE MARIE / 05 Feb 1947`
+  off the same pixels. Worse, those 475 chars of garbage counted as a "strong
+  signal", so the old code declared success and never looked further (10/10 real
+  scans were "strong"). The chat path caps the model at **1024 tokens**: measured
+  4096→22.8s vs 1024→4.7s with a BYTE-IDENTICAL result after filler-collapse —
+  the extra tokens only ever spool out a passport's `<<<<` padding. Project
+  mining keeps the full budget (whole text pages are the norm there).
+  If that recovers something
+  substantive (real OCR text ≥20 chars, a model reading, decoded codes, or a
+  confident feature read) the vision LLM is SKIPPED entirely — free, local, no
+  cloud. **GLM-OCR is the local TEXT eye, not a general vision model**: it
+  TRANSCRIBES. A model that DESCRIBES a scene ("two people on a beach") is still
+  what the vision fallback is for. Only when
   the deterministic pass is thin (a textless photo of a scene) does it fall back
   to the vision LLM (`attachment_image_model`, cheapest image-capable model
   else), and even then the deterministic facts are PREPENDED so the output is

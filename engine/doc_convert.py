@@ -32,6 +32,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -751,6 +752,22 @@ def _tesseract_sees_text(path: str) -> bool | None:
     return bool(r["words"])
 
 
+def collapse_ocr_filler(text: str) -> str:
+    """Cap runs of a repeated filler character (`<<<<…`, `....`, `____`).
+
+    A passport's machine-readable zone is padded with `<`, and the OCR model
+    happily extends that run: one real scan produced 8620 characters of which
+    7864 were `<` — 91% padding, embedded into a drawer and dragged through
+    every search. The run says nothing beyond "there was padding here", which
+    8 characters convey just as well.
+
+    Lives HERE, at the OCR choke point, not in a caller — it was first added to
+    parse_image only, so the same passport came back unpadded through the
+    project import and fully padded through the chat-attachment path.
+    """
+    return re.sub(r"([<>._\-=*#~])\1{7,}", r"\1" * 8, text or "")
+
+
 def _mlx_ocr_extract(path: str, cfg: dict) -> tuple[str, str | None]:
     """One image → text via the in-process MLX OCR model. (text, error)."""
     from engine import mlx_ocr as _mlx
@@ -759,6 +776,7 @@ def _mlx_ocr_extract(path: str, cfg: dict) -> tuple[str, str | None]:
         max_tokens=cfg.get("mlx_ocr_max_tokens", 4096))
     if err:
         return "", err
+    text = collapse_ocr_filler(text)
     if text and _tesseract_sees_text(path) is False:
         print(f"[doc-convert] OCR verworfen (kein lesbarer Text im Bild, "
               f"Modellausgabe unbelegt): {os.path.basename(path)}", flush=True)
@@ -837,7 +855,8 @@ def _pdf_mlx_ocr(src: str, cfg: dict) -> tuple[str, str | None]:
     return out + "\n", None
 
 
-def _extract_image_ocr(path: str) -> tuple[str, str, str | None]:
+def _extract_image_ocr(path: str, *, cfg: dict | None = None
+                       ) -> tuple[str, str, str | None]:
     """Read the TEXT out of a standalone image (scan, photo of a document).
 
     Returns (text, backend, error); empty text = nothing readable, caller
@@ -855,7 +874,9 @@ def _extract_image_ocr(path: str) -> tuple[str, str, str | None]:
     mime = _IMAGE_MIME.get(ext)
     if not mime:
         return "", "", None          # .svg et al — not a raster scan
-    cfg = _ocr_config()
+    # `cfg` lets a caller tighten a knob for its own path (the chat-attachment
+    # degrade caps max_tokens — a user is waiting there); default = the config.
+    cfg = cfg or _ocr_config()
     engine = cfg["engine"]
     if engine == "none":
         return "", "", None

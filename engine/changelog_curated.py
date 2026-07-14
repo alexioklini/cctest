@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.331.0",
+        "date": "2026-07-14",
+        "title": "Bilder an Modelle ohne Bildverständnis",
+        "body": "Wenn Sie ein Bild an ein Modell schicken, das keine Bilder "
+                "verarbeiten kann, wird dessen Inhalt für das Modell in Text "
+                "übersetzt. Diese Übersetzung ist jetzt deutlich besser: Bei "
+                "einem abfotografierten Ausweis kam bisher im Wesentlichen die "
+                "Browser-Leiste an, während Name und Ausweisnummer fehlten — "
+                "nun werden auch diese erkannt und übergeben, klar "
+                "gekennzeichnet als Lesung, die Fehler enthalten kann. "
+                "Gleichzeitig geht das Ganze rund dreimal schneller.",
+        "audience": "user",
+        "versions": ["9.331.0"],
+    },
+    {
         "version": "9.330.0",
         "date": "2026-07-14",
         "title": "Ausweise werden als solche erkannt und geschützt",
