@@ -1324,10 +1324,13 @@ TOOL_DEFINITIONS = [
             "OCR only a RECTANGULAR REGION of a page — for 'just the stamp "
             "top-right', 'only the total at the bottom', 'the handwritten note "
             "in the corner'. bbox=[x, y, width, height] in pixels (unit='px', "
-            "default) or as percent of the page (unit='pct'). Deterministic "
-            "local tesseract, no LLM. Use ocr_inspect first to learn the page "
-            "pixel size. Cheaper and more precise than OCR-ing the whole page "
-            "when you only need one area."
+            "default) or as percent of the page (unit='pct'). `text` is "
+            "deterministic local tesseract, no LLM. Use ocr_inspect first to "
+            "learn the page pixel size. Cheaper and more precise than OCR-ing "
+            "the whole page when you only need one area. "
+            "The result ALSO carries `model_read` — the same crop as read by "
+            "the vision OCR model, UNVERIFIED and able to invent text on an "
+            "unreadable crop. `text` is evidence, `model_read` is a lead."
         ),
         "input_schema": {
             "type": "object",
@@ -1337,6 +1340,7 @@ TOOL_DEFINITIONS = [
                 "unit": {"type": "string", "description": "'px' (default) or 'pct' (percent of page dimensions)"},
                 "page": {"type": "integer", "description": "For PDFs: 1-based page number (default 1)"},
                 "lang": {"type": "string", "description": "Tesseract language(s), default 'deu+eng'"},
+                "model_fallback": {"type": "boolean", "description": "Default true. Also return the vision model's reading of the crop as a separate, flagged `model_read`. Set false for a strictly deterministic result."},
             },
             "required": ["path", "bbox"],
         },
@@ -1353,7 +1357,13 @@ TOOL_DEFINITIONS = [
             "match. Example: fields=[{\"name\":\"rechnungsnr\",\"pattern\":"
             "\"Rechnung\\\\s*Nr\\\\.?\\\\s*([\\\\w-]+)\"}, {\"name\":\"betrag\","
             "\"pattern\":\"(\\\\d[\\\\d.,]*)\\\\s*EUR\"}]. Matching is "
-            "case-insensitive and multi-line."
+            "case-insensitive and multi-line. "
+            "Where the deterministic OCR finds NOTHING for a field, the pattern "
+            "is retried against the vision model's reading — the `source` map "
+            "then marks that field 'model_unverified' instead of 'ocr'. Such a "
+            "value can be INVENTED on an unreadable image: verify it against "
+            "the picture (ocr_region) before quoting it as fact. Set "
+            "model_fallback=false for strictly deterministic values only."
         ),
         "input_schema": {
             "type": "object",
@@ -1372,6 +1382,7 @@ TOOL_DEFINITIONS = [
                     },
                 },
                 "lang": {"type": "string", "description": "Tesseract language(s), default 'deu+eng'"},
+                "model_fallback": {"type": "boolean", "description": "Default true. Retry a field the deterministic OCR could not find against the vision model's reading (marked 'model_unverified' in `source`). Set false for deterministic values only."},
                 "pages": {"type": "string", "description": "For PDFs: '1-3' (default: all pages)"},
             },
             "required": ["path", "fields"],

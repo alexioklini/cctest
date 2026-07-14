@@ -374,12 +374,24 @@ OCR is for scans/photos.**
   merged. `text` = evidence, `model_read` = lead; never quote a value from
   `model_read` as fact. `model_fallback=false` for a strictly deterministic
   result.
-- `ocr_region(path, bbox=[x,y,w,h], unit?, page?, lang?)` — OCR only a rectangle
-  ('just the stamp', 'only the footer'); `unit='px'` (default) or `'pct'`.
-- `ocr_fields(path, fields=[{name,pattern}], lang?, pages?)` — STRUCTURED
-  extraction: OCR then apply your per-field REGEX (one capture group = the
-  value). Returns validated JSON `{name: value|null}` + `unmatched`. For
-  invoices/receipts/forms. Bad regex is reported, never raised.
+- `ocr_region(path, bbox=[x,y,w,h], unit?, page?, lang?, model_fallback?)` — OCR
+  only a rectangle ('just the stamp', 'only the footer'); `unit='px'` (default)
+  or `'pct'`. Also returns `model_read`: the crop is already a picture, so the
+  vision OCR model reads the SAME crop as a flagged second opinion. Without it,
+  the tool meant for the HARD cases ('read just the handwritten number') was
+  stuck with the weaker reader.
+- `ocr_fields(path, fields=[{name,pattern}], lang?, pages?, model_fallback?)` —
+  STRUCTURED extraction: OCR then apply your per-field REGEX (one capture group
+  = the value). Returns validated JSON `{name: value|null}` + `unmatched` + a
+  **`source`** map. For invoices/receipts/forms. Bad regex is reported, never
+  raised.
+  Where the deterministic OCR finds nothing for a field, the pattern is retried
+  against the vision model's reading and `source[field]` becomes
+  `model_unverified` (vs `ocr` = read off the pixels). Measured on a real
+  passport photo: **all four fields came back `null` before**, all four correct
+  now — but a `model_unverified` value **can be invented**, so verify it
+  (`ocr_region`) before quoting it as fact. `model_fallback=false` = strictly
+  deterministic.
 - `ocr_tables(path, out?, lang?, pages?)` — geometric column/row clustering of
   OCR words → CSV; `out='table.csv'` saves the full table, which a follow-up
   `xlsx_inspect`/`xlsx_query` can then read (OCR→spreadsheet pipeline).

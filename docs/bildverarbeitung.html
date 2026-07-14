@@ -154,7 +154,7 @@
 
 <div class="wrap">
 <header>
-  <p class="eyebrow">Prüfbericht · Stand 9.332.0 · 14.07.2026</p>
+  <p class="eyebrow">Prüfbericht · Stand 9.333.0 · 14.07.2026</p>
   <h1>Wie Brain Bilder verarbeitet</h1>
   <p class="sub">Alle Wege, auf denen ein Bild oder ein gescanntes PDF in Brain gelangt: wer ruft was auf, was passiert bei Fehlschlag, und wo lässt sich das einstellen. Zum Nachprüfen der Verdrahtung.</p>
   <div class="meta">
@@ -309,28 +309,42 @@
 </div>
 
 <h2>Weg 3 — Der Agent ruft die OCR-Werkzeuge</h2>
-<p class="lede">Fünf Werkzeuge, die das Sprachmodell selbst aufrufen kann. Sie sind bewusst <strong>frei von Sprachmodellen</strong>: Das Modell soll Beträge und Nummern nicht abtippen, sondern sie abgelesen bekommen.</p>
+<p class="lede">Fünf Werkzeuge, die das Sprachmodell selbst aufrufen kann. Ihr <code>text</code> ist bewusst <strong>frei von Sprachmodellen</strong>: Das Modell soll Beträge und Nummern nicht abtippen, sondern sie abgelesen bekommen.</p>
+<div class="callout">
+  <p class="hd">Die zweite Lesung folgt der Einstellung — sie ist nicht festverdrahtet</p>
+  <p>Wo unten „zweite Lesung" steht, wird <strong>die eingestellte Erkennung</strong> benutzt: bei <code>engine: mlx_ocr</code> das Modell aus <code>mlx_ocr_model</code> (derzeit GLM-OCR-8bit), bei <code>mistral_ocr</code> die Cloud-OCR, bei <code>local_vision</code> das Modell aus <code>local_vision_model</code>, bei <code>none</code> gar nichts. Wer die Erkennung umstellt, stellt sie damit auch für die Werkzeuge um.</p>
+</div>
 
 <div class="scroll">
 <table>
   <thead><tr><th>Werkzeug</th><th>Zweck</th><th>Motor</th></tr></thead>
   <tbody>
-    <tr><td><code>ocr_inspect</code></td><td>Vorabprüfung ohne volle Erkennung: Seitenzahl, Ausrichtung, grobe Textmenge</td><td><span class="tag t-local">Tesseract</span></td></tr>
-    <tr><td><code>ocr_extract</code></td><td>Volltext, wahlweise mit Absatz- und Seitenstruktur</td><td><span class="tag t-local">Tesseract</span> + GLM-OCR daneben</td></tr>
-    <tr><td><code>ocr_region</code></td><td>Nur ein Ausschnitt — „der Stempel oben rechts"</td><td><span class="tag t-local">Tesseract</span></td></tr>
-    <tr><td><code>ocr_fields</code></td><td>Gezielte Felder über eigene Suchmuster — „Rechnungsnummer", „Betrag"</td><td><span class="tag t-local">Tesseract</span></td></tr>
-    <tr><td><code>ocr_tables</code></td><td>Tabellen: Spalten und Zeilen aus der Wortgeometrie</td><td><span class="tag t-local">Tesseract</span></td></tr>
+    <tr><td><code>ocr_inspect</code></td><td>Vorabprüfung ohne volle Erkennung: Seitenzahl, Ausrichtung, grobe Textmenge</td><td>nur Tesseract<br><span class="tag t-none">bewusst — soll billig bleiben</span></td></tr>
+    <tr><td><code>ocr_extract</code></td><td>Volltext, wahlweise mit Absatz- und Seitenstruktur</td><td>Tesseract <strong>+ zweite Lesung</strong></td></tr>
+    <tr><td><code>ocr_region</code></td><td>Nur ein Ausschnitt — „der Stempel oben rechts"</td><td>Tesseract <strong>+ zweite Lesung</strong></td></tr>
+    <tr><td><code>ocr_fields</code></td><td>Gezielte Felder über eigene Suchmuster — „Rechnungsnummer", „Betrag"</td><td>Tesseract <strong>+ zweite Lesung</strong></td></tr>
+    <tr><td><code>ocr_tables</code></td><td>Tabellen: Spalten und Zeilen aus der Wortgeometrie</td><td>nur Tesseract<br><span class="tag t-none">braucht Koordinaten</span></td></tr>
   </tbody>
 </table>
 </div>
 
-<h3>Warum <code>ocr_extract</code> zwei Lesungen zurückgibt</h3>
-<p>Tesseract allein scheitert auf Fotos <em>still</em> — es liest wenig und meldet nicht, dass es versagt hat. Deshalb liefert <code>ocr_extract</code> beide Lesungen, aber <strong>niemals vermischt</strong>:</p>
+<h3>Warum drei Werkzeuge zwei Lesungen zurückgeben</h3>
+<p>Tesseract allein scheitert auf Fotos <em>still</em> — es liest wenig und meldet nicht, dass es versagt hat. Deshalb liefern sie beide Lesungen, aber <strong>niemals vermischt</strong>:</p>
 <ul class="plain">
-  <li><code>text</code> — Tesseract. Zeichengenau abgelesen. <strong>Das ist der Beleg.</strong></li>
-  <li><code>model_read</code> — GLM-OCR. Ausdrücklich als <em>ungeprüft</em> markiert. <strong>Das ist ein Hinweis</strong>, keine Tatsache. Ein Name oder eine Zahl von hier darf nicht als Fakt zitiert werden.</li>
+  <li><code>text</code> — Tesseract. Zeichengenau abgelesen. <strong>Das ist der Beleg.</strong> Nicht einstellbar: Es ist die Instanz, die nie erfindet — wäre sie austauschbar, verlöre der Vergleich seinen Sinn.</li>
+  <li><code>model_read</code> — die <em>eingestellte</em> Erkennung, derzeit GLM-OCR. Ausdrücklich als <strong>ungeprüft</strong> markiert. <strong>Das ist ein Hinweis</strong>, keine Tatsache.</li>
 </ul>
-<p>Wird die Modell-Lesung von der Gegenprobe verworfen, sagt das Feld das <strong>ausdrücklich</strong> — Schweigen würde bedeuten „das Modell stimmt zu". Mit <code>model_fallback: false</code> lässt sich die zweite Lesung ganz abschalten.</p>
+<p>Bei <code>ocr_fields</code> steht die Herkunft <strong>pro Feld</strong> in <code>source</code>: <code>ocr</code> heißt abgelesen, <code>model_unverified</code> heißt vom Modell ergänzt. Ein deterministisch gefundener Wert wird dabei nie überschrieben — das Modell füllt nur Lücken.</p>
+<p>Wird die Modell-Lesung von der Gegenprobe verworfen, sagt das Feld das <strong>ausdrücklich</strong> — Schweigen würde bedeuten „das Modell stimmt zu". Mit <code>model_fallback: false</code> lässt sich die zweite Lesung überall abschalten.</p>
+
+<div class="callout">
+  <p class="hd">Was die zweite Lesung bringt — gemessen</p>
+  <p>Am echten Pass-Foto lieferte <code>ocr_fields</code> für Passnummer, Nachname, Vorname und Geburtsdatum <strong>viermal „nicht gefunden"</strong> — Tesseract liest davon nichts. Jetzt kommen alle vier korrekt zurück, jeder Wert als <code>model_unverified</code> gekennzeichnet.</p>
+</div>
+
+<h3>Warum <code>ocr_tables</code> und <code>ocr_inspect</code> nicht</h3>
+<p><code>ocr_tables</code> gruppiert Wörter nach ihrer <strong>Position</strong> zu Spalten und Zeilen. Das Erkennungsmodell liefert einen Textblock ohne Koordinaten — es gibt schlicht nichts zu gruppieren. Ein Modell direkt nach einer fertigen Tabelle zu fragen wäre ein <em>anderer</em> Ansatz; er wurde nicht heimlich mit eingebaut.</p>
+<p><code>ocr_inspect</code> ist die <strong>billige Vorabprüfung</strong> („lohnt sich die Erkennung überhaupt?"). Ein Modellaufruf würde genau ihren Zweck zerstören.</p>
 
 <h2>Weg 4 — Prüfung auf schützenswerte Daten</h2>
 <p class="lede">Läuft beim Hochladen eines Anhangs. Zwei voneinander unabhängige Prüfungen.</p>
@@ -402,6 +416,6 @@
 </div>
 
 <footer>
-  Brain 9.332.0 · alle Angaben am laufenden System nachgemessen · Messwerte aus 10 echten Pass-Scans
+  Brain 9.333.0 · alle Angaben am laufenden System nachgemessen · Messwerte aus 10 echten Pass-Scans
 </footer>
 </div>

@@ -29,6 +29,38 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.333.0",
+        "date": "2026-07-14",
+        "title": "Werte aus Fotos von Belegen und Ausweisen",
+        "body": "Lässt man Brain gezielt Werte aus einem Bild herauslesen — "
+                "eine Rechnungsnummer, einen Betrag, eine Ausweisnummer — "
+                "kam bei abfotografierten Vorlagen bisher oft „nicht "
+                "gefunden“ zurück, obwohl der Wert deutlich zu sehen war. "
+                "Solche Bilder werden nun zusätzlich von der Texterkennung "
+                "gelesen, die auch mit schrägen Handyfotos zurechtkommt. "
+                "Bei jedem Wert ist erkennbar, ob er sicher abgelesen oder "
+                "vom Erkennungsmodell ergänzt wurde — Letzteres bitte am "
+                "Originalbild prüfen, bevor Sie sich darauf verlassen.",
+        "audience": "user",
+        "versions": ["9.333.0"],
+    },
+    {
+        "version": "9.332.0",
+        "date": "2026-07-14",
+        "title": "Bilder werden beschrieben — und bleiben auf dem Rechner",
+        "body": "Schickt man ein Bild an ein Modell, das keine Bilder "
+                "verarbeiten kann, wird sein Inhalt in Text übersetzt. Zeigt "
+                "das Bild Menschen, wird es nun auch beschrieben — bisher "
+                "erfuhr das Modell bei einem Foto in einem Browserfenster "
+                "lediglich, was in der Menüleiste stand, aber nichts über die "
+                "abgebildete Person. Diese Beschreibung entsteht jetzt "
+                "vollständig auf Ihrem Rechner statt in der Cloud. Laufen "
+                "mehrere Auswertungen gleichzeitig, warten sie geordnet "
+                "aufeinander, statt den Rechner gemeinsam auszubremsen.",
+        "audience": "user",
+        "versions": ["9.332.0"],
+    },
+    {
         "version": "9.331.0",
         "date": "2026-07-14",
         "title": "Bilder an Modelle ohne Bildverständnis",

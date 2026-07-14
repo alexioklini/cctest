@@ -466,14 +466,56 @@ def tool_ocr_region(args: dict) -> str:
         words = _page_tsv(pyt, crop, lang)
         _log_pages(1)
         text = _words_to_text(words)
-        return _ok({
+        payload = {
             "page": page_no,
             "bbox_px": [left, top, right - left, bottom - top],
             "mean_confidence": _mean_conf(words),
             "text": _anon(text, f"ocr_region:{path}"),
-        })
+        }
+        _attach_region_model_read(payload, crop, path, args)
+        return _ok(payload)
     except Exception as e:
         return _err(f"ocr_region failed: {e}")
+
+
+def _attach_region_model_read(payload: dict, crop, path: str,
+                              args: dict) -> None:
+    """Read the SAME crop with the configured OCR model, as a second opinion.
+
+    The model has no word coordinates, so it cannot be asked for "the region" —
+    but the crop is already a picture, so we hand it that picture. Without this
+    the one tool meant for the hard cases ("read just the stamp", "just the
+    handwritten number") is the one stuck with the weaker reader.
+    """
+    if args.get("model_fallback") is False:
+        return
+    import tempfile
+    tmp = ""
+    try:
+        fd, tmp = tempfile.mkstemp(suffix=".png", prefix="brain-ocr-region-")
+        os.close(fd)
+        crop.save(tmp)
+        from engine.doc_convert import _extract_image_ocr
+        text, backend, _err = _extract_image_ocr(tmp)
+        if not text:
+            return
+        payload["model_read"] = {
+            "engine": backend,
+            "text": _anon(text[:_PREVIEW_CHARS], f"ocr_region.model:{path}"),
+            "warning": (
+                "UNVERIFIED — read by a vision model, not off the pixels. It "
+                "fills gaps tesseract could not read, but can invent plausible "
+                "text on an unreadable crop. `text` above is the evidence."
+            ),
+        }
+    except Exception:
+        pass
+    finally:
+        if tmp and os.path.isfile(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def tool_ocr_fields(args: dict) -> str:
@@ -497,7 +539,24 @@ def tool_ocr_fields(args: dict) -> str:
         results, _ = _ocr_all_pages(pyt, path, args.get("pages"), lang)
         _log_pages(len(results))
         text = "\n".join(r["text"] for r in results)
-        out = {}
+
+        # Second reading from the configured OCR model, searched only where the
+        # deterministic one came up empty. Without it a field is reported as
+        # "not found" whenever tesseract could not read it — which on a
+        # photographed invoice or ID is most of the time, while the OCR model
+        # read the value perfectly well. Each hit records WHERE it came from, so
+        # a value inferred by a model is never mistaken for one read off the
+        # pixels. Opt out with model_fallback=false.
+        model_text = ""
+        if args.get("model_fallback") is not False:
+            try:
+                from engine.doc_convert import _extract_image_ocr
+                model_text, _backend, _e = _extract_image_ocr(path)
+            except Exception:
+                pass
+
+        out: dict = {}
+        source: dict = {}
         misses = []
         for f in fields:
             name = (f.get("name") or "").strip() if isinstance(f, dict) else ""
@@ -513,13 +572,36 @@ def tool_ocr_fields(args: dict) -> str:
                 continue
             if m:
                 out[name] = (m.group(1) if m.groups() else m.group(0)).strip()
-            else:
-                out[name] = None
-                misses.append(name)
+                source[name] = "ocr"          # read off the pixels — evidence
+                continue
+            # Deterministic miss → try the model's reading.
+            if model_text:
+                try:
+                    m2 = re.search(pattern, model_text, flags)
+                except re.error:
+                    m2 = None
+                if m2:
+                    out[name] = (m2.group(1) if m2.groups()
+                                 else m2.group(0)).strip()
+                    source[name] = "model_unverified"
+                    continue
+            out[name] = None
+            misses.append(name)
+
         for k, v in out.items():
             if v:
                 out[k] = _anon(v, f"ocr_fields:{path}:{k}")
-        return _ok({"fields": out, "unmatched": misses})
+
+        payload = {"fields": out, "unmatched": misses, "source": source}
+        if any(s == "model_unverified" for s in source.values()):
+            payload["warning"] = (
+                "Fields marked 'model_unverified' in `source` were NOT read "
+                "deterministically — the vision model supplied them where "
+                "tesseract found nothing. The model can invent plausible "
+                "values on unreadable images. Verify such a value against the "
+                "image (ocr_region) before quoting it as fact."
+            )
+        return _ok(payload)
     except Exception as e:
         return _err(f"ocr_fields failed: {e}")
 
