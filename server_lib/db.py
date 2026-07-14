@@ -3558,6 +3558,12 @@ class ChatDB:
             # Transparent-anonymisation maps: drop with the session — keeping
             # them would orphan encrypted blobs nobody can act on.
             conn.execute("DELETE FROM pseudonym_maps WHERE session_id = ?", (session_id,))
+            # PII-decision ledger rows too (v9.342.0): the ledger is append-
+            # only WITHIN a session, but after the session is gone its rows
+            # are orphans carrying raw_value CLEARTEXT (names, IBANs) that no
+            # reader can reach — worse than useless under GDPR. Measured:
+            # a deleted E2E session left 468 cleartext rows behind.
+            conn.execute("DELETE FROM pii_decisions WHERE session_id = ?", (session_id,))
             # NOTE: helpdesk_history is per-USER, not per-session — deliberately
             # NOT dropped here (deleting a chat must not wipe Brainy's history).
             conn.commit()

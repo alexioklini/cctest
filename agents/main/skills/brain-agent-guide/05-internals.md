@@ -1613,6 +1613,17 @@ preamble goes in first-user-message instead.
   counts only, never values; a privacy-driven gap must never read as an
   analytic finding. The `web_egress` mode also gained a GUI knob
   (Settings → GDPR → Master-Schalter, saved via `POST /v1/services/server`).
+- **NER recall net + cleanup hardening (9.342.0)**: German name detection
+  runs TWO spaCy models — `de_core_news_md` (main) plus `de_core_news_sm`
+  as a narrow recall net whose PERSON spans are unioned in (≥2 capitalized
+  tokens, no overlap, stop-token list against title-cased prose). This
+  catches middle-initial forms like "Bonnie M Stark" in typed sentences
+  that the md model measurably misses. Deleting a chat now also purges its
+  `pii_decisions` ledger rows (they carry cleartext values; before, orphans
+  survived the session). Fake rendering keeps genitive suffixes verbatim
+  ("Bonnie Stark's" → "Cameron Taylor's"), and when padded + unpadded
+  spellings of the same date collide on one replacement value, the
+  restoration deterministically uses the padded form.
 - **SERVER-ONLY detection (9.200.0)**: the browser-side `PIIScanner` (the
   ~70 JS regex rules + Luhn/Mod11 validators) was DELETED. PII is detected
   exclusively in Python (`engine/pii_ner.py → _pii_rules` + `_pii_scan_text` +

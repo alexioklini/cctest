@@ -49,11 +49,22 @@ class _GateTestBase(unittest.TestCase):
     def setUp(self):
         self._orig_cfg_fn = brain._get_gdpr_scanner_config
         self._mappings = []
+        # NER-Isolation (v9.342.0): diese Suite testet die GATE-Mechanik auf
+        # Regex-/Mapping-Basis. Läuft sie NACH einer Suite, die die spaCy-
+        # Modelle geladen hat (test_pii_ner), sieht der Gate-Zusatz-Scan
+        # ZUSÄTZLICHE NER-Findings und die Consent-Slot-Assertions kippen —
+        # der vorbestehende Ordnungs-Flake der Ask-Tests. NER hier hart aus.
+        from engine import pii_ner as _pn
+        self._saved_nlp = dict(_pn._NLP_CACHE)
+        _pn._NLP_CACHE.clear()
 
     def tearDown(self):
         brain._get_gdpr_scanner_config = self._orig_cfg_fn
         for m in self._mappings:
             pseudonymizer.close_mapping(m.mapping_id)
+        from engine import pii_ner as _pn
+        _pn._NLP_CACHE.clear()
+        _pn._NLP_CACHE.update(self._saved_nlp)
 
     def _mapping(self, *entries):
         m = _mk_mapping(*entries)

@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.342.0",
+        "date": "2026-07-14",
+        "title": "Zuverlässigere Namenserkennung und saubere Löschung",
+        "body": "Der Datenschutz-Scanner erkennt Personennamen jetzt "
+                "deutlich zuverlässiger — auch Schreibweisen mit mittlerem "
+                "Initial (z. B. „Bonnie M Stark“), die bisher in getippten "
+                "Sätzen durchrutschen konnten, werden ab der ersten "
+                "Nachricht geschützt. Beim Löschen eines Chats werden nun "
+                "auch alle zugehörigen Datenschutz-Entscheidungen aus der "
+                "Datenbank entfernt (vorher blieben verwaiste Einträge mit "
+                "Klardaten zurück). Zudem bleiben Namenszusätze wie das "
+                "englische Genitiv-s in Ersatzwerten korrekt erhalten, und "
+                "unterschiedlich geschriebene Datumsangaben werden nach der "
+                "Rückübersetzung einheitlich in der ausgeschriebenen Form "
+                "wiederhergestellt.",
+        "audience": "user",
+        "versions": ["9.342.0"],
+    },
+    {
         "version": "9.341.0",
         "date": "2026-07-14",
         "title": "KYC-Preset für Projekte mit sensiblen Personendaten",

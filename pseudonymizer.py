@@ -1149,7 +1149,26 @@ class Mapping:
         bare passport numbers) so audit counts keep reflecting what was
         actually FOUND, not what the entity layer prophylactically mapped."""
         self.forward[original] = replacement
-        self.reverse[replacement] = original
+        # Padding-collision determinism (v9.342.0, the L2 edge from the
+        # v9.340 golden run): '5 FEB 1947' and '05 FEB 1947' render the SAME
+        # fake once the constant offset makes the day two-digit — the reverse
+        # can only restore ONE surface. Instead of last-write-wins, keep the
+        # LONGER (padded, canonical) original whenever both colliding
+        # originals parse to the same calendar date. Value identical either
+        # way; this only makes the roundtrip padding deterministic. Non-date
+        # collisions keep the existing last-write-wins behavior untouched.
+        _prev = self.reverse.get(replacement)
+        _keep_prev = False
+        if (_prev is not None and _prev != original
+                and len(_prev) > len(original)):
+            try:
+                _d_prev = _parse_date_surface(_prev)
+                _keep_prev = (_d_prev is not None
+                              and _d_prev == _parse_date_surface(original))
+            except Exception:
+                _keep_prev = False
+        if not _keep_prev:
+            self.reverse[replacement] = original
         if count:
             self.finding_counts[rule_id] = self.finding_counts.get(rule_id, 0) + 1
         self.categories[original] = rule_id

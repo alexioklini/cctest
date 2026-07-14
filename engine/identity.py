@@ -295,6 +295,13 @@ def render_variant(original: str, sur: str, givens: list[str],
         if low.rstrip(".") in _TITLES:
             out.append(part)
             continue
+        if len(low) == 1 and out and out[-1].endswith(("'", "’")):
+            # Genitiv-/Klitik-Suffix ("Bonnie Stark's"), KEIN Initial —
+            # verbatim durchreichen. Ohne den Guard verbrauchte das lone `s`
+            # den nächsten freien Vornamens-Slot und renderte
+            # "Cameron Taylor'm" (im v9.341-Live-E2E-Ledger gemessen).
+            out.append(part)
+            continue
         if len(low) == 1:
             rep = _initial_for(low)
         else:

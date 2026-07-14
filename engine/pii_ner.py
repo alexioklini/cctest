@@ -69,6 +69,20 @@ _NAME_NOUN_SUFFIX = _re.compile(
     r"button|binding|transformer)$", _re.IGNORECASE)
 _NON_NAME_TOKENS = {"pre-trained", "transformer", "delete", "button", "admin",
                     "rechten", "binding", "data", "owner", "ticket", "review"}
+# Recall-net stop tokens (v9.342.0): German function words / adverbs /
+# participles that show up capitalized in title-cased prose ("Der Bericht
+# Wurde Gestern Erstellt") — the _sm model's residual PER-FP mode after the
+# shape checks. A real name never CONTAINS an inflected verb or adverb, so
+# ONE hit kills the recall span. Kept small and unambiguous — adjectives
+# that double as surnames (Stark, Groß, Klein…) must NOT be listed.
+_RECALL_STOP_TOKENS = frozenset({
+    "wurde", "wird", "werden", "wurden", "gestern", "heute", "morgen",
+    "erstellt", "geprüft", "gemacht", "gelöscht", "geändert", "gesendet",
+    "bitte", "danke", "keine", "kein", "alle", "viele", "immer", "wieder",
+    "schon", "noch", "dann", "wenn", "aber", "oder", "nicht", "sehr",
+    "auch", "sowie", "bereits", "zuerst", "zuletzt", "damit", "dabei",
+    "dazu", "jedoch", "außerdem", "enthält", "haben", "hatte", "sind",
+})
 _HONORIFIC_NEAR = _re.compile(
     r"\b(Herr|Frau|Hr|Fr|Dr|Mag|Prof|Dipl|Ing|MMag|DDr)\.?\s*$")
 
@@ -243,7 +257,16 @@ def _model_id_for(lang: str) -> Optional[str]:
 # at modest cost. Pre-trained word vectors help on casual/mixed-case
 # text where `_sm` over-fires PER on lowercase function-words.
 KNOWN_LANGUAGES: dict[str, dict[str, str]] = {
-    "de": {"display": "Deutsch", "model": "de_core_news_md"},
+    # recall_model: a SECOND, small model whose PERSON spans are unioned in
+    # as a recall net (v9.342.0). Measured miss: de_core_news_md does NOT tag
+    # "Bonnie M Stark" in "Prüfe die KO-Kundin Bonnie M Stark aus Oregon
+    # City: …" — de_core_news_sm does. The union is deliberately narrow
+    # (PER only, ≥2 capitalized tokens, non-overlapping, same shape/precision
+    # gates) because _sm's known FP mode is lowercase function-words — which
+    # the token-shape check excludes structurally. FP cost is a modal
+    # question; a miss is cleartext egress (handover §4.2 asymmetry).
+    "de": {"display": "Deutsch", "model": "de_core_news_md",
+           "recall_model": "de_core_news_sm"},
 }
 
 
@@ -277,6 +300,28 @@ def load_models(languages: tuple[str, ...] = ("de",)) -> None:
                 "[pii_ner] failed to load %s: %s — NER disabled for lang=%s",
                 model_id, e, lang,
             )
+            continue
+        # Recall net (best-effort): the small second model whose PERSON
+        # spans are unioned in by scan_text. Absence is fine — the main
+        # model keeps working alone.
+        recall_id = KNOWN_LANGUAGES.get(lang, {}).get("recall_model") or ""
+        if recall_id:
+            try:
+                import spacy
+                nlp_r = spacy.load(
+                    recall_id,
+                    disable=["parser", "tagger", "lemmatizer",
+                             "attribute_ruler"],
+                )
+                with _NLP_LOCK:
+                    _NLP_CACHE[lang + "#recall"] = nlp_r
+                _log.info("[pii_ner] loaded recall net %s (lang=%s)",
+                          recall_id, lang)
+            except Exception as e:
+                _log.warning(
+                    "[pii_ner] recall net %s unavailable (%s) — main "
+                    "model only for lang=%s", recall_id, e, lang,
+                )
 
 
 def is_available(lang: str = "de") -> bool:
@@ -292,6 +337,7 @@ def unload_model(lang: str) -> bool:
     subsequent `load_models` call retries fresh."""
     with _NLP_LOCK:
         nlp = _NLP_CACHE.pop(lang, None)
+        _NLP_CACHE.pop(lang + "#recall", None)
     _LOAD_FAILED.discard(lang)
     if nlp is None:
         return False
@@ -389,6 +435,55 @@ def scan_text(text: str, *, lang: str = "de",
         })
         if len(findings) >= max_findings:
             break
+
+    # Recall net (v9.342.0): union in PERSON spans the small second model
+    # sees but the main model missed (measured: de_core_news_md drops
+    # "Bonnie M Stark" in a German sentence; _sm tags it). Deliberately
+    # narrow — names only, ≥2 capitalized tokens (structurally excludes
+    # _sm's lowercase-function-word FP mode), no overlap with any main
+    # finding, and the same shape/precision gates as the main pass.
+    nlp_r = _NLP_CACHE.get(lang + "#recall")
+    if nlp_r is not None and len(findings) < max_findings:
+        try:
+            doc_r = nlp_r(text[:_MAX_SCAN_CHARS])
+        except Exception:
+            doc_r = None
+        if doc_r is not None:
+            taken = [(f["start"], f["end"]) for f in findings]
+            for ent in doc_r.ents:
+                if _LABEL_MAP.get(ent.label_) != "name":
+                    continue
+                value = ent.text.strip()
+                if len(value) < _MIN_ENTITY_CHARS:
+                    continue
+                if any(ent.start_char < e and ent.end_char > s
+                       for s, e in taken):
+                    continue  # overlaps a main-model finding
+                toks = value.split()
+                if len(toks) < 2 or not all(t[:1].isupper() for t in toks):
+                    continue
+                if sum(1 for t in toks if len(t.rstrip(".")) >= 2) < 2:
+                    continue  # need two substantial tokens ("M M" never)
+                if any(t.lower().strip(".,") in _RECALL_STOP_TOKENS
+                       for t in toks):
+                    continue  # inflected verb/adverb → title-case prose, not a name
+                if not _passes_shape_gate(value, "name"):
+                    continue
+                if name_precision and not _passes_name_precision_gate(
+                        value, text, ent.start_char):
+                    continue
+                findings.append({
+                    "rule_id": "name",
+                    "label": _LABEL_DISPLAY["name"],
+                    "start": ent.start_char,
+                    "end": ent.end_char,
+                    "len": ent.end_char - ent.start_char,
+                    "category": PII_RULE_CATEGORIES.get("name", "contact"),
+                    "source": "ner",
+                })
+                taken.append((ent.start_char, ent.end_char))
+                if len(findings) >= max_findings:
+                    break
     return findings
 
 
