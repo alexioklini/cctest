@@ -842,6 +842,25 @@ def wiki_from_chat(session_id, turn_ids=None, scope=None):
             "forth. Use headings and bullet points, organized by topic. Drop "
             "pleasantries, dead ends, and meta-chatter. Keep the user's language. "
             "Return ONLY the markdown body (no title line, no code fences).")
+        # M3 (G9) — the forgotten gate. This ships the RAW conversation corpus
+        # (~24 KB, straight from ChatDB, which stores the ORIGINALS — only the wire
+        # is rewritten) to the cloud `wiki_model`. Its neighbour `wiki_worth_saving`
+        # 90 lines up does gate; this one simply never did. Same seam, same shape.
+        #
+        # The de-anon on the way back is deliberate and NOT a leak: `organized` is
+        # about to be PERSISTED to the local wiki, which must hold real values (see
+        # the wiki_write entry in brain.GDPR_ARGS_DEANON_TOOLS). Storing the fakes
+        # here is what poisoned memory across sessions.
+        _wiki_deanon = _brain._identity_deanon
+        try:
+            model, (convo,), _wiki_deanon = _brain.gdpr_pick_model_for_background(
+                model, [convo], purpose="wiki")
+        except _brain.GDPRBlockedError as e:
+            print(f"[wiki] from-chat blocked by GDPR policy: {e}", flush=True)
+            return None
+        except Exception:
+            pass
+
         try:
             out = sidecar_proxy.background_call(
                 messages=[{"role": "user", "content": f"Conversation:\n\n{convo}"}],
@@ -855,7 +874,7 @@ def wiki_from_chat(session_id, turn_ids=None, scope=None):
                     if body.rstrip().endswith("```"):
                         body = body.rstrip()[:-3].rstrip()
                 if body:
-                    organized = body
+                    organized = _wiki_deanon(body)
         except Exception as e:
             print(f"[wiki] from-chat organize failed: {type(e).__name__}: {e}", flush=True)
 

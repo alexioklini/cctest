@@ -171,6 +171,17 @@ def _apply_bg_context(ctx: dict) -> None:
     tl.helpdesk_mode = bool(ctx.get("helpdesk_mode", False))
     tl.research_mode_override = ctx.get("research_mode_override", None)
     tl.gdpr_project_preset = ctx.get("gdpr_project_preset", "") or ""
+    # M1 (G1): the transparent-anonymisation mapping. Until v9.343 this field was
+    # the ONE context key background turns didn't rebuild — so the result seam,
+    # the args de-anonymiser AND the web-egress gate were all dead in every
+    # scheduler run, background task and fan-out leaf. `gdpr_bind_mapping`
+    # rehydrates from chats.db when the parent turn already close_mapping()'d it
+    # out of the in-memory registry (a detached task outlives its spawner).
+    _mid = ctx.get("gdpr_mapping_id") or ""
+    if _mid:
+        engine.gdpr_bind_mapping(_mid)
+    else:
+        tl._gdpr_mapping_id = ""
     tl.execution_overrides = ctx.get("execution_overrides") or {}
     tl.attachment_image_model = ctx.get("attachment_image_model") or ""
     tl._current_model = ctx.get("model") or None
@@ -282,7 +293,15 @@ def run_turn(
     except Exception:
         _ctx.event_callback = None
     _gdpr_mid = tool_context.get("gdpr_mapping_id") or ""
-    _ctx._gdpr_mapping_id = _gdpr_mid
+    # M1: bind via the rehydrating helper, not a bare assign. The interactive
+    # worker's mapping is always in the registry, but a SCHEDULED run reaches
+    # here on a fresh thread with only the id — and its mapping may only exist as
+    # the encrypted chats.db row. A bare assign would leave every seam pointing
+    # at a mapping `get_mapping()` can't resolve, i.e. silently unprotected.
+    if _gdpr_mid:
+        engine.gdpr_bind_mapping(_gdpr_mid)
+    else:
+        _ctx._gdpr_mapping_id = ""
     if _gdpr_mid:
         try:
             from handlers.chat import make_gdpr_after_file_write_cb
@@ -636,6 +655,7 @@ def background_call(
     temperature: float | None = None,
     prompt_cache_key: str = "",
     emit: Callable | None = None,
+    gdpr_mapping_id: str | None = None,
 ) -> dict:
     """Thin convenience wrapper around `run_turn_blocking` for background /
     non-interactive LLM calls.
@@ -666,7 +686,15 @@ def background_call(
     `cost_purpose`: the cost-ledger USE-CASE tag (chat_summary, translate_text,
     kg_extract, …) — SEPARATE from `purpose`, which must stay one of the 5
     tool-resolution purposes in `_VALID_PURPOSES`. Effective tag is: this arg →
-    else the request context's `cost_purpose` → else `purpose`."""
+    else the request context's `cost_purpose` → else `purpose`.
+
+    `gdpr_mapping_id` (M1): the transparent-anonymisation mapping this turn runs
+    under. `None` (default) INHERITS the calling context's mapping — the right
+    behaviour for calls nested inside a chat turn (ask_llm, classifier,
+    summariser): they run on the caller's thread, inside its fake world, and
+    must stay in it. Pass an explicit id for DETACHED turns that rebuild context
+    on a fresh thread (background task, delegate, scheduler), or `""` to force a
+    turn to run unmapped."""
     if provider_resolver is None:
         provider_resolver = engine.resolve_provider_for_model
     prov = provider_resolver(model)
@@ -691,6 +719,11 @@ def background_call(
         # Inherit the caller's project GDPR preset (L7a) — a background call
         # spawned from a KYC-project turn keeps the overlaid scanner config.
         "gdpr_project_preset": engine.get_request_context().gdpr_project_preset or "",
+        # M1: inherit the caller's anonymisation mapping unless the caller named
+        # one explicitly (detached turns) or forced "" (run unmapped).
+        "gdpr_mapping_id": (
+            engine.get_request_context()._gdpr_mapping_id or ""
+            if gdpr_mapping_id is None else gdpr_mapping_id),
         "execution_overrides": {},
         "attachment_image_model": "",
         "caveman_chat": 0,

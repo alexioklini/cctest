@@ -117,7 +117,12 @@ def tool_use_skill(args: dict) -> str:
                 break
     except OSError:
         pass
-    return _ok(out)
+    # M3: result seam. Static repo skills are PII-free, so this is a no-op for
+    # them — but skills can now be GENERATED FROM A CHAT ("SKILL.md aus Chat
+    # generieren", v9.294), and such a SKILL.md can quote real names/values from
+    # the conversation it was distilled from. Cheap insurance; no-op without an
+    # active mapping.
+    return _brain._gdpr_anon_tool_text(_ok(out), f"use_skill:{skill_name}")
 
 
 def _current_user_for_skills():

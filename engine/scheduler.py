@@ -1325,10 +1325,18 @@ class Scheduler:
                     # per-tool-call context rebuild is identical (project scope,
                     # team_ids, research_mode etc. all flow through). caveman_chat
                     # was set on the context from the task row earlier.
+                    # M1 (G1): carry the anonymisation mapping the GDPR gate just
+                    # minted (`_sched_deanon.mapping_id`, "" when nothing was
+                    # anonymised) into the turn. Without it the gate protected the
+                    # task PROMPT and nothing else — the run's tool loop then read
+                    # customer files in the clear and could google real names,
+                    # because the result seam, the args de-anonymiser and the
+                    # web-egress gate all key off this one context field.
                     _tool_context = _brain.build_tool_context(
                         session_id=sched_session_id,
                         agent_id=agent_id,
                         user_id=(task_row.get("user_id") or ""),
+                        gdpr_mapping_id=getattr(_sched_deanon, "mapping_id", "") or "",
                     )
                     _sampling = {
                         "temperature": sched_inf.get("temperature"),

@@ -1336,6 +1336,31 @@ Einlesen einer **unveränderten** Datei wird die Prüfung nicht wiederholt — d
 Übersteuerungen und die Anonymisierung werden wiederverwendet, du wirst nicht
 erneut gefragt.
 
+### Wo der Schutz überall greift (ab 9.343.0)
+
+Bisher wirkte der Schutz nur im Chat-Turn selbst. Jetzt auch dort:
+
+- **Geplante Aufgaben, Hintergrund-Recherchen und Delegationen** arbeiten in
+  derselben geschützten Sicht wie dein Chat. Vorher sahen sie die Klardaten und
+  konnten geschützte Namen ungefragt an Suchmaschinen schicken — das ist zu.
+- **Alle Wege nach außen sind gegatet**, nicht nur die Web-Suche: E-Mail-Versand,
+  Bildgenerierung und angebundene Fremd-Werkzeuge (MCP). Enthält ein Aufruf einen
+  geschützten Wert oder einen Platzhalter, wird er **verweigert** statt gesendet.
+- **Achtung Bildgenerierung:** `generate_image` schickt den Prompt **immer** an
+  einen Cloud-Dienst — auch wenn dein Chat auf einem lokalen Modell läuft.
+  Personenbezogene Prompts werden dort abgelehnt. Für Diagramme mit echten Namen
+  nimm **Diagramm rendern** (läuft lokal, bekommt die echten Werte).
+- **Anhänge werden neutral benannt.** Lädst du `KYC_Musterfrau_Ausweis.pdf` hoch,
+  liegt die Datei als `att_01.pdf` auf der Platte — der sprechende Dateiname
+  verrät sonst schon alles, egal wie gut der Inhalt geschützt ist. Der
+  Originalname geht durch die Prüfung wie jeder andere Text; der Agent kann die
+  Datei ganz normal lesen.
+- **E-Mail-Anhänge sind in anonymisierten Sitzungen gesperrt.** Die Datei auf der
+  Platte enthält die echten Werte — sie zu versenden wäre ein Klartext-Leck an der
+  Prüfung vorbei. Verschicke sie bewusst selbst, wenn du das willst.
+- Übersetzungen, Wiki-Einträge, E-Mail- und Verlaufs-Abfragen geben keine
+  Klardaten mehr an das Sprachmodell weiter.
+
 ---
 
 ## Übersetzung

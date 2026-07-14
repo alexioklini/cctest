@@ -127,6 +127,25 @@ def tool_generate_image(args: dict) -> str:
     if aspect_ratio and aspect_ratio != "1:1":
         full_prompt = f"{full_prompt}, aspect ratio {aspect_ratio}"
 
+    # M2 (G7) — UNCONDITIONAL cloud-egress check.
+    #
+    # This tool ALWAYS posts to api.mistral.ai (_MISTRAL_BASE), no matter which
+    # model the session runs on. That breaks the assumption every other guard
+    # rests on: "local model ⇒ nothing leaves the machine". It does not — the
+    # egress happens at the TOOL, not at the chat model. Session 5175bf8fdf70 sent
+    # a family tree (incl. who is deceased) to Mistral from a LOCAL session, where
+    # anonymisation never runs and the mapping-gated gate therefore sees nothing.
+    #
+    # So the mapping-based gate in the dispatcher is necessary but not sufficient
+    # here: it protects anonymising sessions. This scan protects the rest.
+    try:
+        _pii_egress_refusal = brain._gdpr_scan_cloud_egress(
+            full_prompt, tool_name="generate_image")
+        if _pii_egress_refusal:
+            return _pii_egress_refusal
+    except Exception:
+        pass  # scanner failure must not break image generation outright
+
     api_key = _mistral_api_key()
     if not api_key:
         return _err(

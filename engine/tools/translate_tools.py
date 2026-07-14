@@ -444,7 +444,15 @@ def tool_transcribe_audio(args: dict) -> str:
         return _err(f"transcribe_audio: {e}")
 
     out = {
-        "transcript": result["transcript"],
+        # M3: the transcript is a READ-style tool result and goes to the cloud
+        # model — it needs the same seam as read_document. Audio is a rich PII
+        # source (the ko-kunden corpus contains video-legitimation recordings:
+        # spelled-out names, dictated passport numbers). Note the DETECTION of
+        # verbalised PII ("B-O-N-N-E", "kbstart dot pacbell dot net") is a
+        # separate, open problem (G12/M9) — this seam pseudonymises whatever the
+        # scanner does recognise, and is a no-op without an active mapping.
+        "transcript": _brain._gdpr_anon_tool_text(
+            result["transcript"], "transcribe_audio"),
         "language": result["language"],
         "duration_s": result["duration_s"],
         "model": model_id,
@@ -470,7 +478,10 @@ def tool_transcribe_audio(args: dict) -> str:
                 source_lang=result["language"] or "",
                 glossary_slug=args.get("glossary") or "",
             )
-            out["translation"] = tr["translation"]
+            # M3 (G8): same leak as tool_translate_text — translate_text
+            # de-anonymises its own reply, and this result goes to the MODEL.
+            out["translation"] = _brain._gdpr_anon_tool_text(
+                tr.get("translation") or "", "transcribe_audio:translation")
             out["target_lang"] = tr["target_lang"]
             out["translation_model"] = tr["model"]
         except Exception as e:
@@ -550,6 +561,7 @@ def tool_generate_audio_overview(args: dict) -> str:
 # ─── Translation tools ──────────────────────────────────────────────────────
 
 def tool_translate_text(args: dict) -> str:
+    import brain as _brain
     text = args.get("text") or ""
     target_lang = (args.get("target_lang") or "").strip().lower()
     if not text:
@@ -566,6 +578,22 @@ def tool_translate_text(args: dict) -> str:
             model=(args.get("model") or "").strip(),
             tone=(args.get("tone") or "").strip(),
         )
+        # M3 (G8) — LEAK FIX, deterministic. `translate_text` is a background_call
+        # and is correctly GATED on the way in… but it then de-anonymises its own
+        # reply (`_xlate_deanon`, server_lib/translate/text.py:151), because
+        # `_anonymise_background_samples` reuses the SESSION mapping whenever
+        # current_session_id is set — which, on an interactive tool dispatch, it
+        # always is. So the translated text came back carrying the REAL values, and
+        # this tool handed it straight to the cloud model. Every translation of
+        # mapped content was a clear-text leak.
+        #
+        # Fixed at the TOOL boundary, not in translate_text itself: the same
+        # function also serves the translate UI (handlers/translate.py:330), where
+        # de-anonymising IS correct — the USER should see real text. The
+        # distinction is who consumes the result: model → fakes, user → real.
+        result = dict(result)
+        result["translation"] = _brain._gdpr_anon_tool_text(
+            result.get("translation") or "", "translate_text")
         return _ok(result)
     except ValueError as e:
         return _err(f"translate_text: {e}")

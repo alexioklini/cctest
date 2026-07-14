@@ -1779,6 +1779,51 @@ preamble goes in first-user-message instead.
 - Client interlock: `piiBlockActive(chat)` filters dropdown to local-only
   when scanner enabled + server_block + chat has PII.
 
+### Wave 2 (v9.343.0) — the protection now leaves the chat turn
+
+Everything above described the INTERACTIVE turn. Four leaks came from the
+protection existing only there.
+
+- **Every turn has a mapping** (M1). All three enforcement points read ONE field,
+  `RequestContext._gdpr_mapping_id` — result seam (`_gdpr_anon_tool_text`), args
+  de-anonymiser (`_gdpr_deanon_tool_args`), egress gate (`_gdpr_guard_web_args`) —
+  and all three NO-OP when it is empty. `_apply_bg_context` rebuilt ~20 context
+  fields and omitted that one, so **every scheduled run, fan-out leaf and
+  delegation ran unprotected**: only the entry prompt was gated, the whole agentic
+  tail was not (a sub-turn could `read_document` the customer file in cleartext and
+  google the real name). Now: `brain.gdpr_bind_mapping(mid)` binds it **and
+  rehydrates from chats.db** — the interactive worker `close_mapping()`s at turn
+  end, so a detached task that merely inherited the ID would find an empty registry
+  and silently run unprotected again. Sub-turns **inherit the parent mapping** (same
+  fake world, no "fake²"); the scheduler mints its own and keeps the ID;
+  `gdpr_persist_mapping` writes back what a leaf discovered. The gate is never
+  skipped (it also enforces ARL classification + the quota swap).
+- **Egress ≠ web** (M2). `EGRESS_TOOLS` = web ∪ `gmail_send`/`gmail_reply`/
+  `generate_image` ∪ MCP. `generate_image` always posts to Mistral **even from a
+  local session** — "local model ⇒ nothing leaves the machine" is false; the egress
+  happens at the TOOL. Shell/script args are **deny-by-default** now (the old
+  network blocklist knew neither `mail` nor `sendmail`/`osascript`/`gh`);
+  `python_exec` is judged by its imports, `execute_command` by its command tokens.
+  MCP results get a seam (it was the only seam-free tool path).
+- **Seam gaps** (M3). `translate_text` and `context_recall` were gated inbound but
+  RESTORED their own reply and returned real values unseamed → fixed at the TOOL
+  boundary (the same functions serve the UI, where restoring IS correct — the
+  consumer decides: model → fakes, human → real). `wiki_write` gets args-deanon so
+  **real values, not fakes, land on disk** (fakes persisted per-session were read by
+  later sessions as facts = permanent memory poisoning). Seams added on
+  `wiki_read`, `gmail_read/inbox/search`, `context_search/detail`, `use_skill`,
+  `transcribe_audio`; gates added on `wiki_from_chat` + `audio_overview`.
+- **Neutral attachment names** (M11). Uploads are saved as `att_01.pdf` (not
+  `CF_-_STARK_Bonnie_…pdf`) whenever the scanner is enabled; the ORIGINAL name is
+  injected as scanned content (`att_01.pdf = <original>`) so it is pseudonymised and
+  ledgered. The path stays real → `read_document` is unchanged. **Do not "fix" a
+  neutral filename** — it is deliberate.
+- **Never re-seam already-faked text.** Fakes are shape-preserving, real-looking
+  names: a second scan classifies them as fresh PII and mints fakes-of-fakes, which
+  breaks the reply de-anonymiser (the USER then sees the fake). This is why the
+  background-task preamble is NOT seamed (M1 already puts it in the right fake
+  world) and why the seam is not hoisted into the shared wire-injection helper.
+
 ## MemPalace integration
 
 Imported as a Python package — no MCP, no subprocess.

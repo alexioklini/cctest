@@ -575,7 +575,13 @@ def tool_ask_user(args: dict) -> str:
                 cb("user_input_received", {"session_id": session_id, "answer": answer_str})
             except Exception:
                 pass
-        return _ok({"answer": answer_str})
+        # M3 (G10): the user's answer is TYPED TEXT entering the wire, exactly like
+        # a composer message — and composer messages are scanned. This one was not:
+        # it went straight into the loop, so a name the user typed here reached the
+        # cloud model raw AND produced no ledger row (hence no self-heal on later
+        # turns). Same seam as any read-style result; no-op without a mapping.
+        return _brain._gdpr_anon_tool_text(
+            _ok({"answer": answer_str}), "ask_user:answer")
     finally:
         _brain._ask_user_clear(key)
         if task_id:

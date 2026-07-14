@@ -4450,6 +4450,20 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 project_name, pinned_sources)
                         _pin_pre, _pinned_sources_used = _pinned_cache
                         if _pin_pre:
+                            # M3 (G10): pinned sources inject the FULL document text
+                            # straight into the wire, bypassing the scanner AND the
+                            # ledger — so nothing was pseudonymised and no decision
+                            # row was written (which also means no self-heal on
+                            # later turns). Seam it like a tool read.
+                            #
+                            # NOT hoisted into _inject_web_preamble_into_wire (the
+                            # shared choke point): the WEB preamble that goes through
+                            # the same helper is already seamed by tool_web_fetch, and
+                            # a second pass would re-scan its fakes — which are
+                            # shape-preserving REAL-looking names — and mint
+                            # fakes-of-fakes.
+                            _pin_pre = engine._gdpr_anon_tool_text(
+                                _pin_pre, "pinned_sources")
                             _wire_messages = _inject_web_preamble_into_wire(
                                 _wire_messages, _pin_pre)
                     # Detached background tasks: any that FINISHED since the last
@@ -4460,6 +4474,28 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # transaction, so each task's output reaches the model once.
                     _bg_pre = _build_background_task_preamble(sid)
                     if _bg_pre:
+                        # M1+M3 (G10/F5). This preamble is injected AFTER the ledger
+                        # rewrite, so it was never pseudonymised — the F5 finding,
+                        # carried open from the L-catalog.
+                        #
+                        # M1 closes it BY CONSTRUCTION rather than by patching: a
+                        # task spawned from an anonymising session now inherits the
+                        # parent's mapping (background_tasks.py), so its output is
+                        # ALREADY in the parent's fake world when it lands here.
+                        #
+                        # Deliberately NOT seamed a second time. The fakes are
+                        # shape-preserving, real-looking names; re-scanning them
+                        # would classify them as fresh PII and mint fakes-of-fakes,
+                        # which is worse than the disease (it breaks the reply
+                        # de-anonymiser, so the USER would see the fake).
+                        #
+                        # RESIDUAL (documented, not silently ignored): a task spawned
+                        # BEFORE the session began anonymising ran unmapped, so its
+                        # output is raw. Its values are still caught on the FOLLOWING
+                        # turn by the pii_decisions ledger rewrite — one turn later
+                        # than ideal. Closing that fully needs a per-task mapping id
+                        # on the background_tasks row; deferred rather than faked with
+                        # a heuristic here.
                         _wire_messages = _inject_web_preamble_into_wire(
                             _wire_messages, _bg_pre)
                     # MoA (🧬): fan the PII-safe wire history out to the plan's
@@ -7276,12 +7312,62 @@ class ChatHandlerMixin:
         # consumed by the worker's anonymise block — keep it defined even
         # when no files were attached so the closure capture works.
         saved_paths: list[str] = []
+        # M11 (G14): {neutral basename → original filename} for THIS turn.
+        # Non-empty only when the scanner is on (see below).
+        attach_name_map: dict[str, str] = {}
         if disk_files:
             attach_dir = os.path.join("/tmp", "brain-attachments", session.id)
             os.makedirs(attach_dir, exist_ok=True)
-            for f in disk_files:
+
+            # M11 (G14) — NEUTRAL FILENAMES ON DISK.
+            #
+            # The attachment path is exempt from PII scanning (see
+            # _split_attachment_notice) for a hard reason: pseudonymising it would
+            # hand the model a FAKE path and read_document could not find the file.
+            # The L-catalog therefore filed the clear name in the path as an
+            # unavoidable leak. It is not unavoidable — it rests on the assumption
+            # that the file on disk MUST carry the user's filename. Brain creates
+            # that file itself; the name is ours to choose.
+            #
+            # So: neutralise the name at the SOURCE instead of repairing it in the
+            # wire. `CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf` → `att_01.pdf`. The
+            # path stays REAL (read_document works, byte-for-byte as before — no
+            # deanon round-trip, nothing can break), and it is now PII-free, so the
+            # exemption protects nothing but genuine boilerplate.
+            #
+            # The original name is not discarded — it is emitted BELOW as scanned
+            # CONTENT in the typed half, where the scanner and the ledger see it.
+            # It stops being a leak and becomes evidence: the filename is one of the
+            # F1 surface forms of the person's name (`STARK_Bonnie_M_Mrs.`), so it
+            # SEEDS the entity instead of escaping it.
+            #
+            # Gated on `gdpr_scanner.enabled`, NOT on an active mapping: the file is
+            # written at upload time, while the mapping is only minted during the
+            # scan a moment later. Deciding on the mapping would be a chicken-and-egg
+            # race; deciding on the scanner is deterministic and free. Scanner off →
+            # behaviour is exactly as before.
+            try:
+                _neutral_names = bool(
+                    engine._get_gdpr_scanner_config().get("enabled", True))
+            except Exception:
+                _neutral_names = False
+
+            for _i, f in enumerate(disk_files, start=1):
                 fname = f.get("name", "file")
                 safe_name = fname.replace("/", "_").replace("\\", "_")
+                if _neutral_names:
+                    # Take ONLY a plausible extension. `splitext` is not a filter:
+                    # on "../../etc/passwd" (separators already stripped to
+                    # ".._.._etc_passwd") it returns "._etc_passwd", which would
+                    # smuggle the attacker's string straight back into the neutral
+                    # name — defeating the point. read_document dispatches on the
+                    # extension, so it must be a real one or nothing.
+                    _ext = os.path.splitext(safe_name)[1].lower()
+                    if not re.fullmatch(r"\.[a-z0-9]{1,8}", _ext or ""):
+                        _ext = ""
+                    _neutral = f"att_{_i:02d}{_ext}"
+                    attach_name_map[_neutral] = fname
+                    safe_name = _neutral
                 fpath = os.path.join(attach_dir, safe_name)
                 content = f.get("content", "")
                 if f.get("encoding") == "base64":
@@ -7347,6 +7433,25 @@ class ChatHandlerMixin:
                 ocr_block = (_OCR_BLOCK_MARKER
                              + "(Text via OCR + deterministische Merkmale):]\n\n"
                              + "\n\n".join(image_descs))
+
+            # M11 (G14): the original filenames, as CONTENT in the typed half.
+            #
+            # Two things happen because this sits here and not in the notice:
+            #  1. It is SCANNED (the notice half is exempt) — so a name in a
+            #     filename is pseudonymised and enters the pii_decisions ledger like
+            #     any other value, instead of riding into the wire untouched. That
+            #     also covers the sharpest specimen in the corpus: an attachment
+            #     literally named `Alcuatmisi02026!.txt` — a PASSWORD.
+            #  2. The model still knows WHAT each file is (it reads the mapping
+            #     line), so nothing about its behaviour changes — it just sees the
+            #     pseudonymised name, exactly as it sees pseudonymised body text.
+            name_block = ""
+            if attach_name_map:
+                _lines = "\n".join(f"  {n} = {orig}"
+                                   for n, orig in attach_name_map.items())
+                name_block = ("\n\n[Originaldateinamen der Anhänge "
+                              "(Datei auf der Platte = Originalname):]\n" + _lines)
+            ocr_block = ocr_block + name_block
             message = message + ocr_block + notice
             if isinstance(user_content, str):
                 user_content = user_content + ocr_block + notice

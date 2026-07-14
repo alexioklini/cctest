@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.342.0"
+VERSION = "9.343.0"
 VERSION_DATE = "2026-07-14"
 CHANGELOG = [
+    ("9.343.0", "2026-07-14", "feat(PII-Parität WELLE 2 — M1/M2/M3/M11 aus PII_PARITY_WAVE2_HANDOVER.md: die vier LECK-STOPPS. Die erste Welle (L1-L7) war an EINEM Chat kalibriert (58e3c521438a, KYC einer Privatperson); die Wellen-2-Analyse zeigte, dass der Schutz nur im interaktiven Chat-Turn existierte und an drei Rändern brach. Diese Lieferung schließt die vier Lecks, die die Zusage 'anonymisiert' schlicht falsch machten — die QUALITÄTS-Bausteine (M4/M5 Org-Entitäten + Auto-Release, M6 Tabellen, M9 Erkennungs-Netz) bleiben bewusst offen. (M1/G1 — DER SCHWERSTE BEFUND: `_apply_bg_context` rekonstruierte ~20 Kontextfelder für Background-Turns, `_gdpr_mapping_id` war NICHT dabei. An DIESEM einen Feld hängt ALLES: Result-Seam, Args-Deanon UND das Web-Egress-Gate — alle drei no-op'en bei leerem Feld. Also lief JEDER geplante Task, JEDER Fan-out-Leaf und JEDE Delegation komplett ungeschützt: `read_document` auf die Kundenakte lieferte Klartext ans Cloud-Modell, und ein `searxng_search` im Sub-Turn durfte Klarnamen ungehindert googeln — exakt das Leck, das L4 im Chat geschlossen hat, eine Ebene tiefer. NEU: `brain.gdpr_bind_mapping(mid)` bindet das Mapping auf den Request-Context und REHYDRIERT es dabei aus chats.db — nicht optional: der interaktive Worker ruft `close_mapping()` in seinem finally, der Registry-Eintrag ist also weg, während ein detached Background-Task noch eine Stunde läuft; ein Sub-Turn, der die ID nur GEERBT hätte, fände `get_mapping()` → None und jeder Seam würde das als 'keine Anonymisierung aktiv' lesen — G1 wäre durch die Hintertür wieder offen, ausgerechnet auf den langen Fan-outs, für die der Fix existiert. Sub-Turns ERBEN das Parent-Mapping (bg-task via Session-Snapshot, delegate via Request-Context, Scheduler mintet eigenes und BEHÄLT die ID); `gdpr_persist_mapping` schreibt Erweiterungen zurück, damit der Parent die neuen Tokens umkehren kann. Der Gate wird dabei NIE übersprungen (er erzwingt auch ARL-Klassifikation + Quota-Swap — orthogonal zur Pseudonymisierung). LECK-FIX nebenbei: `delegate_task` DE-anonymisierte seine Antwort (`_del_deanon`, brain.py:9065) und reichte damit ECHTE Werte als ungeseamtes Tool-Result an genau das Cloud-Modell zurück, vor dem das Mapping sie schützen soll — entfällt, wenn das Mapping geteilt wird (die Antwort ist bereits in der richtigen Fake-Welt). NICHT im Gate gebunden, obwohl das alle 26 Aufrufer auf einen Schlag gefixt hätte: `_anonymise_background_samples` läuft auf dem CALLER-Thread, und die Pool-Aufrufer (deep_research, kg_extract) dispatchen via `copy_context().run(...)` — das kopiert die ContextVar-BINDINGS, nicht das RequestContext-OBJEKT dahinter; eine Attribut-Mutation dort blutet in die Geschwister-Tasks UND zurück in den Parent (mit einem Scratch-Skript nachgewiesen). Der Gate MELDET die ID jetzt nur (`deanon_fn.mapping_id`, auf jedem Rückgabepfad gesetzt) — gebunden wird nur dort, wo ein frischer RequestContext existiert.) (M2/G7 — EGRESS IST MEHR ALS WEB: das L4-Gate war auf WEB_SEARCH_TOOLS gescopet; alles andere, was die Maschine verlässt, war ungegated. NEU `EGRESS_TOOLS` = Web ∪ {gmail_send, gmail_reply, generate_image} ∪ MCP (dynamisch erkannt). gmail: Live-Specimen 30051b1f4439 — das Modell rief `gmail_send(to='<EMAIL_1_a812>', body='…IBAN DE38…')` und der SMTP-Send GING REAL RAUS; er scheiterte nur daran, dass das opake Token zufällig keine RFC-gültige Adresse ist — eine shape-preserving Fake-Adresse (die Pipeline erzeugt genau solche!) WÄRE ZUGESTELLT WORDEN. Anhänge sind bei aktivem Mapping jetzt FAIL-CLOSED: die Artefakt-Datei auf Platte ist bereits rückübersetzt (L6), eine Mail mit Fake-Body + Klartext-Anhang wäre der Egress am Gate vorbei. generate_image postet IMMER an api.mistral.ai — auch aus einer LOKALEN Session, wo gar keine Anonymisierung läuft und es kein Mapping zu gaten gibt (5175bf8fdf70: Familien-Stammbaum inkl. Verstorbenen-Status); daher zusätzlich ein mapping-UNABHÄNGIGER Cloud-Egress-Scan (`_gdpr_scan_cloud_egress`) — die Annahme 'lokales Modell ⇒ nichts verlässt die Maschine' bricht AM TOOL, nicht am Chat-Modell. SHELL-SEITENTÜR auf DENY-BY-DEFAULT gedreht: `_DEANON_NETWORK_MARKER_RE` war eine Blocklist (deanonymisiere, AUSSER ein Marker taucht auf) und kannte weder `mail` noch `sendmail`/`msmtp`/`osascript`/`gh` — b4edbc9dc8e7 zeigt das Modell bei `mail -s 'IBAN <fake>' …` und `sendmail … <<< …`; damals scheiterte es an zsh-Syntax, mit L3a würde es heute eine ECHTE IBAN verschicken. Eine Blocklist ist gegen einen kreativen Agenten strukturell verloren. `_deanon_string_is_local_safe` prüft jetzt POSITIV auf 'lokal' — und zwar GETRENNT je Tool, weil das Exfiltrations-Risiko verschieden ist: python_exec = keine Netz-Marker + jeder `import` aus einer Lokal-Liste (ein Token-Allowlisting wäre eine Kategorieverwechslung — `df = …`, `for r in …`, `print(…)` sind keine Kommandos, und die erste Fassung verweigerte damit JEDE pandas/openpyxl-Analyse: das hätte das Leck gegen eine stille QUALITÄTS-Regression getauscht, also genau den Fehler, den die Welle verhindern soll); execute_command = jedes Token in Kommando-Position aus einer Lokal-Liste. Kalibriert: 0 Lecks / 20 Egress-Versuche, 0 False-Negatives / 14 legitime Lokal-Operationen. MCP-Ergebnisse bekommen einen Result-Seam — MCP war der EINZIGE komplett seam-freie Tool-Pfad im Dispatcher.) (M3/G8+G9+G10 — DIE SEAM-LÜCKEN: `translate_text` ist ein background_call und korrekt gegatet — stellt seine Antwort dann aber per `_xlate_deanon` WIEDER HER (weil `_anonymise_background_samples` das Session-Mapping wiederverwendet, sobald current_session_id gesetzt ist — beim interaktiven Dispatch immer) und gab die ECHTEN Werte ungeseamt ans Cloud-Modell: deterministischer Klartext-Leak bei JEDER Übersetzung gemappter Inhalte. Gefixt an der TOOL-Grenze, nicht in `translate_text` selbst (der Handover schlug letzteres als 'sauberer' vor): dieselbe Funktion bedient die Übersetzungs-GUI, wo die Rück-Übersetzung KORREKT ist — die Nutzerin SOLL echten Text sehen. Unterscheidungskriterium ist der KONSUMENT: Modell → Fakes, Mensch → echt. Ebenso `context_recall` (gleiche Form: inbound gegatet, outbound restauriert, Rückgabe ungeseamt). `wiki_write` bekommt ARGS-DEANON (Echtwerte auf Platte): vorher persistierte es die FAKES des Modells und spiegelte sie in die Wings — das Mapping ist per Session, also las Session B die Fakes aus Session A als vermeintliche Fakten: weder umkehrbar noch konsistent zum eigenen Mapping = dauerhafte Gedächtnis-Vergiftung, die mit jeder Session schlimmer wird. `wiki_read` (+Baum: Seitentitel SIND eine Namens-Oberfläche), `gmail_read/inbox/search` (fremde Mail-Bodies), `context_search/detail` (der Lossless-DAG speichert die ORIGINALE — die Tools hatten NULL GDPR-Bezug), `use_skill` (Skills können seit v9.294 AUS CHATS generiert werden), `transcribe_audio` (Transkript + verkettete Übersetzung) bekommen Result-Seams. `wiki_from_chat` schickte den rohen ~24-KB-Korpus ungegatet ans wiki_model — ein VERGESSENER Call, kein Design: der Nachbar `wiki_worth_saving` gatet 90 Zeilen höher korrekt; ebenso audio_overview (2 Stellen). Getippter Text, der am Scanner vorbeilief, wird jetzt gescannt UND geledgert (sonst kein Self-Heal): Pinned Sources, POST /v1/chat/inject, ask_user-Antworten. Der BG-Task-Preamble (F5 aus dem L-Katalog) ist durch M1 KONSTRUKTIV geschlossen statt gepatcht — der Leaf erbt das Parent-Mapping, sein Output kommt also bereits in der richtigen Fake-Welt an; ein zweiter Seam wäre hier AKTIV SCHÄDLICH: Fakes sind shape-preserving, real aussehende Namen, ein Re-Scan klassifiziert sie als frische PII und mintet Fakes-von-Fakes — was den Reply-Deanonymisierer bricht, d.h. die NUTZERIN sähe den Fake. Aus demselben Grund NICHT in `_inject_web_preamble_into_wire` (den geteilten Choke-Point) gehoben: der Web-Preamble kommt bereits geseamt aus `tool_web_fetch`. DOKUMENTIERTER REST: ein Task, der VOR Beginn der Anonymisierung gestartet wurde, lief ungemappt — seine Werte fängt der Ledger-Rewrite einen Turn später; sauber wäre eine mapping_id-Spalte auf background_tasks (vertagt statt mit einer Heuristik gefaked).) (M11/G14 — DER KLARNAME IM PFAD, im L-Katalog als 'bewusst, unvermeidbar' fehlklassifiziert: der Attachment-Pfad ist scan-EXEMPT (NER halluziniert auf Boilerplate; ein pseudonymisierter Pfad bricht `read_document`) — die Einordnung war falsch, denn sie unterstellt, die Datei auf Platte MÜSSE den Nutzer-Dateinamen tragen. Brain legt sie selbst an. Also wird der Name AN DER QUELLE neutralisiert statt im Wire repariert: `CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf` → `att_01.pdf`. Der Pfad bleibt ECHT (read_document funktioniert byte-gleich, kein Deanon-Roundtrip, nichts kann brechen) und ist jetzt PII-FREI — die Exemption schützt danach nur noch echtes Boilerplate. Der Originalname wird zu gescanntem INHALT in der typed half (`att_01.pdf = <Original>`) und landet damit im Scanner UND im Ledger: aus dem Leck wird Evidenz (der Dateiname ist eine der F1-Oberflächenformen und SEEDET die Entität). Trifft jeden Cluster hart: risikoanalysen nennt in JEDEM Dateinamen Subjekt UND Prüfzweck ('Geldwäsche Risikoanalyse M&P AM_2025.xlsx' — das Analyse-Subjekt war gegenüber dem Cloud-Provider de facto deanonymisiert, egal wie gut der Inhalt geschützt war); ko-kunden ist über `CF_-_…_STARK_Bonnie_M_Mrs._107625_…` indexiert; härtester Einzelfall `Alcuatmisi02026!.txt` (4a6b889aee66) — ein PASSWORT als Dateiname, das per Exemption ungescannt in den Wire ging. Gegatet auf `gdpr_scanner.enabled`, NICHT auf ein aktives Mapping: die Datei entsteht beim Upload, das Mapping erst beim Scan — eine Mapping-Bedingung wäre ein Henne-Ei-Rennen. Beifang beim Testen gefunden: `splitext` ist kein Filter — bei '../../etc/passwd' (Separatoren bereits zu '.._.._etc_passwd' gestrippt) liefert es die 'Endung' '._etc_passwd', die den Angreifer-String in den neutralen Namen zurückgeschmuggelt hätte; jetzt nur eine plausible Endung (`\\.[a-z0-9]{1,8}`) oder gar keine.) NEU: tests/test_gdpr_mapping_every_turn.py (11 — inkl. Mutations-geprüft: reintroduziert man G1, schlägt der Gate-Test mit genau seiner Fehlermeldung fehl), tests/test_gdpr_egress_gate.py (13 — die Kalibrierungs-Matrix in beide Richtungen), tests/test_attachment_neutral_names.py (9). 39 Test-Module grün. py_compile + AST-Scope-Check über alle 15 berührten Dateien (drei gmail-Read-Tools hatten kein lazy `import brain as _brain` — ein NameError, den py_compile NICHT sieht). KURATIERTER Eintrag (user+admin)."),
     ("9.342.0", "2026-07-14", "fix(PII-Nebenbefund-Katalog aus dem L7-Live-E2E — 4 gezielte Härtungen; ausgenommen bewusst: Kilo-Multimodal-400 und der Upstream-Stream-Stall). (1) NER-RECALL-NETZ (der Turn-1-Wire-Leak des E2E): de_core_news_md taggt 'Bonnie M Stark' im getippten deutschen Satz NICHT (reproduziert; das kleine _sm-Modell tut es — md verlor genau die Middle-Initial-Form). NEU: KNOWN_LANGUAGES trägt ein `recall_model` (de_core_news_sm, ~15MB), load_models lädt es best-effort als '<lang>#recall', scan_text unioniert dessen PERSON-Spans ENG GEGATED dazu: nur name, ≥2 kapitalisierte Tokens mit ≥2 substanziellen (schließt _sm's lowercase-FP-Modus strukturell aus), kein Overlap mit Haupt-Findings, gleiche shape/precision-Gates, plus NEU _RECALL_STOP_TOKENS (flektierte Verben/Adverbien: 'Der Bericht Wurde Gestern Erstellt' feuert nie — ein echter Name enthält kein flektiertes Verb). FP-Kosten = eine Rückfrage, Miss = Klartext-Egress (Handover-§4.2-Asymmetrie). unload_model droppt den Recall-Eintrag mit. (2) SESSION-DELETE PURGT pii_decisions (ChatDB.delete_session): der Ledger ist append-only INNERHALB einer Session, aber nach deren Löschung sind die Zeilen Waisen mit raw_value-KLARTEXT, die kein Reader mehr erreicht (gemessen: 468 Zeilen nach dem E2E) — DSGVO-widrig, jetzt mit pseudonym_maps zusammen gedroppt. (3) GENITIV-RENDERING (engine/identity.py render_variant): Einzelbuchstabe direkt nach Apostroph ist ein Klitik-Suffix, KEIN Initial — vorher verbrauchte das lone `s` aus 'Bonnie Stark''s' den nächsten freien Vornamens-Slot und renderte 'Cameron Taylor''m' (im E2E-Ledger gemessen); jetzt verbatim → 'Cameron Taylor''s'. Initialen-/MRZ-Formen regressionsfrei. (4) DATUMS-PADDING-DETERMINISMUS (pseudonymizer.Mapping.record, der L2-Edge aus dem v9.340-Golden): '5 FEB 1947' und '05 FEB 1947' kollidieren auf demselben Fake, sobald der Offset den Tag zweistellig macht — reverse konnte nur last-write-wins. Jetzt: kollidieren zwei Originale, die auf DASSELBE Kalenderdatum parsen (_parse_date_surface), behält reverse deterministisch die LÄNGERE (gepaddete) Form — in beiden Registrierungs-Reihenfolgen; beide forward-Einträge bleiben; Nicht-Datums-Kollisionen behalten das Bestandsverhalten. BEIFANG: tests/test_web_egress_gate hatte einen VORBESTEHENDEN Ordnungs-Flake (auf HEAD verifiziert): läuft die Suite NACH test_pii_ner (geladene spaCy-Modelle im Prozess), sieht der Gate-Zusatz-Scan zusätzliche NER-Findings und 3-4 Ask-Tests kippen — _GateTestBase isoliert jetzt _NLP_CACHE (save/clear/restore). NEU tests/test_l7_cleanup_fixes.py (14: E2E-Miss gefangen, Title-Case-Prosa feuert nie, Standard-Sätze unverändert, Recall-fehlt-graceful, unload-Symmetrie, Delete-Purge mit Nachbar-Session-Überleben, Genitiv beide Apostroph-Typen + Initialen/MRZ-Regression, Padding beide Reihenfolgen + forward-Erhalt + Nicht-Datum-last-wins + distinkte-Daten-nie-gemerged). 269 Tests der GDPR-Familie grün — auch in der zuvor brechenden pii_ner-zuerst-Reihenfolge. py_compile OK. Kein Schema-/Tool-Change → kein Warmup-Reprime. Server-Restart nötig (Recall-Modell lädt beim Boot). KURATIERTER Eintrag (user)."),
     ("9.341.1", "2026-07-14", "fix(KYC-Preset: Erster-Send-Lücke — beim ALLERERSTEN Send einer frischen Projekt-Session ist session.project noch leer (wird erst im Worker gestempelt), der Sticky-Block in _handle_chat löste den Preset also über einen leeren Projektnamen auf → kein Auto-Anonymise auf Turn 1. Fix: Preset-Auflösung nutzt `project_name or session.project` (project_name = body.project, in _handle_chat in Scope). Beim Live-E2E VOR dem ersten Test-Send gefunden und gefixt; der E2E lief anschließend mit dem Fix (Mapping ab Turn 1 ohne Modal verifiziert). Tests: test_gdpr_project_preset + test_chat_worker_helpers grün (40)."),
     ("9.341.0", "2026-07-14", "feat(KYC-Preset + Degradations-Anzeige + web_egress-GUI — L7 aus PII_ANALYSIS_PARITY_HANDOVER.md, der LETZTE Baustein der PII-Analyse-Paritäts-Serie L1-L7). PROBLEM: die L1-L6-Mechanik existiert, aber (a) sie zu AKTIVIEREN hieß config.json von Hand editieren (gdpr_scanner global enabled + contact=ignore-Loch + web_egress ohne GUI-Knob), und (b) der Analyst sieht NICHT, WARUM eine anonymisierte Antwort anders ausfällt — eine datenschutzbedingte Lücke liest sich als Analysebefund (UX-Seite von F4/F6). NEU: (L7a) PER-PROJEKT-GDPR-PRESET `project.json → gdpr_preset` ('' | 'kyc' | 'kyc_local'), Editor in den Projekt-Einstellungen (Projektmodus-Sektion, Select + Handler setProjectGdprPreset — EIN neues JS-Global, Baseline 1995→1996): 'kyc' = Scanner in diesem Projekt IMMER an, web_egress='ask' (Consent pro Wert, L4-P2), name-Regel aus dem contact=ignore-Loch gehoben (NUR verstärkend: rule_overrides.name→warn nur wenn effektiv ignore — ein explizit stärkeres Admin-Setting bleibt; exakt die live-validierte Konfiguration der Session-3/5-Verifikationen), doc_checks-Tools (mrz_verify/doc_dates_check/identity_consistency) in-prompt undeferred (Projekt-Sessions claimen nie den Warm-Pool → kein KV-Kostenpunkt), Auto-Anonymise AB TURN 1 ohne Modal (der Preset IST der stehende Consent; expliziter User-Opt-out/Pref gewinnt weiter); 'kyc_local' = die im Handover geforderte ehrliche Alternative: JEDER nicht-lokale Turn des Projekts swappt aufs default_local_fallback_model (kein Egress überhaupt; fail-loud 400 wenn keines konfiguriert) + background_pii_action='swap_to_local'. MECHANIK: Overlay per KOPIE auf dem gecachten Global-Config (_gdpr_apply_project_preset; der unkeyed 30s-Cache bleibt Preset-frei, NIE in-place mutiert — mehrere Caller halten dasselbe Objekt), Auflösung expliziter preset=-Param (HTTP-Handler-Threads: Sticky-Block, block_group-Check, Cleartext-Persist-Scan) > RequestContext-Feld gdpr_project_preset (NEU; gesetzt von apply_domain_context aus project.json, gesnapshottet in build_tool_context, restauriert in sidecar_proxy._apply_bg_context — Background-Calls aus KYC-Turns erben den Overlay, gdpr_pick_model_for_background sieht ihn automatisch) > global. update_project validiert (GDPR_PROJECT_PRESETS) und koppelt research_mode=True beim AKTIVIEREN (expliziter research_mode im selben Update gewinnt; §L7a Research-Discipline). Client: GET /messages exponiert gdpr_project_preset; sendMessage überspringt das PII-Modal in Preset-Projekten (Preset→gdpr_action anonymise/local_model; ARL-klassifizierte Dateien behalten ihren Dialog; Server erzwingt unabhängig davon). (L7b) DEGRADATIONS-ANZEIGE pro Turn: NEUES RequestContext-Feld _gdpr_degradation (Counts, NIE Werte) — getallied in _web_gate_audit (web_blocked/web_denied/web_released/web_allowed, dem EINEN Choke-Point aller Gate-Entscheidungen), llm_loop.dispatch_tool (doc_checks-Calls bei aktivem Mapping) und dem PDF-Fail-loud-Callback (pdf_refused); vom Worker in metadata.gdpr_degradation gedraint (neben dem bestehenden metadata.gdpr). chat_render.js zeigt einen kompakten Schild-Streifen unter der Antwort ('Datenschutz dieser Antwort: Websuche 2× nicht ausgeführt (geschützte Werte) · Dokument-Prüfung serverseitig (3×) · 1 Wert nicht rückübersetzbar' — merged metadata.gdpr_unrestored ein; Tooltip: 'datenschutzbedingte Einschränkung ist KEIN Analysebefund'). Kein neues Global (inline im renderAssistantMessage, Muster web_sources/pinned_sources). (L7c) web_egress-GUI-KNOB: Select in Settings→GDPR→Master-Schalter (4 Modi deutsch beschriftet, 'ask' als KYC-Empfehlung markiert), collectGdprFormConfig sendet ihn mit, POST /v1/services/server validiert gegen _WEB_EGRESS_MODES, GET services liefert ihn (admin_artifacts, vorher fehlte der Key im expliziten Antwort-Dict → UI hätte den Ist-Zustand nie gesehen). NEU tests/test_gdpr_project_preset.py (22: Overlay-Felder beide Presets, Cache-Nie-Mutiert (json-Snapshot), only-strengthen name=block, Param>Kontext>Global-Auflösung, Kontext-Bleed-frei, apply_domain_context set/reset+undefer, build_tool_context/_apply_bg_context-Roundtrip, update_project-Validierung+research_mode-Kopplung (explizit gewinnt, Deaktivierung koppelt nicht), Gate-Audit-Tally per kind + werte-frei). 233 Nachbar-Tests grün (web_egress_gate, dispatch_symmetry, pseudonymizer×3, pii_ner, chat_worker_helpers, request_context_isolation, report_fidelity, mrz_entity_seed, doc_checks, gdpr_×3) + llm_loop_stream_stability (8). js_gate GRÜN (Baseline bewusst 1995→1996, Smoke 3 passed/2 flaky-retried). py_compile OK. Schema unverändert (kein neues Tool) → kein Warmup-Reprime. Server-Restart nötig. KURATIERTER Eintrag (user+admin). Damit ist L1-L7 KOMPLETT; offen bleiben nur die gebündelten Live-E2Es (L4-P2+L5+L6+L7, echte UI-Session im Projekt ko-kunden)."),
@@ -1469,6 +1470,57 @@ TOOL_GROUPS = {
 # minus nothing (every web-reaching tool belongs here). feedback_single_fix_point.
 WEB_SEARCH_TOOLS = ["web_fetch", "exa_search", "searxng_search",
                     "science_search", "dev_search", "image_search", "news_search"]
+
+# M2 (G7): the web tools are not the only way OFF this machine — they were just
+# the only ones the L4 gate looked at. Everything below hands data to a third
+# party just as irreversibly, and ran completely ungated:
+#
+#   gmail_send/gmail_reply → smtp.gmail.com. Live specimen (session 30051b1f4439):
+#       the model called gmail_send(to="<EMAIL_1_a812>", body="…IBAN DE38…") and
+#       the send REALLY WENT OUT — it failed only because that opaque token
+#       happens not to be a valid address. A shape-preserving fake address (this
+#       pipeline mints exactly those) would have been DELIVERED to a stranger.
+#   generate_image → api.mistral.ai, ALWAYS, regardless of the session model
+#       (image_gen.py:35) — so even a LOCAL session, where anonymisation never
+#       runs, ships its prompt to the cloud.
+#   MCP tools → an arbitrary, possibly REMOTE server.
+#
+# Kept as a separate set from WEB_SEARCH_TOOLS because the web-LOCKOUT
+# (exclude_tools) still means "the web group", while the GATE means "anything
+# that leaves the machine". Same gate semantics for all of them: fakes always
+# refuse; known originals follow the policy; a fresh scan catches third-party PII.
+_EGRESS_EXTRA_TOOLS = frozenset({
+    "gmail_send", "gmail_reply", "generate_image",
+})
+
+# Egress tools known by name. MCP tools are matched dynamically (see
+# `_is_egress_tool`) since their names come from the connected servers.
+EGRESS_TOOLS = frozenset(WEB_SEARCH_TOOLS) | _EGRESS_EXTRA_TOOLS
+
+
+def _is_mcp_tool(tool_name: str) -> bool:
+    """True when `tool_name` is served by an MCP server (not a built-in).
+
+    Resolved against the live manager rather than a static list — MCP tool names
+    come from whatever servers are connected. Falls CLOSED (True) is NOT possible
+    here (we'd gate every unknown built-in), so it falls open to False and the
+    dispatcher's built-in lookup decides; the gate only consults this for names
+    that are NOT in TOOL_DISPATCH."""
+    try:
+        if tool_name in TOOL_DISPATCH:
+            return False
+        mgr = get_request_context().mcp_manager or _mcp_manager
+        if mgr is None:
+            return False
+        return tool_name in (getattr(mgr, "_tool_to_server", {}) or {})
+    except Exception:
+        return False
+
+
+def _is_egress_tool(tool_name: str) -> bool:
+    """Does calling this tool hand data to a third party? (M2/G7)"""
+    return tool_name in EGRESS_TOOLS or _is_mcp_tool(tool_name)
+
 
 # Default tool groups included for all agents (if no explicit config)
 DEFAULT_TOOL_GROUPS = {"core", "memory", "context", "web", "delegation", "git", "skills",
@@ -3124,6 +3176,75 @@ def _review_anon_override(text: str, source: str) -> str | None:
     return None
 
 
+def gdpr_bind_mapping(mapping_id: str) -> bool:
+    """M1 — bind `mapping_id` onto the CURRENT request context, rehydrating the
+    mapping from `pseudonym_maps` when the in-memory registry no longer holds it.
+
+    This is the single entry point every NON-interactive turn (scheduler,
+    background task, delegate, fan-out leaf) uses to join the parent session's
+    fake world. Everything GDPR hangs off `_gdpr_mapping_id`: the tool-result
+    seam (`_gdpr_anon_tool_text`), the args de-anonymiser
+    (`_gdpr_deanon_tool_args`) and the egress gate (`_gdpr_guard_web_args`) all
+    read it and no-op when it's empty — which is exactly why a background turn
+    without it ran completely unprotected (G1).
+
+    The rehydration is NOT optional bookkeeping. The interactive worker calls
+    `pseudonymizer.close_mapping()` in its `finally`, dropping the mapping from
+    the in-memory registry the moment the spawning turn ends — while a detached
+    background task may still run for another hour. A sub-turn that merely
+    inherited the ID would then find `get_mapping()` → None and silently fall
+    back to "no mapping active", i.e. re-open G1 through the back door on
+    exactly the long fan-outs this fix exists for. The encrypted row in
+    chats.db outlives `close_mapping`, so we reload from it.
+
+    Returns True when a usable mapping is now bound. Never raises: on failure
+    the context is left WITHOUT a mapping, which is the safe direction for the
+    seams (they anonymise nothing) but NOT for egress — callers that gate on
+    this must treat False as "no protection available" (see the fail-closed
+    check in `_gdpr_guard_egress_args`).
+    """
+    if not mapping_id:
+        return False
+    try:
+        import pseudonymizer as _ps
+        m = _ps.get_mapping(mapping_id)
+        if m is None:
+            m = _ps.load_mapping(mapping_id)
+            if m is not None:
+                _ps.restore_mapping_to_registry(m)
+        if m is None:
+            print(f"[gdpr] bind FAILED mapping={mapping_id[:12]} — not in "
+                  f"registry and not persisted; turn runs UNMAPPED", flush=True)
+            return False
+        get_request_context()._gdpr_mapping_id = mapping_id
+        return True
+    except Exception as e:
+        print(f"[gdpr] bind FAILED mapping={mapping_id[:12]}: {e}", flush=True)
+        return False
+
+
+def gdpr_persist_mapping(mapping_id: str, session_id: str, turn_id: str = "") -> None:
+    """Persist a mapping a NON-interactive turn extended (M1).
+
+    A sub-turn that reads a new document mints new fakes into the SHARED parent
+    mapping. Without a save, those tokens die with the sub-turn's registry entry
+    and the parent's next turn can neither reverse them (the delivered result
+    would keep raw tokens) nor reuse them (the same value would get a SECOND
+    fake — the F1 split-brain the entity layer exists to prevent).
+
+    `save_mapping` is idempotent per mapping_id, so re-saving the shared mapping
+    is safe. Best-effort — never raises."""
+    if not (mapping_id and session_id):
+        return
+    try:
+        import pseudonymizer as _ps
+        m = _ps.get_mapping(mapping_id)
+        if m is not None:
+            _ps.save_mapping(m, session_id=session_id, turn_id=turn_id or "background")
+    except Exception as e:
+        print(f"[gdpr] persist failed mapping={mapping_id[:12]}: {e}", flush=True)
+
+
 def _gdpr_anon_tool_text(text: str, source: str) -> str:
     """Pseudonymise text returned from a read-style tool, if the active
     session has a transparent-anonymisation mapping.
@@ -3550,8 +3671,14 @@ def _web_release_translate_args(args, pairs: list):
 
 
 def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
-    """Web-egress gate: refuse a web-tool call whose args contain protected
-    session values (originals), pseudonyms/tokens (fakes), or fresh person-PII.
+    """EGRESS gate: refuse a call that would hand protected session values
+    (originals), pseudonyms/tokens (fakes) or fresh person-PII to a third party.
+
+    Name kept for its L4 lineage, but the scope is no longer just the web
+    (M2/G7): it guards every tool in `EGRESS_TOOLS` — the web tools PLUS
+    gmail_send/gmail_reply (smtp.gmail.com), generate_image (api.mistral.ai,
+    always, even from a local session) and every MCP tool (arbitrary, possibly
+    remote server). See `_is_egress_tool`.
 
     Returns (refusal, args): `refusal` is an error-JSON string to send back to
     the model (blocked) or None (proceed); `args` is the structure to DISPATCH
@@ -3580,7 +3707,9 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         is never useful — it poisons evidence with strangers' data).
     """
     try:
-        if tool_name not in WEB_SEARCH_TOOLS:
+        # M2 (G7): every EGRESS tool, not just the web ones — gmail_send/reply,
+        # generate_image and any MCP tool leave the machine just as irreversibly.
+        if not _is_egress_tool(tool_name):
             return None, args
         try:
             mapping_id = get_request_context()._gdpr_mapping_id or ""
@@ -3817,6 +3946,79 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         }, ensure_ascii=False), args
 
 
+def _gdpr_scan_cloud_egress(text: str, *, tool_name: str) -> str | None:
+    """M2 (G7): PII check for tools that reach the cloud REGARDLESS of the
+    session model — today `generate_image` (always api.mistral.ai).
+
+    Every other guard in the system is conditioned on an active anonymisation
+    mapping, which is a proxy for "this session talks to a cloud model". That
+    proxy is FALSE for these tools: they egress from a LOCAL session too, where
+    anonymisation never ran and there is no mapping to gate on. Session
+    5175bf8fdf70 posted a family tree (incl. deceased status) to Mistral from a
+    local session for exactly this reason.
+
+    Returns a refusal string (to hand back to the model) or None to proceed.
+    Independent of the mapping; driven by the scanner's own confidence
+    disposition, so an admin who set the category to `ignore` is still obeyed.
+
+    NEVER raises — a scanner bug must not take image generation down; it falls
+    open (returns None), consistent with every other scan seam.
+    """
+    if not text:
+        return None
+    try:
+        cfg = _get_gdpr_scanner_config()
+        if not cfg.get("enabled", True):
+            return None
+        findings = _pii_scan_text(text, cfg=cfg)
+        if not findings:
+            return None
+        # Same confidence-band logic the background gate uses: 'ignore' → nothing
+        # to enforce. We do NOT re-implement a policy here.
+        if _pii_worst_disposition(findings, cfg) == "ignore":
+            return None
+        kinds = sorted({(f.get("rule_id") or "unknown") for f in findings})
+    except Exception:
+        return None
+
+    try:
+        _ctx = get_request_context()
+        _d = _ctx._gdpr_degradation
+        if _d is None:
+            _d = {}
+            _ctx._gdpr_degradation = _d
+        _d["cloud_egress_blocked"] = int(_d.get("cloud_egress_blocked", 0)) + 1
+    except Exception:
+        pass
+    try:
+        if _audit_log:
+            _audit_log.log_action(
+                agent=(get_request_context().current_agent.agent_id
+                       if get_request_context().current_agent else "main"),
+                action_type="pii_blocked",
+                tool_name=tool_name,
+                args_summary=f"kinds={','.join(kinds)}",
+                result_summary="cloud egress refused (tool always hits the cloud)",
+                result_status="blocked",
+                session_id=(get_request_context().current_session_id or None),
+                source="tool",
+            )
+    except Exception:
+        pass
+
+    return json.dumps({
+        "error": "cloud_egress_blocked_pii",
+        "tool": tool_name,
+        "value_kinds": kinds,
+        "hint": (
+            f"'{tool_name}' sendet den Prompt IMMER an einen Cloud-Dienst "
+            "(api.mistral.ai) — auch aus einer lokalen Sitzung. Der Prompt "
+            "enthält personenbezogene Daten und wurde deshalb NICHT gesendet. "
+            "Formuliere den Prompt ohne personenbezogene Werte (Platzhalter wie "
+            "'Person A' statt echter Namen) und rufe das Tool erneut auf."),
+    }, ensure_ascii=False)
+
+
 def _web_gate_audit(tool_name: str, kinds: list, mode: str, *, kind: str) -> None:
     """Audit row per gate decision — kinds only, never values.
     kind: fake/original (refused) · denied (user refused/revoked the release)
@@ -3880,17 +4082,164 @@ GDPR_ARGS_DEANON_TOOLS = frozenset({
     "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff",
     "text_diff",
     "mrz_verify", "doc_dates_check", "identity_consistency",
+    # M3 (G9) — the LLM Wiki is LOCAL storage, so what lands on disk must be the
+    # REAL values, not the model's fakes.
+    #
+    # Without this, `wiki_write` persisted whatever the model typed — i.e. FAKES —
+    # into the wiki and mirrored them into the MemPalace wings. The mapping is
+    # per-SESSION, so session B later read session A's fakes as if they were facts:
+    # not reversible (B's mapping doesn't know those tokens) and not consistent
+    # with B's own fakes for the same real person. That is permanent memory
+    # poisoning, and it gets worse with every session.
+    #
+    # Writing real values also makes the READ side trivially correct: wiki_read's
+    # result seam (below) pseudonymises on the way back out, exactly like
+    # read_document. Local storage holds truth; the wire holds fakes.
+    "wiki_write",
+    # M3 (G10): the lossless-context DAG stores ORIGINAL text, so a recall must be
+    # able to look up the real value — and its result is re-anonymised by the seam.
+    "context_search", "context_detail", "context_recall",
+    # M7 / decision 2: the diagram renderer runs LOCALLY (no egress), so the
+    # rendered image should carry REAL values — matching the .docx/.html written
+    # beside it, which the after-file-write reverse already restores. Otherwise the
+    # delivered report has real text and fake diagrams: self-contradictory, with no
+    # warning. Cheapest correct fix — no lint, no warning strip; the artifact is
+    # just right.
+    "render_diagram",
 })
 
-# execute_command/python_exec hardening: a shell command or script can reach
-# the network itself (curl/wget/urllib/requests) — deanonymising such a string
-# would be the same silent egress through a side door. When one of these
-# markers is present, THAT string keeps its fakes (semantically-empty network
-# call, same as status quo — no leak); marker-free strings (grep, pandas,
-# local paths) are deanonymised normally.
+# execute_command/python_exec hardening — DENY BY DEFAULT (M2/G7).
+#
+# These two tools get real values injected into their args (that's the point of
+# L3a: `grep <real name> file.csv` must work). But a shell command or script can
+# also reach the network itself, and then the de-anonymisation IS the leak — a
+# side door around the egress gate.
+#
+# This used to be an ALLOW-list-by-omission: deanonymise unless one of ~15 network
+# markers appeared. That is structurally lost against a creative agent, and the
+# misses were not hypothetical — session b4edbc9dc8e7 has the model reaching for
+# `mail -s "IBAN <fake>" <EMAIL_1_8d62>` and `sendmail … <<< …`. Neither `mail`
+# nor `sendmail` nor `msmtp` nor `osascript` (drives Apple Mail/Messages) nor `gh`
+# was in the blocklist. Back then it failed on zsh syntax; with L3a's args-deanon
+# in place it would have sent a REAL IBAN to a stranger.
+#
+# Inverted: a string is de-anonymised ONLY if it looks recognisably LOCAL. Anything
+# we cannot positively vouch for keeps its fakes — which can never leak, and at
+# worst means a tool sees a pseudonym (it may miss data; it cannot exfiltrate).
+#
+# The old blocklist is KEPT as a fast, loud reject (a positive network signal is
+# worth logging distinctly from "unrecognised"), but it is no longer the decision.
 _DEANON_NETWORK_MARKER_RE = re.compile(
-    r"https?://|\b(?:curl|wget|nc|ssh|scp|telnet|ftp|nslookup|dig|ping)\b"
-    r"|urllib|requests\.|http\.client|socket\.|aiohttp|httpx")
+    r"https?://|\b(?:curl|wget|nc|ncat|socat|ssh|scp|sftp|rsync|telnet|ftp"
+    r"|nslookup|dig|ping|host)\b"
+    r"|urllib|requests\.|http\.client|socket\.|aiohttp|httpx"
+    # M2: the mail/automation side doors the blocklist never had. b4edbc9dc8e7
+    # had the model reaching for `mail -s …` and `sendmail`; neither was listed.
+    r"|smtplib|\b(?:sendmail|mail|mailx|msmtp|mutt|osascript|gh|scutil)\b"
+    r"|\bopen\s+-a\b"                       # macOS `open -a Mail` (not py open())
+    r"|smtp\.|imaplib|poplib|paramiko|ftplib|telnetlib|webbrowser"
+    # Indirect execution — a python_exec script's only remaining way out is to
+    # shell out or to resolve a module dynamically. Both are denied.
+    r"|subprocess|os\.system|os\.popen|os\.exec|commands\.|pty\.|multiprocessing"
+    r"|__import__|importlib|\beval\b|\bexec\b|compile\s*\("
+    r"|/dev/tcp|/dev/udp"                   # bash network redirection
+    , re.IGNORECASE)
+
+# A command/script is de-anonymised only when EVERY token we can see is one of
+# these — i.e. it is unambiguously a local data operation. Deliberately narrow:
+# the cost of a false negative is "the tool sees a pseudonym"; the cost of a
+# false positive is a silent, irreversible leak. Widen only with a concrete,
+# reviewed use case.
+_DEANON_LOCAL_SAFE_RE = re.compile(
+    r"^[\s\w\-./\\:~'\"=,;|()\[\]{}*+@#%^&!?$<>\n\r]*$"
+)
+
+# Commands/functions that read or transform LOCAL data. A string qualifies as
+# local-safe only if it contains no network marker AND its executable-looking
+# tokens are all in here (or it has none at all — e.g. a bare path or a value).
+_DEANON_LOCAL_COMMANDS = frozenset({
+    # shell: read/search/transform
+    "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg",
+    "awk", "sed", "cut", "sort", "uniq", "wc", "tr", "tee", "xargs", "find",
+    "ls", "stat", "file", "du", "df", "basename", "dirname", "realpath",
+    "echo", "printf", "test", "diff", "cmp", "md5", "shasum", "sha256sum",
+    "jq", "yq", "column", "paste", "join", "comm", "split", "nl", "rev",
+    "cp", "mv", "mkdir", "touch", "chmod", "ln", "pwd", "cd", "true", "false",
+    "unzip", "zip", "tar", "gzip", "gunzip", "zcat", "iconv", "base64",
+    # python: local data work
+    "python", "python3", "pandas", "pd", "numpy", "np", "json", "csv", "re",
+    "openpyxl", "pathlib", "os", "sys", "math", "statistics", "collections",
+    "datetime", "itertools", "print", "open", "len", "str", "int", "float",
+    "list", "dict", "set", "sorted", "sum", "min", "max", "range", "enumerate",
+    "zip", "map", "filter", "abs", "round", "type", "isinstance", "repr",
+})
+
+# Python `import X` / `from X import …` — the MODULE is what matters, not the
+# `import` keyword. Checked first so the shell-token pass below skips these lines.
+_DEANON_IMPORT_RE = re.compile(
+    r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", re.MULTILINE)
+
+# Tokens in COMMAND position: start of a line/string, or right after a shell
+# separator (`;` `|` `&&`). An assignment (`df = …`) is not a command, so a token
+# followed by `=` (but not `==`) is skipped.
+#
+# `\b` after the capture is load-bearing: without it the engine BACKTRACKS to a
+# shorter token to satisfy the negative lookahead — `df = …` matched as `d`, which
+# isn't in the allowlist, so every pandas script was wrongly denied.
+_DEANON_CMD_TOKEN_RE = re.compile(
+    r"(?:^|[\n;|&])\s*([A-Za-z_][\w.-]*)\b(?!\s*=[^=])", re.MULTILINE)
+
+
+def _deanon_string_is_local_safe(s: str, *, tool_name: str = "") -> bool:
+    """M2 (G7): may this execute_command/python_exec string receive REAL values?
+
+    Deny-by-default. The two tools need DIFFERENT tests, because the thing that
+    can exfiltrate is different:
+
+    * **python_exec** — a Python script. The only way out is a networked
+      module/call, so the test is: no network marker anywhere, and every `import`
+      is a known-local module. Trying to allowlist "command tokens" in Python is a
+      category error (`df = …`, `for r in …`, `print(…)` are not commands) and was
+      denying every pandas/openpyxl analysis — i.e. trading this wave's leak fix
+      for a silent quality regression, which is precisely what the wave exists to
+      prevent.
+
+    * **execute_command** — a shell line. Here the executable IS the risk, so the
+      command-position tokens must all be known-local (`grep`, `awk`, `cat`, …).
+      An unrecognised binary could be anything.
+
+    Unrecognised → False → the string keeps its fakes (safe direction: the tool may
+    miss data, it cannot leak).
+    """
+    if not s or not isinstance(s, str):
+        return False
+    # Applies to BOTH: any positive network signal is an immediate no.
+    if _DEANON_NETWORK_MARKER_RE.search(s):
+        return False
+    # Every imported module must be a known-local one (both tools: a shell line
+    # can carry `python3 -c "import smtplib"`).
+    for m in _DEANON_IMPORT_RE.finditer(s):
+        if m.group(1).split(".", 1)[0].lower() not in _DEANON_LOCAL_COMMANDS:
+            return False
+
+    if tool_name == "python_exec":
+        # Script body: the import check above + the network markers are the test.
+        # No command-token pass (see docstring).
+        return True
+
+    # execute_command (and anything unknown): the stricter shell test.
+    if not _DEANON_LOCAL_SAFE_RE.match(s):
+        return False  # exotic characters (backticks, $(), unicode pipes …)
+    for m in _DEANON_CMD_TOKEN_RE.finditer(s):
+        tok = (m.group(1) or "").strip()
+        if not tok:
+            continue
+        head = tok.split(".", 1)[0].lower()
+        if head in ("import", "from"):
+            continue  # handled by _DEANON_IMPORT_RE above
+        if head not in _DEANON_LOCAL_COMMANDS:
+            return False
+    return True
 
 
 def _gdpr_deanon_tool_args(tool_name: str, args: dict):
@@ -3915,11 +4264,15 @@ def _gdpr_deanon_tool_args(tool_name: str, args: dict):
         mapping = _ps.get_mapping(mapping_id)
         if mapping is None or not mapping.reverse:
             return args
+        # M2 (G7): shell/script args are DENY-BY-DEFAULT — a string only receives
+        # real values when it is recognisably a local data operation. See
+        # `_deanon_string_is_local_safe`.
         guard_network = tool_name in ("execute_command", "python_exec")
 
         def _walk(v):
             if isinstance(v, str):
-                if guard_network and _DEANON_NETWORK_MARKER_RE.search(v):
+                if guard_network and not _deanon_string_is_local_safe(
+                        v, tool_name=tool_name):
                     return v
                 out, n = _ps.deanonymize_text(v, mapping=mapping)
                 return out if n else v
@@ -8882,6 +9235,13 @@ class TaskRunner:
         # Capture caller's user_id and team ids for MemPalace wing scoping in the child thread
         caller_user_id = get_request_context().current_user_id or ""
         caller_team_ids = list(get_request_context().current_team_ids or [])
+        # M1 (G1): and the caller's anonymisation mapping — the delegate must run
+        # in the SAME fake world. The delegating model only ever saw fakes, so the
+        # `task` string it wrote is already pseudonymised; binding the parent
+        # mapping in the child thread is what makes the delegate's own tool loop
+        # obey the result seam, the args de-anonymiser and the web-egress gate.
+        caller_mapping_id = get_request_context()._gdpr_mapping_id or ""
+        caller_session_id = get_request_context().current_session_id or ""
 
         # Pre-minted turn id for the delegate's LLM call: cancel() trips the
         # loop's per-turn cancel Event via sidecar_proxy.cancel_turn, so a
@@ -8908,7 +9268,7 @@ class TaskRunner:
         thread = threading.Thread(
             target=self._run_task,
             args=(task_id, agent_id, task, model, cancel_flag, caller_user_id,
-                  caller_team_ids, turn_id),
+                  caller_team_ids, turn_id, caller_mapping_id, caller_session_id),
             daemon=True)
         self._threads[task_id] = thread
         thread.start()
@@ -8954,7 +9314,9 @@ class TaskRunner:
                   model: str | None, cancel_flag: threading.Event,
                   caller_user_id: str = "",
                   caller_team_ids: list | None = None,
-                  turn_id: str = ""):
+                  turn_id: str = "",
+                  caller_mapping_id: str = "",
+                  caller_session_id: str = ""):
         caller_team_ids = caller_team_ids or []
         """Execute a task in a background thread."""
         target = AgentConfig(agent_id)
@@ -9035,6 +9397,11 @@ class TaskRunner:
                     _del_deanon = _identity_deanon
                     _wire_system = system_prompt
                     _wire_messages = messages
+                    # M1 (G1): join the caller's fake world before the gate — same
+                    # reasoning as the background-task leaf. Rehydrates from
+                    # chats.db when the parent turn already close_mapping()'d it.
+                    _del_mid = caller_mapping_id or ""
+                    _del_bound = gdpr_bind_mapping(_del_mid) if _del_mid else False
                     try:
                         _msg_blobs = []
                         _msg_idx = []
@@ -9044,6 +9411,10 @@ class TaskRunner:
                                 _msg_blobs.append(_c)
                                 _msg_idx.append(_i)
                         _scan_inputs = [system_prompt] + _msg_blobs
+                        # Never bypassed — the gate also enforces ARL
+                        # classification + the quota/force-local swap. With a bound
+                        # parent mapping the payload is already fake-space, so it
+                        # finds nothing and returns identity.
                         model, _new_blobs, _del_deanon = gdpr_pick_model_for_background(
                             model, _scan_inputs, purpose="delegate_task")
                         if _new_blobs is not _scan_inputs:
@@ -9051,6 +9422,8 @@ class TaskRunner:
                             _wire_messages = list(messages)
                             for _i, _nb in zip(_msg_idx, _new_blobs[1:]):
                                 _wire_messages[_i] = {**messages[_i], "content": _nb}
+                        if not _del_bound:
+                            _del_mid = getattr(_del_deanon, "mapping_id", "") or ""
                     except GDPRBlockedError as e:
                         status = "error"
                         result_text = f"Delegate error: GDPR block — {e}"
@@ -9061,8 +9434,34 @@ class TaskRunner:
                             agent_id=agent_id, cost_purpose="delegate_task",
                             max_tokens=int(delegate_inf.get("max_tokens") or 0) or None,
                             turn_id=turn_id or None,
+                            # Protect the delegate's own tool loop (seams + gate).
+                            gdpr_mapping_id=_del_mid,
                         )
-                        result_text = _del_deanon(_res.get("reply") or "")
+                        # M1 (G1) — LEAK FIX. `result_text` goes STRAIGHT back to
+                        # the delegating (cloud) model as the delegate_task /
+                        # task_status tool result, and that path has no
+                        # re-anonymising seam. Two cases:
+                        #
+                        #  - Shared mapping (we bound the caller's): the reply is
+                        #    already in the caller's fake world → return it AS IS.
+                        #    De-anonymising here — what the code did before — fed
+                        #    REAL values into the very model the mapping exists to
+                        #    keep them from. The user-facing reverse happens once,
+                        #    later, at the parent's StreamingDeanonymizer.
+                        #
+                        #  - No shared mapping (delegate spawned from a
+                        #    non-anonymising session; the gate minted a ONE-SHOT
+                        #    map for this call): nothing downstream knows those
+                        #    tokens, so they must be reversed here or the caller
+                        #    would receive unresolvable placeholders. The caller is
+                        #    non-anonymising by definition, so this is not a leak.
+                        _reply = _res.get("reply") or ""
+                        result_text = _reply if _del_bound else _del_deanon(_reply)
+                        # The delegate may have extended the shared mapping.
+                        if _del_mid and caller_session_id:
+                            gdpr_persist_mapping(
+                                _del_mid, caller_session_id,
+                                turn_id=f"delegate:{task_id}")
                         if cancel_flag.is_set() or _res.get("cancelled"):
                             status = "cancelled"
                         elif _res.get("timed_out"):
@@ -11797,6 +12196,13 @@ def _identity_deanon(text):
     return text
 
 
+# M1: every deanon_fn the gate can return carries `.mapping_id` — "" on the
+# no-anonymisation paths, the real id when a mapping was minted/reused. Callers
+# that drive an agentic background turn read it unconditionally (no getattr
+# dance) and bind it onto their turn's context.
+_identity_deanon.mapping_id = ""
+
+
 def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
     """Decide model + (optionally) pseudonymise inputs for a background call.
 
@@ -12197,7 +12603,7 @@ def _anonymise_background_samples(samples, findings, *, session_id, agent_id,
     n_tokens = len(getattr(mapping, "forward", {}) or {})
     print(f"[gdpr] anonymise OK session={session_id or '-'} agent={agent_id} "
           f"purpose={purpose} samples={len(samples)} tokens={n_tokens} "
-          f"{'reused' if reused else 'new'}", flush=True)
+          f"{'reused' if reused else 'new'} mapping={mapping.mapping_id[:12]}", flush=True)
 
     def _deanon(text):
         if not text or not isinstance(text, str):
@@ -12207,6 +12613,24 @@ def _anonymise_background_samples(samples, findings, *, session_id, agent_id,
             return restored
         except Exception:
             return text
+    # M1 (G1): surface the mapping id to callers that drive an AGENTIC background
+    # turn (scheduler, delegate). They must bind it onto their turn's context, or
+    # the tool-result seam / args-deanon / web-egress gate all stay dead for the
+    # rest of the run — the gate would protect the entry prompt and nothing else.
+    #
+    # Carried as an attribute on the closure rather than as a 4th tuple element
+    # ON PURPOSE: 26 call sites unpack this 3-tuple positionally, and the vast
+    # majority (translate, kg_extract, summariser, next-prompt …) are single-shot
+    # calls with no tool loop that must not be touched.
+    #
+    # It is NOT bound to the request context here. `_anonymise_background_samples`
+    # runs on the CALLER's thread, and pooled callers (deep_research, kg_extract)
+    # dispatch via `copy_context().run(...)` — which copies the ContextVar
+    # BINDINGS but not the RequestContext object behind them. Mutating an
+    # attribute there would bleed the mapping into sibling tasks and back into the
+    # parent run. Binding happens only where the context is genuinely fresh:
+    # `sidecar_proxy._apply_bg_context` (inside `with request_context()`).
+    _deanon.mapping_id = mapping.mapping_id
     return out, _deanon
 
 

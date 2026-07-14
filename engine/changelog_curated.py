@@ -29,6 +29,29 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.343.0",
+        "date": "2026-07-14",
+        "title": "Datenschutz gilt jetzt überall, nicht nur im Chat",
+        "body": "Der Schutz Ihrer personenbezogenen Daten wirkt ab sofort "
+                "auch dort, wo bisher eine Lücke bestand: in geplanten "
+                "Aufgaben, in Hintergrund-Recherchen und bei Aufgaben, die "
+                "an andere Agenten übergeben werden. Diese Läufe arbeiten "
+                "nun in derselben geschützten Sicht wie Ihr Chat — sie "
+                "sehen keine Klardaten mehr und können geschützte Namen "
+                "auch nicht mehr unbemerkt an Suchmaschinen weitergeben. "
+                "Ebenso abgesichert sind jetzt alle übrigen Wege nach "
+                "außen: E-Mail-Versand, Bildgenerierung und angebundene "
+                "Fremd-Werkzeuge. Übersetzungen, Wiki-Einträge, E-Mail- und "
+                "Verlaufs-Abfragen geben keine Klardaten mehr an das "
+                "Sprachmodell weiter. Und: hochgeladene Dateien werden "
+                "neutral benannt, sodass ein sprechender Dateiname wie "
+                "„KYC_Musterfrau_Ausweis.pdf“ nicht mehr an den "
+                "Cloud-Anbieter gelangt — die Datei bleibt für den Agenten "
+                "unverändert nutzbar.",
+        "audience": "user",
+        "versions": ["9.343.0"],
+    },
+    {
         "version": "9.342.0",
         "date": "2026-07-14",
         "title": "Zuverlässigere Namenserkennung und saubere Löschung",

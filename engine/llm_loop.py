@@ -777,9 +777,23 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
             for td in mcp_mgr.get_tool_definitions():
                 if td.get("name") == name:
                     raw = mcp_mgr.call_tool(name, args)
-                    if isinstance(raw, str):
-                        return raw, _looks_like_error(raw)
-                    return json.dumps(raw, ensure_ascii=False), _looks_like_error_dict(raw)
+                    # M2/M3 (G7): MCP was the ONLY completely seam-free tool path
+                    # in the dispatcher — no args-deanon (correct: the server may
+                    # be REMOTE), no gate (fixed: MCP tools are EGRESS_TOOLS now)
+                    # and no result seam (fixed here). Without this an MCP server's
+                    # answer — a CRM record, a calendar entry, a mail body — went
+                    # RAW to the cloud model in an anonymising session. No-op when
+                    # no mapping is active.
+                    #
+                    # Inside this try ON PURPOSE, mirroring the built-in path: the
+                    # seam runs the classification gate, whose
+                    # ClassificationBlockedError propagates out of `fn(args)` into
+                    # the same `except Exception` there. Same behaviour, one rule.
+                    is_str = isinstance(raw, str)
+                    _txt = raw if is_str else json.dumps(raw, ensure_ascii=False)
+                    _txt = engine._gdpr_anon_tool_text(_txt, f"mcp:{name}")
+                    return _txt, (_looks_like_error(_txt) if is_str
+                                  else _looks_like_error_dict(raw))
         except Exception as e:
             return (json.dumps({
                 "error": f"mcp tool crashed: {type(e).__name__}: {e}",
@@ -968,6 +982,13 @@ def run_loop(
                 _inj = (_inj or "").strip()
                 if not _inj:
                     continue
+                # M3 (G10): a mid-turn injection (POST /v1/chat/inject — the user's
+                # "btw …") is TYPED TEXT going onto the wire, exactly like a composer
+                # message, which IS scanned. This path was not: a name typed here
+                # reached the cloud model raw and left no ledger row, so it never
+                # self-healed on later turns either. Seam + ledger it like any other
+                # read; no-op when no mapping is active.
+                _inj = engine._gdpr_anon_tool_text(_inj, "chat_inject")
                 loop_messages.append({"role": "user", "content": _inj})
                 emit("injected_message", {"round": round_no, "text": _inj})
 

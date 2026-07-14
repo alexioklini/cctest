@@ -1323,9 +1323,16 @@ def tool_wiki_read(args: dict) -> str:
             body = page.get("body_md", "")
             if len(body) > 6000:
                 body = body[:6000] + "\n…(truncated)"
-            return _ok({"id": page["id"], "title": page["title"], "scope": page["scope"],
-                        "body_md": body, "version": page.get("current_version"),
-                        "source_ref": page.get("source_ref", "")})
+            # M3 (G9): result seam. The wiki now holds REAL values on disk
+            # (wiki_write is in GDPR_ARGS_DEANON_TOOLS), so a page read in an
+            # anonymising session must be pseudonymised on the way to the model —
+            # exactly like read_document. This is also what makes the write side
+            # safe: local storage holds truth, the wire holds fakes.
+            # (No-op without an active mapping.)
+            return _brain._gdpr_anon_tool_text(_ok({
+                "id": page["id"], "title": page["title"], "scope": page["scope"],
+                "body_md": body, "version": page.get("current_version"),
+                "source_ref": page.get("source_ref", "")}), "wiki_read")
         if query:
             # Wiki pages live in room='wiki' across the caller's accessible wings:
             # their own user wing, each team wing, and the shared wiki_global wing.
@@ -1361,7 +1368,10 @@ def tool_wiki_read(args: dict) -> str:
         slim = [{"id": r["id"], "title": r["title"], "scope": r["scope"],
                  "parent_id": r.get("parent_id", ""), "source": r.get("source", "")}
                 for r in rows]
-        return _ok({"pages": slim, "count": len(slim)})
+        # M3 (G9): seam the tree too — page TITLES are a name surface
+        # ("Kunde Bonnie Stark", "Akte Rakhmetova").
+        return _brain._gdpr_anon_tool_text(
+            _ok({"pages": slim, "count": len(slim)}), "wiki_read:tree")
     except wiki_store.WikiAccessError as e:
         return _err(str(e))
 

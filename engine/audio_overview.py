@@ -475,17 +475,36 @@ def run_audio_overview(*, output_id: str, agent_id: str, project_name: str,
             return
         ChatDB.update_project_output(output_id, phase="scripting")
         from handlers import sidecar_proxy
+        # M3 (G9): the corpus goes to a CLOUD model ungated until now. Same seam
+        # every other background caller uses. The de-anon on the reply is correct
+        # and not a leak: the script is spoken back to the USER (and the TTS voice
+        # should say the real name), it is not fed to the chat model.
+        _prompt = _build_script_prompt(
+            corpus, focus=focus, length=length, audience=audience,
+            lang=lang, speakers=speakers)
+        _ao_deanon = _brain._identity_deanon
+        try:
+            model, (_prompt,), _ao_deanon = _brain.gdpr_pick_model_for_background(
+                model, [_prompt], purpose="audio_overview")
+        except _brain.GDPRBlockedError as e:
+            ChatDB.update_project_output(
+                output_id, status="error", phase="",
+                error=f"Datenschutz-Richtlinie: {str(e)[:200]}")
+            return
+        except Exception:
+            pass
         result = sidecar_proxy.background_call(
-            messages=[{"role": "user", "content": _build_script_prompt(
-                corpus, focus=focus, length=length, audience=audience,
-                lang=lang, speakers=speakers)}],
+            messages=[{"role": "user", "content": _prompt}],
             model=model, cost_purpose="audio_overview", agent_id=agent_id,
             session_id=f"output-{output_id}", project=project_name,
             user_id=user_id, max_rounds=1)
         if result.get("error"):
             ChatDB.update_project_output(output_id, status="error", error=str(result["error"])[:500])
             return
-        script = (result.get("reply") or "").strip()
+        # Restore real values: the script is for the USER's ears (and gets saved as
+        # a .md artifact next to the audio) — shipping a podcast full of invented
+        # names would be the "report lies quietly" failure (F6).
+        script = _ao_deanon((result.get("reply") or "").strip())
         lines = parse_dialogue(script)
         if not lines:
             ChatDB.update_project_output(
@@ -606,15 +625,27 @@ def _corpus_to_audio(*, corpus: str, agent_id: str, out_dir: str, opts: dict,
         return {"ok": False, "error": "No background model configured."}
 
     from handlers import sidecar_proxy
+    # M3 (G9): gate the corpus before it reaches the cloud script model (same as
+    # the project-output path above). The reply is de-anonymised again because it
+    # is spoken to the USER, not fed back to the chat model.
+    _prompt = _build_script_prompt(
+        corpus, focus=focus, length=length, audience=audience,
+        source_label=source_label, lang=lang, speakers=speakers)
+    _ao_deanon = _brain._identity_deanon
+    try:
+        model, (_prompt,), _ao_deanon = _brain.gdpr_pick_model_for_background(
+            model, [_prompt], purpose="audio_overview")
+    except _brain.GDPRBlockedError as e:
+        return {"ok": False, "error": f"Datenschutz-Richtlinie: {str(e)[:200]}"}
+    except Exception:
+        pass
     result = sidecar_proxy.background_call(
-        messages=[{"role": "user", "content": _build_script_prompt(
-            corpus, focus=focus, length=length, audience=audience,
-            source_label=source_label, lang=lang, speakers=speakers)}],
+        messages=[{"role": "user", "content": _prompt}],
         model=model, cost_purpose="audio_overview", agent_id=agent_id,
         session_id=cost_session_id, project=project_name, user_id=user_id, max_rounds=1)
     if result.get("error"):
         return {"ok": False, "error": str(result["error"])[:300]}
-    lines = parse_dialogue((result.get("reply") or "").strip())
+    lines = parse_dialogue(_ao_deanon((result.get("reply") or "").strip()))
     if not lines:
         return {"ok": False, "error": "Model did not produce a parseable script."}
 

@@ -35,7 +35,14 @@ def tool_context_search(args: dict) -> str:
         return _err("Missing query")
     limit = args.get("limit", 10)
     results = _brain._context_manager.search(session_id, query, limit=limit)
-    return _ok({"results": results, "count": len(results), "query": query})
+    # M3 (G10): result seam. The lossless-context DAG stores the ORIGINAL messages
+    # (that is the whole point of "lossless"), so replaying them into an
+    # anonymising session's wire was a straight leak — these tools carried NO GDPR
+    # reference at all. The matching args-deanon (so a search for a fake finds the
+    # real text) is registered in brain.GDPR_ARGS_DEANON_TOOLS.
+    return _brain._gdpr_anon_tool_text(
+        _ok({"results": results, "count": len(results), "query": query}),
+        "context_search")
 
 
 def tool_context_detail(args: dict) -> str:
@@ -47,7 +54,11 @@ def tool_context_detail(args: dict) -> str:
     if not summary_id:
         return _err("Missing summary_id")
     detail = _brain._context_manager.get_detail(summary_id)
-    return _ok(detail) if "error" not in detail else _err(detail["error"])
+    if "error" in detail:
+        return _err(detail["error"])
+    # M3 (G10): the sharpest of the three — get_detail EXISTS to return the
+    # original, uncompacted messages.
+    return _brain._gdpr_anon_tool_text(_ok(detail), "context_detail")
 
 
 def tool_context_recall(args: dict) -> str:
@@ -66,4 +77,9 @@ def tool_context_recall(args: dict) -> str:
     api_key = _brain._delegate_api_key or ""
     base_url = _brain._delegate_base_url or ""
     result = _brain._context_manager.recall(session_id, query, model, api_key, base_url)
-    return _ok({"answer": result, "query": query})
+    # M3 (G10): ContextManager.recall IS gated on the way in (purpose='lcm_recall')
+    # — but it then de-anonymises its own answer (`_rc_deanon`), so `result` carries
+    # REAL values. Handing that to the chat model is the same leak as translate_text
+    # (G8): correctly gated inbound, restored outbound, unseamed on return.
+    return _brain._gdpr_anon_tool_text(
+        _ok({"answer": result, "query": query}), "context_recall")

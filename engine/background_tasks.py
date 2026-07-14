@@ -107,6 +107,13 @@ class BackgroundTaskRunner:
                 "research_mode_override": getattr(session, "research_mode_override", None),
                 "thinking_level": getattr(session, "thinking_level", "") or "",
                 "group_id": group_id or None,
+                # M1 (G1): inherit the spawning session's anonymisation mapping.
+                # A fan-out leaf must see the SAME fake world as its parent —
+                # otherwise it either runs unprotected (today: the leaf reads the
+                # customer file in the clear and may google real names) or, with a
+                # mapping of its own, invents a SECOND fake for every value and
+                # returns identities the parent can never resolve.
+                "gdpr_mapping_id": getattr(session, "_gdpr_mapping_id", "") or "",
             }
         title = (title or "Hintergrundaufgabe").strip()[:200]
         prompt = (prompt or "").strip()
@@ -398,14 +405,43 @@ class BackgroundTaskRunner:
                 except Exception as _e:
                     print(f"[bg-task] {task_id[:8]} preamble failed: {_e}", flush=True)
                 messages = [{"role": "user", "content": prompt}]
+                # M1 (G1): join the parent session's fake world BEFORE the gate.
+                #
+                # The spawning chat model only ever saw fakes, so the `prompt` it
+                # wrote is ALREADY pseudonymised. Binding the parent mapping means
+                # (a) the leaf's tool loop is protected exactly like the chat's —
+                # result seam, args-deanon and web-egress gate all read this field
+                # — and (b) values the leaf discovers itself (a customer file it
+                # reads) get the SAME fake as in the parent, instead of a second
+                # identity nobody can reconcile.
+                #
+                # Rehydrates from chats.db: the spawning turn has long since ended
+                # and called close_mapping(), so the in-memory registry entry is
+                # usually gone by the time a leaf gets here.
+                _inherited_mid = snap.get("gdpr_mapping_id") or ""
+                _bound = _brain.gdpr_bind_mapping(_inherited_mid) if _inherited_mid else False
+
                 # GDPR / quota seam — same gate every background caller passes
-                # through (never a bypass). May swap to a local model or raise.
+                # through (NEVER a bypass, not even when we already bound a
+                # mapping: the gate also enforces ARL classification and the
+                # quota/force-local model swap, which have nothing to do with
+                # pseudonymisation).
+                #
+                # When a parent mapping is bound the payload is already fake-space,
+                # so the scan finds nothing and the gate returns identity — it just
+                # must not REPLACE our inherited id with the "" that comes back.
                 gdpr_blobs = [system_prompt, prompt]
                 model, new_blobs, _deanon = _brain.gdpr_pick_model_for_background(
                     model, gdpr_blobs, purpose="background_task")
                 if new_blobs is not gdpr_blobs:
                     system_prompt = new_blobs[0]
                     messages = [{"role": "user", "content": new_blobs[1]}]
+                if not _bound:
+                    # No parent to inherit from (task spawned from a
+                    # non-anonymising session whose prompt itself carried PII):
+                    # a mapping minted HERE must still reach the tool loop, or the
+                    # gate would again protect only the entry prompt.
+                    _inherited_mid = getattr(_deanon, "mapping_id", "") or ""
 
                 if cancel_ev.is_set():
                     raise _Cancelled()
@@ -426,7 +462,18 @@ class BackgroundTaskRunner:
                     bg_task=True,  # nesting guard: this run can't spawn bg-tasks
                     bg_task_id=task_id,  # ask_user keys its pending slot on this
                     emit=_emit,    # live transcript tap (subagent pane / panel)
+                    # M1: run the whole leaf turn under the (inherited or freshly
+                    # minted) mapping — this is what makes its tool loop obey the
+                    # seams and the egress gate.
+                    gdpr_mapping_id=_inherited_mid,
                 )
+                # The leaf may have extended the SHARED mapping (it read a document
+                # the parent never saw). Persist it so the parent's next turn can
+                # reverse those tokens and reuses the same fakes — otherwise the
+                # new tokens die with this thread's registry entry.
+                if _inherited_mid:
+                    _brain.gdpr_persist_mapping(
+                        _inherited_mid, snap["session_id"], turn_id=f"bgtask:{task_id}")
             output = res.get("reply") or ""
             usage = res.get("usage_total") or {}
             usage_in = int(usage.get("input_tokens") or 0)

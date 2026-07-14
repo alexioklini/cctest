@@ -593,6 +593,15 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   re-probed every 4 hours.
 - `gmail_inbox` / `gmail_read(id)` / `gmail_search(q)` / `gmail_send` /
   `gmail_reply` — requires `gmail.json` configured
+- **In anonymisierenden Sitzungen (v9.343.0)**: `gmail_send`/`gmail_reply` sind
+  **Egress-Tools** und laufen durch dasselbe Gate wie die Web-Tools — enthält ein
+  Argument einen geschützten Wert oder ein Pseudonym, wird der Versand
+  **verweigert** (`web_query_blocked_pii`). Grund: ein Fake-Empfänger sieht wie
+  eine echte Adresse aus, die Mail ginge an einen fremden Dritten. **Anhänge sind
+  bei aktivem Mapping komplett gesperrt** (die Artefakt-Datei auf der Platte ist
+  bereits rückübersetzt → Fake-Text + Klartext-Anhang). Die Lese-Tools
+  (`gmail_inbox`/`read`/`search`) pseudonymisieren ihr Ergebnis (fremde
+  Mail-Inhalte sind fremde personenbezogene Daten).
 
 ## Code execution
 
@@ -861,6 +870,14 @@ write/exec tool is deliberately excluded.
   is `render_diagram`, NOT generate_image. (The prompt classifier has a dedicated
   `diagram` tool word → the `documents` group, so such requests route to
   render_diagram automatically.)
+  **Datenschutz (v9.343.0)**: `generate_image` schickt den Prompt **IMMER** an
+  einen Cloud-Dienst (api.mistral.ai) — auch aus einer lokalen Sitzung. Es ist
+  daher ein **Egress-Tool** (Gate wie bei den Web-Tools) und hat zusätzlich einen
+  **mapping-unabhängigen** PII-Scan: enthält der Prompt personenbezogene Daten,
+  wird er NICHT gesendet (`cloud_egress_blocked_pii`) — formuliere ihn dann mit
+  Platzhaltern („Person A") statt echter Namen. `render_diagram` läuft dagegen
+  **lokal**, bekommt die ECHTEN Werte und ist nicht gegatet — für alles mit
+  Personen-/Firmendaten im Bild ist es damit auch der datenschutzrichtige Weg.
 - `render_diagram(code, format?, title?, theme?, background?)` — render a Mermaid
   diagram to a real SVG/PNG/PDF **artifact** (via mermaid-cli, exact legible
   text). For org charts/flowcharts/structure/timeline/sequence/ER/gantt/etc.

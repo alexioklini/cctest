@@ -89,6 +89,7 @@ def _get_email_body(msg):
 
 def tool_gmail_inbox(args: dict) -> str:
     """List recent emails from Gmail inbox."""
+    import brain as _brain
     cfg = _gmail_config()
     if not cfg:
         return _err("Gmail not configured. Create agents/main/gmail.json with email and app_password.")
@@ -115,13 +116,19 @@ def tool_gmail_inbox(args: dict) -> str:
                 "date": msg.get("Date", ""),
             })
         imap.logout()
-        return _ok({"folder": folder, "count": len(emails), "emails": emails})
+        # M3 (G7/G9): result seam. Mail headers carry third-party names + addresses
+        # — dense PII the model never saw before, going straight to the cloud.
+        # No-op without an active mapping.
+        return _brain._gdpr_anon_tool_text(
+            _ok({"folder": folder, "count": len(emails), "emails": emails}),
+            "gmail_inbox")
     except Exception as e:
         return _err(f"gmail_inbox: {e}")
 
 
 def tool_gmail_read(args: dict) -> str:
     """Read a specific email by ID."""
+    import brain as _brain
     cfg = _gmail_config()
     if not cfg:
         return _err("Gmail not configured.")
@@ -147,7 +154,10 @@ def tool_gmail_read(args: dict) -> str:
                 if fn:
                     attachments.append(_decode_mime_header(fn))
         imap.logout()
-        return _ok({
+        # M3 (G7/G9): result seam — the mail BODY is the richest unseamed PII
+        # source of all the read tools (a whole foreign conversation), and it went
+        # raw to the cloud model.
+        return _brain._gdpr_anon_tool_text(_ok({
             "id": email_id,
             "from": _decode_mime_header(msg.get("From", "")),
             "to": _decode_mime_header(msg.get("To", "")),
@@ -157,13 +167,14 @@ def tool_gmail_read(args: dict) -> str:
             "body": body,
             "attachments": attachments,
             "message_id": msg.get("Message-ID", ""),
-        })
+        }), "gmail_read")
     except Exception as e:
         return _err(f"gmail_read: {e}")
 
 
 def tool_gmail_search(args: dict) -> str:
     """Search emails using Gmail search syntax."""
+    import brain as _brain
     cfg = _gmail_config()
     if not cfg:
         return _err("Gmail not configured.")
@@ -193,7 +204,10 @@ def tool_gmail_search(args: dict) -> str:
                 "date": msg.get("Date", ""),
             })
         imap.logout()
-        return _ok({"query": query, "count": len(emails), "emails": emails})
+        # M3 (G7/G9): result seam (see gmail_inbox).
+        return _brain._gdpr_anon_tool_text(
+            _ok({"query": query, "count": len(emails), "emails": emails}),
+            "gmail_search")
     except Exception as e:
         return _err(f"gmail_search: {e}")
 
@@ -228,6 +242,32 @@ def tool_gmail_send(args: dict) -> str:
         attachments_arg = [attachments_arg]
     if not to_list or not subject:
         return _err("gmail_send: to and subject are required")
+
+    # M2 (G7) — attachments are FAIL-CLOSED in an anonymising session.
+    #
+    # The egress gate (brain._gdpr_guard_web_args) inspects the ARGS, so it
+    # catches a protected value in `to`/`subject`/`body`. It cannot see the
+    # CONTENT of an attached file — and artifact files on disk have already been
+    # de-anonymised by the after-file-write reverse (L6). So a mail whose args look
+    # perfectly clean (fake recipient refused, fake-free body) could still ship a
+    # REAL customer dossier as a .docx: fake body, clear-text attachment.
+    #
+    # There is no safe automatic answer here (re-anonymising the file would mean
+    # sending a document that silently lies), so we refuse and make the human
+    # decide. Only bites when a mapping is active; ordinary sessions are untouched.
+    if attachments_arg:
+        try:
+            _mid = _brain.get_request_context()._gdpr_mapping_id or ""
+        except Exception:
+            _mid = ""
+        if _mid:
+            return _err(
+                "gmail_send: Anhänge sind in einer anonymisierten Sitzung "
+                "gesperrt. Die Datei auf der Platte enthält die ECHTEN Werte "
+                "(sie wurde beim Schreiben zurückübersetzt) — sie zu versenden "
+                "wäre ein Klartext-Egress am Datenschutz-Gate vorbei. "
+                "Sende die Mail ohne Anhang, oder bitte die Nutzerin, die Datei "
+                "bewusst manuell zu versenden.")
 
     # Resolve attachment paths + read bytes up-front so we can fail cleanly
     # before opening the SMTP connection. Match the write_file / python_exec
