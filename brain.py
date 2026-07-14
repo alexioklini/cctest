@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.331.0"
+VERSION = "9.332.0"
 VERSION_DATE = "2026-07-14"
 CHANGELOG = [
+    ("9.332.0", "2026-07-14", "feat(Bildbeschreibung LOKAL statt Cloud) + feat(GEMEINSAME Warteschlange für alle lokalen MLX-Modelle: OCR + Whisper) + fix(Foto einer Person wurde nie beschrieben) + fix(kostenloses lokales Modell verlor gegen die Cloud). ANLASS: der Prüfbericht (docs/bildverarbeitung.html) legte einen Verdrahtungsfehler offen, und der User zog zwei richtige Schlüsse daraus. (1) MEIN IRRTUM, vom User korrigiert: ich hatte behauptet, GLM-OCR könne nur transkribieren, nicht beschreiben — und mich dabei auf einen eigenen Test gestützt, der mit 'Describe this image' fragte. FALSCH: es lag am PROMPT, nicht am Modell. Bei vagem Auftrag fällt GLM-OCR in seinen Grundmodus (auf einem Webcam-Portrait gab es die Browser-Tableiste zurück und erwähnte die Person nie); mit klarem Auftrag ('describe what is VISIBLE … do NOT transcribe') antwortet DASSELBE Modell 'a woman in a room with a bookcase and an American flag'. Der User hatte es an meiner eigenen Typ-Erkennung gemerkt (8/8 Pässe erkannt — das IST Bildverständnis). Gegen gemma-4-12B gemessen: beide erfassen die Szene, gemma etwas detailreicher, GLM-OCR bis 7x schneller (0,6s vs 4,1s) und 13x kleiner. USER-ENTSCHEIDUNG: gemma-4-12B bleibt AUSSCHLIESSLICH Chat-Fallback; im Hintergrund läuft GLM-OCR. NEU: mlx_ocr.describe_image() + _DESCRIBE_PROMPT (bewusst modell-agnostisch formuliert — schadet gemma/mistral nicht, der Admin kann also das Modell tauschen, ohne den Prompt anzufassen) + config ocr.describe_model ('' = das OCR-Modell). brain._describe_image_with_local_model läuft VOR dem Chat-Modell-Fallback: eine Bildbeschreibung im Hintergrund verlässt damit nie mehr still den Rechner. (2) FOTO EINER PERSON WURDE NIE BESCHRIEBEN — der Kern des Ganzen: die Regel 'OCR-Text ≥20 Zeichen = starkes Signal = fertig' liess ein FOTO IN EINEM BROWSERFENSTER als 'Textdokument' durchgehen — die Menüleiste allein reisst die 20-Zeichen-Hürde. Folge: bei den Webcam-Portraits las Tesseract die Tableiste, der Code erklärte sich für erfolgreich, und das Text-Modell erfuhr NICHTS über die Frau auf dem Bild. FIX: zeigt das Bild GESICHTER (feat['faces'] — das verlässliche Signal; 'kind' ist oft leer), wird es beschrieben, AUCH wenn Text gefunden wurde. Mit Deckel: ist die Modell-Lesung LANG (>200 Zeichen), ist es ein DOKUMENT und keine Szene — gemessen trennt das sauber (Foto einer Person 99 Zeichen, derselbe Pass vor derselben Webcam 344), und ohne den Deckel transkribierte das Modell den Pass ein drittes Mal (8s für nichts). Ergebnis: Foto→Beschreibung ('blonde Frau, geblümtes Oberteil, Bücherregal, US-Flagge'), Pass→keine Beschreibung, nur der Text. (3) WARTESCHLANGE für lokale Modelle (User: 'parallele User-Aufrufe schiessen das Mac Studio tot'). BEFUND: die bestehende LocalProviderQueue schützt NUR den oMLX-Chat (provider Lokal, max_concurrent=1). GLM-OCR hatte eine EIGENE Ein-Thread-Serialisierung (aus dem Segfault-Fix 9.328.0) — die aber nichts von Whisper weiss; und mlx_whisper.transcribe() lief KOMPLETT ungebremst: fünf gleichzeitige Transkriptionen = fünf Whisper-Läufe auf EINER GPU. NEU engine/mlx_runner.py: EINE Bahn für ALLE in-process-MLX-Modelle (OCR + Whisper). Der bisherige mlx_ocr-Worker wurde dorthin gehoben (kein zweites Konstrukt), Whisper hängt sich daran. USER-ENTSCHEIDUNG zum Umfang: bewusst NICHT mit dem oMLX-Chat zusammengelegt — ein Chat-Turn hält seinen Slot über den GANZEN Turn INKLUSIVE Tool-Aufrufen, ein Turn der ein OCR-Tool ruft würde also auf sich selbst warten (dieselbe Deadlock-Klasse wie 9.321.0). Zwei Bahnen, kein solcher Rand. Der Ein-Thread bleibt ohnehin zwingend (Metal crasht, wenn ein Thread MLX benutzt und dann ENDET). VERIFIZIERT: 5 gleichzeitige OCR-Aufrufe → max. 1 gleichzeitig auf der GPU (per Spy auf _get gemessen), 5/5 erfolgreich, kein Absturz; 2×OCR + 2×Whisper gleichzeitig → sauber serialisiert, 9,9s, alle Ergebnisse korrekt. mlx_runner.stats() liefert Tiefe + Wartezeiten für die Admin-Ansicht. (4) BEIFANG aus dem Prüfbericht: die Auto-Auswahl des Vision-Fallbacks nahm kimi-k2.6 (CLOUD), obwohl das lokale gemma-4-12B bereitstand. Ursache: gemma trägt cost_input: null, gelesen wurde mit cfg.get('cost_input', 1e9) — der Ersatzwert greift nur bei FEHLENDEM Schlüssel, nicht bei null. Das kostenlose Modell wurde also mit einer Milliarde bewertet und landete auf Platz 9 von 10; 'billigstes zuerst' wählte ausgerechnet das teure. Auf `or 0.0` umgestellt (nur lokale Modelle tragen null — geprüft). Der Pfad wird durch (1) ohnehin kaum noch erreicht, der Fehler ist trotzdem weg. py_compile OK. Brain-Neustart nötig. Skills + kuratierter Eintrag + Prüfbericht aktualisiert im selben Commit."),
     ("9.331.0", "2026-07-14", "feat(Bild an TEXT-ONLY-Modell): GLM-OCR liest jetzt auch im Degrade-Pfad mit — bisher sah ein nicht-multimodales Modell nur Tesseract-Zeichensalat. + fix(MRZ-Kappung sass beim AUFRUFER statt am Choke-Point) + perf(20,7s → 6,1s). ANLASS (User-Frage): 'fungiert GLM-OCR damit als lokales Vision-Modell für nicht-multimodale LLMs?' — NEIN, tat es nicht, und beim Nachsehen war der Bestand schlechter als gedacht. BEFUND: _describe_image_deterministic (der Degrade-Choke-Point aus 9.293.2, gerufen wenn ein Bild an ein Modell ohne Bildfähigkeit geht) nutzte NUR _ocr_image_bytes (Tesseract) + Bildmerkmale + QR-Codes. Was ein Text-Modell vom echten Pass-Scan zu sehen bekam: '„0 X 7) WeblD Solutions GmbH [Pe © X + - a x / PSUSASTARK<<BONNT DCMARTE << em CR RR ERE KERR ERLE / 5606837 078USA4 SGOTOPSACBOTTIO' — Browser-Leiste plus verstümmelte MRZ; der NAME BONNIE fehlt komplett, die Passnummer nur zufällig und mit Leerzeichen zerrissen. GLM-OCR liest auf denselben Pixeln '560683707 / STARK / BONNIE MARIE / 05 Feb 1947'. PERFIDE: weil Tesseract 475 Zeichen MÜLL produziert, galt das als 'starkes Signal' (strong=True, Schwelle ≥20 Zeichen) → der Code erklärte sich für erfolgreich und sah nie weiter nach. Gemessen an allen 10 echten Scans: 10/10 'stark' → der Vision-Fallback feuerte NIE (meine Sorge, die Cloud würde bei Ausweisen gerufen, war unbegründet — aber das Ergebnis war trotzdem Müll). FIX: der Degrade-Pfad hängt die GLM-OCR-Lesung ADDITIV daneben (nicht als Ersatz), klar getrennt und als UNGEPRÜFT gekennzeichnet ('kann bei unscharfen Bildern Namen/Zahlen erfinden; die zeichengenaue Lesung oben ist der Beleg') — dieselbe Trennung wie bei ocr_extract.model_read in 9.330.0. Der Vision-LLM-Fallback für TEXTLOSE Szenenfotos bleibt unangetastet: dort schlägt ein Modell, das BESCHREIBT, eines das TRANSKRIBIERT. Ergebnis: das Text-Modell bekommt jetzt Passnummer, Name UND Geburtsdatum statt Browser-Chrome. (2) MRZ-KAPPUNG AM FALSCHEN ORT — genau der Fehler, den ich sonst anmahne ([[feedback_single_fix_point]]): _collapse_ocr_filler sass in ingest.parse_image, also beim AUFRUFER. Folge: derselbe Pass kam über den Projekt-Import gekappt zurück (716 Zeichen) und über den Chat-Anhang voll gepolstert (8865 Zeichen, die '<<<<'-Kette wieder da). Nach doc_convert.collapse_ocr_filler verschoben und in _extract_image_ocr gezogen = DER OCR-Choke-Point; ingest-Kopie gelöscht. Gegengeprüft: alle VIER Wege (Projekt-Import / read_document / ocr_extract.model_read / Chat-Degrade) liefern jetzt die Passnummer und 12-16 '<' statt Tausenden. (3) PERF — 20,7s war für einen Chat-Anhang inakzeptabel (der Nutzer wartet). Ursache: das Modell SPULT die MRZ-Polsterung aus, bevor wir sie wegwerfen — 8196 Zeichen Rohausgabe. Gemessen: max_tokens 4096 → 22,8s / 1024 → 4,7s / 512 → 2,8s, und der Text NACH der Kappung ist bei allen dreien BYTE-IDENTISCH (344 Zeichen, Passnr+Name+Datum überall drin). Die Extra-Tokens erzeugen ausschliesslich Padding. Der Degrade-Pfad cappt daher auf 1024 (_extract_image_ocr nimmt jetzt ein optionales cfg-Override) → 20,7s → 6,1s bei identischem Inhalt. Projekt-Mining behält das volle Budget: dort sind ganze Textseiten der Normalfall, keine Ausweise. ABGRENZUNG (die eigentliche Antwort auf die User-Frage): GLM-OCR ist damit das lokale TEXT-Auge für Text-Modelle — es TRANSKRIBIERT. Ein allgemeines Vision-Modell, das ein Bild BESCHREIBT ('zwei Personen an einem Strand'), ersetzt es nicht und bleibt der Fallback für textlose Bilder. py_compile OK. Brain-Neustart nötig. Skills + kuratierter Eintrag im selben Commit."),
     ("9.330.0", "2026-07-14", "fix(OCR-Konsistenz über ALLE Wege) + feat(Bild-Typ-Klassifikation schliesst die PII-Lücke bei Foto-Ausweisen). ANLASS (User, zwei Einwände): (a) 'die OCR-Qualität hängt jetzt davon ab, WIE das Bild eingehängt wird — Ingest anders als Attachment anders als OCR-Tools, ist das sinnvoll?' (b) 'wäre es für den PII-Fall nicht besser, den TYP des Bildes abzufragen (Rechnung/Pass/Kontoauszug) und danach zu entscheiden?' BEFUND ZU (a) — die Landkarte war tatsächlich inkonsistent, FÜNF Wege mit VIER Verhalten: Projekt-Import und read_document teilen sich parse_image (LLM-OCR + Tesseract-Wächter + Warnhinweis) — die waren schon konsistent, weil der Fix am Choke-Point sass; ein multimodales Chat-Modell bekommt das Bild als Pixel und GAR KEINE OCR (bewusst so, das Modell sieht mehr als jede OCR); die ocr_*-Tools laufen strikt LLM-frei; und der PII-Scanner übersprang Bilder KOMPLETT ('return \"\", \"media\"'). Das Letzte war eine echte DSGVO-Lücke: ein fotografierter Ausweis ist eine .jpg und ging damit als der PII-DICHTESTE Anhangstyp überhaupt UNGEPRÜFT ans Modell. FIXES: (1) GEMEINSAMES FUNDAMENT doc_convert.tesseract_read(path) → {text, words, mean_conf}, gebaut auf ocr_tools' bestehenden Primitiven (_page_tsv/_words_to_text/_mean_conf) — EIN Tesseract-Aufruf-Shape im ganzen Code, statt drei. (2) PII-SCANNER liest Bilder jetzt — und zwar BEIDE Lesungen (Tesseract + Modell) konkateniert. Begründung (der User fragte explizit 'warum nicht immer beides?'): für einen DETEKTOR zählt Recall, nicht Präzision — ein verpasster Passnummer-Treffer ist ein Datenleck, ein Fehlalarm kostet einen Bestätigungsklick. Und KEINE der beiden Lesungen reicht allein: Tesseract liefert auf einem Foto-Pass Zeichensalat ('+ rer KEES 045584 FE RRS STE ZZ'), verfehlt den Namen komplett und löst mit seinem Müll sogar EINEN EIGENEN Fehlalarm aus (phantom 'Czech rodné číslo'); das Modell liest Name und Nummer, kann aber erfinden. Also Vereinigung, Detektoren entscheiden. (3) ocr_*-TOOLS bekommen ein model_read-FELD: deterministisch bleibt in `text` (unverändert, das ist der Zweck des Toolsets), die Modell-Lesung kommt SEPARAT daneben, explizit als UNVERIFIED markiert, plus Opt-out model_fallback=false. Warum überhaupt: gemessen an den 10 echten Scans las Tesseract die Passnummer in 1/10, das OCR-Modell in 5/10 — und Tesseract WEISS NICHT, dass es versagt hat. Nur den dünnen Read zurückzugeben lässt den Agenten mit Müll UND ohne Hinweis stehen, dass es besser geht. ERSTER ANSATZ WAR FALSCH und wurde von der Messung widerlegt: ich hatte den model_read hinter eine Schwelle (<120 Zeichen) gehängt — aber Tesseracts eigene Qualitätssignale sind auf diesem Material UNBRAUCHBAR als Gate: conf 63,5%/134 Zeichen = nutzlos (nur Browser-Chrome), conf 43,0%/236 Zeichen = das Bild MIT der Passnummer, conf 46,3%/322 Zeichen = die meisten Zeichen, KEINE Passnummer. Das bestbewertete Bild ist der schlechteste Read; jede Schwelle, die das gute Bild durchlässt, lässt auch die nutzlosen durch. Daher: model_read IMMER anbieten (User: 'warum nicht immer beides'), Agent vergleicht. Kommt nichts zurück (Wächter hat verworfen), sagt das Feld das AUSDRÜCKLICH — Schweigen würde 'das Modell stimmt zu' bedeuten. BEFUND ZU (b) — der User hat recht, und mein eigener Test belegt es: der PII-Regex meldet auf einem REISEPASS 'tschechische Personenkennziffer' (Zufallstreffer auf einer 9-stelligen Zahl) und erkennt 'Bonnie Stark' NICHT. Regex auf OCR-Zeichensalat ist strukturell der falsche Ansatz. Die bestehende ARL-Klassifikation hilft auch nicht: sie ist ein MARKER-Detektor (sucht den Aufdruck 'Streng vertraulich') — ein abfotografierter Pass trägt keinen. NEU: mlx_ocr.classify_document(path) — EIN Wort Dokumenttyp (passport/id_card/bank_statement/invoice/…), ~1s, dasselbe schon geladene GLM-OCR-8bit, nur anderer Prompt. Den TYP eines Bildes zu erkennen ist ungleich leichter als seine ZEICHEN zu lesen: 8/8 Pässe korrekt erkannt — INKLUSIVE des Bildes, dessen Text unlesbar ist und bei dem folglich JEDER textbasierte Ansatz blind ist. GEGENGETESTET gegen gemma-4-12B (allgemeines Vision-Modell, gleicher Prompt): nur 4/8 — es antwortet bei der Hälfte 'screenshot', beschreibt also die FORM (Browserfenster) statt den INHALT. GLM-OCR gewinnt und ist ohnehin schon im Speicher. Kein blosses Ablesen des Wortes 'PASSPORT': bei dem Bild mit unlesbarem Text sagen BEIDE Modelle 'passport' — echtes Bildverständnis. VERDRAHTUNG: classification.IMAGE_TYPE_LEVEL mappt Typ → ARL-Stufe (passport/id_card/drivers_license/medical → strict; bank_statement/payslip/contract/certificate → confidential; invoice/receipt/correspondence → internal; screenshot/photo/other → keine Anhebung). Der Typ wird DRITTER Kandidat in _classification_action_level, das schon das MAXIMUM aus marker_level und heuristic_level bildet — die Stufe kann also nur STEIGEN, nie eine bestehende senken. handlers/chat.py klassifiziert Bilder jetzt AUCH OHNE extrahierten Text (das 'if full_text'-Gate hätte genau die Datei übersprungen, die es am nötigsten hat). ERGEBNIS am härtesten Fall (Bild 7, OCR liest 0 Zeichen, Regex blind, kein Marker): Typ='passport' → STUFE=STRICT. Vorher: völlig ungeprüft durchgelassen. Portrait-Fotos: 'photo' → PUBLIC, keine falsche Anhebung. Alle vier Wege am selben Bild gegengeprüft: Ingest/read_document liefern Passnr+Warnhinweis, ocr_extract trennt deterministisch von model_read, PII+Klassifikation greift. py_compile OK; 4-Site-Regel geprüft (5 ocr_*-Tools in Schema UND TOOL_DISPATCH). Brain-Neustart nötig. Skills + kuratierter Eintrag im selben Commit."),
     ("9.329.0", "2026-07-14", "fix(Bild-OCR: HALLUZINATION): GLM-OCR-8bit + Anti-Rate-Prompt + Tesseract-Gegenprobe + Warnhinweis + MRZ-Füllzeichen-Kappung — Halluzinationen auf NULL. ANLASS: Der User stellte die 10 ECHTEN Pass-Scans aus dem ko-kunden-Chat bereit (Browser-Screenshots eines per Webcam gehaltenen US-Passes: schräg, in der Hand, Spiegelungen, ein Bild nur 420x160px). Mein bisheriger Beleg war ein SYNTHETISCHER, sauber gerenderter Scan — der war NICHT aussagekräftig, und genau das flog hier auf ([[feedback_depth_over_speed]]: erst am echten Material messen). BEFUND am echten Material: das Modell HALLUZINIERT, wo das Bild unlesbar ist — es erfindet lieber Text als eine Lücke zu lassen: Vorname 'Sarah M. Stark' bzw. 'Gina M. Stark' (die Person heisst BONNIE), ein Passinhaber 'Pham Van Pham', ein 'Type of Airport: New York City' — steht alles NIRGENDS im Bild; dazu Geburtsdatum mal 05 Feb 1947 (richtig), mal 25 Feb 1947, und Ablauf 24 statt 26 Jan 2027. In einer Compliance-Akte ist ein erfundenes Geburtsdatum GEFÄHRLICHER als eine Lücke. VIER-WEGE-VERGLEICH, alle an denselben 10 echten Scans (Zeit/Bild · Passnr erkannt · halluziniert): Tesseract (kein LLM) 0,3s · 1/10 · 0/10 — erfindet nie, liest aber kaum etwas (Konfidenz 30-55%, 2x exakt 0%); gemma-4-12B via oMLX 50,4s · 1/10 · 0/10 — halluziniert nicht, weil es fast nichts ausliest: ein teurer Verweigerer; GLM-OCR-4bit 4,6s · 5/10 · 2/10; GLM-OCR-8bit 10,9s · 5/10 · 1/10. MASSNAHMEN (alle vier gemessen, nicht vermutet): (1) DEFAULT AUF GLM-OCR-8bit (statt 4bit): gleiche Erkennung (5/10), HALBE Erfindungsrate (2->1), Preis ~2x Zeit. Auf dem sauberen Testbild waren 4/8bit ununterscheidbar — nur das echte Material trennt sie. (2) ANTI-RATE-PROMPT als DEFAULT_PROMPT ('Transcribe ONLY text that is clearly and legibly visible … do NOT guess, do NOT invent names, dates or numbers … omit it'): entfernte messbar die erfundenen Vornamen. Reicht ALLEIN aber nicht (Bild 7 halluzinierte weiter). (3) TESSERACT-GEGENPROBE (_tesseract_sees_text in doc_convert, am Choke-Point _mlx_ocr_extract): findet die DETERMINISTISCHE OCR im Bild KEIN EINZIGES Wort, ist alles, was das Sprachmodell dazu sagt, unbelegt -> Ausgabe VERWERFEN. Tesseract erfindet nie; wo es nichts liest, ist nichts Lesbares. Traf im Test exakt die 2 schlimmsten Bilder (0 Wörter, 0% Konfidenz) — darunter das mit 'Pham Van Pham'. BEWUSST NUR dieser Extremfall: eine Konfidenz-SCHWELLE wäre falsch, denn das zweite Halluzinations-Bild lag mit 53% völlig im Normalbereich — ein Schwellwert würde gute Lesungen wegwerfen, ohne die schlechten zu treffen. Fehlt/bricht Tesseract -> None -> Text bleibt (fail-open). ERGEBNIS: halluziniert 0/10; Preis: Passnr 5/10 -> 4/10 (Bild 7 ENTHIELT die Nummer, aber zusammen mit erfundenen Namen — der richtige Tausch). (4) WARNHINWEIS _IMAGE_OCR_CAVEAT: jeder Bild-OCR-Body trägt jetzt einen Vermerk ('per OCR aus einem Bild gewonnen, kann Lesefehler enthalten … nicht als belegte Tatsache verwenden'). Er fährt IN DEN TEXT (nicht in die Metadaten) und damit in den Drawer UND in die KG-Extraktions-Eingabe — sonst zöge der Tripel-Extraktor 'Sarah M. Stark' als Entität ein. (5) BEIFANG _collapse_ocr_filler: die MRZ-Zeile eines Passes ist mit '<' gepolstert, und das Modell verlängert den Lauf — ein realer Chunk bestand zu 91% aus '<'-Zeichen (8620 Zeichen, davon 7864 Füllzeichen): ein ganzer Drawer aus Padding, der embedded und bei JEDER Suche mitgeschleppt wird. Läufe von 8+ Wiederholzeichen (<>._-=*#~) werden auf 8 gekappt: derselbe Scan jetzt 716 statt 8313 Zeichen, EIN Chunk statt DREI, MRZ als 'P<USASTARK<<BONNIE<MARIE<<<<<<<<' erhalten, alle Kernfelder (560683707/STARK/BONNIE MARIE/05 Feb 1947) korrekt. NB zur Frage des Users 'hatten wir nicht auch eine OCR ohne LLM?': JA — engine/tools/ocr_tools.py (ocr_inspect/ocr_extract/ocr_region/ocr_fields/ocr_tables, pytesseract, mit Wort-Konfidenzen) existiert und bleibt UNVERÄNDERT das deterministische Agenten-Toolset. Es ersetzt die Extraktions-OCR NICHT (1/10 auf diesem Material), liefert aber genau das Signal, das (3) nutzt. E2E am laufenden Server verifiziert. py_compile OK. Skills + kuratierter Eintrag im selben Commit."),
@@ -3320,6 +3321,7 @@ def _describe_image_deterministic(image_data_b64: str, filename: str) -> tuple[s
     feat_text = ""
     feat_signal = False
     codes = []
+    faces = 0
     try:
         from engine.image_features import (describe_image_features,
                                            features_to_text)
@@ -3327,6 +3329,7 @@ def _describe_image_deterministic(image_data_b64: str, filename: str) -> tuple[s
         feat_text = features_to_text(feat, filename)
         codes = feat.get("codes") or []
         feat_signal = bool(feat.get("has_signal"))
+        faces = int(feat.get("faces") or 0)
     except Exception:
         pass
 
@@ -3377,6 +3380,25 @@ def _describe_image_deterministic(image_data_b64: str, filename: str) -> tuple[s
     except Exception:
         pass
 
+    # Describe the PICTURE when it shows people but is not itself a document.
+    #
+    # Why faces: a photo inside a browser window otherwise counts as "text
+    # recovered" — the menu bar alone clears the ≥20-char bar — and the PERSON
+    # in it is never mentioned. That was the gap on the webcam portraits:
+    # tesseract read the tab bar, the code declared success, and the model
+    # learned nothing about the woman on screen. `faces` is the reliable
+    # trigger (`kind` is often unset).
+    #
+    # Why the text ceiling: on a text-DOMINATED image (a passport held to a
+    # webcam — it has a face too) the model ignores the describe instruction and
+    # transcribes anyway. That text is already above, twice, and it cost 8s. So
+    # a picture whose model reading is long is treated as a document, not a
+    # scene, and is not described again.
+    describe_text = ""
+    if faces and len(model_text or "") < _DESCRIBE_TEXT_CEILING:
+        describe_text, _d_err = _describe_image_with_local_model(
+            image_data_b64, filename)
+
     parts = []
     if ocr_text:
         parts.append(f"**{filename} — erkannter Text (OCR, zeichengenau):**"
@@ -3386,15 +3408,74 @@ def _describe_image_deterministic(image_data_b64: str, filename: str) -> tuple[s
             f"**{filename} — Textlesung durch das OCR-Modell (UNGEPRÜFT — kann "
             f"bei unscharfen Bildern Namen/Zahlen erfinden; die zeichengenaue "
             f"Lesung oben ist der Beleg):**\n{model_text}")
+    if describe_text:
+        parts.append(describe_text)
     if feat_text:
         parts.append(f"**{filename} — Bildmerkmale:** {feat_text}")
     combined = "\n\n".join(parts)
 
-    # "Strong" = we have real OCR text (≥20 chars), a model reading, decoded
-    # codes, or the feature pass classified the image with confidence.
+    # "Strong" = we have real OCR text (≥20 chars), a model reading, a
+    # description, decoded codes, or a confident feature read.
     strong = bool((ocr_text and len(ocr_text) >= 20) or model_text
-                  or codes or feat_signal)
+                  or describe_text or codes or feat_signal)
     return combined, strong
+
+
+# Above this many characters of recognised text, an image is a DOCUMENT, not a
+# scene, and is not described again. Measured: the webcam portrait of a person
+# yields 99 chars, the passport held to the same webcam 344.
+_DESCRIBE_TEXT_CEILING = 200
+
+
+def _describe_image_with_local_model(image_data_b64: str, filename: str
+                                     ) -> tuple[str, str | None]:
+    """Describe an image with the LOCAL OCR model. Returns (text, error).
+
+    Not the same job as reading its text: this asks what the picture SHOWS. The
+    OCR model does that well when told to — the pitfall is the prompt, not the
+    model: a bare "Describe this image" makes it fall back to transcribing (on a
+    webcam portrait it returned the browser tab bar and never mentioned the
+    person), while an explicit "describe, do not transcribe" yields "a woman in
+    a room with a bookcase and an American flag". See mlx_ocr._DESCRIBE_PROMPT.
+
+    Admin override: `ocr.describe_model` in config.json. Empty = the OCR model.
+    """
+    try:
+        from engine import mlx_ocr as _mlx
+        from engine.doc_convert import _ocr_config
+        if not _mlx.is_available():
+            return "", None          # no mlx-vlm on this host → caller falls on
+        cfg = _ocr_config()
+        if cfg.get("engine") == "none":
+            return "", None          # OCR deliberately off → don't run a model
+        repo = cfg.get("describe_model") or cfg.get("mlx_ocr_model") or ""
+    except Exception as e:
+        return "", f"{type(e).__name__}: {e}"
+
+    import base64 as _b64
+    import tempfile as _tf
+    tmp = ""
+    try:
+        data = _b64.b64decode(image_data_b64)
+        fd, tmp = _tf.mkstemp(suffix=os.path.splitext(filename)[1] or ".png",
+                              prefix="brain-describe-")
+        os.close(fd)
+        with open(tmp, "wb") as f:
+            f.write(data)
+        text, err = _mlx.describe_image(tmp, repo=repo)
+        if err:
+            return "", err
+        if not text:
+            return "", None
+        return f"**{filename} — Bildbeschreibung (lokal):**\n{text}", None
+    except Exception as e:
+        return "", f"{type(e).__name__}: {e}"
+    finally:
+        if tmp and os.path.isfile(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
 
 
 def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: str) -> str:
@@ -3408,22 +3489,45 @@ def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: 
     if strong:
         return det_text
 
-    # 2) Fallback: vision LLM (deterministic signal was thin). Prepend whatever
-    #    deterministic facts we DID gather so the model output is additive.
+    # 2) The image carries no usable TEXT (a scene photo, a diagram). All that
+    #    can be salvaged is a DESCRIPTION of what is shown.
+    def _with_facts(body: str) -> str:
+        """Prepend the deterministic facts (if any) so the description is
+        additive, never a replacement for what we measured locally."""
+        return f"{det_text}\n\n{body}" if det_text else body
+
+    # 2a) Describe with the LOCAL OCR model — it describes perfectly well when
+    #     told to (measured against gemma-4-12B on the same photos: same scene,
+    #     fewer details, but 13x smaller and already resident, and it needs no
+    #     second model in memory). This runs BEFORE the chat-model fallback so a
+    #     background image description never silently leaves the machine.
+    #     `ocr.describe_model` overrides the model; the prompt is model-agnostic.
+    desc_text, desc_err = _describe_image_with_local_model(image_data_b64,
+                                                           filename)
+    if desc_text:
+        return _with_facts(desc_text)
+    if desc_err:
+        print(f"[image-describe] local description failed for {filename}: "
+              f"{desc_err}", flush=True)
+
+    # 2b) Last resort: a chat model that can see images. Only reached when the
+    #     local path is unavailable (mlx-vlm missing, OCR disabled) — an
+    #     explicit `attachment_image_model` still wins over the auto-pick.
     vision_model = get_request_context().attachment_image_model or ''
     if not vision_model:
-        # Fall back to the cheapest enabled image-capable model.
+        # Cheapest enabled image-capable model. NB: `or 1e9` — NOT
+        # `.get(k, 1e9)`: a local model carries `cost_input: null`, and the
+        # dict default only fires on a MISSING key, so a free local model was
+        # being priced at 1e9 and losing to a cloud model. (Found while
+        # documenting this path.)
         candidates = [
             (mid, cfg) for mid, cfg in (_models_config or {}).items()
             if cfg.get("enabled", True) and "image" in (cfg.get("capabilities") or [])
         ]
-        candidates.sort(key=lambda t: (t[1].get("cost_input", 1e9), -(t[1].get("priority") or 0)))
+        candidates.sort(key=lambda t: (t[1].get("cost_input") or 0.0,
+                                       -(t[1].get("priority") or 0)))
         if candidates:
             vision_model = candidates[0][0]
-    def _with_facts(body: str) -> str:
-        """Prepend the deterministic facts (if any) so vision output is
-        additive, never a replacement for what we measured locally."""
-        return f"{det_text}\n\n{body}" if det_text else body
 
     if not vision_model:
         # No vision model — return whatever the deterministic pass found (even

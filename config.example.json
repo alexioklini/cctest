@@ -113,7 +113,8 @@
     "local_vision_max_tokens": 4096,
     "mlx_ocr_model": "mlx-community/GLM-OCR-8bit",
     "mlx_ocr_max_tokens": 4096,
-    "mlx_ocr_max_edge_px": 1600
+    "mlx_ocr_max_edge_px": 1600,
+    "describe_model": ""
   },
   "default_provider": "mistral-direct",
   "max_context": 131072,

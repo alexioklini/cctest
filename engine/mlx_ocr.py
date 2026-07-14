@@ -56,51 +56,19 @@ DEFAULT_PROMPT = (
 # two are indistinguishable — which is exactly why that test was not enough.)
 DEFAULT_MODEL = "mlx-community/GLM-OCR-8bit"
 
-# Only ever touched from the MLX worker thread → needs no lock of its own.
+# Only ever touched from the MLX runner thread → needs no lock of its own.
 _holder: dict = {"repo": None, "model": None, "processor": None}
 
-# ── The MLX worker thread ────────────────────────────────────────────────────
-# MLX/Metal must be driven from ONE long-lived thread. Two failure modes, both
-# reproduced and both fatal (SIGSEGV inside libmlx.dylib, taking the daemon
-# with it):
-#   1. Two threads evaluating concurrently → crash in `mlx::core::eval`.
-#   2. A thread that runs MLX and then EXITS → crash in `_pthread_tsd_cleanup`
-#      as Metal tears down its thread-local state. This one bites even when the
-#      evaluations were serialised by a lock, which is why a lock alone is not
-#      enough: our callers are POOL threads (`ingest_queue_*`) that die.
-# So we own a single daemon thread that never exits, and callers hand it work
-# and block for the result. Serialising costs nothing real — there is one GPU.
-_jobs: "queue.Queue" = queue.Queue()
-_worker: threading.Thread | None = None
-_worker_lock = threading.Lock()
 
+def _run_on_worker(fn, *, label: str = "ocr"):
+    """Hand `fn` to the shared MLX lane (engine/mlx_runner) and block.
 
-def _pump():
-    while True:
-        fn, box, done = _jobs.get()
-        try:
-            box["result"] = fn()
-        except BaseException as e:      # noqa: BLE001 — must never kill the pump
-            box["error"] = e
-        finally:
-            done.set()
-
-
-def _run_on_worker(fn):
-    """Run `fn` on the MLX thread and return its result (raises its error)."""
-    global _worker
-    with _worker_lock:
-        if _worker is None or not _worker.is_alive():
-            _worker = threading.Thread(target=_pump, daemon=True,
-                                       name="mlx-ocr")
-            _worker.start()
-    box: dict = {}
-    done = threading.Event()
-    _jobs.put((fn, box, done))
-    done.wait()
-    if "error" in box:
-        raise box["error"]
-    return box["result"]
+    Every local-model call — OCR here, speech-to-text in translate_tools — goes
+    through that one lane: MLX/Metal crashes when driven from several threads,
+    and there is only one GPU to share between concurrent users.
+    """
+    from engine import mlx_runner
+    return mlx_runner.run(fn, label=label)
 
 
 def is_available() -> bool:
@@ -158,6 +126,34 @@ DOC_TYPES = (
     "receipt", "contract", "payslip", "medical", "certificate",
     "correspondence", "screenshot", "photo", "other",
 )
+
+
+# The image is DESCRIBED, not transcribed. Say so explicitly: with a vague
+# "Describe this image" GLM-OCR falls back to what it was built for and reads
+# the text off the pixels — on a webcam portrait it returned the browser tab
+# bar and never mentioned the person. Told plainly not to transcribe, the same
+# model answers "a woman in a room with a bookcase and an American flag".
+# The instruction is model-agnostic on purpose: it does no harm to a general
+# vision model (gemma, mistral), so the admin can swap the model without
+# touching the prompt.
+_DESCRIBE_PROMPT = (
+    "Describe what is VISIBLE in this image: the scene, people, objects, "
+    "setting, colours, and any diagrams or charts. Do NOT transcribe text — "
+    "describe the picture itself."
+)
+
+
+def describe_image(path: str, *, repo: str = "", max_tokens: int = 320
+                   ) -> tuple[str, str | None]:
+    """Describe an image (what is SHOWN, not what is written). (text, error).
+
+    The counterpart to extract(): that one reads characters, this one reads the
+    picture. Used when a text-only model gets an image whose TEXT gave us
+    nothing — a scene photo, a diagram — so a description is all that can be
+    salvaged.
+    """
+    return extract(path, repo=repo, prompt=_DESCRIBE_PROMPT,
+                   max_tokens=max_tokens)
 
 
 def classify_document(path: str, *, repo: str = "") -> str:

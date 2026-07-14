@@ -154,7 +154,7 @@
 
 <div class="wrap">
 <header>
-  <p class="eyebrow">Prüfbericht · Stand 9.331.0 · 14.07.2026</p>
+  <p class="eyebrow">Prüfbericht · Stand 9.332.0 · 14.07.2026</p>
   <h1>Wie Brain Bilder verarbeitet</h1>
   <p class="sub">Alle Wege, auf denen ein Bild oder ein gescanntes PDF in Brain gelangt: wer ruft was auf, was passiert bei Fehlschlag, und wo lässt sich das einstellen. Zum Nachprüfen der Verdrahtung.</p>
   <div class="meta">
@@ -183,7 +183,7 @@
       <td><strong>GLM-OCR</strong><br><span class="tag t-local">lokal · kostenlos</span></td>
       <td>Spezialisiertes Texterkennungs-Modell (0,9 Mrd. Parameter).</td>
       <td>Im Brain-Prozess über <code>mlx-vlm</code> auf der Apple-GPU. <strong>Nicht</strong> über oMLX.</td>
-      <td>Liest auch schräge Fotos. Passnummer <span class="num">5×</span> von 10. Erkennt zusätzlich den <em>Dokumenttyp</em>.</td>
+      <td>Liest auch schräge Fotos. Passnummer <span class="num">5×</span> von 10. Erkennt zusätzlich den <em>Dokumenttyp</em> und <em>beschreibt</em> Bilder, wenn man es klar darum bittet.</td>
       <td><strong>Kann erfinden.</strong> Bei unlesbaren Bildern entstanden Namen, die im Bild nicht vorkommen.</td>
     </tr>
     <tr>
@@ -257,14 +257,55 @@
   <li><strong>Tesseract liest</strong><span class="note">Zeichengenau — das ist der Beleg.</span></li>
   <li><strong>GLM-OCR liest ebenfalls</strong><span class="note">Zusätzlich, nicht ersetzend. Als <em>ungeprüft</em> gekennzeichnet. Begrenzt auf 1024 Tokens, weil der Nutzer wartet: 4096 Tokens brauchen 22,8 s und liefern nach der Kappung denselben Text wie 1024 Tokens in 4,7 s.</span></li>
   <li><strong>Bildmerkmale</strong><span class="note">Maße, EXIF, Farben, Gesichter-Anzahl, QR-Codes — alles ohne Modell.</span></li>
-  <li><strong>Nur wenn nichts davon greift:</strong> allgemeines Vision-Modell<span class="note">Der Fall eines <em>textlosen</em> Fotos („zwei Personen am Strand"). Dort schlägt ein Modell, das <em>beschreibt</em>, eines das <em>abschreibt</em>.</span></li>
+  <li><strong>Bildbeschreibung — lokal</strong><span class="note">Zeigt das Bild <em>Gesichter</em> oder wurde kein Text gefunden, beschreibt GLM-OCR, was zu <em>sehen</em> ist: „eine blonde Frau, Bücherregal, US-Flagge". Einstellbar über <code>ocr.describe_model</code>.</span></li>
+  <li><strong>Nur wenn das lokale Modell fehlt:</strong> Chat-Modell mit Bildverständnis<span class="note">Letzter Ausweg, etwa wenn <code>mlx-vlm</code> nicht installiert ist.</span></li>
 </ol>
 
+<div class="callout">
+  <p class="hd">Warum nicht einfach das Chat-Vision-Modell?</p>
+  <p>Weil ein Bild <em>beides</em> sein kann. Ein Foto einer Person <strong>in einem Browserfenster</strong> galt bisher als Textdokument — die Menüleiste allein reißt die 20-Zeichen-Hürde für „Text gefunden". Das Text-Modell erfuhr deshalb nie etwas über die Person. Jetzt entscheiden <strong>Gesichter</strong>: Sind welche im Bild, wird beschrieben, auch wenn Text da ist. Ist die Textlesung dagegen lang (über 200 Zeichen), ist es ein Dokument — dann zählt der Text, nicht die Szene.</p>
+</div>
+
 <div class="check">
-  <p class="hd">Befund — das kostenlose lokale Modell verliert gegen die Cloud</p>
-  <p>Der Rückfall in Stufe 4 nimmt <code>attachment_image_model</code>. Dieser Wert ist <strong>nicht gesetzt</strong>, also sucht der Code selbst das <em>billigste</em> bildfähige Modell — und wählt <code>kimi-k2.6</code>, ein <strong>Cloud-Modell</strong>.</p>
-  <p>Ursache, im Code nachgewiesen: Das lokale <code>gemma-4-12B</code> ist bildfähig und steht in der Kandidatenliste, hat aber <code>cost_input: null</code>. Gelesen wird mit <code>cfg.get("cost_input", 1e9)</code> — der Ersatzwert greift nur bei einem <em>fehlenden</em> Schlüssel, nicht bei <code>null</code>. Das kostenlose Modell wird damit mit <span class="num">1 000 000 000</span> bewertet und landet auf Platz <span class="num">9</span> von <span class="num">10</span>. Die Sortierung „billigstes zuerst" wählt also ausgerechnet das teure.</p>
-  <p>Wirkung: Ein <em>textloses</em> Foto an ein Text-Modell geht in die Cloud. Ausweis-Scans sind nicht betroffen (dort liefern die Stufen 1–3 genug, Stufe 4 läuft gar nicht an). <strong>Zwei Abhilfen:</strong> <code>attachment_image_model</code> ausdrücklich auf das lokale Modell setzen — und den Standardwert so lesen, dass <code>null</code> ebenfalls greift.</p>
+  <p class="hd">Behoben — das kostenlose lokale Modell verlor gegen die Cloud</p>
+  <p>Der frühere Rückfall wählte automatisch das <em>billigste</em> bildfähige Modell — und nahm <code>kimi-k2.6</code>, ein <strong>Cloud-Modell</strong>, obwohl das lokale <code>gemma-4-12B</code> bereitstand.</p>
+  <p>Ursache: Das lokale Modell trägt <code>cost_input: null</code>. Gelesen wurde mit <code>cfg.get("cost_input", 1e9)</code> — der Ersatzwert greift nur bei einem <em>fehlenden</em> Schlüssel, nicht bei <code>null</code>. Das kostenlose Modell wurde damit mit <span class="num">1 000 000 000</span> bewertet und landete auf Platz <span class="num">9</span> von <span class="num">10</span>: „billigstes zuerst" wählte ausgerechnet das teure.</p>
+  <p><strong>Zweifach behoben:</strong> Die Beschreibung läuft jetzt zuerst über das lokale Modell und erreicht diesen Weg kaum noch — und der Lesefehler ist korrigiert, sodass <code>null</code> als kostenlos zählt.</p>
+</div>
+
+<h2>Was passiert bei Fehlern</h2>
+<p class="lede">Kein Bild bringt je einen Turn zu Fall. Die Kette weicht aus.</p>
+<div class="scroll">
+<table>
+  <thead><tr><th>Fehlerfall</th><th>Was dann passiert</th></tr></thead>
+  <tbody>
+    <tr><td>GLM-OCR wirft einen Fehler</td><td>Wird protokolliert, es geht zur nächsten Stufe weiter.</td></tr>
+    <tr><td>Chat-Modell wirft einen Fehler</td><td>Abgefangen. Der Nutzer bekommt die zeichengenaue Lesung und die Bildmerkmale, dazu einen Vermerk zum Fehler.</td></tr>
+    <tr><td>Kein bildfähiges Modell vorhanden</td><td>Zurückgegeben wird, was Tesseract und die Bildmerkmale gefunden haben.</td></tr>
+    <tr><td>Tesseract fehlt</td><td>Die Gegenprobe entfällt und enthält sich — die Modell-Lesung wird <em>behalten</em>, nicht verworfen.</td></tr>
+    <tr><td><code>mlx-vlm</code> nicht installiert</td><td>Die Einstellung <code>mlx_ocr</code> meldet in der Oberfläche „fehlt" samt Installationsbefehl.</td></tr>
+  </tbody>
+</table>
+</div>
+<p><strong>Was es nicht gibt:</strong> eine Kaskade über mehrere Modelle. Wirft das <em>eingestellte</em> Modell, wird nicht das nächstbeste probiert — es fällt eine Stufe zurück. Das ist bewusst so: Wer OCR auf lokal stellt, soll nicht durch einen Fehler still in der Cloud landen.</p>
+
+<h2>Die Warteschlange für lokale Modelle</h2>
+<p class="lede">Der Rechner hat <strong>eine</strong> GPU. Alles, was ein Modell im Brain-Prozess ausführt, läuft deshalb durch eine einzige Reihe.</p>
+<p>Ohne sie würden fünf gleichzeitige Nutzer fünf Modellläufe parallel starten — der sichere Weg, die Maschine lahmzulegen. Nachgemessen: <span class="num">5</span> gleichzeitige Texterkennungen und <span class="num">2</span> Texterkennungen zusammen mit <span class="num">2</span> Transkriptionen laufen jetzt sauber nacheinander durch, mit <strong>höchstens einem</strong> Modell auf der GPU.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Reihe</th><th>Wer darin wartet</th><th>Gleichzeitig</th></tr></thead>
+  <tbody>
+    <tr><td><code>mlx-runner</code><br><span class="tag t-local">im Brain-Prozess</span></td><td>Texterkennung (GLM-OCR), Bildbeschreibung, Dokumenttyp, Spracherkennung (Whisper)</td><td class="num">1</td></tr>
+    <tr><td><code>Lokal</code> (oMLX)<br><span class="tag t-local">eigener Server</span></td><td>Chat-Modelle</td><td class="num">1</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <p class="hd">Warum zwei Reihen und nicht eine</p>
+  <p>Ein Chat-Durchlauf hält seinen Platz über den <em>gesamten</em> Durchlauf — auch während er Werkzeuge aufruft. Läge alles in einer Reihe, würde ein Chat, der ein OCR-Werkzeug benutzt, <strong>auf sich selbst warten</strong>. Zwei Reihen schließen das aus. Die GPU sieht damit höchstens zwei Lasten statt beliebig vieler.</p>
 </div>
 
 <h2>Weg 3 — Der Agent ruft die OCR-Werkzeuge</h2>
@@ -333,7 +374,8 @@
     <tr><td><code>local_vision_model</code></td><td><code>gemma-4-12B-it-qat-oQ4-fp16</code></td><td>Nur bei <code>engine=local_vision</code> oder <code>auto</code>. Läuft über oMLX.</td></tr>
     <tr><td><code>provider</code> / <code>model</code></td><td><code>mistral-direct</code> / <code>mistral-ocr-latest</code></td><td>Nur bei <code>engine=mistral_ocr</code> oder <code>auto</code>. Zurzeit ohne Wirkung.</td></tr>
     <tr><td><code>max_pages_per_cycle</code></td><td class="num">1000</td><td>Obergrenze je Durchlauf, damit ein riesiges PDF nichts blockiert.</td></tr>
-    <tr><td><code>attachment_image_model</code></td><td><strong>nicht gesetzt</strong></td><td>Modell für die Beschreibung textloser Fotos. <span style="color:var(--check)">Siehe Prüfpunkt oben.</span></td></tr>
+    <tr><td><code>describe_model</code></td><td><em>leer</em></td><td>Modell für die <strong>Bildbeschreibung</strong>. Leer = das OCR-Modell (GLM-OCR). Hier lässt sich ein anderes eintragen — der Auftrag an das Modell ist so formuliert, dass er auch für gemma oder mistral passt.</td></tr>
+    <tr><td><code>attachment_image_model</code></td><td><em>nicht gesetzt</em></td><td>Chat-Modell als letzter Ausweg, wenn das lokale Modell nicht verfügbar ist.</td></tr>
   </tbody>
 </table>
 </div>
@@ -360,6 +402,6 @@
 </div>
 
 <footer>
-  Brain 9.331.0 · alle Angaben am laufenden System nachgemessen · Messwerte aus 10 echten Pass-Scans
+  Brain 9.332.0 · alle Angaben am laufenden System nachgemessen · Messwerte aus 10 echten Pass-Scans
 </footer>
 </div>

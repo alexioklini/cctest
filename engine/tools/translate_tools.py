@@ -72,13 +72,22 @@ def _transcription_config() -> dict:
 
 def _transcribe_with_whisper(file_path: str, model_id: str, language: str | None,
                              with_segments: bool = False) -> dict:
-    """Run local mlx-whisper. Raises on import / runtime failure."""
+    """Run local mlx-whisper. Raises on import / runtime failure.
+
+    Runs on the SHARED MLX lane (engine/mlx_runner), together with the local
+    OCR model. Two users transcribing at once used to start two whisper runs on
+    the one GPU; now the second waits. mlx_whisper keeps its own model cache
+    (`transcribe.ModelHolder`), so queueing costs a wait, never a reload.
+    """
     repo = _whisper_repo_for(model_id)
     import mlx_whisper  # type: ignore
+    from engine import mlx_runner
     kwargs = {"path_or_hf_repo": repo}
     if language:
         kwargs["language"] = language
-    result = mlx_whisper.transcribe(file_path, **kwargs) or {}
+    result = mlx_runner.run(
+        lambda: mlx_whisper.transcribe(file_path, **kwargs),
+        label=f"whisper:{model_id}") or {}
     transcript = (result.get("text") or "").strip()
     detected_language = result.get("language") or language or ""
     segments = result.get("segments") or []

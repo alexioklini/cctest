@@ -323,6 +323,12 @@ def _ocr_config() -> dict:
         # see engine/mlx_ocr.py for why that is both faster and smaller.
         "mlx_ocr_model": ocr.get("mlx_ocr_model", ""),
         "mlx_ocr_max_tokens": int(ocr.get("mlx_ocr_max_tokens", 4096)),
+        # Which model DESCRIBES an image whose text gave us nothing (a scene
+        # photo, a diagram). "" = the local MLX OCR model, which also describes
+        # when asked to (see mlx_ocr._DESCRIBE_PROMPT). Set a chat-model id here
+        # to route the description through that model instead — the prompt is
+        # model-agnostic, so no other change is needed.
+        "describe_model": ocr.get("describe_model", ""),
         # Longest edge handed to the OCR model (0 = no cap). See
         # _cap_image_edge: a 200-DPI page render is ~5x slower than a 1600px
         # one for the SAME text. Applies to rendered PDF pages only — a plain
