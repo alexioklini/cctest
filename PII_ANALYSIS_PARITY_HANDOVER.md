@@ -1,6 +1,6 @@
 # PII-Analyse-Parität — Handover (L1–L7)
 
-**Stand:** 2026-07-14 (aktualisiert nach Session 6) · Basis-VERSION: `9.340.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 + L2 + L4 Phase 2 + L5 + L6 GELIEFERT (v9.334.0–v9.340.0). Nur noch L7 offen (KYC-Preset + Degradations-Anzeige; dabei die aufgelaufenen Live-E2Es L4-P2 + L5 + L6 bündeln).**
+**Stand:** 2026-07-14 (aktualisiert nach Session 7) · Basis-VERSION: `9.341.1` · **Status: ALLE Bausteine L1–L7 GELIEFERT (v9.334.0–v9.341.1) — die Serie ist KOMPLETT. Die gebündelten Live-E2Es (L4-P2 + L5 + L6 + L7) sind gefahren (echte UI-Session im Projekt ko-kunden, Details §0.0/v9.341); Config + Projekt exakt revertiert, Test-Sessions gelöscht.**
 
 ---
 
@@ -15,7 +15,7 @@
 | **L4 Phase 2** (`ask`/Consent/`release_web`) | ✅ GELIEFERT | v9.338.0 |
 | **L5** OCR-Preamble + MRZ-Entity-Seed | ✅ GELIEFERT | v9.339.0 |
 | **L6** Report-Fidelity | ✅ GELIEFERT | v9.340.0 |
-| **L7** KYC-Preset | ⬜ NÄCHSTER Baustein | — |
+| **L7** KYC-Preset + Degradations-Anzeige + web_egress-GUI | ✅ GELIEFERT | v9.341.0 + v9.341.1 |
 
 ### Was v9.334.0 (Web-Egress-Gate) konkret enthält
 - `brain._gdpr_guard_web_args(tool_name, args)` (brain.py, direkt hinter `_gdpr_anon_tool_text`), aufgerufen am Anfang von `engine/llm_loop.py:dispatch_tool` — **der einzige Live-Dispatch-Choke-Point**, deckt Chat + Background + Scheduler. Aktiv nur bei `get_request_context()._gdpr_mapping_id`.
@@ -82,6 +82,30 @@
 - **Nebenbefund (vorbestehend, L2-Edge, bewusst NICHT hier gefixt):** `5 FEB 1947` und `05 FEB 1947` kollidieren auf DENSELBEN Fake, wenn der Offset den Tag zweistellig macht (`_fake_date` rendert beide als z. B. `10 FEB 1947`) → `reverse` behält einen der beiden Originale, Roundtrip stellt einheitlich diese Form her. Wert korrekt, reine Padding-Kosmetik; bei Bedarf in L7-Aufräumarbeiten mitnehmen.
 - Tests: NEU `tests/test_report_fidelity.py` (20 — alle 4 Linter-Klassen + FP-Negativliste (Starkstrom-Analog fake-seitig, Fremd-Salt, `<ITEM_1>`, restauriertes Original-Datum), File-Seam .md reformatted+clean, PDF-fail-loud mit echtem fitz-PDF (Row status=error + Warning + Context-Queue) + PDF-clean-still, dispatch_tool-Drain append+clear, Clamp-Sätze). 273 Nachbar-Tests grün. Kein neues Tool → kein Warmup-Reprime.
 - **Für L7 relevant:** der L6-Live-E2E (echte Anonymise-Session, Modell reformatiert ein Datum → Hinweisblock erscheint; write_document .pdf → Warnung + Modell weicht auf HTML aus) steht aus — **mit dem L4-P2- und L5-Live-E2E beim L7-Test bündeln.** L7b (Degradations-Anzeige) kann `metadata.gdpr_unrestored` + die `pii_report_fidelity`-Audit-Zeilen direkt als Datenquelle nutzen.
+
+### Was v9.341.0/.1 (L7 — KYC-Preset + Degradations-Anzeige + web_egress-GUI) konkret enthält
+
+- **L7a Preset:** `project.json → gdpr_preset` ('' | 'kyc' | 'kyc_local'), Editor in den Projekt-Einstellungen (Projektmodus-Sektion). Overlay per KOPIE auf der gecachten Global-Config (`_gdpr_apply_project_preset`; **der unkeyed 30s-Cache bleibt Preset-frei, NIE in-place mutiert**). Auflösung: expliziter `preset=`-Param (HTTP-Handler-Threads: Sticky-Block/block_group-Check/Cleartext-Persist — dort `project_name or session.project`, der v9.341.1-Fix: beim ERSTEN Send ist session.project noch leer) > RequestContext-Feld `gdpr_project_preset` (apply_domain_context; gesnapshottet in build_tool_context, restauriert in `_apply_bg_context` — Background-Calls erben den Overlay) > global. `kyc` = enabled + web_egress 'ask' + `rule_overrides.name→warn` NUR wenn effektiv ignore (only-strengthen) + doc_checks undeferred (Projekt-Sessions claimen nie den Warm-Pool) + **Auto-Anonymise ab Turn 1 ohne Modal** (Preset = stehender Consent; expliziter Opt-out/Pref gewinnt) + research_mode-Kopplung beim Aktivieren (expliziter research_mode im selben Update gewinnt). `kyc_local` = jeder nicht-lokale Turn swappt aufs Fallback-Modell (fail-loud 400 ohne konfiguriertes) + `background_pii_action='swap_to_local'`. Client: GET /messages exponiert `gdpr_project_preset`, sendMessage überspringt das PII-Modal (ARL-Dateien behalten ihren Dialog; Server erzwingt unabhängig).
+- **L7b Degradations-Anzeige:** NEUES RequestContext-Feld `_gdpr_degradation` (Counts, NIE Werte) — getallied in `_web_gate_audit` (web_blocked/denied/released/allowed), `dispatch_tool` (doc_checks bei aktivem Mapping), PDF-Callback (pdf_refused); Worker draint in `metadata.gdpr_degradation`. `chat_render.js`: Schild-Streifen „Datenschutz dieser Antwort: …" unter der Antwort (merged `gdpr_unrestored`; Tooltip „datenschutzbedingte Einschränkung ist KEIN Analysebefund"; kein neues Global — Muster web_sources).
+- **L7c web_egress-GUI:** Select in Settings→GDPR→Master-Schalter; `collectGdprFormConfig` sendet mit, POST /v1/services/server validiert gegen `_WEB_EGRESS_MODES`, Services-GET liefert den Key (admin_artifacts — fehlte im expliziten Antwort-Dict). js_gate-Baseline bewusst 1995→1996 (`setProjectGdprPreset`).
+- Tests: NEU `tests/test_gdpr_project_preset.py` (22 — Overlay beide Presets, Cache-nie-mutiert, only-strengthen, Param>Kontext>Global, apply_domain_context set/reset+undefer, bg-Context-Roundtrip, update_project-Validierung+research_mode-Kopplung, Audit-Tally). 233 Nachbar-Tests + js_gate grün.
+
+### Live-E2E-Ergebnisse (Session 7, echte UI-Session Projekt ko-kunden — die gebündelten L4-P2+L5+L6+L7-Verifikationen)
+
+Getestet via Safari-Browser-Session, Preset `kyc` am Projekt (globale Config blieb komplett unangetastet, `enabled:false` — das Preset ist der Test!). Danach exakt revertiert (Preset '', research_mode zurück auf False), Test-Sessions gelöscht, Artefakt-Ordner entfernt.
+
+- **L7 ✓:** Kein PII-Modal beim Send, `pseudonym_maps`-Zeile ab Turn 1 (Auto-Anonymise via Preset), Preset-Select rendert/persistiert, research_mode-Kopplung live.
+- **L4-P2 ✓:** Consent-Karte mit EINER Frage pro Wert (5 NER-Formen), Freigaben → 5 `release_web`-Ledger-Zeilen, freigegebene Suche lief (`pii_web_egress match=released`), NICHT freigegebene Werte (Adresse/PLZ) refused ohne zweites Modal (3× `pii_web_blocked match=original`); das Modell suchte danach selbst mit der FAKE-Identität („Cameron Taylor"-Queries → Hin-Übersetzung dispatch-only); Antwort wies geblockte Recherche korrekt als „**nicht prüfbar (Datenschutz)**" aus (keine Negative-Evidenz-Lüge). **Widerruf im GDPR-Modal ✓** (`deny_web`-Zeile via Toggle+Speichern).
+- **L7b ✓:** `metadata.gdpr_degradation` persistiert (auch am abgebrochenen Turn) und der Streifen rendert: „Datenschutz dieser Antwort: Websuche 2× nicht ausgeführt (geschützte Werte)".
+- **L6 ✓ (Clamp-Pfad):** Auf explizite PDF-Anforderung reflektierte das Modell „Da PDF nicht erlaubt ist (Pseudonymisierungs-Restoration…)" und schrieb direkt `bericht.html`; die Datei trug nach dem File-Seam NUR Echtwerte (8× Bonnie/6× Stark, 0 Fakes, 0 Residuen). Der Fail-loud-PDF-Pfad selbst wurde dadurch nicht getriggert (bleibt durch die fitz-Unit-Tests gedeckt — das Clamp-Ausweichen IST der gewünschte Normalpfad).
+- **L5 ✓ (Seed-Pfad):** Ausweis-Scan-JPG in frischer Projekt-Session → Entität ab Turn 1 komplett geseedet: `Bonnie Marie Stark→John Quinn Turner` inkl. `STARK<<BONNIE<MARIE`, **Middle-Initial-Formen** `Bonnie M Stark→John Q Turner` und Glued-Givens `BONNIEMARIE`. (Der eigentliche LLM-Call schlug am Upstream fehl — Kilo 400 bei 4MB-Bild an deepseek-v4-flash, unabhängige Multimodal-Baustelle; der Seed läuft davor und ist der L5-Kern.)
+
+**Nebenbefunde aus Session 7 (offen / für später):**
+1. **Erste-Turn-NER-Lücke im TEXT-only-Fall bleibt:** Im getippten Satz „Prüfe die KO-Kundin Bonnie M Stark aus Oregon City…" taggte die deutsche NER NICHTS (`findings:0`) — der Klarname ging im Turn-1-Wire zum Cloud-Provider (das WEB blieb dank Gate dicht: alle Klarnamen-Egresses gefangen). Die Entität entstand beim mempalace-Result-Scan; **ab Turn 2 self-healt der L5-Sweep** (`Bonnie M Stark→Cameron M Taylor` als echte Paare registriert → Ledger-Rewrite deckt rückwirkend auch die Turn-1-History). Mit FOTO-Anhang existiert die Lücke nicht (L5b-Seed vor dem Scan — live gezeigt). Kandidaten: NER-Upgrade (`de_core_news_lg`) oder ein Vorab-Seed aus Projekt-Wissen. F1-Restklasse, dokumentiert, nicht L7-Regression.
+2. **Session-Delete lässt `pii_decisions`-Zeilen zurück** (468 Waisen mit raw_value-Klarwerten nach Löschung der Test-Sessions; von Hand gepurged). Append-only ist gewollt, aber verwaiste Klarwerte nach Session-Löschung sind DSGVO-fragwürdig — Purge-Kandidat für den Session-Delete-Pfad.
+3. **Genitiv-Fake-Kuriosität:** Ledger zeigte `Bonnie Stark's → Cameron Taylor'm` — `render_variant` behandelt das englische `'s` als Token und rendert es form-mappend (`'m`). Kosmetisch (reverse funktioniert), aber der Fake liest sich falsch; Mini-Fix-Kandidat in `render_variant` (Apostroph-Suffixe verbatim).
+4. **Kilo/deepseek-Multimodal-400** bei ~4MB-JPG als image_url — der Turn failt als „Sidecar error: HTTP 400" ohne Degrade. Gehört zur `_sanitize_multimodal_for_model`-Baustelle (v9.291.0), nicht zu PII.
+5. Der Upstream-Stream (deepseek-v4-flash via Kilo) blieb im ersten E2E-Turn einmal ~10min mitten in der Generation stehen (kein Timeout-Abbruch) — Cancel+Resend halfen; ggf. Read-Timeout im httpx-Stream prüfen.
 
 ### Nebenbefunde aus Session 4 (für die Weiterarbeit relevant)
 - **Live-E2E steht noch aus** (Regel 12, ehrlich): Unit-Suite deckt Consent-Mechanik + Übersetzung + Ledger; der interaktive Rundlauf (echte anonymisierende Session, `web_egress:"ask"`, Frage-Karte im Browser beantworten, searxng läuft rückübersetzt, Ergebnis rück-anonymisiert, Widerruf im Modal) braucht eine echte UI-Session im Projekt `ko-kunden` — **beim L5- oder L7-Test mit erledigen** (Config danach exakt revertieren, Test-Sessions löschen, [[feedback_cleanup_test_sessions]]).
@@ -690,7 +714,7 @@ Diese wurden **getroffen** (nicht neu aufrollen, außer es gibt neue Evidenz):
 - ~~**L6a:** HTML→Server-Render **oder** PDF-Write-Block?~~ **ENTSCHIEDEN (Session 6): Steuern+Fail-loud** — die Render-Empfehlung beruhte auf `report_html.py`, das ist aber Markdown→HTML; ein HTML→PDF-Renderer existiert nicht und crawl4ai ist optional/per-machine. Begründung + Umsetzung §0.0 (v9.340.0). Nicht neu aufrollen, außer ein echter HTML→PDF-Renderer wird Infrastruktur.
 - ~~**L2a Persistenz-Schema**~~ erledigt (v9.337.0: fehlendes Feld = leer, kein Migrations-Script).
 - ~~**Fuzzy-Schwelle**~~ erledigt (v9.337.0/9.339.0: GARBLE_FLOOR 0.60 / ANCHOR 0.72, am echten Material kalibriert).
-- **L7:** einziger offener Baustein — KYC-Preset (§L7a) + Degradations-Anzeige (§L7b; Datenquellen existieren jetzt: `metadata.gdpr_unrestored`, `pii_report_fidelity`-/`pii_web_*`-Audit). Beim L7-Test die Live-E2Es L4-P2 + L5 + L6 bündeln (echte UI-Session im Projekt `ko-kunden`, Config danach exakt revertieren, Test-Sessions löschen).
+- ~~**L7**~~ GELIEFERT (v9.341.0/.1) inkl. der gebündelten Live-E2Es — **die Serie L1–L7 ist damit KOMPLETT.** Verbleibende Folgearbeit ist nur noch der Nebenbefund-Katalog aus Session 7 (§0.0: Text-only-Erste-Turn-NER-Lücke, pii_decisions-Waisen beim Session-Delete, Genitiv-Fake-Kosmetik, Kilo-Multimodal-400, Upstream-Stream-Stall) + der L2-Padding-Edge (`5 FEB` vs `05 FEB`).
 
 ---
 
