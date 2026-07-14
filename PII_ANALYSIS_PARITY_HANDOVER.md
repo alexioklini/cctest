@@ -40,6 +40,13 @@
 - Tests: `tests/test_dispatch_symmetry.py` (16) — inkl. Whitelist∩Web=∅-Invariante, Web-nie-Deanon-Negativtest, Gate-vor-Deanon end-to-end, Netzwerk-Marker beide Richtungen, L3c-Notice-Erhalt.
 - **Für L4 Phase 2 relevant:** die Ergebnis-Rück-Anonymisierung (Schritt 2d) existiert jetzt als web_fetch/searxng/exa-Seam; Phase 2 braucht nur noch Consent (`release_web`) + Hin-Übersetzung am Gate.
 
+### Nebenbefunde aus Session 2 (für die Weiterarbeit relevant)
+- **Commit:** `21505fb9` (12 Dateien). Code-Orte für die Weiterarbeit: `GDPR_ARGS_DEANON_TOOLS` + `_DEANON_NETWORK_MARKER_RE` + `_gdpr_deanon_tool_args` in brain.py **direkt hinter `_web_gate_audit` / vor `_route_to_node`**; Dispatch-Hook in `engine/llm_loop.py:dispatch_tool` (zwischen Web-Gate und `TOOL_DISPATCH`-Lookup); `_web_result_anon` + `_tool_web_fetch_impl` in `engine/tools/misc_tools.py` (direkt vor `tool_web_fetch`); mempalace-Seams jeweils am finalen `_ok(...)`-Return.
+- **OFFENE LIVE-VERIFIKATION (bewusst, Regel 12):** die Unit-Suite deckt die Mechanik + ein In-Process-Roundtrip mit echtem Scanner lief grün (E-Mail+IBAN inbound anonymisiert, reversibel; `/v1/web/search` nach Restart ok). Die **Original-Chat-Reproduktion** aus der L3-Verifikationsliste (anonymisierende Session: `mempalace_query("Stark Bonnie KO Kunde")` → dieselben 10 Drawer; `read_document` auf Pfad mit Klarnamen) wurde NICHT live gefahren — sie braucht eine echte Auto-Anonymise-Session im Projekt `ko-kunden` (interaktiver PII-Modal-Flow). **Beim L2-Test in der nächsten Session mit erledigen** (L2 braucht ohnehin genau dieses Szenario; Test-Session danach löschen, [[feedback_cleanup_test_sessions]]).
+- `deanonymize_text` ist exakt-String + tolerante Token-Regex — d. h. L3a übersetzt heute NUR Werte, die als exakte Strings in `mapping.reverse` stehen. **Die 8-Oberflächenformen-Lücke (F1) besteht an der Args-Grenze fort, bis L2 die Varianten ins Mapping einträgt** — L2a-Varianten müssen deshalb als echte forward/reverse-Einträge registriert werden (dann profitiert L3a automatisch, ohne Code-Änderung).
+- Der `include_snippets`-Pfad von `_searxng_query` (menschliches Websuche-Panel, `POST /v1/web/search`) läuft durch denselben Seam, no-opt aber (HTTP-Handler-Thread hat kein Mapping) — gewollt: das Panel ist user-facing, der User ist Dateneigner.
+- Doku in demselben Commit aktualisiert: INVARIANTS.md (§GDPR → „Dispatch symmetry (v9.336.0, L3)"), brain-agent-guide 05-internals + 06-user-manual-FAQ („Findet ein anonymisierter Chat meine Projektdaten noch?"), SKILL 1.206.0, kuratierter Changelog (9.336.0).
+
 ### Nebenbefunde aus Session 1 (für die Weiterarbeit relevant)
 - **`_check_tool_dedup` läuft im Live-Dispatch-Pfad NICHT** — `llm_loop.dispatch_tool` ruft `TOOL_DISPATCH[name](args)` direkt, ohne Dedup/Hooks; der einzige Caller von `_check_tool_dedup` ist das tote `_execute_tool_inner` (brain.py:16065). engine/CLAUDE.md behauptet Dedup sei live → **Doku-Drift seit 9.247.0, bewusst NICHT angefasst.** Konsequenz für L3: die „built-in pre"-Stufe der Pipeline existiert im Live-Pfad faktisch nur als das neue Web-Gate; L3a (Args-Deanon) gehört an dieselbe Stelle (`dispatch_tool`, vor `fn(args)`, NACH dem Web-Gate — Reihenfolge wichtig: erst Gate prüfen, dann deanonymisieren, sonst prüft der Gate schon rückübersetzte Args).
 - Doku aktualisiert in denselben Commits: INVARIANTS.md (§GDPR Web-Egress-Gate, §doc_checks), brain-agent-guide (05-internals, 06-user-manual-FAQ, 02-tools, SKILL 1.205.0), kuratierter Changelog (2 Einträge).
@@ -328,7 +335,13 @@ Die fehlenden Seams nachziehen — **konsistent zum bestehenden Per-Tool-Muster*
 
 ---
 
-## L2 — Entitäts-konsistente Pseudonymisierung
+## L2 — Entitäts-konsistente Pseudonymisierung — ⬜ NÄCHSTER BAUSTEIN
+
+> **Session-2-Update (nach L3-Lieferung):** L2 setzt jetzt auf fertiger Infrastruktur auf — vier konkrete Integrationspunkte:
+> 1. **Varianten MÜSSEN als echte `mapping.forward`/`reverse`-Einträge registriert werden** (nicht nur im neuen `entities`-Feld). Grund: L3a (Args-Deanon) und der Web-Egress-Gate arbeiten beide auf forward/reverse — registrierte Varianten machen beide automatisch entitäts-fähig, ohne dass dort Code angefasst wird. Das `entities`-Feld ist die BUCHFÜHRUNG (welche Variante gehört zu welcher Person), die String-Tabellen bleiben der ARBEITSSPEICHER.
+> 2. **Wiederverwenden, nicht duplizieren:** `engine/identity.py` (Normalisierung/Fuzzy, L1) für den Alias-Resolver; der ICAO-9303-Rechner aus `engine/tools/doc_checks.py` für die Fake-MRZ (L2b).
+> 3. **Testfall-Infrastruktur existiert:** `tests/test_dispatch_symmetry.py` zeigt das Fixture-Muster (request_context + `pseudonymizer.new_mapping()`); die F1/F2-Testfälle unten dort oder in `tests/test_pseudonymizer.py` anbauen.
+> 4. **Die offene Live-Verifikation aus Session 2 (Original-Chat-Repro, §0.0) beim L2-E2E-Test mit erledigen** — L2 braucht genau dieses Szenario ohnehin.
 
 **Der größte Brocken — und der größte Qualitätshebel.** Hebt das Mapping von **String-** auf **Entitäts-Ebene**.
 
@@ -613,8 +626,10 @@ Diese wurden **getroffen** (nicht neu aufrollen, außer es gibt neue Evidenz):
 3. **L1 Tool-Inputs:** primär **Pfade** (Rohdaten), `text` nur als Fallback.
 4. **L4 Default:** `refuse`. Ziel-Modus für KYC: `ask`.
 5. **L4 Gate-Basis:** bekannte Session-Werte (Mapping + Ledger), **nicht** nur „actionable findings".
-6. **L3 Results-Anon:** per-Tool (konsistent zum Bestand), **nicht** generischer Post-Hook (Doppel-Anon-Gefahr).
-7. **L3 Args-Deanon:** Whitelist lokaler Tools; **Web-Tools NIEMALS**.
+6. **L3 Results-Anon:** per-Tool (konsistent zum Bestand), **nicht** generischer Post-Hook (Doppel-Anon-Gefahr). ✅ umgesetzt.
+7. **L3 Args-Deanon:** Whitelist lokaler Tools; **Web-Tools NIEMALS**. ✅ umgesetzt.
+8. **(Session 2) Netzwerk-Marker-Guard:** `execute_command`/`python_exec`-Strings mit Netzwerk-Markern (curl/https:///urllib/…) werden NICHT deanonymisiert — Seitentür-Egress wiegt schwerer als der F3-Rest (lokales Skript mit zufälligem Marker läuft mit Fakes). Nicht aufweichen ohne neue Evidenz.
+9. **(Session 2) L2a-Varianten landen in forward/reverse**, nicht nur im `entities`-Feld — sonst bleiben L3a und der Web-Gate blind für sie (Begründung im L2-Session-2-Update).
 
 **Wirklich offen:**
 - **L6a:** HTML→Server-Render **oder** PDF-Write-Block? (Empfehlung: Render-Weg, weil `report_html.py` schon existiert.)
