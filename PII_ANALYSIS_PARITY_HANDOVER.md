@@ -1,6 +1,42 @@
 # PII-Analyse-Parität — Handover (L1–L7)
 
-**Stand:** 2026-07-14 · Basis-VERSION: `9.333.0` · **Status: NICHTS IMPLEMENTIERT — reines Design/Handover.**
+**Stand:** 2026-07-14 (aktualisiert nach Session 1) · Basis-VERSION: `9.335.0` · **Status: Sofortmaßnahme (§5) + L1 GELIEFERT (v9.334.0 + v9.335.0, beide auf main gepusht). L2/L3/L4-Phase-2/L5/L6/L7 offen.**
+
+---
+
+## 0.0 Stand der Umsetzung (Session 1, 2026-07-14)
+
+| Baustein | Status | Release / Commit |
+|---|---|---|
+| **§5 Sofortmaßnahme = L4 Phase 1** (Web-Egress-Gate, `refuse`) | ✅ GELIEFERT | v9.334.0, `2f1fa8ce` |
+| **L1** doc_checks-Toolset | ✅ GELIEFERT | v9.335.0, `e2395b97` |
+| **L3** Dispatch-Symmetrie | ⬜ NÄCHSTER Baustein | — |
+| **L2** Entitäts-Map | ⬜ offen (nutzt `engine/identity.py` aus L1!) | — |
+| **L4 Phase 2** (`ask`/Consent/`release_web`) | ⬜ offen ('ask' verhält sich bis dahin wie 'refuse') | — |
+| **L5** OCR-Preamble | ⬜ offen | — |
+| **L6** Report-Fidelity | ⬜ offen | — |
+| **L7** KYC-Preset | ⬜ offen | — |
+
+### Was v9.334.0 (Web-Egress-Gate) konkret enthält
+- `brain._gdpr_guard_web_args(tool_name, args)` (brain.py, direkt hinter `_gdpr_anon_tool_text`), aufgerufen am Anfang von `engine/llm_loop.py:dispatch_tool` — **der einzige Live-Dispatch-Choke-Point**, deckt Chat + Background + Scheduler. Aktiv nur bei `get_request_context()._gdpr_mapping_id`.
+- Prüfbasis: `mapping.forward`/`mapping.reverse` + `pii_decisions`-Ledger (FP-Werte exempt UND unterdrücken Frisch-Scan-Refunde); Normalisierung lowercase + Space→`-`/`_`/`+`/`%20` + Erst/Letzt-Token-Paar (fängt URL-Slug `bonnie-stark` bei bekanntem `Bonnie M Stark`). Zusatz-Scan mit gate-eigener Kategorien-Policy (`_WEB_GATE_PASS_CATEGORIES = {business_id, network}`; `rule_overrides` ignoriert) — §4.2 umgesetzt.
+- Fakes/Tokens → **immer** refuse (jeder Modus); fail-CLOSED bei Gate-Crash; Error `web_query_blocked_pii` mit `value_kind` (nie Werte). Hint OHNE ask_user-Option (bewusste Abweichung: ohne `release_web` wäre das eine Sackgasse — kommt mit Phase 2 zurück).
+- Config `gdpr_scanner.web_egress`: `refuse` (Default) | `ask` (= refuse bis Phase 2) | `block_group` (Worker exkludiert `WEB_SEARCH_TOOLS` via exclude_tools an der `_base_excl`-Stelle; Dispatch-Gate bleibt Defense-in-Depth) | `allow` (auditiert). Kein GUI-Knob — kommt mit L7.
+- Clamp-Satz in `_GDPR_ANON_CLAMP` (englisch, konsistent zum Bestand): „nicht prüfbar (Datenschutz)", nie „no results" für nicht ausgeführte Suchen.
+- Audit: `pii_web_blocked` / `pii_web_egress` (kinds+mode, nie Werte).
+- Tests: `tests/test_web_egress_gate.py` (17) — Slug, Fake-in-allow, FP-Technik-Queries, Ledger+FP, verschachtelte Args, alle Modi.
+
+### Was v9.335.0 (doc_checks) konkret enthält
+- Neue Tool-Gruppe `doc_checks`: `mrz_verify` / `doc_dates_check` / `identity_consistency` (`engine/tools/doc_checks.py`, 4-Site-Verdrahtung + TOOL_ICONS/VERBS). **NEU `engine/identity.py`** (Namens-Normalisierung/Clustering, difflib, Schwelle 0.84) — **L2 MUSS dieses Modul wiederverwenden.**
+- **MRZ-OCR-Erkenntnis (am echten Material gemessen):** der generische OCR-Lauf (tesseract + GLM-OCR-Modell) liefert auf den Referenz-Fotos NULL parsebare MRZ-Datenzeilen (`«` statt `4`, lowercase-bleed; das Modell lässt Zeile 2 weg). Erst `_ocr_mrz_strip` (tesseract mit Zeichen-Whitelist `A-Z0-9<`, Boden-Streifen- + Vollbild-Crops, psm 6) macht `mrz_verify` auf Fotos funktionsfähig. Checksummen selbst-validieren die beste Lesung; voller Strip-Treffer überspringt die teuren Reads (CF-Scan 27s→5,6s).
+- **Ehrlichkeits-Invarianten:** unlesbares MRZ-Feld ⇒ Prüfziffer `null`, NIE `false` (sonst F2 in Gegenrichtung); `all_valid` nur bei ≥3 prüfbaren Ziffern, sonst `partial: true` + Warnhinweis; DOB verlässt Tools nur als Alter/Gleichheit; Kalender-exakte Deltas (`_human_delta_dates`: „10y − 1d" — die 365-Tage-Näherung ergäbe „10y + 1d" = falscher Fälschungsverdacht).
+- **Messung am echten 10-JPG-Satz:** CF-Scan `all_valid=true` · Foto 2 ehrlich `partial` (Nummern-Prüfziffer ✓, Datumsfelder unlesbar → null) · Fotos 1/3–7 sind WebID-Video-Screenshots, **die MRZ ist im Frame abgeschnitten** (visuell verifiziert) → `mrz_found=false` ist dort KORREKT · `identity_consistency` clustert CF-Scan + Foto 2 + Dateinamen-Form auf EINE Person, DOB-Match, Alter 79, 1 distinkte Passnummer — E1-Kernbefund serverseitig in 6,6s. Degarble dafür nötig: X-als-Füller-Split (`BONNIEXMARIE`→`BONNIE MARIE`), Trailing-`[CEKLMR]`-Garble-Schnitt, Glued-Token-Fallback im Matcher (nur bei ≥10-Zeichen-Token; `Maria Huber` vs `Marion Huber` matcht NICHT).
+- Tests: `tests/test_doc_checks.py` (37) inkl. Golden-MRZs beider echter Pässe.
+
+### Nebenbefunde aus Session 1 (für die Weiterarbeit relevant)
+- **`_check_tool_dedup` läuft im Live-Dispatch-Pfad NICHT** — `llm_loop.dispatch_tool` ruft `TOOL_DISPATCH[name](args)` direkt, ohne Dedup/Hooks; der einzige Caller von `_check_tool_dedup` ist das tote `_execute_tool_inner` (brain.py:16065). engine/CLAUDE.md behauptet Dedup sei live → **Doku-Drift seit 9.247.0, bewusst NICHT angefasst.** Konsequenz für L3: die „built-in pre"-Stufe der Pipeline existiert im Live-Pfad faktisch nur als das neue Web-Gate; L3a (Args-Deanon) gehört an dieselbe Stelle (`dispatch_tool`, vor `fn(args)`, NACH dem Web-Gate — Reihenfolge wichtig: erst Gate prüfen, dann deanonymisieren, sonst prüft der Gate schon rückübersetzte Args).
+- Doku aktualisiert in denselben Commits: INVARIANTS.md (§GDPR Web-Egress-Gate, §doc_checks), brain-agent-guide (05-internals, 06-user-manual-FAQ, 02-tools, SKILL 1.205.0), kuratierter Changelog (2 Einträge).
+- Memory-Datei: `project_pii_parity_l_progress` (im Claude-Code-Memory-Index).
 
 **Ziel in einem Satz:** Ein KYC-/Betrugs-Analyse-Chat soll mit **aktiviertem** PII-Scanner + Auto-Anonymisierung/Deanonymisierung **nahezu dieselbe Analysequalität** liefern wie mit deaktiviertem Scanner — ohne dass Klardaten in die Cloud gehen.
 
@@ -170,21 +206,21 @@ Drei Hebel, die zusammen Parität herstellen:
 
 ## 3. Umsetzungsreihenfolge
 
-| # | Baustein | Repariert | Aufwand |
-|---|---|---|---|
-| 1 | **L1** — Deterministische Verifikations-Tools (`doc_checks`) | **F2** komplett, F1 teilweise | M |
-| 2 | **L3** — Dispatch-Symmetrie (Args-Deanon + Results-Anon) | **F3**, F5 (mempalace + web-inbound) | M |
-| 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** |
-| 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L |
-| 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M |
-| 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M |
-| 7 | **L7** — KYC-Preset + Degradations-Transparenz | UX/Vertrauen | S |
+| # | Baustein | Repariert | Aufwand | Status |
+|---|---|---|---|---|
+| 1 | **L1** — Deterministische Verifikations-Tools (`doc_checks`) | **F2** komplett, F1 teilweise | M | ✅ v9.335.0 |
+| 2 | **L3** — Dispatch-Symmetrie (Args-Deanon + Results-Anon) | **F3**, F5 (mempalace + web-inbound) | M | ⬜ **NÄCHSTER** |
+| 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** | ⬜ |
+| 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L | Phase 1 ✅ v9.334.0 · Phase 2 ⬜ |
+| 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M | ⬜ |
+| 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M | ⬜ |
+| 7 | **L7** — KYC-Preset + Degradations-Transparenz | UX/Vertrauen | S | ⬜ |
 
 **Begründung der Reihenfolge:** L1 eliminiert den gefährlichsten Schaden (falsche Fälschungsindizien) mit kleinstem Eingriff und etabliertem Muster. L3 repariert Retrieval/Pfade und schließt die zwei größten Leaks — und liefert die Infrastruktur, auf der L2 aufsetzt. L2 ist der größte Qualitätshebel, aber auch der aufwendigste; er profitiert davon, dass L1/L3 schon stehen. L4 braucht L2/L3 für die Rück-/Hinübersetzung in Phase 2. L5 speist L2. L6/L7 sind Vertrauens-Schicht.
 
 ---
 
-## L1 — Deterministische Verifikations-Tools (`doc_checks`)
+## L1 — Deterministische Verifikations-Tools (`doc_checks`) — ✅ GELIEFERT (v9.335.0; Details §0.0)
 
 **Ziel:** Die Rechen-Checks laufen **serverseitig auf Rohdaten** und geben **PII-freie Verdikte** zurück. Damit sind sie **immun gegen jede Anonymisierung** — sie funktionieren, als wäre der Scanner aus.
 
@@ -241,7 +277,9 @@ Plus: `TOOL_ICONS` (`brain.py:14220`) + `TOOL_VERBS` (`:14247`).
 
 ---
 
-## L3 — Dispatch-Choke-Point-Symmetrie
+## L3 — Dispatch-Choke-Point-Symmetrie — ⬜ NÄCHSTER BAUSTEIN
+
+> **Session-1-Update:** Der Dispatch-Choke-Point ist `engine/llm_loop.py:dispatch_tool` — dort sitzt seit v9.334.0 bereits der Web-Egress-Gate (erste Zeilen). L3a gehört an dieselbe Stelle, **NACH** dem Gate (erst prüfen, dann deanonymisieren — sonst prüft der Gate rückübersetzte Args). Die in engine/CLAUDE.md beschriebene „built-in pre"-Stufe (Dedup etc.) läuft im Live-Pfad NICHT (Doku-Drift, §0.0 Nebenbefunde) — nicht darauf bauen.
 
 **Ziel:** Das Modell denkt in Fakes, die Tools arbeiten auf Rohdaten — **ohne dass eines vom anderen weiß**.
 
@@ -336,7 +374,7 @@ Konsequente Fortsetzung der bestehenden Philosophie (IBAN mod-97-gültig, Kredit
 
 ---
 
-## L4 — Web-Egress-Policy (Phase 1 **und** Phase 2)
+## L4 — Web-Egress-Policy (Phase 1 ✅ v9.334.0 · Phase 2 ⬜)
 
 **Der einzige Punkt mit echtem Zielkonflikt:** Personensuche im offenen Web mit Klarnamen **ist** inhärent Preisgabe. Es gibt keine Lösung, die beides hat — nur eine **ehrliche, auditierbare Entscheidung**.
 
@@ -538,11 +576,11 @@ Ehrlich benennen (CLAUDE.md-Regel 12):
 
 ---
 
-## 5. Sofortmaßnahme (unabhängig von allem)
+## 5. Sofortmaßnahme (unabhängig von allem) — ✅ ERLEDIGT (v9.334.0)
 
 > Die Kombination **heutige Config + Auto-Anonymise** (`contact=ignore` → Klarname bleibt; Web-Tools offen) würde den **Klarnamen kommentarlos an externe Suchmaschinen schicken**.
 
-**Wenn vor den großen Umbauten nur EINE Sache geändert wird: den Web-Tool-Args-Gate bei aktivem Mapping einziehen** (L4-Phase-1, `refuse` — wenige Zeilen am Dispatch + ein Clamp-Satz).
+~~Wenn vor den großen Umbauten nur EINE Sache geändert wird: den Web-Tool-Args-Gate bei aktivem Mapping einziehen~~ **Umgesetzt in v9.334.0** (Details §0.0).
 
 ---
 
