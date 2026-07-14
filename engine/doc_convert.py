@@ -313,9 +313,20 @@ def _ocr_config() -> dict:
         ocr = {}
     return {
         # engine unset → OCR disabled (no hardcoded provider/model guess).
-        "engine": ocr.get("engine", "none"),  # mistral_ocr | local_vision | auto | none
+        # mlx_ocr | mistral_ocr | local_vision | auto | none
+        "engine": ocr.get("engine", "none"),
         "provider": ocr.get("provider", ""),
         "model": ocr.get("model", ""),
+        # mlx_ocr: a purpose-built OCR model run IN-PROCESS via mlx_vlm (no
+        # server hop). Unlike local_vision it does not borrow a chat model —
+        # see engine/mlx_ocr.py for why that is both faster and smaller.
+        "mlx_ocr_model": ocr.get("mlx_ocr_model", ""),
+        "mlx_ocr_max_tokens": int(ocr.get("mlx_ocr_max_tokens", 4096)),
+        # Longest edge handed to the OCR model (0 = no cap). See
+        # _cap_image_edge: a 200-DPI page render is ~5x slower than a 1600px
+        # one for the SAME text. Applies to rendered PDF pages only — a plain
+        # image file is used as-is.
+        "mlx_ocr_max_edge_px": int(ocr.get("mlx_ocr_max_edge_px", 1600)),
         "max_pages_per_cycle": int(ocr.get("max_pages_per_cycle", 1000)),
         "trigger_chars_per_page": int(ocr.get("trigger_chars_per_page", _OCR_TRIGGER_CHARS_PER_PAGE)),
         # NB: OCR page billing moved to a PER-MODEL rate (models.<id>.cost_per_page_usd,
@@ -669,6 +680,117 @@ _IMAGE_MIME = {
 }
 
 
+def _cap_image_edge(path: str, max_edge: int) -> None:
+    """Downscale an image in place so its longest edge is <= max_edge.
+
+    A page rendered at 200 DPI is ~2500px wide, and the OCR model's runtime
+    scales with the pixel count: MEASURED on the same scanned passport —
+        2500px  14.7s        1600px  2.9s        1200px  1.5s
+    with byte-identical, fully correct text at every size. So the big render is
+    pure waste. We cap rather than lower the DPI because fitz renders sharper
+    than a downscale of a low-DPI render, and dense text pages still want the
+    detail; 0 disables the cap.
+    """
+    if not max_edge or max_edge <= 0:
+        return
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            longest = max(im.size)
+            if longest <= max_edge:
+                return
+            ratio = max_edge / longest
+            im.resize((max(1, int(im.width * ratio)),
+                       max(1, int(im.height * ratio))),
+                      Image.LANCZOS).save(path)
+    except Exception as e:
+        # Cosmetic optimisation — a failure here just means a slower OCR.
+        print(f"[doc-convert] image downscale failed for {path}: "
+              f"{type(e).__name__}: {e}", flush=True)
+
+
+def _mlx_ocr_extract(path: str, cfg: dict) -> tuple[str, str | None]:
+    """One image → text via the in-process MLX OCR model. (text, error)."""
+    from engine import mlx_ocr as _mlx
+    text, err = _mlx.extract(
+        path, repo=cfg.get("mlx_ocr_model") or _mlx.DEFAULT_MODEL,
+        max_tokens=cfg.get("mlx_ocr_max_tokens", 4096))
+    if err:
+        return "", err
+    if text:
+        # Local model on our own GPU → $0, but still logged so OCR throughput
+        # shows up in the same dashboard as the cloud engine.
+        try:
+            _log_ocr_cost(model=cfg.get("mlx_ocr_model") or _mlx.DEFAULT_MODEL,
+                          provider="local-mlx-ocr", pages=1, cost_usd=0.0)
+        except Exception:
+            pass
+    return text, None
+
+
+def _pdf_mlx_ocr(src: str, cfg: dict) -> tuple[str, str | None]:
+    """Scanned PDF → text via the in-process MLX OCR model.
+
+    A PDF page is not an image, so it has to be rendered first — same fitz
+    render the local_vision path does, reusing its DPI knob.
+    """
+    global _ocr_pages_this_cycle
+    try:
+        import fitz  # type: ignore
+    except ImportError:
+        return "", "pymupdf not installed (pip install pymupdf)"
+    try:
+        doc = fitz.open(src)
+    except Exception as e:
+        return "", f"open failed: {type(e).__name__}: {e}"
+
+    zoom = cfg["local_vision_render_dpi"] / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+    parts: list[str] = []
+    done = 0
+    try:
+        for i, page in enumerate(doc, 1):
+            if _ocr_pages_this_cycle >= cfg["max_pages_per_cycle"]:
+                parts.append(f"## Page {i}\n\n_(skipped — OCR cycle cap reached)_")
+                continue
+            _extract_progress("OCR", current=i, total=doc.page_count,
+                              note=f"Seite {i} (MLX-OCR)")
+            tmp = ""
+            try:
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                # mlx_vlm reads image FILES, so the rendered page spills to a
+                # tempfile; unique name (concurrent mines) + always removed.
+                import tempfile
+                fd, tmp = tempfile.mkstemp(suffix=".png", prefix="brain-ocr-")
+                os.close(fd)
+                pix.save(tmp)
+                _cap_image_edge(tmp, cfg["mlx_ocr_max_edge_px"])
+                text, err = _mlx_ocr_extract(tmp, cfg)
+            except Exception as e:
+                parts.append(f"## Page {i}\n\n_(render failed: {type(e).__name__}: {e})_")
+                continue
+            finally:
+                if tmp and os.path.isfile(tmp):
+                    try:
+                        os.unlink(tmp)
+                    except OSError:
+                        pass
+            if err:
+                parts.append(f"## Page {i}\n\n_(OCR failed: {err})_")
+                continue
+            parts.append(f"## Page {i}\n\n{text}" if text
+                         else f"## Page {i}\n\n_(empty OCR output)_")
+            done += 1
+            _ocr_pages_this_cycle += 1
+    finally:
+        doc.close()
+
+    out = "\n\n".join(parts).strip()
+    if not out or done == 0:
+        return "", "mlx-ocr: no usable output"
+    return out + "\n", None
+
+
 def _extract_image_ocr(path: str) -> tuple[str, str, str | None]:
     """Read the TEXT out of a standalone image (scan, photo of a document).
 
@@ -696,9 +818,18 @@ def _extract_image_ocr(path: str) -> tuple[str, str, str | None]:
     if _ocr_pages_this_cycle >= cfg["max_pages_per_cycle"]:
         return "", "", f"per-cycle cap {cfg['max_pages_per_cycle']} reached"
 
+    err = ""
+    # In-process MLX OCR — the fast path: an image needs no rendering, so the
+    # file goes straight to the OCR model.
+    if engine == "mlx_ocr":
+        text, m_err = _mlx_ocr_extract(path, cfg)
+        if text:
+            _ocr_pages_this_cycle += 1
+            return text, "mlx-ocr (1p)", None
+        return "", "", m_err
+
     # Cloud OCR first (when allowed): Mistral's /ocr takes an image data-URI
     # the same way it takes a PDF one — only the document type differs.
-    err = ""
     if engine in ("mistral_ocr", "auto"):
         _extract_progress("OCR", note="Bild — Cloud-OCR")
         text, err, pages = _extract_with_mistral_ocr(path, mime=mime)
@@ -1082,7 +1213,41 @@ def _extract_pdf_pymupdf4llm(path: str, *, pages: str | None = None) -> tuple[st
     md = (md or "").strip()
     if len(md.splitlines()) <= 1 or _pymupdf4llm_is_blank(md):
         return "", None   # scanned/empty → caller's OCR path
+    if _pdf_has_no_text_layer(path, page_sel):
+        # pymupdf4llm silently falls back to TESSERACT on a page with no text
+        # layer ("Using Tesseract for OCR processing" on stderr) and returns its
+        # output as if it were extracted text. That output is markedly worse
+        # than our configured OCR engine — on a scanned passport Tesseract read
+        # "05.02.1847" (year off by a century) and "S6068370F" for the passport
+        # number, where GLM-OCR reads both correctly. Because a non-empty
+        # result counts as success, the OCR chain below was NEVER reached and
+        # every scan in the corpus silently got the worse text.
+        # No text layer ⇒ whatever came back IS Tesseract ⇒ drop it and let the
+        # caller run the real OCR.
+        return "", None
     return md + "\n", None
+
+
+def _pdf_has_no_text_layer(path: str, page_sel: set | None = None) -> bool:
+    """True when NO selected page carries an actual text layer (i.e. the doc is
+    a scan). Cheap: `page.get_text()` reads the existing text objects, it does
+    not render or OCR."""
+    try:
+        import fitz  # type: ignore
+        doc = fitz.open(path)
+    except Exception:
+        return False      # can't tell → don't discard pymupdf4llm's output
+    try:
+        for i, page in enumerate(doc, 1):
+            if page_sel is not None and i not in page_sel:
+                continue
+            if (page.get_text() or "").strip():
+                return False
+        return True
+    except Exception:
+        return False
+    finally:
+        doc.close()
 
 
 def _extract_pdf_fitz_fast(path: str, *, pages: str | None = None) -> tuple[str, str | None]:
@@ -1806,6 +1971,15 @@ def _pdf_ocr_or_empty(src: str) -> tuple[str, str, str | None]:
     ocr_err = ""
     pages = 0
     backend = ""
+    if engine == "mlx_ocr":
+        _extract_progress("OCR", note="Gescanntes PDF — MLX-OCR (lokal)")
+        ocr_text, ocr_err = _pdf_mlx_ocr(src, ocr_cfg)
+        if ocr_text:
+            return ocr_text, "mlx-ocr", None
+        if ocr_err:
+            print(f"[doc-convert] OCR fallback failed for {src}: {ocr_err}",
+                  flush=True)
+        return "", "fitz/legacy", None
     if engine in ("mistral_ocr", "auto"):
         _extract_progress("OCR", note="Gescanntes PDF — Cloud-OCR")
         ocr_text, ocr_err, pages = _extract_with_mistral_ocr(src)

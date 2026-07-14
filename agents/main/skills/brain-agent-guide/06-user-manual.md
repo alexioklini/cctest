@@ -629,10 +629,20 @@ Codebasen, Forschungspapiere, …).
    **Bilder werden ausgelesen:** Aus einem Bild wird nicht nur Größe/Format
    erfasst, sondern per **OCR der enthaltene Text** (Scan eines Dokuments,
    Ausweis, Screenshot) — damit ist der Inhalt durchsuchbar und landet im
-   Wissensgraphen. Welche OCR benutzt wird, steuert der `ocr`-Block in
-   `config.json` (dieselbe Einstellung wie für gescannte PDFs): Cloud-OCR,
-   ein **lokales** Vision-Modell (wenn die Daten den Rechner nicht verlassen
-   dürfen) oder `none` zum Abschalten.
+   Wissensgraphen. Dieselbe OCR greift bei **gescannten PDFs** ohne Textebene.
+   Eingestellt wird sie unter *Einstellungen → Service-Modelle → OCR*
+   (`config.json` → `ocr.engine`):
+
+   - **`mlx_ocr`** (Standard) — ein spezialisiertes OCR-Modell, das **direkt im
+     Brain-Prozess** auf der eigenen GPU läuft (mlx-vlm), Standardmodell
+     `mlx-community/GLM-OCR-4bit` (0,9 Mrd. Parameter, 1,25 GB, ~1 s/Bild).
+     Nichts verlässt den Rechner. Läuft **nicht** über oMLX — das bleibt den
+     Chat-Modellen vorbehalten.
+   - **`mistral_ocr`** — Cloud-OCR-Endpunkt (schnell, aber die Datei geht zum
+     Anbieter).
+   - **`local_vision`** — ein allgemeines Chat-Vision-Modell über oMLX.
+     Funktioniert, ist aber deutlich langsamer als `mlx_ocr` (~37 s statt ~1 s).
+   - **`auto`** — Cloud zuerst, lokal als Rückfall. · **`none`** — OCR aus.
 
    **Originale bleiben erhalten:** Die hochgeladene Datei selbst wird im
    Projekt unter `originals/` aufbewahrt (nicht nur der extrahierte Text).

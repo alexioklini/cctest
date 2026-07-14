@@ -103,14 +103,17 @@
     }
   },
   "ocr": {
-    "engine": "mistral_ocr",
+    "engine": "mlx_ocr",
     "provider": "mistral-direct",
     "model": "mistral-ocr-latest",
     "max_pages_per_cycle": 1000,
     "trigger_chars_per_page": 50,
-    "local_vision_model": "gemma-4-26B-A4B-it-MLX-4bit",
+    "local_vision_model": "gemma-4-12B-it-qat-oQ4-fp16",
     "local_vision_render_dpi": 200,
-    "local_vision_max_tokens": 4096
+    "local_vision_max_tokens": 4096,
+    "mlx_ocr_model": "mlx-community/GLM-OCR-4bit",
+    "mlx_ocr_max_tokens": 4096,
+    "mlx_ocr_max_edge_px": 1600
   },
   "default_provider": "mistral-direct",
   "max_context": 131072,
@@ -4872,23 +4875,6 @@
       "is_local": false,
       "warmup": false
     },
-    "openai/gpt-oss-120b:free": {
-      "enabled": false,
-      "shortname": "gpt-oss-120b:free",
-      "display_name": "gpt-oss-120b:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "openai/gpt-oss-20b:free": {
       "enabled": false,
       "shortname": "gpt-oss-20b:free",
@@ -5042,6 +5028,83 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false
+    },
+    "kwaipilot/kat-coder-air-v2.5": {
+      "enabled": false,
+      "shortname": "kat-coder-air-v2.5",
+      "display_name": "kat-coder-air-v2.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "kwaipilot/kat-coder-pro-v2.5": {
+      "enabled": false,
+      "shortname": "kat-coder-pro-v2.5",
+      "display_name": "kat-coder-pro-v2.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/kwaipilot/kat-coder-air-v2.5": {
+      "enabled": false,
+      "shortname": "kat-coder-air-v2.5",
+      "display_name": "kat-coder-air-v2.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "kwaipilot/kat-coder-air-v2.5",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/kwaipilot/kat-coder-pro-v2.5": {
+      "enabled": false,
+      "shortname": "kat-coder-pro-v2.5",
+      "display_name": "kat-coder-pro-v2.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "kwaipilot/kat-coder-pro-v2.5",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "GLM-OCR-8bit": {
+      "enabled": false,
+      "shortname": "GLM-OCR-8bit",
+      "display_name": "GLM-OCR-8bit",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

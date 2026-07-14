@@ -43,3 +43,13 @@ oletools
 # analyzer is regex-based and works without this; sqlglot only adds column-lineage
 # on cleanly-parsable files. Gated by HAVE_SQLGLOT in engine/tools/sql_analysis.py.
 sqlglot>=20.0.0
+
+# In-process OCR (config.json -> ocr.engine = "mlx_ocr"): runs a dedicated OCR
+# model (default mlx-community/GLM-OCR-4bit) on the Apple GPU, see
+# engine/mlx_ocr.py. APPLE SILICON ONLY and NOT pip-installed by this file — it
+# is listed here for the record, like mlx-whisper (the STT counterpart), which
+# is also installed out-of-band. On a Homebrew python you need:
+#   pip3 install --break-system-packages 'mlx-vlm>=0.6.4'
+# Absent → the mlx_ocr engine reports "missing" in Settings → Service-Modelle
+# (with this command) and OCR falls back to whatever engine you pick instead.
+# mlx-vlm>=0.6.4

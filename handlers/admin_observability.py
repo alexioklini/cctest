@@ -1086,6 +1086,8 @@ class AdminObservabilityHandlers:
             "provider": ocr.get("provider", "") or "",
             "model": ocr.get("model", "") or "",
             "local_vision_model": ocr.get("local_vision_model", "") or "",
+            "mlx_ocr_model": ocr.get("mlx_ocr_model", "") or "",
+            "mlx_ocr_max_tokens": int(ocr.get("mlx_ocr_max_tokens", 4096)),
         }
         return cfg, values, ocr_block
 
@@ -1153,6 +1155,17 @@ class AdminObservabilityHandlers:
                 lv = (_cfg.get("ocr") or {}).get("local_vision_model") or ""
                 ocr_status = "ok" if lv else "missing"
                 ocr_why = "" if lv else "local_vision_model erforderlich"
+            elif ocr_block["engine"] == "mlx_ocr":
+                # In-process: nothing to resolve against a provider — the only
+                # hard requirement is that mlx_vlm imports (Apple Silicon).
+                from engine import mlx_ocr as _mlx
+                if not _mlx.is_available():
+                    ocr_status = "missing"
+                    ocr_why = ("mlx-vlm nicht installiert — "
+                               "pip3 install --break-system-packages mlx-vlm")
+                else:
+                    ocr_status = "ok"
+                    ocr_why = ""
             else:  # none
                 ocr_status, ocr_why = "off", "OCR deaktiviert"
 
@@ -1262,7 +1275,8 @@ class AdminObservabilityHandlers:
                 ocr = cfg.setdefault("ocr", {})
                 if "engine" in o:
                     eng = str(o["engine"] or "none").strip()
-                    if eng not in ("mistral_ocr", "local_vision", "auto", "none"):
+                    if eng not in ("mlx_ocr", "mistral_ocr", "local_vision",
+                                   "auto", "none"):
                         self._send_json({"error": f"Unbekannte OCR-Engine: {eng}"}, 400)
                         return
                     ocr["engine"] = eng
@@ -1276,6 +1290,24 @@ class AdminObservabilityHandlers:
                     ocr["model"] = str(o["model"] or "").strip()
                 if "local_vision_model" in o:
                     ocr["local_vision_model"] = str(o["local_vision_model"] or "").strip()
+                if "mlx_ocr_model" in o:
+                    new_repo = str(o["mlx_ocr_model"] or "").strip()
+                    if new_repo != (ocr.get("mlx_ocr_model") or ""):
+                        # The model lives in-process behind a one-slot cache —
+                        # drop it, or the OLD weights keep answering after the
+                        # admin picks a new model (no restart should be needed).
+                        try:
+                            from engine import mlx_ocr as _mlx
+                            _mlx.unload()
+                        except Exception:
+                            pass
+                    ocr["mlx_ocr_model"] = new_repo
+                if "mlx_ocr_max_tokens" in o:
+                    try:
+                        ocr["mlx_ocr_max_tokens"] = max(
+                            256, min(32768, int(o["mlx_ocr_max_tokens"])))
+                    except (TypeError, ValueError):
+                        pass
 
             # Conversion matrix: which extensions are markitdown-first, + the
             # tool-result budget knobs. Validated against the formats that have

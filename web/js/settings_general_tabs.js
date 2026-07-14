@@ -2758,7 +2758,7 @@ async function _genTab_service_models(C) {
   }).join('');
 
   const ocr = d.ocr || { engine: 'none', provider: '', model: '', status: 'off' };
-  const engineOpts = ['none', 'mistral_ocr', 'local_vision', 'auto'].map(e =>
+  const engineOpts = ['none', 'mlx_ocr', 'mistral_ocr', 'local_vision', 'auto'].map(e =>
     `<option value="${e}"${e === ocr.engine ? ' selected' : ''}>${e}</option>`).join('');
   const provOpts = '<option value="">— —</option>' + (d.providers || []).map(p =>
     `<option value="${esc(p)}"${p === ocr.provider ? ' selected' : ''}>${esc(p)}</option>`).join('');
@@ -2798,13 +2798,30 @@ async function _genTab_service_models(C) {
           <b>none</b>: OCR aus. <b>mistral_ocr</b>: Cloud-OCR-Endpoint. <b>local_vision</b>: lokales Vision-LLM.
           <b>auto</b>: Cloud zuerst, bei Fehler/PII lokal.</div>
       </div>
+      <div id="svc-ocr-mlx" style="${G('10px')}">
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+          <label style="font-size:12px;color:var(--text-300)">MLX-OCR-Modell</label>
+          <input type="text" class="form-input" id="svc-ocr-mlx-model" value="${esc(ocr.mlx_ocr_model || '')}" placeholder="mlx-community/GLM-OCR-4bit"${dis}>
+        </div>
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+          <label style="font-size:12px;color:var(--text-300)">Max. Tokens</label>
+          <input type="number" class="form-input" id="svc-ocr-mlx-max-tokens" value="${esc(String(ocr.mlx_ocr_max_tokens || 4096))}" min="256" max="32768"${dis}>
+        </div>
+        <div style="font-size:11px;color:var(--text-400);margin-left:210px;margin-top:-4px">
+          Spezialisiertes OCR-Modell, <b>direkt im Brain-Prozess</b> (mlx-vlm) — nicht über oMLX.
+          Empfohlen: <code>mlx-community/GLM-OCR-4bit</code> (0,9B · 1,25&nbsp;GB · ~1&nbsp;s/Bild).
+          Das Modell wird beim ersten Gebrauch von HuggingFace geladen und dann im Speicher gehalten.
+          Alternativen: <code>mlx-community/GLM-OCR-8bit</code>, <code>mlx-community/dots.ocr-4bit</code>,
+          <code>mlx-community/DeepSeek-OCR-4bit</code>.</div>
+      </div>
       <div id="svc-ocr-local" style="${G('10px')}">
         <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
           <label style="font-size:12px;color:var(--text-300)">Lokales Vision-Modell</label>
           <input type="text" class="form-input" id="svc-ocr-local-vision-model" value="${esc(ocr.local_vision_model || '')}" placeholder="z.B. gemma-4-26B-A4B-it-MLX-4bit"${dis}>
         </div>
         <div style="font-size:11px;color:var(--text-400);margin-left:210px;margin-top:-4px">
-          Genutzt bei Engine <b>local_vision</b> oder als lokaler Fallback bei <b>auto</b>.</div>
+          Genutzt bei Engine <b>local_vision</b> oder als lokaler Fallback bei <b>auto</b>.
+          Ein allgemeines Chat-Vision-Modell über oMLX — deutlich langsamer als <b>mlx_ocr</b>.</div>
       </div>
     </div>
 
@@ -2876,6 +2893,8 @@ function _svcOcrEngineToggle() {
   cloud.style.display = (eng.value === 'mistral_ocr' || eng.value === 'auto') ? '' : 'none';
   const local = document.getElementById('svc-ocr-local');
   if (local) local.style.display = (eng.value === 'local_vision' || eng.value === 'auto') ? '' : 'none';
+  const mlx = document.getElementById('svc-ocr-mlx');
+  if (mlx) mlx.style.display = (eng.value === 'mlx_ocr') ? '' : 'none';
 }
 
 // Save the new-chat composer defaults (Server tab → Eingabefeld-Standards).
@@ -2971,6 +2990,8 @@ async function saveServiceModels() {
     provider: document.getElementById('svc-ocr-provider')?.value || '',
     model: document.getElementById('svc-ocr-model')?.value || '',
     local_vision_model: document.getElementById('svc-ocr-local-vision-model')?.value || '',
+    mlx_ocr_model: document.getElementById('svc-ocr-mlx-model')?.value || '',
+    mlx_ocr_max_tokens: parseInt(document.getElementById('svc-ocr-mlx-max-tokens')?.value, 10) || 4096,
   };
   // Conversion matrix: which extensions are markitdown-first + the budget knobs.
   const mdExts = Array.from(document.querySelectorAll('.svc-conv-md:checked'))

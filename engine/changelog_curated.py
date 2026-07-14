@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.328.0",
+        "date": "2026-07-14",
+        "title": "Texterkennung: schneller, genauer, vollständig lokal",
+        "body": "Für das Auslesen von Text aus Bildern und eingescannten "
+                "Dokumenten kommt jetzt ein spezialisiertes Erkennungsmodell "
+                "zum Einsatz, das direkt auf Ihrem Rechner läuft: Eine Seite "
+                "wird in gut einer Sekunde statt in gut einer halben Minute "
+                "gelesen, und Ihre Dokumente verlassen den Rechner nicht. "
+                "Wichtiger noch: Bei eingescannten PDFs war bisher stillschweigend "
+                "eine veraltete Texterkennung am Werk, die sich in Ziffern "
+                "vertat — aus einem Geburtsjahr 1947 wurde etwa 1847. Solche "
+                "Scans werden nun korrekt gelesen. Das Erkennungsmodell lässt "
+                "sich in den Einstellungen unter „Service-Modelle“ wechseln.",
+        "audience": "admin",
+        "versions": ["9.328.0"],
+    },
+    {
         "version": "9.327.0",
         "date": "2026-07-13",
         "title": "Originaldateien bleiben erhalten · Text aus Bildern",
