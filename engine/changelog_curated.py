@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.336.0",
+        "date": "2026-07-14",
+        "title": "Anonymisierte Chats finden ihre Daten wieder",
+        "body": "In anonymisierten Chats liefen Suchen im Projektgedächtnis "
+                "und Dateizugriffe bisher oft ins Leere, weil die Werkzeuge "
+                "die Platzhalter-Werte nicht kannten — jetzt übersetzt der "
+                "Server sie beim Werkzeugaufruf automatisch zurück und "
+                "anonymisiert die Ergebnisse wieder, bevor das Sprachmodell "
+                "sie sieht. Auch Inhalte aus dem Projektgedächtnis und aus "
+                "dem Web werden nun vor der Übergabe an Cloud-Modelle "
+                "anonymisiert. Die Analysequalität anonymisierter Chats "
+                "nähert sich damit der ohne Anonymisierung an, ohne dass "
+                "Klardaten den Rechner verlassen.",
+        "audience": "user",
+        "versions": ["9.336.0"],
+    },
+    {
         "version": "9.335.0",
         "date": "2026-07-14",
         "title": "Ausweisprüfung rechnet jetzt der Server",

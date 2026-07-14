@@ -207,6 +207,11 @@ def _build_web_sources(web_urls, web_locked):
         try:
             _wf_args = {"url": url, "force_fresh": True}
             parsed = json.loads(_engine.tool_web_fetch(_wf_args))
+        except _engine.GDPRBlockedError as e:
+            # The L3b result seam inside tool_web_fetch runs the
+            # classification gate — a blocked page becomes a per-source
+            # error instead of crashing the whole turn.
+            parsed = {"error": str(e)}
         except (ValueError, TypeError):
             parsed = {}
         if parsed.get("error") or "content" not in parsed:
@@ -1907,14 +1912,20 @@ def _apply_pii_decisions_to_wire(messages, decisions):
         nonlocal replaced
         if not text:
             return text
-        out = text
+        # L3c: the attachment notice (Brain boilerplate + literal disk paths)
+        # is exempt from the ledger-replace, exactly like the scan path
+        # (_split_attachment_notice) — a customer number that also appears in
+        # a filename would otherwise get zerschrieben in the history and every
+        # follow-up read_document on that path would fail (F3).
+        typed, notice = _split_attachment_notice(text)
+        out = typed
         for orig, fake, rid in pairs:
             if orig in out:
                 n = out.count(orig)
                 out = out.replace(orig, fake)
                 replaced += n
                 counts[rid] = counts.get(rid, 0) + n
-        return out
+        return out + notice
 
     wire = []
     for msg in messages or []:

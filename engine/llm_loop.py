@@ -717,6 +717,14 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
     if guard is not None:
         return guard, True
 
+    # Args-deanonymisation (L3a, dispatch symmetry): for whitelisted LOCALLY-
+    # executing tools, translate pseudonyms back to real values so retrieval/
+    # paths/scripts work on the raw data. MUST run AFTER the web gate (the
+    # gate judges the model's own args) and NEVER touches web tools (that
+    # would be silent egress — see brain.GDPR_ARGS_DEANON_TOOLS). Returns a
+    # new structure; `args` (and thus the wire history) keeps the fakes.
+    args = engine._gdpr_deanon_tool_args(name, args)
+
     fn = engine.TOOL_DISPATCH.get(name)
     if fn is not None:
         try:

@@ -2147,6 +2147,19 @@ Fehlermeldungen) laufen normal durch. Admins wählen das Verhalten unter
 Suchen mit **Ersatzwerten** (den Pseudonymen) werden immer verweigert — sie
 würden nichts finden oder fremde, echte Personen treffen.
 
+**F: Findet ein anonymisierter Chat meine Projektdaten und Dateien noch?**
+A: Ja — seit v9.336.0. Vorher liefen Suchen im Projektgedächtnis und
+Dateizugriffe in anonymisierten Chats oft ins Leere, weil die Werkzeuge nur
+die Ersatzwerte kannten (eine Suche nach dem Pseudonym findet keine Akte mit
+dem echten Namen). Jetzt übersetzt der Server die Ersatzwerte beim
+Werkzeugaufruf automatisch zurück, führt das Werkzeug auf den echten Daten
+aus und anonymisiert das Ergebnis wieder, bevor es das Sprachmodell erreicht.
+Auch Inhalte aus dem Projektgedächtnis und aus dem Web (Suchtreffer,
+abgerufene Seiten, Websuche-Korb) werden seither vor der Übergabe an
+Cloud-Modelle anonymisiert. Web-Suchanfragen selbst werden dabei **nie**
+zurückübersetzt — dafür gilt weiterhin das Web-Egress-Gate (siehe vorherige
+Frage).
+
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
 `ask_user_for_file` / `ask_user` (geplante Aufgaben können nicht

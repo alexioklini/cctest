@@ -1126,7 +1126,14 @@ def tool_mempalace_query(args: dict) -> str:
             f"relevant source rather than answering from a single chunk:\n"
             f"{_list}")
 
-    return _ok({
+    # L3b results-anonymisation seam (dispatch symmetry): drawers hold RAW
+    # project/user knowledge — the only read-tool path that shipped raw PII
+    # to the model until v9.336.0 (the deliberate v9.96.0 "verified raw
+    # today" decision, reversed by PII_ANALYSIS_PARITY_HANDOVER.md L3b).
+    # No-op without an active anonymise mapping. Names inside read_path get
+    # pseudonymised too — the args-deanon (L3a) translates them back when
+    # the model passes them to read_document, so the round-trip works.
+    return _brain._gdpr_anon_tool_text(_ok({
         "query": query,
         "wing": wing,
         "room": room,
@@ -1137,7 +1144,7 @@ def tool_mempalace_query(args: dict) -> str:
         # ready-to-use absolute path for read_document — no string-joining
         # required. When >1 distinct source, also nudges to read each.
         "read_hint": _read_hint,
-    })
+    }), "mempalace_query")
 
 
 def tool_save_chat_to_memory(args: dict) -> str:
@@ -1593,7 +1600,8 @@ def tool_mempalace_kg_query(args: dict) -> str:
         sf = t.get("source_file", "") or ""
         if _kg_source_in_scope(sf, prefixes):
             in_scope.append(t)
-    return _ok({
+    # L3b results-anonymisation seam — KG triples carry raw names/values.
+    return _brain._gdpr_anon_tool_text(_ok({
         "entity": entity,
         "direction": direction,
         "as_of": as_of,
@@ -1601,7 +1609,7 @@ def tool_mempalace_kg_query(args: dict) -> str:
         "total_before_scope_filter": len(triples),
         "triples": [_kg_normalize_span(t) for t in in_scope[:200]],
         "read_hint": _KG_READ_HINT,
-    })
+    }), "mempalace_kg_query")
 
 
 def tool_mempalace_kg_search(args: dict) -> str:
@@ -1712,7 +1720,8 @@ def tool_mempalace_kg_search(args: dict) -> str:
                     else (r["span"] or ""),
             "valid_from": r["valid_from"] or "",
         })
-    return _ok({
+    # L3b results-anonymisation seam — KG triples carry raw names/values.
+    return _brain._gdpr_anon_tool_text(_ok({
         "mode": "structured" if predicate else "free_text",
         "predicate": predicate or None,
         "query": free_query or None,
@@ -1721,7 +1730,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
         "count": len(triples),
         "triples": triples,
         "read_hint": _KG_READ_HINT,
-    })
+    }), "mempalace_kg_search")
 
 
 def tool_mempalace_kg_neighbors(args: dict) -> str:
@@ -1785,7 +1794,8 @@ def tool_mempalace_kg_neighbors(args: dict) -> str:
         try: kg.close()
         except Exception: pass
 
-    return _ok({
+    # L3b results-anonymisation seam — KG edges carry raw names/values.
+    return _brain._gdpr_anon_tool_text(_ok({
         "entity": entity,
         "depth": depth,
         "predicate_filter": pred_filter,
@@ -1793,7 +1803,7 @@ def tool_mempalace_kg_neighbors(args: dict) -> str:
         "edge_count": len(edges),
         "edges": edges[:300],
         "read_hint": _KG_READ_HINT,
-    })
+    }), "mempalace_kg_neighbors")
 
 
 def indexed_source_files_for_wing(palace_path: str, wing: str) -> set:

@@ -944,7 +944,41 @@ def _note_turn_fetched_url(url: str) -> None:
         pass
 
 
+def _web_result_anon(payload: str, src: str) -> str:
+    """L3b results-anonymisation seam (dispatch symmetry): INBOUND web
+    content is scanned + pseudonymised before it reaches the model — a web
+    hit about the real person maps onto the SAME fake identity as the local
+    files, so the web join works without the cloud model ever seeing the
+    clear name (PII_ANALYSIS_PARITY_HANDOVER.md L3b / F4-inbound / F5).
+
+    Only the `content` field is rewritten (URLs/status stay verbatim — the
+    egress side is the web gate's job). No-op without an active anonymise
+    mapping; the classification gate inside _gdpr_anon_tool_text may raise
+    (same contract as every other read seam)."""
+    import brain as _brain
+    try:
+        obj = json.loads(payload)
+    except (ValueError, TypeError):
+        return payload
+    if not isinstance(obj, dict):
+        return payload
+    content = obj.get("content")
+    if not isinstance(content, str) or not content:
+        return payload
+    anon = _brain._gdpr_anon_tool_text(content, src)
+    if anon == content:
+        return payload
+    obj["content"] = anon
+    return json.dumps(obj, ensure_ascii=False)
+
+
 def tool_web_fetch(args: dict) -> str:
+    """Fetch a URL; inbound content passes the L3b anonymisation seam."""
+    return _web_result_anon(_tool_web_fetch_impl(args),
+                            f"web_fetch:{args.get('url', '')[:120]}")
+
+
+def _tool_web_fetch_impl(args: dict) -> str:
     import brain as _brain
     url = args.get("url", "")
     method = args.get("method", "GET")
@@ -1242,7 +1276,9 @@ def _searxng_query(query: str, num_results: int = 5, *, category: str = "",
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
-            return json.dumps(cached, indent=1)
+            # L3b: SERP titles/snippets/infobox are inbound web content.
+            return _brain._gdpr_anon_tool_text(
+                json.dumps(cached, indent=1), "searxng_search")
 
     params = {"q": query, "format": "json"}
     if category:
@@ -1310,7 +1346,11 @@ def _searxng_query(query: str, num_results: int = 5, *, category: str = "",
             search_info["message"] = "No search results found. Try a different query."
         if results:
             _brain._web_cache.put(cache_key, dict(search_info))
-        return json.dumps(search_info, indent=1)
+        # L3b results-anonymisation seam: SERP titles/snippets/infobox are
+        # inbound web content — anonymise before the model sees them (the
+        # cache above keeps the raw copy; mappings are per-session).
+        return _brain._gdpr_anon_tool_text(
+            json.dumps(search_info, indent=1), "searxng_search")
 
     except urllib.error.HTTPError as e:
         error_body = ""
@@ -1401,7 +1441,9 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None,
         cached = _brain._web_cache.get(cache_key)
         if cached is not None:
             cached["cached"] = True
-            return json.dumps(cached, indent=1)
+            # L3b: result titles are inbound web content.
+            return _brain._gdpr_anon_tool_text(
+                json.dumps(cached, indent=1), "exa_search")
 
     # Read API key from tools_config, fall back to env var. No hardcoded
     # default — an unconfigured key surfaces as an Exa 401 the model sees.
@@ -1454,7 +1496,9 @@ def exa_search(query: str, num_results: int = 5, category: str | None = None,
             search_info["message"] = "No search results found. Try a different query."
         if results:
             _brain._web_cache.put(cache_key, dict(search_info))
-        return json.dumps(search_info, indent=1)
+        # L3b results-anonymisation seam (see _searxng_query).
+        return _brain._gdpr_anon_tool_text(
+            json.dumps(search_info, indent=1), "exa_search")
 
     except urllib.error.HTTPError as e:
         error_body = ""

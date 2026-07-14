@@ -1,6 +1,6 @@
 # PII-Analyse-Parität — Handover (L1–L7)
 
-**Stand:** 2026-07-14 (aktualisiert nach Session 1) · Basis-VERSION: `9.335.0` · **Status: Sofortmaßnahme (§5) + L1 GELIEFERT (v9.334.0 + v9.335.0, beide auf main gepusht). L2/L3/L4-Phase-2/L5/L6/L7 offen.**
+**Stand:** 2026-07-14 (aktualisiert nach Session 2) · Basis-VERSION: `9.336.0` · **Status: Sofortmaßnahme (§5) + L1 + L3 GELIEFERT (v9.334.0 / v9.335.0 / v9.336.0). L2/L4-Phase-2/L5/L6/L7 offen.**
 
 ---
 
@@ -10,8 +10,8 @@
 |---|---|---|
 | **§5 Sofortmaßnahme = L4 Phase 1** (Web-Egress-Gate, `refuse`) | ✅ GELIEFERT | v9.334.0, `2f1fa8ce` |
 | **L1** doc_checks-Toolset | ✅ GELIEFERT | v9.335.0, `e2395b97` |
-| **L3** Dispatch-Symmetrie | ⬜ NÄCHSTER Baustein | — |
-| **L2** Entitäts-Map | ⬜ offen (nutzt `engine/identity.py` aus L1!) | — |
+| **L3** Dispatch-Symmetrie | ✅ GELIEFERT | v9.336.0 |
+| **L2** Entitäts-Map | ⬜ NÄCHSTER Baustein (nutzt `engine/identity.py` aus L1!) | — |
 | **L4 Phase 2** (`ask`/Consent/`release_web`) | ⬜ offen ('ask' verhält sich bis dahin wie 'refuse') | — |
 | **L5** OCR-Preamble | ⬜ offen | — |
 | **L6** Report-Fidelity | ⬜ offen | — |
@@ -32,6 +32,13 @@
 - **Ehrlichkeits-Invarianten:** unlesbares MRZ-Feld ⇒ Prüfziffer `null`, NIE `false` (sonst F2 in Gegenrichtung); `all_valid` nur bei ≥3 prüfbaren Ziffern, sonst `partial: true` + Warnhinweis; DOB verlässt Tools nur als Alter/Gleichheit; Kalender-exakte Deltas (`_human_delta_dates`: „10y − 1d" — die 365-Tage-Näherung ergäbe „10y + 1d" = falscher Fälschungsverdacht).
 - **Messung am echten 10-JPG-Satz:** CF-Scan `all_valid=true` · Foto 2 ehrlich `partial` (Nummern-Prüfziffer ✓, Datumsfelder unlesbar → null) · Fotos 1/3–7 sind WebID-Video-Screenshots, **die MRZ ist im Frame abgeschnitten** (visuell verifiziert) → `mrz_found=false` ist dort KORREKT · `identity_consistency` clustert CF-Scan + Foto 2 + Dateinamen-Form auf EINE Person, DOB-Match, Alter 79, 1 distinkte Passnummer — E1-Kernbefund serverseitig in 6,6s. Degarble dafür nötig: X-als-Füller-Split (`BONNIEXMARIE`→`BONNIE MARIE`), Trailing-`[CEKLMR]`-Garble-Schnitt, Glued-Token-Fallback im Matcher (nur bei ≥10-Zeichen-Token; `Maria Huber` vs `Marion Huber` matcht NICHT).
 - Tests: `tests/test_doc_checks.py` (37) inkl. Golden-MRZs beider echter Pässe.
+
+### Was v9.336.0 (L3 Dispatch-Symmetrie) konkret enthält
+- **L3a Args-Deanon:** `brain._gdpr_deanon_tool_args` in `dispatch_tool`, NACH dem Web-Gate (Reihenfolge-Invariante eingehalten). Whitelist `brain.GDPR_ARGS_DEANON_TOOLS` = exakt die Handover-Liste (24 Tools). Liefert NEUE Struktur (Wire behält Fakes); Fail-Richtung = Fakes bleiben (kein Leak möglich). **Härtung über den Handover hinaus:** `execute_command`/`python_exec`-Strings mit Netzwerk-Markern (`_DEANON_NETWORK_MARKER_RE`: curl/wget/https:///urllib/requests/…) werden NICHT deanonymisiert — ein Shell-/Python-String kann selbst das Netz erreichen; Deanon dort wäre stiller Egress durch die Seitentür (die Handover-Whitelist hatte diese Lücke nicht adressiert). Preis: ein lokales Skript, das zufällig einen Marker enthält, läuft mit Fakes (F3-Rest) — bewusster Trade-off, im Test dokumentiert.
+- **L3b Results-Anon:** per-Tool-Seams (kein Post-Hook): `tool_mempalace_query` + `mempalace_kg_query/search/neighbors` (kg_neighbors ergänzt — gibt genauso Triples mit Namen zurück wie kg_query/search), `tool_web_fetch` (jetzt Wrapper `tool_web_fetch` → `_tool_web_fetch_impl` + `_web_result_anon`, anonymisiert NUR das `content`-Feld, deckt auch Cache-Hit/academic/YouTube/Audio/File-Zweige), `_searxng_query` (beide content-Returns → alle 5 searxng-Tools), `exa_search` (Titel!). Klassifikations-Gate greift dadurch auch für mempalace/Web — Daemons safe (kein Session-Modell → no-op). `_build_web_sources` fängt `GDPRBlockedError` pro Quelle und erbt den web_fetch-Seam → Websuche-Prefetch wird bei aktivem Mapping anonymisiert (F5 teilgeschlossen, Vorgriff auf L4-2d/f).
+- **L3c:** `_apply_pii_decisions_to_wire._rewrite` splittet jetzt via `_split_attachment_notice` (typed rewritten + notice verbatim). Für L5 gilt weiter: der neue OCR-Block braucht einen EIGENEN Marker außerhalb `_ATTACH_NOTICE_PREFIXES`.
+- Tests: `tests/test_dispatch_symmetry.py` (16) — inkl. Whitelist∩Web=∅-Invariante, Web-nie-Deanon-Negativtest, Gate-vor-Deanon end-to-end, Netzwerk-Marker beide Richtungen, L3c-Notice-Erhalt.
+- **Für L4 Phase 2 relevant:** die Ergebnis-Rück-Anonymisierung (Schritt 2d) existiert jetzt als web_fetch/searxng/exa-Seam; Phase 2 braucht nur noch Consent (`release_web`) + Hin-Übersetzung am Gate.
 
 ### Nebenbefunde aus Session 1 (für die Weiterarbeit relevant)
 - **`_check_tool_dedup` läuft im Live-Dispatch-Pfad NICHT** — `llm_loop.dispatch_tool` ruft `TOOL_DISPATCH[name](args)` direkt, ohne Dedup/Hooks; der einzige Caller von `_check_tool_dedup` ist das tote `_execute_tool_inner` (brain.py:16065). engine/CLAUDE.md behauptet Dedup sei live → **Doku-Drift seit 9.247.0, bewusst NICHT angefasst.** Konsequenz für L3: die „built-in pre"-Stufe der Pipeline existiert im Live-Pfad faktisch nur als das neue Web-Gate; L3a (Args-Deanon) gehört an dieselbe Stelle (`dispatch_tool`, vor `fn(args)`, NACH dem Web-Gate — Reihenfolge wichtig: erst Gate prüfen, dann deanonymisieren, sonst prüft der Gate schon rückübersetzte Args).
@@ -209,8 +216,8 @@ Drei Hebel, die zusammen Parität herstellen:
 | # | Baustein | Repariert | Aufwand | Status |
 |---|---|---|---|---|
 | 1 | **L1** — Deterministische Verifikations-Tools (`doc_checks`) | **F2** komplett, F1 teilweise | M | ✅ v9.335.0 |
-| 2 | **L3** — Dispatch-Symmetrie (Args-Deanon + Results-Anon) | **F3**, F5 (mempalace + web-inbound) | M | ⬜ **NÄCHSTER** |
-| 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** | ⬜ |
+| 2 | **L3** — Dispatch-Symmetrie (Args-Deanon + Results-Anon) | **F3**, F5 (mempalace + web-inbound) | M | ✅ v9.336.0 |
+| 3 | **L2** — Entitäts-Map + MRZ-Fakes + Datums-Offset | **F1**, Rest von **F2**, F7 | **L (größter Brocken)** | ⬜ **NÄCHSTER** |
 | 4 | **L4** — Web-Egress-Policy, **Phase 1 + Phase 2** | **F4** | M–L | Phase 1 ✅ v9.334.0 · Phase 2 ⬜ |
 | 5 | **L5** — OCR-Preamble scannen + als Entity-Seed | **F5**, F7, speist L2 | S–M | ⬜ |
 | 6 | **L6** — Report-Fidelity (PDF + Reverse-Linter + Clamp) | **F6** | M | ⬜ |
@@ -277,7 +284,7 @@ Plus: `TOOL_ICONS` (`brain.py:14220`) + `TOOL_VERBS` (`:14247`).
 
 ---
 
-## L3 — Dispatch-Choke-Point-Symmetrie — ⬜ NÄCHSTER BAUSTEIN
+## L3 — Dispatch-Choke-Point-Symmetrie — ✅ GELIEFERT (v9.336.0; Details §0.0)
 
 > **Session-1-Update:** Der Dispatch-Choke-Point ist `engine/llm_loop.py:dispatch_tool` — dort sitzt seit v9.334.0 bereits der Web-Egress-Gate (erste Zeilen). L3a gehört an dieselbe Stelle, **NACH** dem Gate (erst prüfen, dann deanonymisieren — sonst prüft der Gate rückübersetzte Args). Die in engine/CLAUDE.md beschriebene „built-in pre"-Stufe (Dedup etc.) läuft im Live-Pfad NICHT (Doku-Drift, §0.0 Nebenbefunde) — nicht darauf bauen.
 

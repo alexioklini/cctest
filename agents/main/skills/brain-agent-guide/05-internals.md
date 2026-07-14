@@ -1476,6 +1476,28 @@ preamble goes in first-user-message instead.
 
 ## GDPR / PII scanner
 
+- **Dispatch symmetry (9.336.0, L3)**: in anonymising sessions the tool
+  boundary is now symmetric — the model thinks in pseudonyms, the tools work
+  on raw data. (a) **Args-deanonymisation**: at tool dispatch
+  (`engine/llm_loop.py:dispatch_tool`, AFTER the web-egress gate) the
+  pseudonyms in the args of locally-executing tools
+  (`brain.GDPR_ARGS_DEANON_TOOLS`: mempalace_query, mempalace_kg_*,
+  read_document, read_file, list_directory, search_files, execute_command,
+  python_exec, ocr_*, xlsx_*, text_diff, doc_checks tools) are translated
+  back to the real values — project-memory searches find their drawers again,
+  file paths containing real names open again, scripts with value literals
+  match the real bytes. Web tools are NEVER deanonymised (that would leak);
+  shell/python strings containing network markers (curl, https://, urllib …)
+  also keep their pseudonyms. (b) **Results-anonymisation completed**:
+  `mempalace_query` + the KG tools (previously the only read path returning
+  raw PII to cloud models) and inbound web content (web_fetch page content,
+  SearXNG/Exa result titles+snippets, the Websuche basket prefetch) are now
+  pseudonymised before the model sees them — a web hit about the real person
+  maps onto the SAME fake identity as the local files. (c) The PII decision
+  ledger no longer rewrites values inside attachment-notice disk paths, so
+  follow-up document reads keep working. Non-anonymising sessions are
+  unaffected; the document-classification gate now also covers mempalace
+  and web reads (consistent with file reads).
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,
