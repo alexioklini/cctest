@@ -673,6 +673,37 @@ class TestNERFalsePositiveHardening(unittest.TestCase):
             self.assertFalse(gate(v, ctx, ctx.index(v)),
                              f"prose pair wrongly kept: {v}")
 
+    def test_form_labels_and_ocr_noise_rejected(self):
+        # v9.349.0 calibration over 35 real analysis chats: form-field labels,
+        # legal-doc terms, and OCR-garble spans the model tagged as PER. These
+        # are rejected UNCONDITIONALLY (even next to a person — a "Given Names:"
+        # label sits right beside the real name).
+        gate = pii_ner._passes_name_precision_gate
+        for v in ("Given Names", "Mentions Spéciales",
+                  "Bahamian Dormant Accounts Regulations",
+                  "Ex Verwaltete Les Otc", "De TOT", "Basia Us"):
+            ctx = f"Kunde Bonnie Stark. {v}. weiter."   # person nearby on purpose
+            self.assertFalse(gate(v, ctx, ctx.index(v)),
+                             f"form-label/OCR-noise wrongly kept: {v}")
+
+    def test_english_honorific_stripped_not_a_name_token(self):
+        # "Bonnie M Mrs" — the trailing Mrs is an honorific, not a name token.
+        # The real name must still be detected; the honorific must not inflate
+        # or block it.
+        pii = self._pii_values("Die Kundin Bonnie Stark Mrs wurde geprüft.")
+        self.assertTrue(any("Bonnie Stark" in p for p in pii),
+                        f"name lost after honorific strip: {pii}")
+
+    def test_calibration_real_names_survive(self):
+        # The real names found in the calibration must NOT be collateral of the
+        # form-label / OCR-noise / honorific filters.
+        for name in ("Michael Munterl", "Milo Borissov", "Alexander Klinsky",
+                     "Novaro Supply", "Hristo Atanasov Kovachki"):
+            pii = self._pii_values(f"Onboarding von {name} als Kunde.")
+            surname = name.split()[-1]
+            self.assertTrue(any(surname in p for p in pii),
+                            f"real calibration name dropped: {name} → {pii}")
+
 
 if __name__ == "__main__":
     unittest.main()

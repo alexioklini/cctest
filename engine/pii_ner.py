@@ -106,7 +106,13 @@ _MAX_SCAN_CHARS = 50_000
 # kg-real-policies corpus: 12/12 real names kept, 21/21 spaCy FPs dropped.
 # Gated by gdpr_scanner.name_precision_gate (default off until A/B-validated).
 _HONORIFICS = {"herr", "frau", "hr", "fr", "dr", "mag", "prof", "dipl",
-               "ing", "mmag", "ddr", "dipl.-ing", "frau dr", "herr dr"}
+               "ing", "mmag", "ddr", "dipl.-ing", "frau dr", "herr dr",
+               # v9.349.0: English/French honorifics — a KYC doc's name carries
+               # "Mrs"/"Mr"/"Ms"/"Mme" as an appendage ("Bonnie M Mrs"), not a
+               # name token. Stripped before the core-token count, and a
+               # positive person-context signal in _name_has_person_context.
+               "mr", "mrs", "ms", "miss", "sir", "mme", "mlle", "m.",
+               "esq", "phd", "md"}
 _NAME_NOUN_SUFFIX = _re.compile(
     r"(ung|ungen|heit|heiten|keit|keiten|schaft|schaften|tion|tionen|"
     r"rechten|recht|kontakte|vorfall|vorfalls|prinzip|vorschläge|wörter|"
@@ -225,8 +231,48 @@ def _passes_address_precision_gate(value: str, text: str, start: int) -> bool:
     return False
 
 
+# v9.349.0 calibration (35 real analysis chats, 99 typed user messages):
+# form/document field labels + legal-doc terms the model tags as PER
+# ("Given Names", "Mentions Spéciales", "Bahamian Dormant Accounts
+# Regulations"). A real person name never CONTAINS one of these as a whole
+# token. Verified against the full real-name set from the calibration + a
+# surname corpus — zero collateral.
+_NAME_FORM_LABEL_TOKENS = frozenset({
+    "names", "surname", "surnames", "mentions", "spéciales", "spéciale",
+    "accounts", "account", "regulations", "regulation", "dormant", "given",
+    "holder", "bearer", "signature", "nationality", "residence", "issuing",
+})
+# OCR / garbled-span noise tokens: short function words / fragments that show
+# up inside mangled OCR spans ("Ex Verwaltete Les Otc", "De TOT", "Basia Us")
+# but are never a substantial token of a real name. Kept SHORT and unambiguous;
+# any token here in a multi-token span kills it. NOT surname-colliding (checked
+# against Ott/Toth/Weber/… — those are ≥3-char full tokens, not these).
+_NAME_OCR_NOISE_TOKENS = frozenset({
+    "us", "tot", "les", "otc", "ex", "het", "du", "le", "la", "van",
+})
+
+
+def _looks_like_name_noise(cap: list) -> bool:
+    """True if a capitalised-token list is a form-label / legal-doc / OCR-noise
+    span rather than a real person name. `cap` = the capitalised core tokens."""
+    low = [t.lower().strip(".,") for t in cap]
+    if any(t in _NAME_FORM_LABEL_TOKENS for t in low):
+        return True
+    if len(low) >= 2 and any(t in _NAME_OCR_NOISE_TOKENS for t in low):
+        return True
+    return False
+
+
 def _passes_name_precision_gate(value: str, text: str, start: int) -> bool:
     v = value.strip()
+    # Form-label / legal-doc / OCR-noise spans are rejected UNCONDITIONALLY —
+    # even with a person nearby (a KYC doc's "Given Names:" label sits right
+    # next to the real name, so the person-context early-return would wrongly
+    # keep it). Runs before _name_has_person_context.
+    _pre_cap = [t for t in _re.split(r"\s+", v.replace(",", " "))
+                if t[:1].isupper() and t[:1].isalpha() and len(t) >= 2]
+    if _looks_like_name_noise(_pre_cap):
+        return False
     if _name_has_person_context(text, start):
         return True
     toks = [t for t in _re.split(r"\s+", v.replace(",", " ")) if t]
