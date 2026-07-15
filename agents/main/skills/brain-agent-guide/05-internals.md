@@ -1666,34 +1666,24 @@ preamble goes in first-user-message instead.
   **Invariant (mutation-tested): PERSON fakes still refuse in EVERY mode**,
   `allow` included, and a mixed query containing one kills the whole call.
   Audit kind `policy_released` (`pii_web_egress`, tally `web_policy_released`).
-- **KYC project preset + degradation strip (9.341.0, L7; `screening` added
-  9.344.0)**: a project can declare its GDPR posture once — `project.json →
-  gdpr_preset` ('' | 'kyc' | 'kyc_local' | 'screening'), editable in the
-  project settings ("PII-Analyse (KYC-Preset)"
-  select in the Projektmodus section). The preset OVERLAYS the global
-  `gdpr_scanner` config for every turn/background call of that project on a
-  COPY (the global config + cache stay untouched; resolution: explicit
-  `preset=` param > request-context `gdpr_project_preset` set by
-  `apply_domain_context` > global). `kyc`: scanner always ON in this project,
-  `web_egress='ask'`, the `name` rule is lifted out of the default
-  contact=ignore hole (only-strengthen — an admin's stronger setting wins),
-  the three doc_checks tools are surfaced in-prompt, auto-anonymise starts at
-  TURN 1 without the per-session modal (the preset IS the standing consent;
-  the composer shield opt-out still wins), and activating the preset turns
-  the project's research/citation mode on once. `kyc_local`: the honest
-  zero-egress alternative — every non-local turn of the project is swapped to
-  the local fallback model (clear 400 if none is configured); background PII
-  calls swap local too. `screening` (9.344.0): like `kyc` PLUS organisations
-  as entities (M4) — for workloads where the FIRM is the subject under review
-  (risk analysis, compliance checks, adverse media, group/UBO structures,
-  sanctions/registry matching). Company names are pseudonymised toward the
-  cloud model but auto-released (M5) into the outgoing search request, so the
-  research still works. `kyc` is deliberately UNCHANGED (orgs stay clear text —
-  when a PERSON is the subject, the company is not the thing to protect).
-  NB: `screening` must raise `organisation` as a **rule_override**, not a
-  category bump — the live config carries `rule_overrides['organisation'] =
-  'ignore'`, and rule_overrides beat the category in `_pii_effective_action`,
-  so a category bump would be silently shadowed.
+- **GDPR project presets REMOVED (9.348.0)**: the per-project `gdpr_preset`
+  ('kyc'/'kyc_local'/'screening', 9.341.0–9.347.0) and its project-settings
+  select are gone — a user/product call: protection that must be activated per
+  project either goes unused or gets switched off to get work done. Privacy
+  posture is governed by ONE central rule set (Settings → GDPR): the RULE
+  decides when it fires (rule/category actions + confidence bands — identical
+  in every chat, project or not), the ACTION decides what the user may do
+  (`warn` → ignore/proceed allowed; `block` → only anonymise / local model /
+  cancel, NO cleartext send). Everything the presets bundled remains reachable
+  globally: `rule_overrides.name` / `rule_overrides.organisation` (the org
+  entity layer M4 + web auto-release M5 hang on the RULE and the CATEGORY, not
+  on any preset — raise `organisation` as a rule_override, not a category
+  bump: the live config carries `rule_overrides['organisation']='ignore'` and
+  rule_overrides beat the category in `_pii_effective_action`), `web_egress`,
+  `background_pii_action`, per-tool deferred flags for the doc_checks tools.
+  The session-sticky anonymise flow (one modal consent → the session keeps
+  anonymising) replaces the preset's turn-1 standing consent. A legacy
+  `gdpr_preset` field in project.json is ignored and stripped on save.
 - **Ad-hoc egress protection without a project (9.344.0, M10b)**: the egress
   gate used to be inert without an active mapping — but the MAJORITY of real
   KYC/DD/compliance chats ran project-less (no preset → no turn-1

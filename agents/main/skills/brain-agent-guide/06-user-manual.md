@@ -2262,30 +2262,25 @@ erscheint eine deutliche Warnung an der Datei und der Assistent erhält den
 Hinweis, den Bericht als HTML/Markdown neu zu erzeugen. Ein PDF ohne
 geschützte Werte (z. B. ein rein technischer Anhang) bleibt unbeanstandet.
 
-**F: Was ist das KYC-Preset in den Projekt-Einstellungen?**
-A: Seit v9.341.0 können Projekte, in denen Sie personenbezogene Unterlagen
-prüfen (Ausweise, KYC-Akten, Betrugsanalysen), ihre Datenschutz-Haltung
-einmalig festlegen: **Projekt-Einstellungen → Projektmodus → „PII-Analyse
-(KYC-Preset)"**. Mit **KYC** ist der PII-Scanner in diesem Projekt immer
-aktiv — unabhängig von der globalen Einstellung —, Namen und Kenndaten
-werden ab der ersten Nachricht automatisch durch konsistente Ersatzwerte
-geschützt (ohne den Rückfrage-Dialog pro Chat), Websuchen zu geschützten
-Werten nutzen den Freigabe-Dialog (siehe oben), die serverseitigen
-Dokument-Prüfwerkzeuge (`doc_checks`: MRZ-Prüfziffern, Datums-Abgleiche,
-Identitäts-Konsistenz) stehen dem Assistenten direkt zur Verfügung, und der
-Recherche-Modus (Quellenpflicht) wird mit eingeschaltet. Mit **KYC lokal**
-laufen alle Chats des Projekts stattdessen komplett auf dem lokalen
-Fallback-Modell — nichts verlässt den Rechner, dafür geringere
-Modellqualität (das Fallback-Modell muss unter Einstellungen → GDPR
-konfiguriert sein). Ein bewusster Opt-out per Schild-Symbol im Eingabefeld
-gewinnt weiterhin über das Preset.
+**F: Wo stelle ich die Datenschutz-Haltung ein? (Projekt-Presets entfernt)**
+A: Zentral, an genau einer Stelle: **Einstellungen → GDPR**. Die früheren
+Projekt-Presets („KYC", „KYC lokal", „Screening", v9.341–9.347) wurden in
+v9.348.0 entfernt — es gilt ein einziges Regelwerk, das in jedem Chat gleich
+greift, mit und ohne Projekt, und nicht pro Projekt umgangen oder
+abgeschwächt werden kann. Das Prinzip: Die **Regel** (pro Datenart, mit
+Konfidenz-Schwellen) entscheidet, wann sie greift; die **Aktion** entscheidet,
+was Sie dann tun können — bei „Warnen" dürfen Sie ignorieren oder fortfahren,
+bei „Blockieren" bleibt nur Anonymisieren, das lokale Modell oder Abbrechen
+(kein Klartext-Versand). Haben Sie in einem Chat einmal „Anonymisieren"
+gewählt, bleibt der Chat dabei — ohne erneute Rückfrage; ein bewusster
+Opt-out per Schild-Symbol im Eingabefeld ist weiterhin möglich, sofern die
+Regel nicht auf „Blockieren" steht.
 
-**F: Wann nehme ich „Screening" statt „KYC"?**
-A: Seit v9.344.0 gibt es einen dritten Modus. Die Faustregel: **Prüfen Sie
-eine PERSON, nehmen Sie KYC. Prüfen Sie eine FIRMA, nehmen Sie Screening.**
-Mit **Screening** werden zusätzlich zu den Personendaten auch **Firmennamen**
-gegenüber dem Cloud-Modell durch Ersatznamen geschützt — und zwar über alle
-Schreibweisen hinweg: „Wiener Privatbank SE", „Wiener Privatbank", die
+**F: Wie schütze ich Firmennamen (früher „Screening")?**
+A: Über die **Organisations-Regel** in Einstellungen → GDPR (Regel
+`organisation` auf „Warnen" oder „Blockieren" stellen). Dann werden
+**Firmennamen** gegenüber dem Cloud-Modell durch Ersatznamen geschützt — über
+alle Schreibweisen hinweg: „Wiener Privatbank SE", „Wiener Privatbank", die
 GROSSSCHREIBUNG, in der Sanktionslisten geführt werden, und die Kurzform in
 einer Web-Adresse gelten als ein und dieselbe Firma und bekommen denselben
 Ersatznamen. Auch **Konzernstrukturen bleiben lesbar**: eine
@@ -2305,10 +2300,9 @@ Firmenbuch, Companies House, BaFin) — sie sind Ihr Prüfwerkzeug, nicht das
 Prüfsubjekt.
 
 **F: Bin ich auch ohne Projekt geschützt?**
-A: Teilweise — und seit v9.344.0 deutlich besser. Bisher hing der Schutz vor
-ungewollter Weitergabe an Suchmaschinen am Projekt-Preset: In einem Chat
-**ohne Projekt** konnte ein Name oder eine Kontonummer in die allererste
-Websuche geraten, bevor irgendein Schutz griff. Ab sofort gilt: Sobald der
+A: Ja — der Schutz ist projekt-unabhängig. In einem Chat
+**ohne Projekt** konnte früher ein Name oder eine Kontonummer in die allererste
+Websuche geraten, bevor irgendein Schutz griff. Seit v9.344.0 gilt: Sobald der
 Datenschutz-Scanner aktiv ist (Einstellungen → GDPR), prüft Brain **jede**
 ausgehende Websuche — auch in Chats ohne Projekt — und verweigert bzw. fragt
 nach, wenn personenbezogene Daten darin vorkommen. Die automatische

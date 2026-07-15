@@ -341,22 +341,7 @@ async function sendMessage() {
       // dialog. (Aggregated/legacy findings without a value also count as new.)
       const newFindings = (scan.findings || []).filter(f => !f._seen);
       const seenFindings = (scan.findings || []).filter(f => f._seen);
-      // L7a KYC-Preset: das Projekt hat die Datenschutz-Entscheidung bereits
-      // auf Projektebene getroffen — kein Dialog pro Session. Preset kommt
-      // aus der geladenen Session (gdprProjectPreset) oder, für den ersten
-      // Send eines frischen Projekt-Chats, aus dem Projekt-Detail-Cache.
-      // Klassifizierte Dateien (ARL) behalten ihren eigenen Dialog. Der
-      // Server erzwingt die Preset-Aktion unabhängig hiervon.
-      const _cp = state.currentProject || '';
-      const kycPreset = chat.gdprProjectPreset
-        || ((_cp && state._projectDetail
-             && (state._projectDetail.name === _cp
-                 || state._projectDetail.folder_name === _cp))
-            ? (state._projectDetail.gdpr_preset || '') : '');
-      if (kycPreset && !classifiedFiles.length) {
-        gdprAction = (kycPreset === 'kyc_local') ? 'local_model' : 'anonymise';
-        if (gdprAction === 'anonymise') chat.hasGdprMapping = true;
-      } else if (newFindings.length || classifiedFiles.length) {
+      if (newFindings.length || classifiedFiles.length) {
         const localActive = isModelLocal(chat.model || '');
         unifiedModalRan = true;
         const { verdict, askAfter, decisions } = await gdprActionModal(scan, chat, localActive, classifiedFiles);

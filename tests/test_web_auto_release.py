@@ -67,7 +67,7 @@ class _Base(unittest.TestCase):
         cfg["web_egress"] = mode
         cfg["rule_overrides"] = {**(cfg.get("rule_overrides") or {}),
                                  "organisation": "warn", "name": "warn"}
-        brain._get_gdpr_scanner_config = lambda preset=None: cfg
+        brain._get_gdpr_scanner_config = lambda: cfg
         return cfg
 
     def _guard(self, args, mapping=None, tool="searxng_search"):

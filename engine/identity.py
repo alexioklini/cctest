@@ -522,8 +522,9 @@ _ORG_GENERIC_SOLO = {
 # aus (gemessen: 'OFAC-SDN-Liste' → organisation). Sie zu faken ist kein Leak,
 # aber eine QUALITÄTS-Regression: das Modell verlöre den Namen der Liste, gegen
 # die es gerade abgleichen soll ('In der Oscorp Corp steht …' — real erzeugt).
-# Unter `kyc` fiel das nie auf, weil Orgs dort im Klartext bleiben; erst
-# `screening` anonymisiert sie und macht den Fehler sichtbar.
+# Solange die `organisation`-Regel auf ignore steht (Default), fällt das nie
+# auf — erst eine global aktivierte organisation-Regel anonymisiert Firmen
+# und macht den Fehler sichtbar.
 _ORG_PUBLIC_BODY_TOKENS = {
     "ofac", "sdn", "interpol", "europol", "un", "uno", "eu", "ec", "bafin",
     "fma", "finma", "sec", "fbi", "bka", "lka", "fatf", "gafi", "wko",

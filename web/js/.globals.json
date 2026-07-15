@@ -1473,7 +1473,6 @@
     "setChatFilter": "writable",
     "setProjectChatsFilter": "writable",
     "setProjectFilter": "writable",
-    "setProjectGdprPreset": "writable",
     "setRightPanelGlow": "writable",
     "setScheduledFilter": "writable",
     "setStreamStatus": "writable",

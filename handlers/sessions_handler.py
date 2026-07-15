@@ -739,16 +739,6 @@ class SessionsHandlerMixin:
                         ChatDB.list_pseudonym_maps_for_session(sid) or [])
                 except Exception:
                     resp["has_gdpr_mapping"] = False
-        # L7a: effective project GDPR preset for this session — lets the
-        # client skip the per-send PII modal in preset projects (the server
-        # enforces the preset action regardless; this is UX parity).
-        try:
-            _agent = (session.agent_id if session
-                      else ChatDB.get_session_info(sid).get("agent") or "main")
-            resp["gdpr_project_preset"] = engine._gdpr_project_preset_for(
-                _agent, resp.get("project") or "")
-        except Exception:
-            resp["gdpr_project_preset"] = ""
         self._send_json(resp)
 
     def _handle_next_prompt_suggestion(self, path):

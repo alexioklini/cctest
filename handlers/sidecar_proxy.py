@@ -170,7 +170,6 @@ def _apply_bg_context(ctx: dict) -> None:
     tl.plan_mode = bool(ctx.get("plan_mode", False))
     tl.helpdesk_mode = bool(ctx.get("helpdesk_mode", False))
     tl.research_mode_override = ctx.get("research_mode_override", None)
-    tl.gdpr_project_preset = ctx.get("gdpr_project_preset", "") or ""
     # M1 (G1): the transparent-anonymisation mapping. Until v9.343 this field was
     # the ONE context key background turns didn't rebuild — so the result seam,
     # the args de-anonymiser AND the web-egress gate were all dead in every
@@ -716,9 +715,6 @@ def background_call(
         "workflow_run_id": "",
         "plan_mode": False,
         "research_mode_override": None,
-        # Inherit the caller's project GDPR preset (L7a) — a background call
-        # spawned from a KYC-project turn keeps the overlaid scanner config.
-        "gdpr_project_preset": engine.get_request_context().gdpr_project_preset or "",
         # M1: inherit the caller's anonymisation mapping unless the caller named
         # one explicitly (detached turns) or forced "" (run unmapped).
         "gdpr_mapping_id": (

@@ -29,6 +29,27 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.348.0",
+        "date": "2026-07-15",
+        "title": "Datenschutz einfacher: ein zentrales Regelwerk statt Projekt-Presets",
+        "body": "Die Datenschutz-Presets in den Projekt-Einstellungen (KYC, "
+                "KYC lokal, Screening) sind entfernt. Es gilt jetzt überall "
+                "ein einziges, zentrales Regelwerk: Administratoren legen in "
+                "den GDPR-Einstellungen fest, welche Datenarten geschützt "
+                "werden und was dabei erlaubt ist — „Warnen“ lässt Ihnen die "
+                "Wahl, „Blockieren“ erlaubt nur noch Anonymisieren, das "
+                "lokale Modell oder Abbrechen. Diese Regeln greifen in jedem "
+                "Chat gleich, mit und ohne Projekt, und können nicht pro "
+                "Projekt umgangen oder abgeschwächt werden. Auch der Schutz "
+                "von Firmennamen (eine Firma = ein Ersatzname über alle "
+                "Schreibweisen, Recherche läuft trotzdem weiter) wird jetzt "
+                "zentral über die Organisations-Regel aktiviert statt über "
+                "ein Preset. Haben Sie in einem Chat einmal „Anonymisieren“ "
+                "gewählt, bleibt der Chat dabei — ohne erneute Rückfrage.",
+        "audience": "user",
+        "versions": ["9.348.0"],
+    },
+    {
         "version": "9.347.0",
         "date": "2026-07-15",
         "title": "Besserer PII-Schutz für Tabellen, Listen und fremdsprachige Dokumente",

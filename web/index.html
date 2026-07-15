@@ -578,42 +578,6 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             und nicht möchtest, dass das Modell stattdessen googelt –
             modell-unabhängig erzwungen, nicht nur als Bitte im Prompt.
           </div>
-          <div style="margin-top:12px">
-            <label style="display:flex;flex-direction:column;gap:6px;font-size:13px;line-height:1.4">
-              <strong>PII-Analyse (KYC-Preset)</strong>
-              <select class="form-select" id="project-gdpr-preset-select"
-                      onchange="setProjectGdprPreset(this.value)">
-                <option value="">Aus — globale Datenschutz-Einstellungen gelten</option>
-                <option value="kyc">KYC — anonymisieren + Web-Freigabe per Rückfrage</option>
-                <option value="kyc_local">KYC lokal — alles auf dem lokalen Modell, kein Egress</option>
-                <option value="screening">Screening — wie KYC, zusätzlich Firmennamen geschützt (Recherche läuft weiter)</option>
-              </select>
-            </label>
-            <div class="project-panel-help">
-              Für Prüfungen personenbezogener Unterlagen (Ausweise, KYC-Akten,
-              Betrugsanalysen). <b>KYC</b>: Der PII-Scanner ist in diesem
-              Projekt immer aktiv, Namen und Kenndaten werden vor dem Versand
-              an Cloud-Modelle automatisch durch konsistente Ersatzwerte
-              ersetzt (ab der ersten Nachricht, ohne Rückfrage-Dialog), und
-              Websuchen zu geschützten Werten fragen einzeln um Freigabe.
-              Dokument-Prüfungen (MRZ-Prüfziffern, Datums-Abgleiche,
-              Identitäts-Konsistenz) laufen serverseitig auf den Originaldaten.
-              <b>KYC lokal</b>: Chats dieses Projekts laufen komplett auf dem
-              lokalen Fallback-Modell — nichts verlässt den Rechner, dafür
-              geringere Modellqualität. Beim Aktivieren wird der
-              Recherche-Modus mit eingeschaltet.
-              <b>Screening</b>: Wählen Sie dies, wenn das Prüfsubjekt eine
-              <b>Firma</b> ist (Risikoanalyse, Compliance-Prüfung,
-              Adverse-Media, Konzern-/UBO-Strukturen, Sanktions- und
-              Registerabgleich). Zusätzlich zu KYC werden auch Firmennamen
-              gegenüber dem Cloud-Modell durch Ersatznamen geschützt — und
-              zwar über alle Schreibweisen hinweg (Langform, Kurzform,
-              GROSSSCHREIBUNG wie in Sanktionslisten). Ihre Recherche
-              funktioniert trotzdem uneingeschränkt: für die Suchanfrage setzt
-              Brain den echten Firmennamen automatisch wieder ein, ohne ihn dem
-              Modell zu zeigen.
-            </div>
-          </div>
         </div>
       </div>
       <div class="project-panel-section" id="project-kg-section">

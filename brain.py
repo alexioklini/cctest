@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.347.0"
+VERSION = "9.348.0"
 VERSION_DATE = "2026-07-15"
 CHANGELOG = [
+    ("9.348.0", "2026-07-15", "feat(GDPR-Projekt-Presets ENTFERNT — User-/Produkt-Call: die Regel-Aktions-Matrix ist der EINE Enforcement-Mechanismus). USER: 'presets raus - wird keiner verwenden oder wird umgangen werden' + 'entweder die globale regel interpretiert korrekt in chats / projekten - wenn nicht wird sie nicht aktiviert weil arbeitsverhindernd' + (zu screening) 'entweder die erkennung eines firmennamens funktioniert und die ersetzung gut und nachvollziehbar dann ist es ein globales setting, das immer greift'. BEGRÜNDUNG: Schutz, der pro Projekt aktiviert werden muss, wird entweder nicht aktiviert oder vom User umgangen (Klassiker: Mitarbeiter schalten Schutz ab, um arbeiten zu können → die Akte landet im fremden Browser-Tab). Das bestehende Modell ist vollständig UND zentral erzwingbar: die REGEL sagt global, wann sie greift (Settings → GDPR, Regel/Kategorie + Konfidenz-Bänder — gilt in Projekten UND projektlosen Chats); die AKTION definiert den Handlungsspielraum (`warn` → ignorieren/weiter; `block` → nur anonymisieren/lokal/abbrechen, KEIN Klartext-Send). Eine Preset-Ebene war eine zweite Config-Stelle über derselben Frage. ENTFERNT: GDPR_PROJECT_PRESETS ('kyc'/'kyc_local'/'screening'), _gdpr_apply_project_preset, _gdpr_project_preset_for, _gdpr_preset_overlay, der preset=-Param von _get_gdpr_scanner_config (alle Call-Sites), RequestContext-Feld gdpr_project_preset (+build_tool_context-Snapshot +_apply_bg_context-Restore +background_call-Vererbung), update_project-Validierung (legacy gdpr_preset wird beim Save GESTRIPPT), GET/messages-Exposure, der kyc_local-Zwangs-Swap + der kyc-Turn-1-Auto-Anonymise-Zweig im Sticky-Block, das Projekt-Einstellungs-Select + setProjectGdprPreset (JS-Global, net-globals-Baseline bewusst 1996→1995 zurück) + Modal-Skip in chat_send/sessions. ALLE Preset-Fähigkeiten bleiben GLOBAL erreichbar (Admin-GUI): rule_overrides name/organisation (Org-Entitäts-Schicht M4 + Auto-Release M5 hängen an der REGEL bzw. KATEGORIE, nicht am Preset — _WEB_GATE_PASS_CATEGORIES ist kategoriebasiert, preset-frei verifiziert), web_egress, background_pii_action, tool_settings (doc_checks undeferred). Der Session-Sticky-Anonymise-Flow (8.7.0: einmal Consent im Modal → Session bleibt anonymisierend) ersetzt den Turn-1-stehenden-Consent des Presets; M10b (Egress-Gate scanner-gekoppelt, v9.344) war schon preset-unabhängig und bleibt. tests/test_gdpr_project_preset.py (22) GELÖSCHT; test_web_auto_release-Stub auf neue Signatur; identity.py-Kommentar aktualisiert. 641 Tests grün (discover). js_gate GRÜN (5/5 Smoke, Baseline 1995). py_compile OK. Kein Schema/Prompt → KV-Prefix unberührt; Server-Restart nötig. KURATIERTER Eintrag (user+admin)."),
     ("9.347.0", "2026-07-15", "feat(PII-Parität Welle 2 — M6/G4 + M9/G12: die zwei LETZTEN Bausteine der Welle — Tabellen-/Massendaten-Erkennung + Erkennungs-Netz. Damit ist Welle 2 (M1-M11) KOMPLETT. LASTTEST VOR DEM DESIGN (Handover-Mandat): der reale O(M²·T)-Verdacht am Reverse-Pass ist WIDERLEGT — deanonymize_text skaliert LINEAR (40→1000 Tokens: 6,7ms→141ms über 150k-Wire), die Fixpunkt-Schleife konvergiert in 2 Pässen (keine Ketten), Ledger-Bau 0,4µs/Eintrag. Der Wire-Ansatz ist sicher; die im Handover erwogene 'Massen-Tabellen gar nicht in den Wire'-Architektur ist NICHT nötig. Der Lasttest zeigte STATTDESSEN den echten Schaden: der Scanner fand über die KO-Kunden-xlsx 40 Findings, aber NULL Kundennamen — er mis-klassifizierte 13 Kontonummern als kanadische SIN (ca_sin) und übersah die Namen komplett (KO-Präfix + ALLCAPS + Excel-Truncation brechen NER). (M6/G4 — SPALTEN-HEURISTIK: unser Extraktor rendert JEDE xlsx/csv als GitHub-Markdown-Tabelle (Header + |---|-Zeile). NEU _scan_markdown_table_columns als ERSTE Scan-Phase in _pii_scan_text: ein Header-Wort wählt per WORT-GRENZEN-Match (nicht Substring — 'Depotvolumen' matcht NICHT 'depot', 'Information Kundenkontakt' NICHT 'kunde') die Kategorie der Spalte, JEDE nicht-leere/nicht-NULL-Zelle der Spalte wird Kandidat DERSELBEN Kategorie. Das ist die einzige Methode, die gegen Excel-Truncation ('KO TULLNERSAntonius') und invertierte Formen ('Pölzl Philipp') robust ist — sie keyt auf die SPALTE, nicht den Zellinhalt. Header-Zeile wird NIE tokenisiert (ein Spaltenkopf als Token zerstört die Tabellensemantik). Plus eine VETO-Liste (volumen/cash/kontakt/kommentar/…), die einen Treffer kippt, wenn ein Geld-/Freitext-Wort daneben steht ('Konto Saldo' = Saldo, kein ID). Ergebnis am Golden-Material: 73 Namen + 32 DOBs + Kd.Nr.-Zellen jetzt erfasst, die der Scanner zuvor KOMPLETT übersah. CA_SIN-SUBSTRING-BUG GESCHLOSSEN: eine ID-Spalten-Zelle ('300622-800-1') resolved default auf ignore (business_id = kein personenbezogenes Datum), ihre volle Zell-SPANNE wird aber TROTZDEM reserviert — genau das blockiert die ca_sin-Regel daran, den Fragment-Substring '300622-800' als kanadische SIN zu matchen (13→0 False Positives). Das ist M6.4s Zellgrenzen-Anker. DOKUMENTIERTER REST: 3 Float-Rundungs-Artefakte in GELD-Spalten ('18320.869999999995' → 12-stellige jp_mynumber/se_personnummer) feuern weiter — VORBESTEHEND (auf HEAD verifiziert), außerhalb der M6-Tabellenspalten-Scope (eine National-ID-Regex-Präzisionsfrage), erzeugt Junk-Fakes auf Geld-Nachkommastellen, kein Leak. Die Kd.Nr.↔Konto-Join-Präfix-Wiederverwendung (E1/E2) ist MOOT unter allen ausgelieferten Presets: business_id bleibt überall ignore, IDs werden nie gefakt — die Mechanik würde erst relevant, wenn ein künftiges Preset business_id anonymisiert.) (M9.1/G12 — SPERRSCHRIFT: notarielle Dokumente rendern Namen gesperrt ('Dr. Gottwald K R A N E B I T T E R'); NER sieht Einzelbuchstaben, nicht den Namen → 0 Findings, während die Normalform desselben Namens gefakt wird — der Cloud-Provider kann das Mapping über die gesperrte Zeile (Funktion + Vorname) TRIVIAL invertieren (gemessen: 6c8dc5937f2c HV-Protokolle). NEU _scan_sperrschrift_names (Regex ([A-ZÄÖÜ]\\s){3,}[A-ZÄÖÜ], ≥4 gesperrte Großbuchstaben, optionaler Vorname/Titel davor) emittiert ein `name`-Finding über die ROHE gesperrte Spanne (der Ledger anonymisiert den On-Page-Text), die kollabierte Form ('Gottwald KRANEBITTER') reitet als _value mit → zählt als DERSELBE distinkte Wert wie das normal-gecasede Vorkommen. FP-fest: 'A B C' (nur 3 < 4), 'USA'/'EU' (nicht gesperrt), 'HTML CSS JS' (Mehrbuchstaben-Tokens) feuern nie.) (M9.3/G12 — EN-NER-NETZ: der reale KYC/DD-Korpus ist MEHRHEITLICH nicht-deutsch (>50% Englisch in ko-kunden), und deutsche NER auf englischem Content ist inkonsistent ('Craig Federighi' ja, 'Tim Cook'/'Joe Rossignol' nein). NEU en_core_web_md zusätzlich zu de geladen; scan_text UNIONiert beider Modelle Findings (dasselbe sm∪md-Recall-Netz-Muster aus v9.342, de zuerst → füttert name_spans für die Datums-/Adress-Proximity-Gates, en fügt nur Nicht-Overlap-Spannen dazu). DER LADENDE BUG: englisches spaCy nutzt das OntoNotes-Schema (PERSON/GPE), deutsches WikiNER (PER/LOC) — _LABEL_MAP kannte nur letzteres, also fielen ALLE englischen Personen durch; jetzt beide Schemata gemappt. en-Abwesenheit ist non-fatal (is_available gated → de-only Pipeline). requirements.txt trägt das en-Wheel.) NEU tests/test_pii_ner.py: TestTableColumnHeuristic (5), TestTableCaSinSubstringFix (1), TestSperrschrift (2), TestEnglishLabelMap (1), TestEnglishNERUnion (2) — MUTATIONSGEPRÜFT (Veto entfernen → 'Konto Saldo' mis-matcht; Zell-Span-Reserve entfernen → ca_sin kehrt zurück; PERSON aus _LABEL_MAP → englische Namen verloren). test_unload_silences_ner_findings auf de+en aktualisiert (en ist jetzt Fallback). 663 Tests grün (discover, 2 skipped). py_compile OK. Kein Schema/Tool/Prompt → KV-Prefix unberührt, kein Warmup-Reprime; Server-Restart nötig (en-Modell lädt beim Boot). DAMIT IST PII-PARITÄT WELLE 2 KOMPLETT (M1-M11). KURATIERTER Eintrag (user)."),
     ("9.346.0", "2026-07-15", "feat(PII-Parität Welle 2 — M7/G5+G6: ARTEFAKT-VOLLSTÄNDIGKEIT — der Fail-loud-Baustein gegen 'der Report lügt leise' auf den drei Wegen, die L6 noch offen ließ. L6 rückübersetzt Dateien im ARTEFAKT-BAUM in unterstützten Textformaten; drei Kanäle fielen still durch. (G5 — NICHT-BAUM-SCHREIBPFADE: `make_gdpr_after_file_write_cb` bailte bei `not _is_artifact_path(path)` — schrieb das Modell auf einen ABSOLUTEN Pfad (was Nutzer real anweisen: 'schreib es nach /pfad/report.docx'), gab es KEINEN Reverse, KEIN Lint, KEINE Warnung. Real 3× getroffen: zwei HV-Sprechvorlagen (.docx) und ein konzernstruktur_neu.html ins Repo-Root — eine Sprechvorlage für eine ECHTE Hauptversammlung mit ERFUNDENEN Namen von Aufsichtsrat/Vorstand/Prüfern, ohne jede Kennzeichnung. Fix: der `_is_artifact_path`-Bail ENTFÄLLT. Der Callback feuert AUSSCHLIESSLICH aus `brain._after_file_write`, das die Schreib-/Edit-Tools mit dem Pfad rufen, den das Modell GERADE DIESEN Turn geschrieben hat — Baum oder nicht. Reverse+Lint ist für JEDE modell-geschriebene Datei korrekt; fremde/vorbestehende Dateien erreichen den Callback nie, weil die Tools `_after_file_write` nur auf ihren EIGENEN Schreibvorgängen rufen. Der ursprüngliche Bail-Grund ('nicht in fremde Dateien schreiben') bleibt für FREMDE Dateien richtig — aber diese hier sind alle modell-geschrieben.) (G6-a — .svg REVERSE: .svg ist Text-XML und trivial reversibel, wurde aber übersprungen. Neu in engine/file_pseudonymize.py: .svg ∈ SUPPORTED_EXTS ∪ _PLAIN_EXTS → läuft durch den Plain-Text-Reverse (String-Replace; Tokens sind XML-text-safe, kein `<`/`>`/`&`). Zusammen mit render_diagram ∈ GDPR_ARGS_DEANON_TOOLS (v9.344, lokaler Renderer, kein Egress) trägt ein lokal gerendertes Diagramm-.svg jetzt ECHTE Werte — genau wie die .docx/.html daneben nach dem Reverse; das ausgelieferte Dokument ist in sich konsistent statt 'echter Text, falsche Grafik'.) (G6-b — RASTER-BILDER FAIL-LOUD: ein .png/.jpg, das unter aktivem Mapping geschrieben wird, kann die FAKE-Werte des Modells in PIXEL brennen (ein Chart/Diagramm) — nicht reversibel, ohne OCR nicht lint-bar — und wird per ![](…) in eine .docx/.html eingebettet, deren Text rückübersetzt wird → echter Text, falsche Grafik, kein Hinweis. Neu: _GDPR_IMAGE_EXTS (.png/.jpg/.jpeg/.webp/.gif) lösen UNBEDINGT (kein Residuen-Check — die Pixel sind nicht lesbar) einen Fail-loud aus: synthetische Error-Zeile + Degradations-Zähler image_unreversible + ein am Dispatch gedrainter Modell-Hinweis, das Diagramm stattdessen als .svg zu rendern. Ein lokal gerendertes render_diagram-.svg landet NIE hier (es ist supported und reversiert auf Wahrheit); ein Mistral-generate_image-.png landet hier — und dessen Pixel sind ehrlich nicht vertrauenswürdig. generate_image ist zusätzlich weiter über EGRESS_TOOLS + `_gdpr_scan_cloud_egress` gegatet (M2, der PROMPT verlässt die Maschine); der Fail-loud betrifft die AUSGELIEFERTE Datei. Frontend: chat_render.js zeigt 'N× Bild-Artefakt nicht rückübersetzbar (Pixel) → SVG' im bestehenden Datenschutz-Streifen (ein `parts.push`, kein neues Global).) NEU tests/test_report_fidelity.py: TestSvgReverse (2), TestFileSeamNonTree (1), TestFileSeamImage (1) — alle DREI MUTATIONSGEPRÜFT: entfernt man .svg aus SUPPORTED_EXTS fällt der SVG-Reverse-Test; reintroduziert man den `_is_artifact_path`-Bail bleibt der Fake-Name in der Nicht-Baum-Datei (Test schlägt an); neutralisiert man den Image-Zweig fehlt der Fail-loud (Test schlägt an). Zwei CHARAKTERISIERUNGS-Tests in test_chat_worker_helpers.py auf die neue Intent aktualisiert: skips_non_artifact→reverses_non_artifact (Nicht-Baum wird jetzt rückübersetzt), skips_unsupported nutzt jetzt .bin statt .png (.png/.jpg fail-loud statt no-op). 653 Tests grün (discover, 2 skipped). py_compile OK. Reine Callback-/Walker-Logik, kein Schema/Prompt → KV-Prefix unberührt, kein Warmup-Reprime; Brain-Neustart für die Worker-Logik nötig. OFFEN bleiben M6 (Tabellen, Lasttest VOR Design) + M9 (Erkennungs-Netz). KURATIERTER Eintrag (user)."),
     ("9.345.0", "2026-07-15", "fix(PII-Parität Welle 2 — M8/G11: Citation-Validator hinter die Rück-Übersetzung gezogen). PROBLEM (statisch verifiziert am Code, aus dem Wave-2-Handover G11): der Zitat-Validator `engine.validate_citations_in_response(reply,…)` lief im Chat-Worker (handlers/chat.py) VOR der Reply-Rück-Übersetzung `pseudonymizer.deanonymize_text(reply,…)` — ~130 Zeilen früher. Der Validator matcht jedes wörtliche Zitat BYTE-genau gegen die ECHTEN Quelldateien auf Platte (`_read_file_cached_for_validation` → `_normalize_quote(quote) in _normalize_quote(content)`). Solange ein Mapping aktiv ist, trägt `reply` an dieser Stelle aber noch die FAKES → jedes Zitat, das einen geschützten Wert enthält, verfehlt den Match → landet als 'unverified'/uncited. Folge: in research_mode-/Citation-Discipline-Projekten (KG-Real-Policies, compliance-prüfung, firmenbewertung, DD-Reports) hing an praktisch JEDER Antwort ein FALSCHER Quellentreue-Warnblock bzw. `citation_reround_needed` feuerte auf Scheinbefunde — OHNE dass die Antwortqualität real sank; die Eval-Reihen scorten damit systematisch schlechter. FIX: der komplette Validator-Block (validate → _cv_meta → strip_fabricated_citations → citation_reround_needed → warning-append) wird jetzt NACH dem Deanonymise-Block ausgeführt, auf dem rück-übersetzten `reply`. Der Nudge-Hinweis-Append bleibt VOR dem Deanonymise (sein Text wird weiter mit-rücküberssetzt); der Fabrication-Strip-Hinweis (statischer deutscher Prosatext, keine PII) läuft jetzt nach dem Deanonymise und ist bewusst nicht mehr rück-übersetzt — unschädlich. INVARIANTE ERHALTEN: ist KEIN Mapping aktiv, ist der Deanonymise-Block ein No-Op → `reply` ist byte-identisch zu vorher → Nicht-GDPR-Turns unverändert (`_reround_uncited_only`/[[feedback_reround_uncited_only]] hängt weiter am selben `_val`, nur auf korrektem Text). `_web_sources_used`/`_partial_tools`/`_nudge_count` bleiben an der neuen (späteren) Stelle in scope. NEU tests/test_citation_after_deanon.py (2, mutationsgeprüft): AST-Source-Order-Invariante — der Validator-Call MUSS nach dem Reply-Level-`_deanon_reply, _restored = deanonymize_text(…)` stehen (gegen die live-Streaming-Delta-Reverses abgegrenzt, die immer voranlaufen und die Regression sonst maskiert hätten); Mutations-Gegenprobe bestätigt: Validator vor Reply-Deanon → Test schlägt an. test_report_fidelity + test_chat_worker_helpers grün (40 Tests). py_compile OK. AKZEPTANZ-GATE (Handover): KG-Real-Policies-Eval Scanner-an == Scanner-aus — separat zu fahren (≥3 Reps, [[feedback_eval_single_run_noise]]). Reine Reihenfolge-Änderung im Worker, kein Schema/Prompt → KV-Prefix unberührt, kein Warmup-Reprime; Brain-Neustart für die Worker-Logik nötig."),
@@ -7373,19 +7374,11 @@ class ProjectManager:
             # Coerce research_mode to bool so the on-disk shape is stable.
             if "research_mode" in updates:
                 cfg["research_mode"] = bool(updates["research_mode"])
-            # Per-project GDPR preset (L7a): '' = none, 'kyc' = scanner on +
-            # web_egress 'ask' + names anonymised, 'kyc_local' = PII turns on
-            # the local fallback model (zero egress). Activating a preset
-            # implies the research/citation discipline (handover §L7a) — set
-            # it ON once at activation; an explicit research_mode in the same
-            # update wins, and the user can toggle it off afterwards.
-            if "gdpr_preset" in updates:
-                _gp = str(updates.get("gdpr_preset") or "").strip().lower()
-                _gp_old = str(cfg.get("gdpr_preset") or "").strip().lower()
-                cfg["gdpr_preset"] = _gp if _gp in GDPR_PROJECT_PRESETS else ""
-                if (cfg["gdpr_preset"] and cfg["gdpr_preset"] != _gp_old
-                        and "research_mode" not in updates):
-                    cfg["research_mode"] = True
+            # GDPR project presets were REMOVED in 9.348.0 (user call: the
+            # rule/category action matrix in Settings → GDPR is the single
+            # enforcement mechanism; a per-project posture layer would either
+            # go unused or be circumvented). Strip any legacy field on save.
+            cfg.pop("gdpr_preset", None)
             with open(cfg_path, "w") as f:
                 json.dump(cfg, f, indent=2)
             return {"name": name, "status": "updated"}
@@ -8954,7 +8947,6 @@ def apply_domain_context(*, agent_id: str, project: str = "",
     #    project has `disable_web_search` set. Model-independent enforcement.
     _excl = set(base_exclude_tools or [])
     ctx.working_dir = None
-    ctx.gdpr_project_preset = ""
     if proj_name:
         try:
             _pcfg = ProjectManager.get_project(agent_id, proj_name)
@@ -8962,17 +8954,6 @@ def apply_domain_context(*, agent_id: str, project: str = "",
             _pcfg = None
         if _pcfg and _pcfg.get("disable_web_search"):
             _excl |= set(WEB_SEARCH_TOOLS)
-        # L7a: per-project GDPR preset → request context, so every
-        # _get_gdpr_scanner_config() reader on this turn (scan seams, web
-        # gate, background picker) sees the overlaid config. KYC analysis
-        # leans on the deterministic doc_checks verdicts (L1) — surface them
-        # in-prompt (project sessions never claim the warm pool, so the
-        # prefix change costs nothing; same pattern as code mode below).
-        _gp = str((_pcfg or {}).get("gdpr_preset") or "").strip().lower()
-        if _gp in GDPR_PROJECT_PRESETS:
-            ctx.gdpr_project_preset = _gp
-            ctx.undefer_tools = list((ctx.undefer_tools or []) + [
-                "mrz_verify", "doc_dates_check", "identity_consistency"])
         # Code Mode: point file tools at the project's working directory and
         # remove the MemPalace tools (this project doesn't use project memory —
         # the model reads/edits files directly in working_dir + reads BRAIN.md
@@ -9045,7 +9026,6 @@ def build_tool_context(*, session_id: str, agent_id: str, user_id: str = "",
         "caveman_chat": int(ctx.caveman_chat or 0),
         "caveman_system": int(ctx.caveman_system or 0),
         "gdpr_mapping_id": gdpr_mapping_id or "",
-        "gdpr_project_preset": ctx.gdpr_project_preset or "",
     }
 
 
@@ -11854,99 +11834,18 @@ _gdpr_scanner_cache_time: float = 0.0
 # module globals via that import. Mirrored in web/index.html PIIScanner.
 
 
-# ── Per-project GDPR preset (L7a) ───────────────────────────────────────────
-# A project.json `gdpr_preset` bundles the scanner posture a KYC-/fraud-
-# analysis project needs WITHOUT touching the global config: the overlay is
-# applied per-call on a COPY of the cached global config (the unkeyed 30s
-# cache stays preset-free — never mutate the cached dict, several callers
-# hold the same object). Preset resolution order in _get_gdpr_scanner_config:
-# explicit `preset=` param (HTTP-handler threads that know the session's
-# project pass it) > request-context field `gdpr_project_preset` (set by
-# apply_domain_context for worker/scheduler/background turns) > none.
-GDPR_PROJECT_PRESETS = ("kyc", "kyc_local", "screening")
-
-
-def _gdpr_apply_project_preset(cfg: dict, preset: str) -> dict:
-    """Return a NEW config dict with the project preset overlaid.
-
-    kyc:        scanner ON + web_egress 'ask' (consent per value) + the name
-                rule raised out of the default contact=ignore hole (§0.5 of
-                PII_ANALYSIS_PARITY_HANDOVER.md) so the checked person's name
-                is actually anonymised. Firmennamen bleiben im KLARTEXT —
-                beim KYC einer PRIVATPERSON ist die Firma nicht das Prüfsubjekt.
-    kyc_local:  scanner ON + PII turns run on the local fallback model — the
-                only zero-egress route; background PII calls swap local too.
-    screening:  wie kyc, PLUS Organisationen als Entitäten (M4) — für
-                Workloads, in denen die FIRMA das Prüfsubjekt ist
-                (Risikoanalyse, Compliance-Prüfung, Adverse-Media, UBO,
-                Sanktions-/Registry-Screening). Der Firmenname wird gegenüber
-                dem CLOUD-MODELL pseudonymisiert (eine Entität pro Firma, alle
-                Oberflächenformen inkl. ALLCAPS-Registryform → EIN Fake), aber
-                per M5-Auto-Release im ausgehenden SUCH-Request wieder
-                eingesetzt — die Kategorie `business_id` lässt die Policy
-                ohnehin passieren. Ergebnis: Registry-/Sanktions-/Adverse-
-                Media-Recherche funktioniert vollständig, während der
-                Cloud-Provider den Firmennamen nie zu sehen bekommt.
-                Personen bleiben wie bei kyc geschützt (Consent-Klick).
-
-    Only-strengthen rule: an admin's explicit stronger setting wins — the
-    overlay raises a rule only when it currently resolves to `ignore`.
-    """
-    if preset not in GDPR_PROJECT_PRESETS:
-        return cfg
-    out = dict(cfg)
-    out["enabled"] = True
-    _ro = dict(cfg.get("rule_overrides") or {})
-    if _pii_effective_action("name", cfg) == "ignore":
-        _ro["name"] = "warn"
-    if preset == "screening" and _pii_effective_action("organisation", cfg) == "ignore":
-        # MUSS ein rule_override sein, kein Kategorie-Bump: die Live-Config
-        # trägt rule_overrides['organisation']='ignore', und rule_overrides
-        # schlagen die Kategorie in _pii_effective_action. Ein Bump von
-        # business_id würde davon still geschattet — das Preset wäre wirkungslos.
-        _ro["organisation"] = "warn"
-    if _ro != (cfg.get("rule_overrides") or {}):
-        out["rule_overrides"] = _ro
-    if preset in ("kyc", "screening"):
-        out["web_egress"] = "ask"
-    else:  # kyc_local
-        out["background_pii_action"] = "swap_to_local"
-    return out
-
-
-def _gdpr_project_preset_for(agent_id: str, project_name: str) -> str:
-    """Resolve a project's `gdpr_preset` ('' when none/invalid).
-
-    Reads project.json via ProjectManager.get_project — callers on HTTP
-    threads (no request context) use this to pass `preset=` explicitly into
-    _get_gdpr_scanner_config."""
-    if not project_name:
-        return ""
-    try:
-        cfg = ProjectManager.get_project(agent_id or "main", project_name)
-    except Exception:
-        return ""
-    p = str((cfg or {}).get("gdpr_preset") or "").strip().lower()
-    return p if p in GDPR_PROJECT_PRESETS else ""
-
-
-def _gdpr_preset_overlay(cfg: dict, preset: str | None) -> dict:
-    """Apply the effective project preset to a config dict (see
-    GDPR_PROJECT_PRESETS comment for resolution order)."""
-    if preset is None:
-        try:
-            preset = get_request_context().gdpr_project_preset or ""
-        except Exception:
-            preset = ""
-    return _gdpr_apply_project_preset(cfg, preset) if preset else cfg
-
-
-def _get_gdpr_scanner_config(preset: str | None = None) -> dict:
+# GDPR project presets (L7a: kyc / kyc_local / screening, v9.341–9.344) were
+# REMOVED in 9.348.0 — a user/product call: the rule/category action matrix in
+# Settings → GDPR is the SINGLE enforcement mechanism (the rule decides
+# centrally when it fires; the action decides what the user may do — `block`
+# has no cleartext escape). A per-project posture layer was a second config
+# surface over the same question: it would either go unused or be worked
+# around, and two places can contradict each other. Everything the presets
+# bundled remains reachable globally: rule_overrides (name/organisation),
+# web_egress, background_pii_action — all admin-editable in the GUI. The
+# session-sticky anonymise flow (8.7.0) replaces the turn-1 standing consent.
+def _get_gdpr_scanner_config() -> dict:
     """Read gdpr_scanner config block from config.json. 30s cache.
-
-    `preset`: per-project GDPR preset (L7a). None = resolve from the request
-    context (worker/background threads); '' = force global config; 'kyc' /
-    'kyc_local' = overlay applied on a copy (the cache itself stays global).
 
     Shape:
       {"enabled": bool,                  # master on/off (default True)
@@ -11980,7 +11879,7 @@ def _get_gdpr_scanner_config(preset: str | None = None) -> dict:
     global _gdpr_scanner_cache, _gdpr_scanner_cache_time
     now = time.time()
     if _gdpr_scanner_cache is not None and (now - _gdpr_scanner_cache_time) < 30:
-        return _gdpr_preset_overlay(_gdpr_scanner_cache, preset)
+        return _gdpr_scanner_cache
     cfg = {
         "enabled": True, "server_log": True,
         "confidence_lower": 0.50, "confidence_upper": 0.85,
@@ -12066,7 +11965,7 @@ def _get_gdpr_scanner_config(preset: str | None = None) -> dict:
         pass
     _gdpr_scanner_cache = cfg
     _gdpr_scanner_cache_time = now
-    return _gdpr_preset_overlay(cfg, preset)
+    return cfg
 
 
 def _pii_effective_action(rule_id: str, cfg: dict | None = None) -> str:
