@@ -2679,7 +2679,7 @@
       "max_context": 262144,
       "max_output": 262144,
       "cost_input": 0.95,
-      "cost_output": 4.0,
+      "cost_output": 4,
       "cost_cache_read": 0.16,
       "benchmark": {
         "coding": {
@@ -3905,7 +3905,90 @@
       "is_local": true,
       "warmup": true,
       "scratchpad_mode": "auto",
-      "warmup_mode": "minimal"
+      "warmup_mode": "minimal",
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 32.5,
+            "n": 4,
+            "ts": "2026-07-15T17:08:56Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 100,
+            "tps": 35.3,
+            "n": 5,
+            "ts": "2026-07-15T17:09:29Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 98,
+            "tps": 36.4,
+            "n": 3,
+            "ts": "2026-07-15T17:11:04Z",
+            "source": "internal"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 98,
+            "tps": 36.3,
+            "n": 3,
+            "ts": "2026-07-15T17:12:23Z",
+            "source": "internal"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 98,
+            "tps": 25.5,
+            "n": 3,
+            "ts": "2026-07-15T17:12:44Z",
+            "source": "internal"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 95,
+            "tps": 21.0,
+            "n": 3,
+            "ts": "2026-07-15T17:13:00Z",
+            "source": "internal"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 98,
+            "tps": 34.5,
+            "n": 3,
+            "ts": "2026-07-15T17:14:05Z",
+            "source": "internal"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 83,
+            "tps": 31.0,
+            "n": 3,
+            "ts": "2026-07-15T17:14:37Z",
+            "source": "internal"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 5.6,
+            "n": 4,
+            "ts": "2026-07-15T17:14:39Z",
+            "source": "internal"
+          }
+        }
+      }
     },
     "openrouter/openai/gpt-5.6-luna-pro": {
       "enabled": false,
@@ -5043,7 +5126,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "kwaipilot/kat-coder-pro-v2.5": {
       "enabled": false,
@@ -5058,7 +5143,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/kwaipilot/kat-coder-air-v2.5": {
       "enabled": false,
@@ -5074,7 +5161,9 @@
       "provider": "openrouter",
       "base_model_id": "kwaipilot/kat-coder-air-v2.5",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/kwaipilot/kat-coder-pro-v2.5": {
       "enabled": false,
@@ -5090,7 +5179,9 @@
       "provider": "openrouter",
       "base_model_id": "kwaipilot/kat-coder-pro-v2.5",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "GLM-OCR-8bit": {
       "enabled": false,
@@ -5105,7 +5196,9 @@
       "thinking_format": "none",
       "provider": "Lokal",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "stealth/gpt-5.6-sol": {
       "enabled": false,
@@ -5120,7 +5213,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "meta/muse-spark-1.1": {
       "enabled": false,
@@ -5135,7 +5230,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     }
   },
   "nodes": {},

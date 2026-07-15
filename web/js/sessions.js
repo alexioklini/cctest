@@ -471,6 +471,31 @@ async function openSession(sessionId, agentId) {
     if (data.total_tokens) chat.totalTokens = data.total_tokens;
     chat.messages = expanded;
 
+    // Open a multi-turn chat collapsed down to just the last turn: every
+    // completed turn but the newest is pre-collapsed so the reader lands on the
+    // most recent exchange instead of scrolling past the whole history. Turn
+    // numbers are 1-based, counting user/human rows (same grouping the render
+    // path uses). Skipped for a mid-stream session — the in-flight turn (and
+    // thus everything) stays open so the live reply is visible. The user can
+    // re-expand any turn via the badge / turn-nav menu; those states persist
+    // for the session's lifetime, only this initial default is set here.
+    //
+    // Gated on a page-life "seen" set: this auto-collapse fires only the FIRST
+    // time a given session is opened this page-life. Navigating away and back
+    // then keeps whatever collapse state the user left it in, instead of
+    // re-collapsing to the last turn every visit.
+    if (!state._autoCollapseSeen) state._autoCollapseSeen = new Set();
+    if (!data.streaming && !state._autoCollapseSeen.has(sessionId)) {
+      let _turnCount = 0;
+      for (const m of expanded) {
+        if (m.role === 'user' || m.role === 'human') _turnCount++;
+      }
+      if (_turnCount > 1) {
+        for (let t = 1; t < _turnCount; t++) chat._collapsedTurns.add(t);
+      }
+    }
+    state._autoCollapseSeen.add(sessionId);
+
     // Drop any cached references for this session so the badge + pane rebuild
     // from the freshly loaded messages/metadata. The cache is otherwise only
     // invalidated at stream end, so reopening a session that was visited earlier

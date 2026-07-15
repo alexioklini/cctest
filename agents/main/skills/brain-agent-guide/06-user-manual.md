@@ -452,6 +452,12 @@ Schließt man den Browser-Tab mitten im Turn, einfach den Chat wieder
 öffnen — der Worker läuft weiter und der Verlauf holt auf.
 
 **Anfragen auf-/zuklappen**: Jede Anfrage hat oben ein **Anfrage N**-Badge.
+Wird eine mehrteilige Sitzung geöffnet, sind alle Anfragen **bis auf die
+letzte vorab zugeklappt** — Sie landen direkt auf dem jüngsten Austausch
+statt durch die ganze Historie zu scrollen. Das gilt nur beim ersten Öffnen
+der Sitzung; klappen Sie danach Anfragen auf und wechseln zwischendurch
+weg, bleibt Ihr Zustand beim erneuten Öffnen erhalten (kein erneutes
+Einklappen). Bei einer noch laufenden Antwort bleibt alles offen.
 Ein Klick klappt diese eine Anfrage auf oder zu. **Lange gedrückt halten**
 (≈ ½ Sekunde) klappt **alle** Anfragen auf oder zu — die Richtung richtet
 sich nach der gehaltenen Anfrage (eine offene gehalten → alle zu; eine
