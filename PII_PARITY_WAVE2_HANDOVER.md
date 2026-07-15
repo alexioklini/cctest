@@ -1,8 +1,29 @@
 # PII-Parität — Welle 2 (M1–M11) · Handover
 
-**Stand:** 2026-07-15 · Basis-VERSION `9.345.0` · **Status: M1/M2/M3/M11 GELIEFERT in v9.343.0** (die vier Leck-Stopps) · **M4/M5 + M10 GELIEFERT in v9.344.0** (der Qualitäts-Hebel + Ad-hoc-Schutz) · **M8 GELIEFERT in v9.345.0** (Citation-Validator hinter den Reverse). **OFFEN: M6, M7, M9.**
+**Stand:** 2026-07-15 · Basis-VERSION `9.346.0` · **Status: M1/M2/M3/M11 GELIEFERT in v9.343.0** (die vier Leck-Stopps) · **M4/M5 + M10 GELIEFERT in v9.344.0** (der Qualitäts-Hebel + Ad-hoc-Schutz) · **M8 GELIEFERT in v9.345.0** (Citation-Validator hinter den Reverse) · **M7 GELIEFERT in v9.346.0** (Artefakt-Vollständigkeit — Fail-loud). **OFFEN: M6, M9.**
 
 **Vorgänger:** `PII_ANALYSIS_PARITY_HANDOVER.md` (Serie L1–L7, v9.334.0–9.342.0, KOMPLETT). Der dortige Katalog bleibt gültig — diese Welle *ergänzt* ihn, sie widerruft nichts.
+
+---
+
+## STATUS nach Session 4 der Welle 2 (v9.346.0)
+
+### Geliefert — M7 (G5+G6): Artefakt-Vollständigkeit
+
+| # | Baustein | Schließt | Ergebnis |
+|---|---|---|---|
+| **M7** | Artefakt-Vollständigkeit | **G5, G6** | ✅ Drei Kanäle, die L6 still durchließ, sind Fail-loud bzw. reversibel: Nicht-Baum-Schreibpfade werden rückübersetzt+gelintet; `.svg` ist reversibel (Echtwerte im lokal gerenderten Diagramm); Raster-Bilder (`.png/.jpg/…`) lösen unbedingt Fail-loud aus |
+
+**Die drei Kanäle:**
+- **G5 — Nicht-Baum:** der `_is_artifact_path`-Bail in `make_gdpr_after_file_write_cb` (`handlers/chat.py`) entfällt. Der Callback feuert **ausschließlich** aus `brain._after_file_write`, das die Schreib-/Edit-Tools mit dem *gerade geschriebenen* Pfad rufen — fremde Dateien erreichen ihn nie, also ist Reverse+Lint für jede modell-geschriebene Datei korrekt.
+- **G6-a — `.svg`:** `.svg` ∈ `SUPPORTED_EXTS` ∪ `_PLAIN_EXTS` (`engine/file_pseudonymize.py`, reverse-only Modul; Plain-Text-Replace, Tokens XML-safe). Zusammen mit `render_diagram` ∈ `GDPR_ARGS_DEANON_TOOLS` (schon v9.344) → lokal gerendertes Diagramm trägt Echtwerte.
+- **G6-b — Raster:** `_GDPR_IMAGE_EXTS` neu; unbedingt Fail-loud (kein Residuen-Check — Pixel nicht lesbar): Error-Zeile + `image_unreversible`-Zähler + `_gdpr_file_warnings`-Nudge (→ als `.svg` rendern). Der generische Drain in `llm_loop.dispatch_tool` reicht den Nudge ans Modell — also auch für `generate_image` (dessen Prompt separat über `EGRESS_TOOLS`/`_gdpr_scan_cloud_egress` gegatet ist, M2).
+
+**Befund, der die Analyse präzisierte:** `render_diagram` und der `generate_image`-Egress-Scan waren **schon** in M3/M4 mit-erledigt (Session-3-Note). M7 offen blieben damit exakt die vier Punkte oben — der Kern ist die eine Reihenfolge-/Scope-Korrektur (Bail entfernen) plus zwei Ext-Mengen.
+
+**Tests:** `tests/test_report_fidelity.py` (`TestSvgReverse` 2, `TestFileSeamNonTree` 1, `TestFileSeamImage` 1) — **alle drei mutationsgeprüft** (`.svg` aus SUPPORTED_EXTS raus → SVG-Test fällt; Bail reintroduzieren → Nicht-Baum-Fake bleibt stehen; Image-Zweig neutralisieren → Fail-loud fehlt). Zwei Charakterisierungs-Tests in `test_chat_worker_helpers.py` auf die neue Intent aktualisiert (`skips_non_artifact`→`reverses_non_artifact`; `.png`→`.bin` als echtes Nicht-Bild). 653 Tests grün (discover). js_gate grün (net-globals 1996 unverändert). Live-E2E gegen die echten Module + den echten Callback.
+
+**Nächster sinnvoller Schnitt:** **M6** (Tabellen/Massendaten — **Lasttest VOR dem Design**; Reverse-Pass O(M²·T) bei Mapping-Bloat) und **M9** (Erkennungs-Netz — billigster Einstieg: Sperrschrift #1, dann EN-NER #3). Das sind die zwei verbleibenden Bausteine der Welle.
 
 ---
 
