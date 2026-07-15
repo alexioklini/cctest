@@ -28,8 +28,13 @@ _LOAD_FAILED: set[str] = set()
 # it; LOC also covers cities/countries which we treat as addressy enough
 # in the personal category).
 _LABEL_MAP = {
+    # German (de_core_news_*) uses the WikiNER scheme (PER/LOC/ORG); English
+    # (en_core_web_*) uses OntoNotes (PERSON/GPE/LOC/ORG). Map both so the
+    # M9.3 English recall net actually surfaces PERSON spans.
     "PER": "name",
+    "PERSON": "name",
     "LOC": "address",
+    "GPE": "address",
     "ORG": "organisation",
 }
 
@@ -267,6 +272,11 @@ KNOWN_LANGUAGES: dict[str, dict[str, str]] = {
     # question; a miss is cleartext egress (handover §4.2 asymmetry).
     "de": {"display": "Deutsch", "model": "de_core_news_md",
            "recall_model": "de_core_news_sm"},
+    # M9.3 (G12): English recall net. The KYC/DD corpus is majority non-German;
+    # German NER on English content is inconsistent, so we run en_core_web_md in
+    # addition to de and UNION the findings (see the NER pass in _pii_scan_text).
+    # No recall_model — the union is already the recall lever here.
+    "en": {"display": "English", "model": "en_core_web_md"},
 }
 
 
@@ -1618,6 +1628,208 @@ def _pii_confidence(finding: dict, *, gated: bool, occurrences: int,
     return round(max(0.05, min(score, 0.99)), 2)
 
 
+# ── M6 (G4): table / mass-data column heuristic ──────────────────────────────
+# Prose NER + regex miss the CELL. The real PII carrier in a KYC/DD workload is
+# the tabular cell: "KO TULLNERSAntonius" (Excel truncation, no space),
+# "KO STARK Bonnie M." (KO-prefix + ALLCAPS), "19470205" (DOB as YYYYMMDD),
+# "300622-800-1" (account no.). Measured against the real scanner: 0 findings
+# on these cells, while the ca_sin rule mis-matched "300622-800" as a Canadian
+# SIN substring. Both are fixed here: the column heuristic reserves the WHOLE
+# cell span for every cell in a name/ID/DOB column BEFORE the regex/NER passes
+# run, so (a) truncated/prefixed names get caught and (b) the full-cell span
+# blocks a substring false-match downstream.
+#
+# We only understand the ONE table shape our extractor emits: GitHub-flavoured
+# markdown (`| a | b |` rows with a `|---|` separator under the header) — that's
+# what engine/doc_convert renders every xlsx/csv into. A header cell maps to a
+# rule by keyword; every non-empty, non-NULL data cell of that column becomes a
+# finding of that rule. The header row itself is NEVER tokenised (tokenising a
+# column head like "Kd.Nr." destroys table semantics — measured).
+# Header → rule keywords. Matched on WORD BOUNDARIES, not raw substrings — a
+# free-text notes column "Information Kundenkontakt" must NOT match "kunde", and
+# a money column "Depotvolumen" must NOT match "depot". Each keyword is a token
+# that must appear as a whole word (or `.`/`-`/`/`-separated fragment) in the
+# header. Measured: without this, 205 money/notes cells were mis-tagged.
+_TABLE_HEADER_RULES: tuple[tuple, ...] = (
+    ("name", ("name", "kunde", "auftraggeber", "inhaber", "vorname",
+              "nachname", "kontoinhaber", "begünstigter", "empfänger")),
+    ("organisation", ("firma", "unternehmen", "gesellschaft", "emittent")),
+    ("dob", ("geburtsdatum", "geburtstag", "geb", "dob")),
+    # ID columns: the cell IS an identifier even when formless (107625). We
+    # reserve its full-cell span so a downstream substring rule (ca_sin) can't
+    # false-match a fragment (`300622-800` inside `300622-800-1`). Emitted as
+    # `organisation` (business_id category).
+    ("business_id", ("kd.nr", "kdnr", "kundennummer", "kunden-nr", "kd-nr",
+                     "kto", "depot", "konto", "iban", "account", "kontonr",
+                     "kontonummer", "depotnummer")),
+)
+# Header tokens that VETO a match even if a keyword hit — money/free-text
+# columns whose name shares a stem with an ID/name keyword ("Depotvolumen",
+# "Information Kundenkontakt", "Cash", "Volumen", "Kommentar").
+_TABLE_HEADER_VETO = ("volumen", "volume", "cash", "betrag", "kontakt",
+                      "information", "kommentar", "recherche", "notiz",
+                      "summe", "saldo", "wert", "kurs")
+# Cell values that carry no PII — never emit a finding for these.
+_TABLE_EMPTY_CELLS = frozenset({"", "null", "none", "n/a", "na", "-", "0",
+                                "nan", "false", "true"})
+# Split a header into lowercased word tokens (word-boundary matching).
+_HEADER_TOKEN_RE = _re.compile(r"[a-zäöüß0-9.\-/]+")
+
+
+def _classify_table_header(header: str) -> str | None:
+    """Map a markdown table header cell to a rule_id, or None. Word-boundary
+    matching + a veto list so money/notes columns that merely share a stem
+    ("Depotvolumen", "Information Kundenkontakt") don't select a column.
+    `business_id` is returned for ID columns (caller emits it as
+    'organisation')."""
+    h = header.strip().lower()
+    if not h:
+        return None
+    if any(v in h for v in _TABLE_HEADER_VETO):
+        return None
+    tokens = _HEADER_TOKEN_RE.findall(h)
+    # For each token collect its matchable forms: the raw token, its
+    # `.`/`-`/`/`-split fragments, and a fully de-punctuated form
+    # ("kd.nr." → "kdnr"). Keyword hits any of these.
+    forms: set[str] = set()
+    for tok in tokens:
+        forms.add(tok)
+        forms.update(f for f in _re.split(r"[.\-/]", tok) if f)
+        forms.add(_re.sub(r"[.\-/]", "", tok))
+    for rule_id, needles in _TABLE_HEADER_RULES:
+        for n in needles:
+            n_norm = _re.sub(r"[.\-/]", "", n)
+            if n in forms or n_norm in forms:
+                return rule_id
+    return None
+
+
+def _scan_markdown_table_columns(text: str) -> list[dict]:
+    """Find every data cell in a name/ID/DOB table column and return findings
+    (rule_id + absolute char span in `text`). Robust against Excel truncation
+    and inverted "Lastname Firstname" forms because it keys off the COLUMN, not
+    the cell content. Never emits for the header row or empty/NULL cells."""
+    findings: list[dict] = []
+    lines = text.split("\n")
+    # Char offset of the start of each line (for absolute spans).
+    offs = []
+    _o = 0
+    for ln in lines:
+        offs.append(_o)
+        _o += len(ln) + 1  # +1 for the '\n' we split on
+    i = 0
+    while i < len(lines) - 1:
+        line = lines[i]
+        if line.count("|") < 2:
+            i += 1
+            continue
+        # A header row is followed by a separator row of only |, -, :, space.
+        sep = lines[i + 1].strip()
+        if not sep or set(sep) - set("|-: "):
+            i += 1
+            continue
+        headers = [c.strip() for c in line.strip().strip("|").split("|")]
+        col_rule = [(_classify_table_header(h)) for h in headers]
+        if not any(col_rule):
+            i += 2
+            continue
+        # Data rows follow the separator until a blank line or a non-table line.
+        j = i + 2
+        while j < len(lines):
+            row = lines[j]
+            if row.count("|") < 2:
+                break
+            # Split preserving positions: walk the raw row so spans are exact.
+            base = offs[j]
+            # cell index ↔ raw segment between pipes
+            seg_start = 0
+            cell_idx = -1
+            raw = row
+            # Leading pipe: the first split segment before the first '|' is
+            # outside the table (usually empty) — treat segments between pipes.
+            parts = raw.split("|")
+            pos = 0
+            for k, seg in enumerate(parts):
+                seg_off = pos
+                pos += len(seg) + 1  # +1 for the '|'
+                # Table cells are the segments strictly between the outer pipes.
+                if k == 0 or k == len(parts) - 1:
+                    continue
+                cell_idx += 1
+                if cell_idx >= len(col_rule):
+                    continue
+                rid = col_rule[cell_idx]
+                if not rid:
+                    continue
+                val = seg.strip()
+                if val.lower() in _TABLE_EMPTY_CELLS or len(val) < 2:
+                    continue
+                # Absolute span of the trimmed value inside the row.
+                lead = len(seg) - len(seg.lstrip())
+                s = base + seg_off + lead
+                e = s + len(val)
+                emit_rid = "organisation" if rid == "business_id" else rid
+                findings.append({
+                    "rule_id": emit_rid,
+                    "start": s, "end": e, "len": e - s,
+                    "_table_col": cell_idx,
+                    "_raw_rule": rid,
+                })
+            j += 1
+        i = j
+    return findings
+
+
+# ── M9.1 (G12): Sperrschrift (letter-spaced) name normalisation ──────────────
+# Notarial / formal documents render names in letter-spacing:
+# "Dr. Gottwald K R A N E B I T T E R", "Herr Günter K E R B L E R". NER sees
+# individual capital letters, not a name → 0 findings, while the normal-cased
+# form of the same name elsewhere in the doc IS faked. The cloud provider can
+# then trivially invert the mapping (the spaced line names function + first
+# name). Measured 0 findings (session 6c8dc5937f2c, HV protocols).
+#
+# We detect a run of ≥4 single capital letters each followed by whitespace and
+# emit a `name` finding over the ORIGINAL spaced span — so the ledger
+# anonymises the actual on-page text. The collapsed form ("KRANEBITTER") is
+# stashed as `_collapsed` so the caller can register it as a variant of the
+# entity (letting the entity layer tie it to the normal-cased occurrence).
+# A leading first name / title token before the run is included when present so
+# the fake reads naturally.
+_SPERRSCHRIFT_RE = _re.compile(
+    r"(?:\b[A-ZÄÖÜ][a-zäöüß]+\s+)?"        # optional preceding first-name/title
+    r"(?:[A-ZÄÖÜ]\s+){3,}[A-ZÄÖÜ]\b"        # ≥4 letter-spaced capitals
+)
+
+
+def _scan_sperrschrift_names(text: str) -> list[dict]:
+    """Find letter-spaced name runs and return `name` findings over the raw
+    spaced span, each carrying `_collapsed` (the de-spaced surname). Empty when
+    the pattern doesn't occur — cheap regex, never raises."""
+    out: list[dict] = []
+    for m in _SPERRSCHRIFT_RE.finditer(text):
+        span = m.group(0)
+        # Collapse the letter-spaced tail into a single word; keep any leading
+        # first-name/title token separated by a single space.
+        parts = span.split()
+        # Trailing run = the sequence of single-letter tokens at the end.
+        letters = []
+        head = []
+        for tok in parts:
+            if len(tok) == 1 and tok.isalpha() and tok.isupper():
+                letters.append(tok)
+            else:
+                head.append(tok)
+        if len(letters) < 4:
+            continue
+        collapsed = ("".join(head[:1]) + " " if head else "") + "".join(letters)
+        out.append({
+            "rule_id": "name",
+            "start": m.start(), "end": m.end(), "len": m.end() - m.start(),
+            "_collapsed": collapsed.strip(),
+        })
+    return out
+
+
 def _pii_scan_text(text: str, max_findings: int = 100,
                    cfg: dict | None = None) -> list[dict]:
     """Scan text for PII. Returns list of {rule_id, label, start, end, category,
@@ -1643,6 +1855,70 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     allowlist = cfg.get("email_allowlist") or []
     findings: list[dict] = []
     spans: list[tuple[int, int]] = []
+
+    # ── M6 (G4): table column pre-pass — runs FIRST so a full-cell span blocks
+    # a downstream substring false-match (the ca_sin `300622-800` bug) AND so
+    # NER/regex-missed cells (truncated / prefixed names, YYYYMMDD DOBs) still
+    # get caught. Emits `name`/`organisation`/`dob` findings; each respects the
+    # per-rule action + reserves its span. Never touches the header row.
+    try:
+        for tf in _scan_markdown_table_columns(text):
+            rid = tf["rule_id"]
+            action = _pii_effective_action(rid, cfg)
+            s, e = tf["start"], tf["end"]
+            if any(s < se and e > ss for ss, se in spans):
+                continue
+            # RESERVE the full-cell span even for ignore-action ID columns:
+            # an ID cell (`300622-800-1`) is not personal data (business_id →
+            # ignore by default), but reserving its span is exactly what stops
+            # a downstream substring rule (ca_sin) from false-matching a
+            # fragment of it. The cell just doesn't become a FINDING when
+            # ignored. (This is M6.4's cell-boundary anchor.)
+            spans.append((s, e))
+            if action == "ignore":
+                continue
+            findings.append({
+                "rule_id": rid,
+                "label": PII_RULE_LABELS.get(rid, _LABEL_DISPLAY.get(rid, rid)),
+                "start": s, "end": e, "len": e - s,
+                "category": PII_RULE_CATEGORIES.get(rid, "contact"),
+                "action": action,
+                "source": "table",
+                "_value": _re.sub(r"\s+", " ", text[s:e]).strip().lower(),
+            })
+            if len(findings) >= max_findings:
+                break
+    except Exception as _e:
+        # The table heuristic must never break the regex pipeline.
+        print(f"[pii_ner] table pre-pass skipped: {_e}", flush=True)
+
+    # ── M9.1 (G12): Sperrschrift name pre-pass — catch letter-spaced names
+    # ("K R A N E B I T T E R") that NER can't see. Emits a `name` finding over
+    # the raw spaced span so the ledger anonymises the on-page text; the
+    # collapsed surname rides along in `_value` so it counts as the same
+    # distinct value as the normal-cased occurrence.
+    try:
+        _sp_action = _pii_effective_action("name", cfg)
+        if _sp_action != "ignore":
+            for sf in _scan_sperrschrift_names(text):
+                s, e = sf["start"], sf["end"]
+                if any(s < se and e > ss for ss, se in spans):
+                    continue
+                spans.append((s, e))
+                findings.append({
+                    "rule_id": "name",
+                    "label": PII_RULE_LABELS.get("name", "Name"),
+                    "start": s, "end": e, "len": e - s,
+                    "category": PII_RULE_CATEGORIES.get("name", "contact"),
+                    "action": _sp_action,
+                    "source": "sperrschrift",
+                    "_value": sf.get("_collapsed", text[s:e]).strip().lower(),
+                })
+                if len(findings) >= max_findings:
+                    break
+    except Exception as _e:
+        print(f"[pii_ner] sperrschrift pre-pass skipped: {_e}", flush=True)
+
     # Track distinct matched values per rule_id for the min_occurrences gate.
     # `value` (normalised, lowercased) is stashed on each finding so the post-
     # pass can both count distinct values AND drop a whole rule below threshold.
@@ -1717,10 +1993,19 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     # adjacent (~120 chars). Collected even when `name` itself resolves to
     # ignore, because the gate needs the spans regardless of the name action.
     name_spans: list[tuple[int, int]] = []
-    try:
-        if is_available("de"):
+    # M9.3 (G12): run the German model, then UNION in the English model's
+    # findings (same pattern as the sm∪md recall net). The real KYC/DD corpus
+    # is majority non-German (>50% English in ko-kunden), and German NER on
+    # English content is inconsistent ("Craig Federighi" yes, "Tim Cook" no).
+    # de runs first so it populates name_spans for the date/address proximity
+    # gates; en only adds non-overlapping spans. Absence of the en model is
+    # fine — `is_available` gates it, and it stays a de-only pipeline.
+    for _ner_lang in ("de", "en"):
+        try:
+            if not is_available(_ner_lang):
+                continue
             ner_findings = scan_text(
-                text, lang="de", max_findings=max_findings,
+                text, lang=_ner_lang, max_findings=max_findings,
                 name_precision=bool((cfg or {}).get("name_precision_gate")))
             for f in ner_findings:
                 if f.get("rule_id") == "name":
@@ -1742,9 +2027,10 @@ def _pii_scan_text(text: str, max_findings: int = 100,
                 # counts and breaking de-anonymisation token stability.
                 f["_value"] = _re.sub(r"\s+", " ", text[s:e]).strip().lower()
                 findings.append(f)
-    except Exception as e:
-        # NER must never break the regex pipeline.
-        print(f"[pii_ner] scan skipped: {e}", flush=True)
+        except Exception as e:
+            # NER must never break the regex pipeline.
+            print(f"[pii_ner] scan skipped (lang=%s): %s" % (_ner_lang, e),
+                  flush=True)
 
     # ── Context gates (person-name proximity) ────────────────────────────────
     # `date` and `address` only count as personal data when tied to a person.

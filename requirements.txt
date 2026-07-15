@@ -18,6 +18,9 @@ spacy>=3.8,<4.0
 # Quality lift over `_sm` is most visible on casual / mixed-case text
 # where the smaller model over-fires PER on lowercase function-words.
 de_core_news_md @ https://github.com/explosion/spacy-models/releases/download/de_core_news_md-3.8.0/de_core_news_md-3.8.0-py3-none-any.whl
+# M9.3 (G12): English NER recall net. The KYC/DD corpus is majority non-German;
+# scan_text unions de + en PERSON/GPE/ORG findings (OntoNotes labels for en).
+en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl
 
 # PDF extraction: PyMuPDF (fitz) + the pymupdf4llm markdown wrapper. fitz was
 # already an implicit dep (engine/doc_convert._extract_pdf); pymupdf4llm renders

@@ -1,8 +1,40 @@
 # PII-Parität — Welle 2 (M1–M11) · Handover
 
-**Stand:** 2026-07-15 · Basis-VERSION `9.346.0` · **Status: M1/M2/M3/M11 GELIEFERT in v9.343.0** (die vier Leck-Stopps) · **M4/M5 + M10 GELIEFERT in v9.344.0** (der Qualitäts-Hebel + Ad-hoc-Schutz) · **M8 GELIEFERT in v9.345.0** (Citation-Validator hinter den Reverse) · **M7 GELIEFERT in v9.346.0** (Artefakt-Vollständigkeit — Fail-loud). **OFFEN: M6, M9.**
+**Stand:** 2026-07-15 · Basis-VERSION `9.347.0` · **✅ WELLE 2 KOMPLETT (M1–M11).** M1/M2/M3/M11 (v9.343.0, die vier Leck-Stopps) · M4/M5/M10 (v9.344.0, Qualitäts-Hebel + Ad-hoc-Schutz) · M8 (v9.345.0, Citation-Validator hinter den Reverse) · M7 (v9.346.0, Artefakt-Vollständigkeit) · **M6/M9 (v9.347.0, Tabellen-Erkennung + Erkennungs-Netz).** Offen bleiben nur die in §3 dokumentierten, bewusst-nicht-erreichbaren Restpunkte.
 
 **Vorgänger:** `PII_ANALYSIS_PARITY_HANDOVER.md` (Serie L1–L7, v9.334.0–9.342.0, KOMPLETT). Der dortige Katalog bleibt gültig — diese Welle *ergänzt* ihn, sie widerruft nichts.
+
+---
+
+## STATUS nach Session 5 der Welle 2 (v9.347.0) — ✅ WELLE KOMPLETT
+
+### Geliefert — M6 (G4) + M9 (G12): die zwei letzten Bausteine
+
+| # | Baustein | Schließt | Ergebnis |
+|---|---|---|---|
+| **M6** | Tabellen-/Massendaten-Erkennung | **G4** | ✅ Spalten-Heuristik (Header→Kategorie, ganze Spalte) als erste Scan-Phase; Header-Wort-Grenzen-Match + Veto; ca_sin-Substring-Bug via Zell-Span-Reservierung geschlossen |
+| **M9.1** | Sperrschrift-Normalisierung | **G12** | ✅ `K R A N E B I T T E R` → `name`-Finding über die rohe Spanne, kollabierte Form als distinct-value-Key |
+| **M9.3** | EN-NER-Netz | **G12** | ✅ `en_core_web_md` neben `de`, `scan_text` unioniert; OntoNotes-Labels (PERSON/GPE) gemappt |
+
+### Der LASTTEST (Handover-Mandat: VOR dem M6-Design)
+
+Gegen die echten Module gemessen: der **O(M²·T)-Verdacht am Reverse-Pass ist WIDERLEGT.** `deanonymize_text` skaliert **linear** (40→1000 Tokens: 6,7ms→141ms über 150k-Wire), die Fixpunkt-Schleife konvergiert in **2 Pässen** (keine Ketten in der Praxis), Ledger-Bau **0,4µs/Eintrag**. → Der Wire-Ansatz ist sicher; die im Handover erwogene „Massen-Tabellen gar nicht in den Wire"-Architektur ist **nicht nötig.**
+
+Der Lasttest zeigte **stattdessen** den echten Schaden: über die KO-Kunden-xlsx fand der Scanner 40 Findings, aber **NULL Kundennamen** — 13 Kontonummern als `ca_sin` (kanadische SIN) mis-klassifiziert, Namen komplett übersehen. Nach M6: **13 ca_sin → 0**, **73 Namen + 32 DOBs neu erfasst.**
+
+### Befunde, die die Analyse präzisierten
+
+1. **Die Extraktion rendert xlsx/csv als Markdown-Tabelle** (`| Kd.Nr. | Name | … |` + `|---|`-Zeile) — das macht die Spalten-Heuristik sauber machbar. Header→Kategorie per **Wort-Grenzen**-Match (`Depotvolumen` matcht NICHT `depot`; `Information Kundenkontakt` NICHT `kunde`) + **Veto-Liste** (`Konto Saldo` = Saldo, kein ID).
+2. **ID-Zellen resolven auf `ignore` (business_id), ihre Span wird aber TROTZDEM reserviert** — genau das blockiert den ca_sin-Substring-Match. M6.4s Zellgrenzen-Anker.
+3. **Der ladende EN-NER-Bug:** englisches spaCy = OntoNotes (`PERSON`/`GPE`), deutsches = WikiNER (`PER`/`LOC`). `_LABEL_MAP` kannte nur letzteres → ALLE englischen Personen fielen durch, bis beide Schemata gemappt waren.
+
+### Dokumentierter Rest (bewusst offen)
+
+- **3 Float-Rundungs-Artefakte in GELD-Spalten** (`18320.869999999995` → 12-stellige `jp_mynumber`) feuern weiter — **vorbestehend** (auf HEAD verifiziert), außerhalb der M6-Tabellenspalten-Scope, erzeugt Junk-Fakes, **kein Leak.**
+- **Kd.Nr.↔Konto-Join-Präfix-Wiederverwendung** (M6.4, E1/E2) ist **moot** unter allen ausgelieferten Presets: `business_id` bleibt überall `ignore`, IDs werden nie gefakt.
+- **M9.2/M9.4-7** (Verbalisierung, Transliteration, Familien-Stamm, same_as, Nicht-Prosa-Encodings) sind NICHT in dieser Session gebaut — geringerer Nutzen/höheres Risiko als die drei gelieferten Punkte, und teils „vermutet, nicht gemessen" (Handover). Als nächste Verfeinerungen offen, kein Leck-Blocker.
+
+**Tests:** `tests/test_pii_ner.py` (`TestTableColumnHeuristic` 5, `TestTableCaSinSubstringFix` 1, `TestSperrschrift` 2, `TestEnglishLabelMap` 1, `TestEnglishNERUnion` 2) — **mutationsgeprüft** (Veto raus → `Konto Saldo` mis-matcht; Zell-Span-Reserve raus → ca_sin kehrt zurück; PERSON aus `_LABEL_MAP` → englische Namen verloren). 663 Tests grün (discover). Live: beide Modelle im laufenden Server geladen (`/v1/gdpr/ner-models`).
 
 ---
 

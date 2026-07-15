@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.347.0",
+        "date": "2026-07-15",
+        "title": "Besserer PII-Schutz für Tabellen, Listen und fremdsprachige Dokumente",
+        "body": "Der Datenschutz-Scanner erkennt personenbezogene Daten jetzt "
+                "auch dort zuverlässig, wo er sie bisher übersah: in "
+                "TABELLEN und Massendaten (Kundenlisten, Kontodaten-Exporte) "
+                "erkennt er Namen, Geburtsdaten und Kundennummern anhand der "
+                "Spalten-Überschrift — auch wenn ein Name abgekürzt, "
+                "umgestellt oder ohne Leerzeichen geschrieben ist. Zugleich "
+                "verwechselt er Kontonummern nicht mehr mit ausländischen "
+                "Ausweisnummern. Neu erkannt werden außerdem gesperrt "
+                "geschriebene Namen aus notariellen Dokumenten "
+                "(„K R A N E B I T T E R“) und Namen in ENGLISCHEN Texten — "
+                "der überwiegende Teil vieler Prüfakten ist nicht "
+                "deutschsprachig, und diese Namen blieben bisher ungeschützt.",
+        "audience": "user",
+        "versions": ["9.347.0"],
+    },
+    {
         "version": "9.346.0",
         "date": "2026-07-15",
         "title": "Datenschutz auch in erzeugten Dateien und Grafiken",

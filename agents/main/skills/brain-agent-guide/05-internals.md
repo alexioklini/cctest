@@ -1573,6 +1573,28 @@ preamble goes in first-user-message instead.
   (`image_unreversible`) + a model-directed warning to re-render as .svg. A
   Mistral `generate_image` .png hits this (its prompt is also egress-gated
   via EGRESS_TOOLS); a local render_diagram .svg never does.
+- **Detection net — tables + Sperrschrift + English (M6/M9, 9.347.0)**: three
+  detectors that raise recall where prose-NER misses PII. **(M6/G4) Table
+  columns**: `engine/pii_ner._scan_markdown_table_columns` runs as the FIRST
+  pass of `_pii_scan_text`. Our extractor renders every xlsx/csv as a markdown
+  table; a header keyword (word-boundary match, with a money/free-text veto
+  list) selects a column's category and EVERY non-empty/non-NULL cell of that
+  column becomes a candidate — robust against Excel truncation
+  ("KO TULLNERSAntonius") and inverted "Lastname Firstname" forms that NER
+  misses. The header row is never tokenised. An ID column's full-cell span is
+  reserved even when its category is `ignore` (business_id) — that reservation
+  is what blocks the `ca_sin` rule from false-matching a fragment of an account
+  number (`300622-800` inside `300622-800-1`). **(M9.1/G12) Sperrschrift**:
+  `_scan_sperrschrift_names` collapses letter-spaced names
+  ("K R A N E B I T T E R") NER can't see and emits a `name` finding over the
+  raw span (ledger anonymises the on-page text; the collapsed surname is the
+  distinct-value key). **(M9.3/G12) English NER**: `en_core_web_md` loads
+  alongside `de_core_news_md` and `scan_text` unions both models' findings (de
+  first — it feeds the proximity gates — en adds non-overlapping spans). English
+  spaCy uses OntoNotes labels (PERSON/GPE), German uses WikiNER (PER/LOC), both
+  mapped in `_LABEL_MAP`. en absence is non-fatal (de-only fallback). All three
+  respect the per-rule/category action, so `contact: ignore` still silences
+  name findings. Tests: `tests/test_pii_ner.py`.
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,

@@ -292,9 +292,11 @@ class TestNERIntegration(unittest.TestCase):
         # Unloading the model is the runtime kill-switch for NER (no
         # separate `ner_enabled` config exists). When the cache is empty,
         # `_pii_scan_text` produces zero NER findings even if the contact
-        # category is bumped to warn.
+        # category is bumped to warn. Both de AND en must be unloaded now
+        # (M9.3): en is a union fallback, so unloading only de leaves it live.
         text = "Maria Schmidt arbeitet bei Siemens."
         pii_ner.unload_model("de")
+        pii_ner.unload_model("en")
         try:
             findings = self._scan(
                 text, categories={"contact": {"action": "warn"}})
@@ -302,7 +304,7 @@ class TestNERIntegration(unittest.TestCase):
             self.assertNotIn("name", rule_ids)
             self.assertNotIn("organisation", rule_ids)
         finally:
-            pii_ner.load_models(("de",))
+            pii_ner.load_models(("de", "en"))
 
     def test_ner_rule_override_ignore(self):
         # rule_overrides.name='ignore' must drop NER name findings even when
@@ -397,6 +399,180 @@ class TestPseudonymizerRoundtrip(unittest.TestCase):
             self.assertGreater(n, 0)
         finally:
             self.ps.close_mapping(mapping.mapping_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# M6 (G4) — table / mass-data column heuristic
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class TestTableColumnHeuristic(unittest.TestCase):
+    """Column heuristic: header keyword → whole-column reservation. Pure
+    string logic (no spaCy) so it runs everywhere."""
+
+    def test_header_classification(self):
+        c = pii_ner._classify_table_header
+        self.assertEqual(c("Name"), "name")
+        self.assertEqual(c("Auftraggeber_1"), "name")
+        self.assertEqual(c("Geburtsdatum"), "dob")
+        self.assertEqual(c("Kd.Nr."), "business_id")
+        self.assertEqual(c("Kto/Depot"), "business_id")
+        self.assertEqual(c("IBAN"), "business_id")
+        # Word-boundary: money/free-text columns that share a STEM must not
+        # match ("Depotvolumen" is one token, not "depot").
+        self.assertIsNone(c("Depotvolumen"))
+        self.assertIsNone(c("Volumen"))
+        self.assertIsNone(c("Cash in EUR"))
+        self.assertIsNone(c("Information Kundenkontakt"))
+        self.assertIsNone(c("Recherche Kommentar"))
+        # Veto: a keyword present as a WHOLE token is still vetoed when a
+        # money/text word sits beside it ("Konto Saldo" is a balance, not an
+        # ID; "Kunde Volumen" is a figure column). Removing the veto list
+        # regresses exactly these.
+        self.assertIsNone(c("Konto Saldo"))
+        self.assertIsNone(c("Kunde Volumen"))
+        self.assertIsNone(c("Name des Betrags"))
+
+    def test_column_cells_caught(self):
+        # Truncated / prefixed / inverted names in a markdown table that NER
+        # would miss are caught by the column, not the cell content.
+        text = (
+            "| Kd.Nr. | Name | Geburtsdatum |\n"
+            "|---|---|---|\n"
+            "| 107625 | KO STARK Bonnie M. | 19470205 |\n"
+            "| 106707 | KO TULLNERSAntonius | 19440205 |\n"
+        )
+        tf = pii_ner._scan_markdown_table_columns(text)
+        got = {f["rule_id"]: [] for f in tf}
+        for f in tf:
+            got[f["rule_id"]].append(text[f["start"]:f["end"]])
+        self.assertIn("KO STARK Bonnie M.", got.get("name", []))
+        self.assertIn("KO TULLNERSAntonius", got.get("name", []))
+        self.assertIn("19470205", got.get("dob", []))
+        # Kd.Nr. cells reserved as organisation (business_id).
+        self.assertIn("107625", got.get("organisation", []))
+
+    def test_header_row_never_tokenised(self):
+        # No finding may span into the header row itself.
+        text = "| Name | X |\n|---|---|\n| Bonnie Stark | 1 |\n"
+        tf = pii_ner._scan_markdown_table_columns(text)
+        for f in tf:
+            self.assertNotIn("Name", text[f["start"]:f["end"]])
+
+    def test_empty_and_null_cells_skipped(self):
+        text = "| Name |\n|---|\n| NULL |\n| 0 |\n| - |\n|  |\n| Real Name |\n"
+        tf = pii_ner._scan_markdown_table_columns(text)
+        vals = [text[f["start"]:f["end"]] for f in tf]
+        self.assertEqual(vals, ["Real Name"])
+
+
+@unittest.skipUnless(GERMAN_AVAILABLE, "spaCy model not installed")
+class TestTableCaSinSubstringFix(unittest.TestCase):
+    """M6.4: the full-cell span reservation for an ID column blocks the
+    ca_sin rule from false-matching a fragment (`300622-800` inside
+    `300622-800-1`)."""
+
+    @classmethod
+    def setUpClass(cls):
+        pii_ner.load_models(("de",))
+        import brain
+        cls.brain = brain
+
+    def _scan(self, text, **ov):
+        cfg = {**self.brain._get_gdpr_scanner_config(), **ov}
+        return self.brain._pii_scan_text(text, cfg=cfg)
+
+    def test_account_number_not_flagged_as_ca_sin(self):
+        text = (
+            "| Kd.Nr. | Name | Kto/Depot |\n"
+            "|---|---|---|\n"
+            "| 300622 | KO LIFELINE | 300622-800-1 |\n"
+        )
+        findings = self._scan(text)
+        # ca_sin must NOT fire on the reserved account-number cell.
+        self.assertNotIn("ca_sin", {f["rule_id"] for f in findings})
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# M9.1 (G12) — Sperrschrift (letter-spaced) name normalisation
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class TestSperrschrift(unittest.TestCase):
+    """Pure regex — runs everywhere."""
+
+    def test_letter_spaced_name_detected_and_collapsed(self):
+        txt = "Der Vorsitzende Dr. Gottwald K R A N E B I T T E R eröffnet."
+        out = pii_ner._scan_sperrschrift_names(txt)
+        self.assertEqual(len(out), 1)
+        self.assertEqual(txt[out[0]["start"]:out[0]["end"]],
+                         "Gottwald K R A N E B I T T E R")
+        self.assertEqual(out[0]["_collapsed"], "Gottwald KRANEBITTER")
+
+    def test_acronyms_and_short_runs_do_not_match(self):
+        for neg in ("Die USA und die EU regeln das.",
+                    "Nur A B C hier.",          # 3 letters < 4
+                    "HTML CSS JS sind Sprachen.",
+                    "Er ging nach Hause."):
+            self.assertEqual(pii_ner._scan_sperrschrift_names(neg), [],
+                             f"false positive on {neg!r}")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# M9.3 (G12) — English NER recall net (OntoNotes label mapping)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _english_available() -> bool:
+    try:
+        import spacy
+        spacy.util.get_package_path("en_core_web_md")
+        return True
+    except Exception:
+        return False
+
+
+ENGLISH_AVAILABLE = _english_available()
+
+
+class TestEnglishLabelMap(unittest.TestCase):
+    def test_ontonotes_labels_mapped(self):
+        # English spaCy uses PERSON/GPE; German uses PER/LOC. Both must map.
+        self.assertEqual(pii_ner._LABEL_MAP.get("PERSON"), "name")
+        self.assertEqual(pii_ner._LABEL_MAP.get("PER"), "name")
+        self.assertEqual(pii_ner._LABEL_MAP.get("GPE"), "address")
+
+
+@unittest.skipUnless(ENGLISH_AVAILABLE and GERMAN_AVAILABLE,
+                     "en/de spaCy models not installed")
+class TestEnglishNERUnion(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        pii_ner.load_models(("de", "en"))
+        import brain
+        cls.brain = brain
+
+    def _scan(self, text, **ov):
+        cfg = {**self.brain._get_gdpr_scanner_config(), **ov}
+        return self.brain._pii_scan_text(text, cfg=cfg)
+
+    def test_english_names_caught_when_de_misses(self):
+        # These are the names the handover measured German NER missing.
+        text = ("The client Tim Cook met Joe Rossignol in Cupertino. "
+                "Craig Federighi signed the transfer.")
+        findings = self._scan(text, categories={"contact": {"action": "warn"}})
+        names = {text[f["start"]:f["end"]] for f in findings
+                 if f["rule_id"] == "name"}
+        self.assertIn("Tim Cook", names)
+        self.assertIn("Joe Rossignol", names)
+
+    def test_german_still_works_with_en_loaded(self):
+        text = "Der Kunde Maria Schmidt traf Herrn Klaus Weber."
+        findings = self._scan(text, categories={"contact": {"action": "warn"}})
+        names = {text[f["start"]:f["end"]] for f in findings
+                 if f["rule_id"] == "name"}
+        self.assertIn("Maria Schmidt", names)
 
 
 if __name__ == "__main__":

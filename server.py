@@ -3958,7 +3958,10 @@ def main():
     # server boots regardless and NER becomes a no-op for the lang.
     try:
         from engine import pii_ner
-        pii_ner.load_models(languages=("de",))
+        # M9.3 (G12): load de + en. The KYC/DD corpus is majority non-German;
+        # scan_text unions both models' findings. en absence is non-fatal
+        # (is_available gates it → de-only pipeline).
+        pii_ner.load_models(languages=("de", "en"))
     except Exception as e:
         print(f"[startup] spaCy NER skipped: {e}", flush=True)
 
