@@ -87,10 +87,18 @@ function brainyOpen() {
   overlay = document.createElement('div');
   overlay.id = 'brainy-overlay';
   overlay.className = 'modal-overlay brainy-overlay';
-  overlay.onclick = (e) => { if (e.target === overlay) brainyClose(); };
+  // Backdrop click closes — but NOT the click synthesised at the end of a
+  // resize drag whose pointer left the panel and came up over the backdrop
+  // (brainyState._resizedAt is stamped on resize end; ignore for a beat).
+  overlay.onclick = (e) => {
+    if (e.target !== overlay) return;
+    if (brainyState._resizedAt && (performance.now() - brainyState._resizedAt) < 250) return;
+    brainyClose();
+  };
   const accent = (typeof buddyColor === 'function') ? buddyColor() : 'var(--accent-brand)';
   overlay.innerHTML = `
     <div class="modal-content brainy-modal">
+      <div class="brainy-resize-grip" id="brainy-resize-grip" title="Größe ändern" aria-hidden="true"></div>
       <div class="brainy-header" style="background:linear-gradient(135deg, ${accent}, color-mix(in srgb, ${accent} 70%, #000 30%))">
         <span class="brainy-avatar" aria-hidden="true" style="color:#fff">${brainyAvatarHTML(true)}</span>
         <div class="brainy-header-text">
@@ -125,6 +133,8 @@ function brainyOpen() {
     </div>`;
   document.body.appendChild(overlay);
   overlay.style.display = 'flex';
+  // Restore the user's saved panel size + wire the corner resize grip.
+  brainyInitResize();
   // Short press steps one exchange; long press jumps to top/bottom.
   wireLongPress(document.getElementById('brainy-up'), () => brainyScrollTurn(-1), () => brainyScrollTop());
   wireLongPress(document.getElementById('brainy-down'), () => brainyScrollTurn(1), () => brainyScrollBottom());
@@ -150,6 +160,60 @@ function brainyClose() {
   const overlay = document.getElementById('brainy-overlay');
   if (overlay) overlay.style.display = 'none';
   // Don't abort an in-flight answer — it persists server-side and finishes.
+}
+
+// User-resizable Brainy panel. The window is anchored bottom-right, so the grip
+// lives at the TOP-LEFT corner: dragging it up/left enlarges the panel toward
+// the viewport centre. Size persists per user in localStorage (same convention
+// as the right-panel width) and is re-applied on every open. On phones (≤560px
+// the panel is CSS-fullscreen) resizing is disabled and no saved size is applied
+// — otherwise the persisted px size would override the fullscreen layout.
+function brainyInitResize() {
+  const modal = document.querySelector('#brainy-overlay .brainy-modal');
+  const grip = document.getElementById('brainy-resize-grip');
+  if (!modal || !grip) return;
+  const isPhone = () => window.matchMedia('(max-width: 560px)').matches;
+  if (isPhone()) { grip.style.display = 'none'; return; }
+  grip.style.display = '';
+
+  // Bounds: min from CSS floors; max stays inside the viewport (24px overlay
+  // padding on each edge → account for both sides).
+  const clampW = (w) => Math.max(320, Math.min(w, window.innerWidth - 48));
+  const clampH = (h) => Math.max(380, Math.min(h, window.innerHeight - 48));
+
+  // Re-apply the saved size (guarded numbers only).
+  const savedW = parseInt(localStorage.getItem('brainy-width'), 10);
+  const savedH = parseInt(localStorage.getItem('brainy-height'), 10);
+  if (savedW > 0) modal.style.width = clampW(savedW) + 'px';
+  if (savedH > 0) modal.style.height = clampH(savedH) + 'px';
+
+  grip.onpointerdown = (e) => {
+    // Bail to fullscreen behaviour if the viewport shrank to phone size.
+    if (isPhone()) return;
+    e.preventDefault();
+    const startX = e.clientX, startY = e.clientY;
+    const startW = modal.offsetWidth, startH = modal.offsetHeight;
+    document.body.classList.add('brainy-resizing');
+    try { grip.setPointerCapture(e.pointerId); } catch (_) {}
+    const onMove = (ev) => {
+      // Grip at top-left, panel pinned bottom-right → moving left/up (negative
+      // delta) must GROW the panel, hence the subtraction.
+      modal.style.width = clampW(startW - (ev.clientX - startX)) + 'px';
+      modal.style.height = clampH(startH - (ev.clientY - startY)) + 'px';
+    };
+    const onUp = () => {
+      document.body.classList.remove('brainy-resizing');
+      brainyState._resizedAt = performance.now();
+      grip.removeEventListener('pointermove', onMove);
+      grip.removeEventListener('pointerup', onUp);
+      grip.removeEventListener('pointercancel', onUp);
+      localStorage.setItem('brainy-width', String(parseInt(modal.style.width, 10) || modal.offsetWidth));
+      localStorage.setItem('brainy-height', String(parseInt(modal.style.height, 10) || modal.offsetHeight));
+    };
+    grip.addEventListener('pointermove', onMove);
+    grip.addEventListener('pointerup', onUp);
+    grip.addEventListener('pointercancel', onUp);
+  };
 }
 
 /* ── History: pair messages into exchanges, group by age, lazy-load ──────── */

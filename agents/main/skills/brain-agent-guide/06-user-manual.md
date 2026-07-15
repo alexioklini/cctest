@@ -2130,6 +2130,12 @@ schreibt oder löscht nie etwas.
 
 - Auf die Blase klicken öffnet einen Mini-Chat. Antworten kommen auf
   Deutsch und sind auf die aktuelle Ansicht zugeschnitten.
+- **Fenstergröße anpassbar:** Am **oberen linken Eck** des Brainy-Fensters
+  sitzt ein Anfasser — daran ziehen macht das Fenster breiter/höher (oder
+  wieder kleiner). Die gewählte Größe wird **pro Nutzer gespeichert** und
+  beim nächsten Öffnen wiederhergestellt. Auf schmalen Bildschirmen
+  (Smartphone) füllt Brainy ohnehin die ganze Fläche; dort entfällt das
+  Anpassen.
 - **Modell-Beratung (9.314.0):** Brainy beantwortet Fragen zur Modellwahl
   aus der echten Live-Konfiguration — z. B. „Welches Modell fürs
   Programmieren?", „Was kostet mich Modell X?", „Welches ist am

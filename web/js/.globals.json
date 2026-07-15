@@ -846,6 +846,7 @@
     "brainyExchangeHTML": "writable",
     "brainyFmtTime": "writable",
     "brainyGroupOf": "writable",
+    "brainyInitResize": "writable",
     "brainyInputKey": "writable",
     "brainyLoadHistory": "writable",
     "brainyLoadOlder": "writable",

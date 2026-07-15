@@ -9795,15 +9795,40 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 /* Modal — a focused mini-chat, narrower than the wide settings modals. */
 .brainy-overlay { z-index: 120; align-items: flex-end; justify-content: flex-end; padding: 24px; }
 .brainy-modal {
-  max-width: 420px;
+  max-width: min(96vw, 900px);
   width: 420px;
   height: min(620px, 82vh);
+  min-width: 320px;
+  min-height: 380px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  position: relative;          /* anchor the scroll-anchor buttons */
+  position: relative;          /* anchor the scroll-anchor buttons + resize grip */
   animation: brainySlideUp 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+/* Resize grip — top-left corner, since the panel is anchored bottom-right.
+   Dragging it up/left grows the panel toward the viewport centre. Width +
+   height are persisted per user (localStorage) and re-applied on open. */
+.brainy-resize-grip {
+  position: absolute;
+  top: 0; left: 0;
+  width: 18px; height: 18px;
+  cursor: nwse-resize;
+  z-index: 5;
+  touch-action: none;
+}
+.brainy-resize-grip::before {
+  content: '';
+  position: absolute;
+  top: 4px; left: 4px;
+  width: 8px; height: 8px;
+  border-top: 2px solid rgba(255,255,255,0.55);
+  border-left: 2px solid rgba(255,255,255,0.55);
+  border-top-left-radius: 3px;
+}
+.brainy-resize-grip:hover::before { border-color: #fff; }
+body.brainy-resizing { cursor: nwse-resize; user-select: none; }
+body.brainy-resizing .brainy-modal { animation: none; }
 @keyframes brainySlideUp {
   from { opacity: 0; transform: translateY(24px) scale(0.97); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
