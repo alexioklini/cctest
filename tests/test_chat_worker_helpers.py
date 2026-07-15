@@ -384,9 +384,11 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as td:
-            path = os.path.join(td, "image.png")
+            # A truly-unsupported binary ext (not reversible, not lintable, not
+            # an image warned by M7/G6 — .png/.jpg now fail loud, so use .bin).
+            path = os.path.join(td, "blob.bin")
             with open(path, "wb") as f:
-                f.write(b"\x89PNG\r\n")
+                f.write(b"\x00\x01\x02\x03")
 
             cb(path, "created", "main")
 
@@ -394,13 +396,17 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
         self.assertEqual(sess.live_stream.events, [])
         self.assertEqual(self.fake_db.rows, [])
 
-    def test_callback_skips_non_artifact_paths(self):
+    def test_callback_reverses_non_artifact_paths(self):
+        # M7/G5: a model-written file OUTSIDE the artifact tree is now reversed
+        # too — the old `_is_artifact_path` bail let a .docx for a real meeting,
+        # written to an absolute path with invented names, sail through. The
+        # callback only ever fires for model-written paths, so reversing them
+        # everywhere is correct. (Was: test_callback_skips_non_artifact_paths.)
         sid = "sid-deanon-3"
         sess = _FakeSession(sid)
         self.fake_sessions.add(sid, sess)
-        # Flip _is_artifact_path back to "no" so the callback short-circuits.
         import brain
-        brain._is_artifact_path = lambda _p: False
+        brain._is_artifact_path = lambda _p: False  # outside the tree
 
         cb = self.chat_mod.make_gdpr_after_file_write_cb(
             mapping_id=self.mapping.mapping_id,
@@ -412,10 +418,9 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
             with open(path, "w") as f:
                 f.write(f"random {self.token}")
             cb(path, "created", "main")
-            # File unchanged (still has token).
+            # File de-anonymised in place (token restored to the original).
             with open(path) as f:
-                self.assertIn(self.token, f.read())
-        self.assertEqual(sess.live_stream.events, [])
+                self.assertNotIn(self.token, f.read())
 
     def test_callback_handles_missing_session_gracefully(self):
         # No session registered — callback must not crash.

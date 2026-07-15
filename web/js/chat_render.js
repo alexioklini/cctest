@@ -1025,6 +1025,7 @@ function renderAssistantMessage(msg, idx) {
     if (n('web_allowed')) parts.push(`Websuche ${n('web_allowed')}× mit Originalwerten (auditiert)`);
     if (n('doc_checks')) parts.push(`Dokument-Prüfung serverseitig (${n('doc_checks')}×)`);
     if (n('pdf_refused')) parts.push('PDF-Erzeugung abgelehnt (nicht rückübersetzbar) → HTML/MD');
+    if (n('image_unreversible')) parts.push(`${n('image_unreversible')}× Bild-Artefakt nicht rückübersetzbar (Pixel) → SVG`);
     if (unre && parseInt(unre.count)) parts.push(`${parseInt(unre.count)} Wert${parseInt(unre.count) === 1 ? '' : 'e'} nicht rückübersetzbar`);
     if (parts.length) {
       gdprDegradationHtml = `

@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.346.0",
+        "date": "2026-07-15",
+        "title": "Datenschutz auch in erzeugten Dateien und Grafiken",
+        "body": "Wenn Brain im Datenschutz-Modus eine Datei für Sie erstellt, "
+                "werden die geschützten Ersatzwerte darin jetzt "
+                "zuverlässiger wieder durch Ihre Echtdaten ersetzt — auch "
+                "wenn die Datei außerhalb des Artefakt-Ordners abgelegt wird "
+                "(etwa bei „schreib den Bericht nach …“) und auch in "
+                "Diagrammen im SVG-Format. Bisher konnte in solchen Fällen "
+                "ein Dokument mit erfundenen Namen entstehen, ohne jeden "
+                "Hinweis. Für Grafiken, die als Pixelbild (PNG/JPG) erzeugt "
+                "werden, lassen sich die Ersatzwerte nicht zurückverwandeln — "
+                "hier weist Brain jetzt deutlich darauf hin und schlägt das "
+                "rückverwandelbare SVG-Format vor, statt stillschweigend "
+                "eine Grafik mit Ersatznamen auszuliefern.",
+        "audience": "user",
+        "versions": ["9.346.0"],
+    },
+    {
         "version": "9.345.0",
         "date": "2026-07-15",
         "title": "Keine falschen Quellentreue-Warnungen mehr im Datenschutz-Modus",

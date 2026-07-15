@@ -266,6 +266,148 @@ class TestFileSeamLint(unittest.TestCase):
         self.assertFalse(warns)
 
 
+class TestSvgReverse(unittest.TestCase):
+    """M7/G6: .svg is text XML → reversible like .html. A locally-rendered
+    render_diagram .svg carries real values (args-deanon); a model-written .svg
+    carries fake tokens that the reverse walker must restore."""
+
+    def setUp(self):
+        self.m = ps.new_mapping()
+        self.m.record("Bonnie Stark", "Sam Mitchell", "name")
+
+    def tearDown(self):
+        ps.close_mapping(self.m.mapping_id)
+
+    def test_svg_in_supported_exts(self):
+        from engine.file_pseudonymize import SUPPORTED_EXTS, _PLAIN_EXTS
+        self.assertIn(".svg", SUPPORTED_EXTS)
+        self.assertIn(".svg", _PLAIN_EXTS)
+
+    def test_svg_fake_token_restored(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "diagram.svg")
+            with open(path, "w") as f:
+                f.write('<svg><text>Sam Mitchell</text></svg>')
+            restored = ps.deanonymize_file(path, path, mapping=self.m)
+            with open(path) as f:
+                out = f.read()
+        self.assertEqual(restored, 1)
+        self.assertIn("Bonnie Stark", out)
+        self.assertNotIn("Sam Mitchell", out)
+
+
+class TestFileSeamNonTree(unittest.TestCase):
+    """M7/G5: the after-file-write callback must reverse+lint files the model
+    wrote OUTSIDE the artifact tree (a .docx for a real meeting written to an
+    absolute path used to sail through with fake names). The callback no longer
+    gates on `_is_artifact_path` — model-written files are handled everywhere.
+    """
+
+    def setUp(self):
+        from handlers import chat as chat_mod
+        self.chat_mod = chat_mod
+        self.fake_db = FakeChatDB()
+        self._orig_chatdb = getattr(chat_mod, "ChatDB", None)
+        chat_mod.ChatDB = self.fake_db
+        self._orig_sessions = getattr(chat_mod, "sessions", None)
+        self.fake_sessions = _FakeSessions()
+        chat_mod.sessions = self.fake_sessions
+        self.m = ps.new_mapping()
+        self.m.record("Bonnie Stark", "Sam Mitchell", "name")
+
+    def tearDown(self):
+        if self._orig_chatdb is not None:
+            self.chat_mod.ChatDB = self._orig_chatdb
+        if self._orig_sessions is not None:
+            self.chat_mod.sessions = self._orig_sessions
+        ps.close_mapping(self.m.mapping_id)
+
+    def _cb(self, sid):
+        sess = _FakeSession(sid)
+        self.fake_sessions.add(sid, sess)
+        cb = self.chat_mod.make_gdpr_after_file_write_cb(
+            mapping_id=self.m.mapping_id, session_id=sid, agent_id="main")
+        return cb, sess
+
+    def test_non_tree_md_still_reversed(self):
+        """A .md written to an arbitrary (non-artifact) absolute path is still
+        de-anonymised in place. Mutation guard: re-adding the `_is_artifact_path`
+        bail (with the stub forced False) would leave the fake token in place."""
+        import brain
+        _orig = brain._is_artifact_path
+        brain._is_artifact_path = lambda _p: False  # NOT in the artifact tree
+        try:
+            cb, sess = self._cb("sid-m7-nontree")
+            with tempfile.TemporaryDirectory() as td:
+                path = os.path.join(td, "hv_sprechvorlage.docx.md")
+                with open(path, "w") as f:
+                    f.write("Aufsichtsrat: Sam Mitchell.\n")
+                cb(path, "created", "main")
+                with open(path) as f:
+                    out = f.read()
+        finally:
+            brain._is_artifact_path = _orig
+        self.assertIn("Bonnie Stark", out)
+        self.assertNotIn("Sam Mitchell", out)
+        result = json.loads(self.fake_db.rows[1]["content"])["result"]
+        self.assertEqual(result.get("restored"), 1)
+
+
+class TestFileSeamImage(unittest.TestCase):
+    """M7/G6: a raster image written under active anonymisation can bake fake
+    values into pixels — not reversible, not lintable without OCR. The callback
+    fails LOUD (synthetic error row + degradation tally + model-directed
+    warning) so the model re-renders as .svg."""
+
+    def setUp(self):
+        from handlers import chat as chat_mod
+        self.chat_mod = chat_mod
+        self.fake_db = FakeChatDB()
+        self._orig_chatdb = getattr(chat_mod, "ChatDB", None)
+        chat_mod.ChatDB = self.fake_db
+        self._orig_sessions = getattr(chat_mod, "sessions", None)
+        self.fake_sessions = _FakeSessions()
+        chat_mod.sessions = self.fake_sessions
+        self.m = ps.new_mapping()
+        self.m.record("Bonnie Stark", "Sam Mitchell", "name")
+
+    def tearDown(self):
+        if self._orig_chatdb is not None:
+            self.chat_mod.ChatDB = self._orig_chatdb
+        if self._orig_sessions is not None:
+            self.chat_mod.sessions = self._orig_sessions
+        ps.close_mapping(self.m.mapping_id)
+
+    def _cb(self, sid):
+        sess = _FakeSession(sid)
+        self.fake_sessions.add(sid, sess)
+        cb = self.chat_mod.make_gdpr_after_file_write_cb(
+            mapping_id=self.m.mapping_id, session_id=sid, agent_id="main")
+        return cb, sess
+
+    def test_png_fails_loud_and_tallies(self):
+        from engine.context import request_context, get_request_context
+        cb, sess = self._cb("sid-m7-png")
+        with request_context():
+            with tempfile.TemporaryDirectory() as td:
+                path = os.path.join(td, "konzernstruktur.png")
+                with open(path, "wb") as f:
+                    f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)  # bogus pixels
+                cb(path, "created", "main")
+            warns = get_request_context()._gdpr_file_warnings
+            degr = get_request_context()._gdpr_degradation
+        # Loud synthetic pair with error status + warning text.
+        kinds = [t for (t, _) in sess.live_stream.events]
+        self.assertEqual(kinds,
+                         ["synthetic_tool_use", "synthetic_tool_result"])
+        result = json.loads(self.fake_db.rows[1]["content"])["result"]
+        self.assertEqual(result.get("restored"), 0)
+        self.assertIn(".svg", result.get("warning", ""))
+        # Model-directed warning + per-turn degradation tally.
+        self.assertTrue(warns and "konzernstruktur.png" in warns[0])
+        self.assertEqual((degr or {}).get("image_unreversible"), 1)
+
+
 class TestDispatchDrainsFileWarnings(unittest.TestCase):
     """dispatch_tool appends queued report-fidelity warnings to the tool
     result string (the model-visible half of L6a) and clears the queue."""

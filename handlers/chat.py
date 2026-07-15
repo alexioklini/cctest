@@ -2189,9 +2189,21 @@ class PseudonymizeError(Exception):
 # report then carried plausible fake passport numbers / names with no
 # marking (F6).
 _GDPR_LINT_ONLY_EXTS = frozenset({".pdf"})
+# Raster-image extensions (M7/G6). We can NOT reverse pixels and can NOT lint
+# them for fake substance without OCR (unreliable, expensive). But a chart /
+# diagram raster written in an anonymise session bakes the model's FAKE values
+# into pixels — and it gets `![](…)`-embedded into a .docx/.html whose text IS
+# reversed → delivered document has real text, fake graphics, no warning (F6,
+# "the report lies quietly"). So we fail LOUD unconditionally: a synthetic row
+# + degradation tally telling the model the raster can't be restored and to use
+# a reversible format (.svg is text XML → SUPPORTED_EXTS; render_diagram runs
+# locally with real values, so its .svg/.png already carry truth). Locally-
+# rendered .svg never reaches this branch (it's supported); a Mistral
+# generate_image .png does — and it should warn.
+_GDPR_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".gif"})
 # Plain-text extensions linted by direct read (no parser subprocess needed).
 _GDPR_PLAIN_LINT_EXTS = frozenset({".txt", ".md", ".log", ".html", ".htm",
-                                   ".json", ".csv"})
+                                   ".json", ".csv", ".svg"})
 _GDPR_LINT_MAX_BYTES = 20 * 1024 * 1024
 
 
@@ -2233,15 +2245,22 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
     tokens).
     """
     def _cb(path: str, action: str, _agent_id: str):
-        # No-op when the file is outside the artifact tree — only LLM-written
-        # files (tool_write_file etc.) reach the user; we don't want to
-        # rewrite arbitrary disk paths the model might touch.
-        if not engine._is_artifact_path(path):
-            return
+        # M7/G5: do NOT gate on `_is_artifact_path`. This callback fires ONLY
+        # from `brain._after_file_write`, which the write/edit tools call with
+        # the path the model just wrote THIS turn — including absolute paths
+        # outside the artifact tree (users routinely say "write it to
+        # /path/report.docx"). The old `_is_artifact_path` bail meant a .docx
+        # for a real shareholders' meeting, written to the repo root with
+        # invented board-member names, sailed through with NO reverse, NO lint,
+        # NO warning (G5). Reverse+lint is correct for every model-written
+        # file, tree or not. (Pre-existing/foreign files never reach here — the
+        # tools only call `_after_file_write` on what they themselves wrote.)
         ext = os.path.splitext(path)[1].lower()
         from engine.file_pseudonymize import SUPPORTED_EXTS
-        if ext not in SUPPORTED_EXTS and ext not in _GDPR_LINT_ONLY_EXTS:
-            return  # Image / binary / unknown — nothing to restore or lint.
+        if (ext not in SUPPORTED_EXTS
+                and ext not in _GDPR_LINT_ONLY_EXTS
+                and ext not in _GDPR_IMAGE_EXTS):
+            return  # Binary / unknown — nothing to restore, lint, or warn on.
 
         mapping = pseudonymizer.get_mapping(mapping_id)
         if mapping is None:
@@ -2326,6 +2345,71 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                         args_summary=fname,
                         result_summary=(f"unrestored={len(residues)} "
                                         f"kinds={_kinds} "
+                                        f"mapping_id={mapping_id}"),
+                        result_status="error",
+                        duration_ms=int((time.time() - t0) * 1000),
+                        source="chat",
+                    )
+                except Exception:
+                    pass
+            return
+
+        if ext in _GDPR_IMAGE_EXTS:
+            # M7/G6: raster image written under active anonymisation. The pixels
+            # can carry the model's FAKE values (a chart / diagram), and we can
+            # neither reverse them nor lint them without OCR. So fail LOUD
+            # UNCONDITIONALLY — unlike the PDF branch there's no residue check
+            # (we can't read the pixels): any raster written while a mapping is
+            # active is treated as potentially-fake. Synthetic error row +
+            # degradation tally + a drained-at-dispatch nudge so the model
+            # re-renders as .svg (text XML, reversible → real values). A
+            # locally-rendered render_diagram .svg never lands here (it's in
+            # SUPPORTED_EXTS and reverses to truth); a Mistral generate_image
+            # .png does — and that raster genuinely can't be trusted.
+            warn = (f"{fname}: Bild-Artefakt enthält möglicherweise "
+                    "pseudonymisierte Werte, die in Pixeln NICHT "
+                    "zurückübersetzbar sind. Erzeuge Diagramme stattdessen als "
+                    ".svg (wird automatisch in Echtwerte zurückübersetzt).")
+            if live is not None:
+                try:
+                    _emit_synthetic_tool_event(
+                        live=live, sid=session_id, kind="deanonymise_file",
+                        tool_use_id=tool_use_id, phase="dispatch",
+                        args={"file": fname, "mapping_id": mapping_id},
+                    )
+                    _emit_synthetic_tool_event(
+                        live=live, sid=session_id, kind="deanonymise_file",
+                        tool_use_id=tool_use_id, phase="done",
+                        result={"file": fname, "restored": 0,
+                                "unrestored": -1,  # unknown — pixels
+                                "warning": warn,
+                                "mapping_id": mapping_id},
+                        status="error",
+                        duration_ms=int((time.time() - t0) * 1000),
+                    )
+                except Exception:
+                    pass
+            try:
+                _ctx = engine.get_request_context()
+                _warns = _ctx._gdpr_file_warnings or []
+                _warns.append(warn)
+                _ctx._gdpr_file_warnings = _warns
+                _dg = _ctx._gdpr_degradation
+                if _dg is None:
+                    _dg = {}
+                    _ctx._gdpr_degradation = _dg
+                _dg["image_unreversible"] = int(
+                    _dg.get("image_unreversible", 0)) + 1
+            except Exception:
+                pass
+            if engine._audit_log:
+                try:
+                    engine._audit_log.log_action(
+                        agent=agent_id, session_id=session_id,
+                        action_type="pii_report_fidelity",
+                        tool_name="gdpr_scanner",
+                        args_summary=fname,
+                        result_summary=(f"image_unreversible "
                                         f"mapping_id={mapping_id}"),
                         result_status="error",
                         duration_ms=int((time.time() - t0) * 1000),

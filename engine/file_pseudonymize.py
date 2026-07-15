@@ -15,8 +15,9 @@ the source of truth — tokens that didn't survive the LLM round-trip
 all runs.
 
 Supported formats: `.docx`, `.pptx`, `.xlsx`, `.csv`, plus all plain-text
-extensions in `_PLAIN_EXTS`. Unsupported types are copied src→dst
-unchanged (the LLM may emit a PNG we never pseudonymised).
+extensions in `_PLAIN_EXTS` (incl. `.svg`, which is text XML). Unsupported
+types are copied src→dst unchanged (the LLM may emit a PNG we never
+pseudonymised).
 """
 
 from __future__ import annotations
@@ -46,14 +47,18 @@ MAX_RUN_CHARS = 64_000
 SUPPORTED_EXTS = frozenset({
     ".docx", ".pptx", ".xlsx",
     ".txt", ".md", ".csv", ".json", ".log",
-    ".html", ".htm",
+    ".html", ".htm", ".svg",
 })
 
 # Plain-text extensions — read/written as utf-8 strings without structural
 # parsing. JSON is treated as plain text on purpose: PII inside a JSON
 # value will be replaced and the JSON stays well-formed (tokens are
-# JSON-string-safe — no quotes / backslashes).
-_PLAIN_EXTS = frozenset({".txt", ".md", ".log", ".html", ".htm"})
+# JSON-string-safe — no quotes / backslashes). SVG is text XML and reverses
+# the same way — a locally-rendered `render_diagram` .svg (M7/G6) now carries
+# REAL values (render_diagram is in GDPR_ARGS_DEANON_TOOLS), and a model-
+# written .svg carries fake tokens that the same string-replace restores;
+# tokens are XML-text-safe (no `<`/`>`/`&`).
+_PLAIN_EXTS = frozenset({".txt", ".md", ".log", ".html", ".htm", ".svg"})
 
 
 class FilePseudonymizeError(Exception):

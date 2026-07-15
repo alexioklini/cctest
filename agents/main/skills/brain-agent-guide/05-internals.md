@@ -1558,7 +1558,21 @@ preamble goes in first-user-message instead.
   real source files — now runs AFTER the reply is de-anonymised, so a quote
   containing a protected value is no longer falsely flagged "unverified"
   (previously nearly every anonymised research answer carried a bogus
-  source-fidelity warning).
+  source-fidelity warning). Artefakt-completeness (9.346.0, M7): the
+  file-reverse seam now covers three channels L6 missed. (1) Files the model
+  writes OUTSIDE the artifact tree (an absolute path like
+  "/pfad/report.docx") are reversed + linted too — the callback only ever
+  fires for model-written paths, so the old "artifact tree only" bail let a
+  .docx for a real meeting with invented names sail through with no warning.
+  (2) `.svg` is now a reversible format (text XML) — together with
+  `render_diagram` being args-de-anonymised (9.344.0, local renderer), a
+  locally-rendered diagram .svg carries REAL values, matching the .docx/.html
+  beside it. (3) A raster image (.png/.jpg/.jpeg/.webp/.gif) written under
+  active anonymisation can bake fake values into pixels that cannot be
+  reversed or linted — it now produces a LOUD error row + degradation tally
+  (`image_unreversible`) + a model-directed warning to re-render as .svg. A
+  Mistral `generate_image` .png hits this (its prompt is also egress-gated
+  via EGRESS_TOOLS); a local render_diagram .svg never does.
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,
