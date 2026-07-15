@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.345.0",
+        "date": "2026-07-15",
+        "title": "Keine falschen Quellentreue-Warnungen mehr im Datenschutz-Modus",
+        "body": "In Projekten mit aktivem Datenschutz (anonymisierte Recherche, "
+                "Compliance- und Due-Diligence-Berichte) prüft Brain jedes "
+                "wörtliche Zitat gegen Ihre Originalquellen. Bisher verglich "
+                "diese Prüfung noch die geschützten Ersatzwerte mit den echten "
+                "Dateien — dadurch wurde fast jedes Zitat fälschlich als „nicht "
+                "belegt“ markiert und an praktisch jede Antwort ein "
+                "unberechtigter Quellentreue-Hinweis gehängt, obwohl die "
+                "Antwort korrekt belegt war. Die Prüfung läuft jetzt erst, "
+                "nachdem die Echtwerte wiederhergestellt sind: der "
+                "Quellentreue-Hinweis erscheint nur noch dann, wenn ein Zitat "
+                "tatsächlich nicht in den Quellen steht.",
+        "audience": "user",
+        "versions": ["9.345.0"],
+    },
+    {
         "version": "9.344.0",
         "date": "2026-07-14",
         "title": "Firmen-Recherche mit Datenschutz — neuer Modus „Screening“",

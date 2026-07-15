@@ -1553,7 +1553,12 @@ preamble goes in first-user-message instead.
   reversible); the system prompt clamp additionally steers anonymised
   sessions away from generating PDFs and from reformatting protected
   values ("compute with them: yes — rewrite their form: no"). A PDF
-  without fake content stays untouched and silent.
+  without fake content stays untouched and silent. Related (9.345.0): the
+  citation validator — which checks each `[Quelle: …]` quote against the
+  real source files — now runs AFTER the reply is de-anonymised, so a quote
+  containing a protected value is no longer falsely flagged "unverified"
+  (previously nearly every anonymised research answer carried a bogus
+  source-fidelity warning).
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,

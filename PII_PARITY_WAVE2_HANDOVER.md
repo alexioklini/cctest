@@ -1,8 +1,34 @@
 # PII-Parität — Welle 2 (M1–M11) · Handover
 
-**Stand:** 2026-07-14 · Basis-VERSION `9.344.0` · **Status: M1/M2/M3/M11 GELIEFERT in v9.343.0** (die vier Leck-Stopps) · **M4/M5 + M10 GELIEFERT in v9.344.0** (der Qualitäts-Hebel + Ad-hoc-Schutz). **OFFEN: M6, M7, M8, M9.**
+**Stand:** 2026-07-15 · Basis-VERSION `9.345.0` · **Status: M1/M2/M3/M11 GELIEFERT in v9.343.0** (die vier Leck-Stopps) · **M4/M5 + M10 GELIEFERT in v9.344.0** (der Qualitäts-Hebel + Ad-hoc-Schutz) · **M8 GELIEFERT in v9.345.0** (Citation-Validator hinter den Reverse). **OFFEN: M6, M7, M9.**
 
 **Vorgänger:** `PII_ANALYSIS_PARITY_HANDOVER.md` (Serie L1–L7, v9.334.0–9.342.0, KOMPLETT). Der dortige Katalog bleibt gültig — diese Welle *ergänzt* ihn, sie widerruft nichts.
+
+---
+
+## STATUS nach Session 3 der Welle 2 (v9.345.0)
+
+### Geliefert — M8 (G11): Citation-Validator hinter den Reverse
+
+| # | Baustein | Schließt | Ergebnis |
+|---|---|---|---|
+| **M8** | Citation-Validator hinter den Reverse | **G11** | ✅ Der Validator-Block läuft jetzt NACH der Reply-Rück-Übersetzung in `handlers/chat.py`, auf dem deanonymisierten `reply` — Fake-Zitate matchen nicht mehr gegen die Echtdateien und werden nicht mehr fälschlich „unverified" |
+
+**Der Fix ist eine reine Reihenfolge-Änderung im Worker** (kein Schema/Prompt → KV-Prefix unberührt): der komplette Validator-Block (`validate` → `_cv_meta` → `strip_fabricated_citations` → `citation_reround_needed` → warning-append) wurde von VOR dem Deanonymise-Block hinter ihn gezogen. Der Nudge-Hinweis-Append bleibt VOR dem Deanonymise (sein Text wird weiter mit-rücküberssetzt); der Fabrication-Strip-Hinweis (statischer deutscher Prosatext, keine PII) läuft jetzt danach und ist bewusst nicht mehr rück-übersetzt.
+
+**Warum das sauber ist — nicht ein Kompromiss:** ist KEIN Mapping aktiv, ist der Deanonymise-Block ein No-Op → `reply` ist byte-identisch zu vorher → Nicht-GDPR-Turns unverändert. `_reround_uncited_only` ([[feedback_reround_uncited_only]]) hängt weiter am selben `_val`, nur auf korrektem Text.
+
+**Tests:** `tests/test_citation_after_deanon.py` (2, **mutationsgeprüft**): AST-Source-Order-Invariante — der Validator-Call MUSS nach dem Reply-Level-`_deanon_reply, _restored = deanonymize_text(…)` stehen. Die Prüfung ist gegen die live-Streaming-Delta-Reverses (2579/2603/2616) abgegrenzt, die IMMER voranlaufen und die Regression sonst maskiert hätten — sie zielt auf den `_deanon_reply`-gebundenen Reply-Level-Reverse. Mutations-Gegenprobe: Validator vor Reply-Deanon → Test schlägt an. `test_report_fidelity` + `test_chat_worker_helpers` grün (40 Tests).
+
+### Ein Befund, der die Analyse präzisierte
+
+**Der naheliegende „Block-Move"-Test wäre stumpf gewesen.** Eine Prüfung „mindestens ein `deanonymize_text` läuft vor dem Validator" hätte die Regression NICHT gefangen: die drei Streaming-Delta-Reverses (`full_denon = deanonymize_text(full_raw, …)`, chat.py:2579/2603/2616) laufen immer voran — auch in der kaputten Reihenfolge. Der Test muss den **Reply-Level-Reverse** (`_deanon_reply, _restored = …`) gezielt identifizieren, sonst passt er in beiden Welten.
+
+### Offen (bewusst, Akzeptanz-Gate)
+
+- **KG-Real-Policies-Eval Scanner-an == Scanner-aus** ist das eigentliche Akzeptanzkriterium (Handover M8) — separat zu fahren, ≥3 Reps ([[feedback_eval_single_run_noise]]). Der Code-Fix ist statisch + mutationsgeprüft; die Score-Parität ist noch nicht empirisch bestätigt.
+
+**Nächster sinnvoller Schnitt:** **M6** (Tabellen/Massendaten — **Lasttest VOR dem Design**; der reale Lastrisiko liegt im Reverse-Pass O(M²·T) bei Mapping-Bloat durch Registry-PDFs + der stillen 50k-NER-Truncation, nicht im 23k-Excel) und **M9** (Erkennungs-Netz — billigster Einstieg: Sperrschrift #1, dann EN-NER #3). M7 (Artefakt-Vollständigkeit) ist kleiner und unabhängig; `render_diagram`-Args-Deanon + `generate_image`-Gate sind bereits Teil von M3/M4 mit-erledigt, offen bleiben Nicht-Baum-Schreibpfade, `.svg`-Reverse, `generate_image`-Warnstreifen, png/jpg-Lint.
 
 ---
 

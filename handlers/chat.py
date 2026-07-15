@@ -5096,116 +5096,16 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         if _cav_sys:
                             msg_metadata["caveman_system"] = _cav_sys
                         # --- Citation validator ---
-                        # Scans the reply for [Quelle: X — "Y"] brackets, verifies each
-                        # quote against the files read this turn, counts uncited claims,
-                        # and appends a persistent fidelity warning when the reply
-                        # violates the threshold (>30% uncited OR ≥2 unverified quotes).
-                        #
-                        # The validator now runs whenever the citation discipline was
-                        # active this turn — the DYNAMIC grounding case (any chat) OR
-                        # the explicit research_mode toggle/project flag (computed +
-                        # stored as session._citation_discipline_active before the
-                        # run). validate_citations_in_response verifies quotes against
-                        # the files read this turn, so it's meaningful outside projects.
-                        _research_active = bool(getattr(session, "_citation_discipline_active", False))
-                        if _research_active and reply:
-                            try:
-                                _val = engine.validate_citations_in_response(reply, session_id=sid)
-                                _cv_meta = {
-                                    "verified": _val.get("verified", 0),
-                                    "unverified_count": len(_val.get("unverified", []) or []),
-                                    "unverified_samples": [
-                                        {"basename": bn, "quote_excerpt": q[:120], "reason": r}
-                                        for (bn, q, r) in (_val.get("unverified") or [])[:5]
-                                    ],
-                                    "uncited_claims": _val.get("uncited_claims", 0),
-                                    "claim_total": _val.get("claim_total", 0),
-                                    "total_brackets": _val.get("total_brackets", 0),
-                                }
-
-                                # Citation-Warning: instead of re-rounding (which
-                                # turned correct refusals into hallucinated
-                                # citations on refusal-bucket questions), we flag
-                                # the message in metadata so the frontend can render
-                                # a compact "x von y" badge (full text in tooltip)
-                                # that survives reload. Same threshold the re-round
-                                # used (>30% uncited OR ≥2 unverified quotes). The
-                                # prose is no longer baked into `reply` — the badge
-                                # is built client-side from these fields.
-                                #
-                                # Only flag the message when a retrieval tool was
-                                # ACTUALLY CALLED this turn (not merely live): if the
-                                # model answered from its own knowledge without ever
-                                # reading a file / searching / fetching, there were
-                                # no sources to cite and "N von N ohne Quellenangabe"
-                                # would be misleading. _RETRIEVAL_TOOLS is the same
-                                # set turn_has_retrieval_tools uses.
-                                _called_tool_names = [
-                                    (t or {}).get("name") for t in (_partial_tools or [])
-                                ]
-                                _retrieval_called = engine.turn_has_retrieval_tools(_called_tool_names)
-                                # FABRICATION STRIP (v9.272.0): when the turn
-                                # retrieved NOTHING — no retrieval tool call, no
-                                # curated web sources, and not a single quote
-                                # verified against anything this session read —
-                                # every [Quelle:…] bracket is invented decoration
-                                # (models satisfy the citation FORMAT when the
-                                # discipline is active but retrieval came up
-                                # empty). Deterministically remove the brackets
-                                # (claims stay), append an honest reload-stable
-                                # note, and record it in metadata. Conservative
-                                # by design: one verified quote or any retrieval
-                                # signal → no strip (the warning path handles
-                                # partially-grounded replies instead).
-                                if (not _retrieval_called
-                                        and not _web_sources_used
-                                        and int(_val.get("verified", 0) or 0) == 0
-                                        and int(_val.get("total_brackets", 0) or 0) > 0):
-                                    _stripped, _n_fab = engine.strip_fabricated_citations(reply)
-                                    if _n_fab:
-                                        reply = (_stripped.rstrip()
-                                                 + "\n\n---\n\n> ℹ️ **Hinweis**: Diese "
-                                                   "Antwort beruht auf allgemeinem "
-                                                   "Fachwissen — in diesem Durchlauf "
-                                                   "wurden keine Quellen abgerufen. "
-                                                 + f"{_n_fab} unbelegte Quellenangabe"
-                                                 + ("n wurden" if _n_fab != 1 else " wurde")
-                                                 + " automatisch entfernt.")
-                                        _cv_meta["fabricated_stripped"] = _n_fab
-                                if _retrieval_called and engine.citation_reround_needed(_val):
-                                    _uncited = int(_val.get("uncited_claims", 0) or 0)
-                                    _ctotal = int(_val.get("claim_total", 0) or 0)
-                                    _unver = len(_val.get("unverified", []) or [])
-                                    _parts = []
-                                    if _ctotal > 0 and _uncited > 0:
-                                        _parts.append(
-                                            f"{_uncited} von {_ctotal} Behauptungen "
-                                            f"ohne Quellenangabe"
-                                        )
-                                    if _unver >= 2:
-                                        _parts.append(
-                                            f"{_unver} Zitat(e) konnten nicht "
-                                            f"in den Quelldateien verifiziert werden"
-                                        )
-                                    if _parts:
-                                        _cv_meta["warning_appended"] = True
-                                        _cv_meta["warning_text"] = (
-                                            "Hinweis zur Quellentreue: "
-                                            + "; ".join(_parts)
-                                            + ". Möglich ist auch, dass zu dieser "
-                                              "Frage keine passenden Informationen "
-                                              "in den Quellen vorlagen und die "
-                                              "Antwort daher ohne Belege bleiben "
-                                              "musste. Bitte einzelne Aussagen vor "
-                                              "Weiterverwendung gegen die "
-                                              "Originalquellen prüfen."
-                                        )
-
-                                msg_metadata["citation_validation"] = _cv_meta
-                            except Exception as _e:
-                                # Validation must never crash the response; log and continue.
-                                try: print(f"[citation-validator] error: {_e}")
-                                except Exception: pass
+                        # M8 (G11): the validator MUST run on the DE-ANONYMISED reply,
+                        # not the fake-bearing wire text. It byte-matches each quote
+                        # against the REAL source files on disk — so a quote containing
+                        # a protected value only verifies once the fakes are reversed.
+                        # Running it here (before the deanonymise block below) marked
+                        # every such quote "unverified" and hung a spurious fidelity
+                        # warning on practically every research-mode answer. The block
+                        # is therefore relocated AFTER the deanonymise pass — see
+                        # "--- Citation validator (post-deanonymise) ---" further down.
+                        # (Nothing between here and there reads `citation_validation`.)
 
                         # Sidecar empty-round nudge marker — persistent so the
                         # user sees it after reload too, not just live via SSE.
@@ -5232,8 +5132,12 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         # The text_delta path already de-anonymised live deltas;
                         # this pass covers the final assembled reply (which may
                         # include text the streamer held back at flush time, plus
-                        # nudge/citation hints appended above). It's also the
-                        # canonical text persisted to the messages table.
+                        # the nudge hint appended above). It's also the canonical
+                        # text persisted to the messages table. NB: the citation
+                        # validator + its fabrication-strip note now run AFTER this
+                        # block (M8) — on the de-anonymised reply — so the strip
+                        # note (static German prose, no PII) is intentionally not
+                        # covered by this pass.
                         _gdpr_streamer = getattr(session, "_gdpr_streamer", None)
                         _gdpr_mapping_id = getattr(session, "_gdpr_mapping_id", None)
                         if _gdpr_mapping_id and _gdpr_streamer is not None:
@@ -5341,6 +5245,125 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                         _spans = []
                                     if _spans:
                                         msg_metadata["gdpr_restored_spans"] = _spans
+                        # --- Citation validator (post-deanonymise) ---
+                        # Relocated here from before the deanonymise block (M8/G11):
+                        # `reply` is now the DE-ANONYMISED final text, so quotes that
+                        # contain a protected value match the real source files
+                        # correctly instead of failing as "unverified". When no
+                        # mapping is active the deanonymise block above is a no-op, so
+                        # `reply` is byte-identical to what this validator saw before —
+                        # non-GDPR turns are unchanged.
+                        #
+                        # Scans the reply for [Quelle: X — "Y"] brackets, verifies each
+                        # quote against the files read this turn, counts uncited claims,
+                        # and appends a persistent fidelity warning when the reply
+                        # violates the threshold (>30% uncited OR ≥2 unverified quotes).
+                        #
+                        # The validator runs whenever the citation discipline was
+                        # active this turn — the DYNAMIC grounding case (any chat) OR
+                        # the explicit research_mode toggle/project flag (computed +
+                        # stored as session._citation_discipline_active before the
+                        # run). validate_citations_in_response verifies quotes against
+                        # the files read this turn, so it's meaningful outside projects.
+                        _research_active = bool(getattr(session, "_citation_discipline_active", False))
+                        if _research_active and reply:
+                            try:
+                                _val = engine.validate_citations_in_response(reply, session_id=sid)
+                                _cv_meta = {
+                                    "verified": _val.get("verified", 0),
+                                    "unverified_count": len(_val.get("unverified", []) or []),
+                                    "unverified_samples": [
+                                        {"basename": bn, "quote_excerpt": q[:120], "reason": r}
+                                        for (bn, q, r) in (_val.get("unverified") or [])[:5]
+                                    ],
+                                    "uncited_claims": _val.get("uncited_claims", 0),
+                                    "claim_total": _val.get("claim_total", 0),
+                                    "total_brackets": _val.get("total_brackets", 0),
+                                }
+
+                                # Citation-Warning: instead of re-rounding (which
+                                # turned correct refusals into hallucinated
+                                # citations on refusal-bucket questions), we flag
+                                # the message in metadata so the frontend can render
+                                # a compact "x von y" badge (full text in tooltip)
+                                # that survives reload. Same threshold the re-round
+                                # used (>30% uncited OR ≥2 unverified quotes). The
+                                # prose is no longer baked into `reply` — the badge
+                                # is built client-side from these fields.
+                                #
+                                # Only flag the message when a retrieval tool was
+                                # ACTUALLY CALLED this turn (not merely live): if the
+                                # model answered from its own knowledge without ever
+                                # reading a file / searching / fetching, there were
+                                # no sources to cite and "N von N ohne Quellenangabe"
+                                # would be misleading. _RETRIEVAL_TOOLS is the same
+                                # set turn_has_retrieval_tools uses.
+                                _called_tool_names = [
+                                    (t or {}).get("name") for t in (_partial_tools or [])
+                                ]
+                                _retrieval_called = engine.turn_has_retrieval_tools(_called_tool_names)
+                                # FABRICATION STRIP (v9.272.0): when the turn
+                                # retrieved NOTHING — no retrieval tool call, no
+                                # curated web sources, and not a single quote
+                                # verified against anything this session read —
+                                # every [Quelle:…] bracket is invented decoration
+                                # (models satisfy the citation FORMAT when the
+                                # discipline is active but retrieval came up
+                                # empty). Deterministically remove the brackets
+                                # (claims stay), append an honest reload-stable
+                                # note, and record it in metadata. Conservative
+                                # by design: one verified quote or any retrieval
+                                # signal → no strip (the warning path handles
+                                # partially-grounded replies instead).
+                                if (not _retrieval_called
+                                        and not _web_sources_used
+                                        and int(_val.get("verified", 0) or 0) == 0
+                                        and int(_val.get("total_brackets", 0) or 0) > 0):
+                                    _stripped, _n_fab = engine.strip_fabricated_citations(reply)
+                                    if _n_fab:
+                                        reply = (_stripped.rstrip()
+                                                 + "\n\n---\n\n> ℹ️ **Hinweis**: Diese "
+                                                   "Antwort beruht auf allgemeinem "
+                                                   "Fachwissen — in diesem Durchlauf "
+                                                   "wurden keine Quellen abgerufen. "
+                                                 + f"{_n_fab} unbelegte Quellenangabe"
+                                                 + ("n wurden" if _n_fab != 1 else " wurde")
+                                                 + " automatisch entfernt.")
+                                        _cv_meta["fabricated_stripped"] = _n_fab
+                                if _retrieval_called and engine.citation_reround_needed(_val):
+                                    _uncited = int(_val.get("uncited_claims", 0) or 0)
+                                    _ctotal = int(_val.get("claim_total", 0) or 0)
+                                    _unver = len(_val.get("unverified", []) or [])
+                                    _parts = []
+                                    if _ctotal > 0 and _uncited > 0:
+                                        _parts.append(
+                                            f"{_uncited} von {_ctotal} Behauptungen "
+                                            f"ohne Quellenangabe"
+                                        )
+                                    if _unver >= 2:
+                                        _parts.append(
+                                            f"{_unver} Zitat(e) konnten nicht "
+                                            f"in den Quelldateien verifiziert werden"
+                                        )
+                                    if _parts:
+                                        _cv_meta["warning_appended"] = True
+                                        _cv_meta["warning_text"] = (
+                                            "Hinweis zur Quellentreue: "
+                                            + "; ".join(_parts)
+                                            + ". Möglich ist auch, dass zu dieser "
+                                              "Frage keine passenden Informationen "
+                                              "in den Quellen vorlagen und die "
+                                              "Antwort daher ohne Belege bleiben "
+                                              "musste. Bitte einzelne Aussagen vor "
+                                              "Weiterverwendung gegen die "
+                                              "Originalquellen prüfen."
+                                        )
+
+                                msg_metadata["citation_validation"] = _cv_meta
+                            except Exception as _e:
+                                # Validation must never crash the response; log and continue.
+                                try: print(f"[citation-validator] error: {_e}")
+                                except Exception: pass
                         # ── Per-turn GDPR outcome (metadata.gdpr) ──
                         # Data source for the post-turn feedback modal, for BOTH
                         # occasions:
