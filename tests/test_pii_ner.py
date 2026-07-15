@@ -694,6 +694,40 @@ class TestNERFalsePositiveHardening(unittest.TestCase):
         self.assertTrue(any("Bonnie Stark" in p for p in pii),
                         f"name lost after honorific strip: {pii}")
 
+    def test_language_detection_at_seam(self):
+        # An English document is parsed natively by the English model, so a
+        # multi-word span the German model would swallow ("CEO John Smith of
+        # Acme Corp") is split correctly instead.
+        text = ("The client was reviewed by the bank. CEO John Smith of Acme "
+                "Corp signed the deal. The documents are complete.")
+        self.assertEqual(pii_ner._dominant_lang(text), "en")
+        pii = self._pii_values(text)
+        self.assertIn("John Smith", pii)
+        self.assertNotIn("CEO John Smith of Acme Corp", pii)
+
+    def test_nobiliary_particle_names_survive(self):
+        # OCR-noise tokens double as nobiliary particles — a particle followed
+        # by a substantial name token must NOT be dropped.
+        for name in ("Vincent van Gogh", "Jan van der Berg"):
+            pii = self._pii_values(f"Der Kunde {name} wurde geprüft.")
+            self.assertTrue(any("Gogh" in p or "Berg" in p for p in pii),
+                            f"nobiliary-particle name dropped: {name} → {pii}")
+
+    def test_country_code_ocr_garble_dropped(self):
+        # A garbled passport OCR span appending a country code ("EEALASKA USA").
+        gate = pii_ner._passes_name_precision_gate
+        for v in ("EEALASKA USA", "Someword UK", "Blah EUR"):
+            ctx = f"scan {v} noise"
+            self.assertFalse(gate(v, ctx, ctx.index(v)),
+                             f"country-code garble kept: {v}")
+
+    def test_german_sentence_window_not_misdetected(self):
+        # Cross-lingual tokens ("in"/"an") must not skew the window language of
+        # a German sentence (regression: München was dropped when "in" counted
+        # as English).
+        self.assertNotEqual(pii_ner._window_lang(
+            "Ich wohne in München an der Hauptstraße.", 13, 20), "en")
+
     def test_calibration_real_names_survive(self):
         # The real names found in the calibration must NOT be collateral of the
         # form-label / OCR-noise / honorific filters.

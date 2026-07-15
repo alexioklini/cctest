@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.350.0",
+        "date": "2026-07-15",
+        "title": "Namenserkennung erkennt jetzt die Sprache",
+        "body": "Die Datenschutz-Prüfung erkennt jetzt automatisch, ob ein "
+                "Text überwiegend deutsch oder englisch ist, und wählt das "
+                "passende Erkennungsmodell. In englischen Dokumenten werden "
+                "Namen und Firmen dadurch sauber getrennt statt zu einer "
+                "langen Fehl-Erkennung zusammengefasst. Zusätzlich bleiben "
+                "Namen mit Namenszusätzen wie „van“, „von“ oder „de“ "
+                "(z. B. „Vincent van Gogh“) korrekt erhalten, und Länder-"
+                "kürzel aus schlecht lesbaren Ausweis-Scans werden nicht mehr "
+                "als Namensbestandteil gewertet.",
+        "audience": "user",
+        "versions": ["9.350.0"],
+    },
+    {
         "version": "9.349.0",
         "date": "2026-07-15",
         "title": "Weniger Fehlalarme bei der Namenserkennung",

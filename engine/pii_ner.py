@@ -48,17 +48,81 @@ _LABEL_MAP = {
 # and each PERSON span additionally passes the STRICT recall-net gate (all
 # tokens capitalised, ≥2 substantial tokens, no stop/connective words) — not
 # the loose main-model path that trusts the model's span. German is unchanged.
-_MAIN_MODEL_LANGS = frozenset({"de"})  # langs whose spans we trust directly
+_MAIN_MODEL_LANGS = frozenset({"de"})  # default-trusted when no detection ran
+
+# ── Language detection at the seam (v9.350.0) ────────────────────────────────
+# The residual FP mode after v9.349 was the GERMAN model parsing ENGLISH prose
+# (it tags English title-case as PER: "Risk-Based Approach", "May Have Saved
+# Around", "CEO John Smith of Acme Corp" as ONE span) — and symmetrically the
+# English model on German prose (handled by the strict gate). Fix: detect the
+# language ONCE per scan (document level) and per finding (local window), both
+# via cheap deterministic stopword counting — no new dependency, no model call.
+#   * Document level: the dominant language's model becomes the TRUSTED main
+#     model (loose path); the other runs as the strict PERSON-only recall net.
+#     An English KYC file (>50% of the real corpus) is parsed by the English
+#     model natively instead of producing German-model garbage.
+#   * Span level: a TRUSTED-model finding whose local window is confidently the
+#     OTHER language is dropped entirely — the other model is responsible
+#     there (an English quote inside a German report). UNTRUSTED findings keep
+#     the strict gate instead (never window-dropped: the whole point of the
+#     recall net is English names inside German prose).
+# Deliberately EXCLUSIVE stopword lists — a word that exists (even rarely) in
+# the other language is omitted, so cross-lingual tokens ("in"/"an"/"am" are
+# German AND English) never skew the count. Verified: no member appears as a
+# common word of the other language.
+_DE_STOPWORDS = frozenset({
+    "der", "die", "das", "und", "ist", "nicht", "mit", "für", "von", "zu",
+    "den", "dem", "ein", "eine", "auf", "als", "auch", "sich", "werden",
+    "wurde", "bei", "nach", "aus", "über", "dass", "wird", "sind", "einer",
+    "eines", "zum", "zur", "durch", "oder", "wie", "des", "um", "nur", "noch",
+    "einem", "einen", "seiner", "ihrer", "wurden", "haben", "hatte",
+})
+_EN_STOPWORDS = frozenset({
+    "the", "and", "of", "to", "that", "for", "with", "was", "on",
+    "by", "from", "this", "are", "be", "has", "have", "not",
+    "which", "its", "his", "her", "their", "were", "been", "or", "but",
+    "they", "these", "those", "would", "should", "could", "about", "into",
+})
+_LANG_TOKEN_RE = _re.compile(r"[a-zA-ZäöüÄÖÜß]+")
 
 
-def _lang_allows_label(lang: str, rule_id: str) -> bool:
-    """A non-main-model language (English) contributes ONLY person NAMES — but
-    from BOTH its PERSON and ORG labels, because en_core_web_md unreliably tags
-    a real person's proper name as ORG on adverse-media prose ("Hristo Atanasov
+def _stopword_counts(text: str) -> tuple[int, int]:
+    de = en = 0
+    for tok in _LANG_TOKEN_RE.findall(text.lower()):
+        if tok in _DE_STOPWORDS:
+            de += 1
+        elif tok in _EN_STOPWORDS:
+            en += 1
+    return de, en
+
+
+def _dominant_lang(text: str) -> str:
+    """Document-level language: 'en' | 'de'. Defaults to 'de' (the UI/corpus
+    default) unless English clearly dominates — a mixed report stays German."""
+    de, en = _stopword_counts(text[:6000])
+    return "en" if en > de * 1.2 and en >= 3 else "de"
+
+
+def _window_lang(text: str, start: int, end: int) -> str:
+    """Local language of a finding's surroundings: 'de' | 'en' | '' (ambiguous).
+    Requires a CLEAR majority — ambiguity never drops anything."""
+    lo, hi = max(0, start - 90), min(len(text), end + 90)
+    de, en = _stopword_counts(text[lo:hi])
+    if de >= 2 and de >= en * 2:
+        return "de"
+    if en >= 2 and en >= de * 2:
+        return "en"
+    return ""
+
+
+def _lang_allows_label(trusted: bool, rule_id: str) -> bool:
+    """An UNTRUSTED model contributes ONLY person NAMES — but from BOTH its
+    PERSON and ORG labels, because en_core_web_md unreliably tags a real
+    person's proper name as ORG on adverse-media prose ("Hristo Atanasov
     Kovachki" → ORG). Both are re-tested as `name` and must clear the strict
     span gate, so genuine orgs ("the European Prosecutor's Office") and bare
-    words ("Bitte") don't sneak through. English never contributes address."""
-    if lang in _MAIN_MODEL_LANGS:
+    words ("Bitte") don't sneak through. Untrusted never contributes address."""
+    if trusted:
         return True
     return rule_id in ("name", "organisation")
 
@@ -244,22 +308,42 @@ _NAME_FORM_LABEL_TOKENS = frozenset({
 })
 # OCR / garbled-span noise tokens: short function words / fragments that show
 # up inside mangled OCR spans ("Ex Verwaltete Les Otc", "De TOT", "Basia Us")
-# but are never a substantial token of a real name. Kept SHORT and unambiguous;
-# any token here in a multi-token span kills it. NOT surname-colliding (checked
-# against Ott/Toth/Weber/… — those are ≥3-char full tokens, not these).
+# but are never a substantial token of a real name. Kept SHORT and unambiguous.
+# NB: several of these double as NOBILIARY PARTICLES in real names (van/le/la/
+# du — "Vincent van Gogh", "Le Pen", "Du Pont"): a noise token therefore kills
+# the span ONLY when it is NOT immediately followed by a substantial non-noise
+# token (particle position). "Les Otc" kills (next is noise); "Le Pen" keeps.
+# Particle-sensitive noise: these double as nobiliary particles in real names
+# (van Gogh, Le Pen, Du Pont) → they only mark garble when NOT in particle
+# position (not followed by a substantial name token).
 _NAME_OCR_NOISE_TOKENS = frozenset({
     "us", "tot", "les", "otc", "ex", "het", "du", "le", "la", "van",
 })
+# Unconditional-drop tokens: country / bloc / currency codes a garbled OCR span
+# appends as a "name token" ("EEALASKA USA"). NEVER a name token, any position.
+_NAME_HARD_NOISE_TOKENS = frozenset({
+    "usa", "uk", "eu", "uae", "usd", "eur", "gbp", "chf",
+})
 
 
-def _looks_like_name_noise(cap: list) -> bool:
-    """True if a capitalised-token list is a form-label / legal-doc / OCR-noise
-    span rather than a real person name. `cap` = the capitalised core tokens."""
-    low = [t.lower().strip(".,") for t in cap]
+def _looks_like_name_noise(toks: list) -> bool:
+    """True if a token list is a form-label / legal-doc / OCR-noise span rather
+    than a real person name. `toks` = the span's tokens in original order."""
+    low = [t.lower().strip(".,") for t in toks]
     if any(t in _NAME_FORM_LABEL_TOKENS for t in low):
         return True
-    if len(low) >= 2 and any(t in _NAME_OCR_NOISE_TOKENS for t in low):
+    if len(low) >= 2 and any(t in _NAME_HARD_NOISE_TOKENS for t in low):
         return True
+    if len(low) >= 2:
+        for i, t in enumerate(low):
+            if t not in _NAME_OCR_NOISE_TOKENS:
+                continue
+            nxt = low[i + 1] if i + 1 < len(low) else ""
+            # Nobiliary-particle position: followed by a substantial (≥3 chars)
+            # non-noise token → part of a real name, not garble.
+            if nxt and len(nxt) >= 3 and nxt not in _NAME_OCR_NOISE_TOKENS:
+                continue
+            return True
     return False
 
 
@@ -268,10 +352,10 @@ def _passes_name_precision_gate(value: str, text: str, start: int) -> bool:
     # Form-label / legal-doc / OCR-noise spans are rejected UNCONDITIONALLY —
     # even with a person nearby (a KYC doc's "Given Names:" label sits right
     # next to the real name, so the person-context early-return would wrongly
-    # keep it). Runs before _name_has_person_context.
-    _pre_cap = [t for t in _re.split(r"\s+", v.replace(",", " "))
-                if t[:1].isupper() and t[:1].isalpha() and len(t) >= 2]
-    if _looks_like_name_noise(_pre_cap):
+    # keep it). Runs before _name_has_person_context. Full token order is
+    # passed so the nobiliary-particle position rule works ("Van der Berg").
+    if _looks_like_name_noise(
+            [t for t in _re.split(r"\s+", v.replace(",", " ")) if t]):
         return False
     if _name_has_person_context(text, start):
         return True
@@ -482,7 +566,8 @@ def list_loaded() -> list[dict]:
 
 def scan_text(text: str, *, lang: str = "de",
               max_findings: int = 100,
-              name_precision: bool = False) -> list[dict]:
+              name_precision: bool = False,
+              trusted: bool | None = None) -> list[dict]:
     """Run NER over `text`, return findings shaped like brain._pii_scan_text.
 
     Findings carry:
@@ -495,6 +580,11 @@ def scan_text(text: str, *, lang: str = "de",
       len       - end - start
       source    - 'ner' (for audit / debugging)
 
+    `trusted` (v9.350.0): whether this model is the TRUSTED main model for the
+    text's dominant language (loose path, all labels) or the strict PERSON-only
+    recall contributor. None = legacy default (`lang in _MAIN_MODEL_LANGS`);
+    `_pii_scan_text` passes it explicitly from `_dominant_lang(text)`.
+
     `action` is NOT set here — the caller resolves it via
     _pii_effective_action so per-rule overrides apply uniformly.
     """
@@ -502,6 +592,8 @@ def scan_text(text: str, *, lang: str = "de",
         return []
     if max_findings <= 0:
         return []
+    if trusted is None:
+        trusted = lang in _MAIN_MODEL_LANGS
     nlp = _NLP_CACHE.get(lang)
     if nlp is None:
         return []  # model unavailable — graceful no-op
@@ -517,23 +609,34 @@ def scan_text(text: str, *, lang: str = "de",
         rule_id = _LABEL_MAP.get(ent.label_)
         if not rule_id:
             continue
-        # M9.3-hardening: a non-main-model language (English) contributes only
-        # person NAMES (from PERSON and ORG labels — en mislabels real names as
-        # ORG on adverse-media prose); its GPE/LOC are noise (Bulgaria, Balkan).
-        if not _lang_allows_label(lang, rule_id):
+        # M9.3-hardening: an untrusted model contributes only person NAMES
+        # (from PERSON and ORG labels — en mislabels real names as ORG on
+        # adverse-media prose); its GPE/LOC are noise (Bulgaria, Balkan).
+        if not _lang_allows_label(trusted, rule_id):
             continue
         value = ent.text.strip()
         if len(value) < _MIN_ENTITY_CHARS:
             continue
-        # English: coerce ORG→name and require the STRICT span gate (all tokens
-        # capitalised, ≥2 substantial, no stop/connective words). This keeps a
-        # mislabelled real name ("Hristo Atanasov Kovachki"→ORG) while dropping
-        # genuine orgs ("the European Prosecutor's Office") and bare words
-        # ("Bitte", "money laundering"). German keeps its loose trusted path.
-        if lang not in _MAIN_MODEL_LANGS:
+        # Untrusted: coerce ORG→name and require the STRICT span gate (all
+        # tokens capitalised, ≥2 substantial, no stop/connective words). Keeps
+        # a mislabelled real name ("Hristo Atanasov Kovachki"→ORG) while
+        # dropping genuine orgs and bare words. The trusted model keeps its
+        # loose path.
+        if not trusted:
             if not _strict_name_span_ok(value, value.split()):
                 continue
             rule_id = "name"
+        else:
+            # v9.350.0 span-level language check: a TRUSTED-model finding whose
+            # local window is confidently the OTHER language is garbage-prone
+            # (the German model tags English title-case prose as PER: "May Have
+            # Saved Around") — drop it; the other language's model is
+            # responsible for that window. Never applied to untrusted findings
+            # (the recall net exists precisely for foreign names in this
+            # language's prose).
+            _wl = _window_lang(text, ent.start_char, ent.end_char)
+            if _wl and _wl != lang:
+                continue
         if not _passes_shape_gate(value, rule_id):
             continue
         # Opt-in NER-precision gate: tighten `name` (German-common-noun FP mode)
@@ -2113,13 +2216,22 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     # de runs first so it populates name_spans for the date/address proximity
     # gates; en only adds non-overlapping spans. Absence of the en model is
     # fine — `is_available` gates it, and it stays a de-only pipeline.
+    #
+    # v9.350.0 — language detection at the seam: the DOMINANT language's model
+    # is the TRUSTED main model (loose path); the other runs as the strict
+    # PERSON-only recall net. An English document is parsed natively by the
+    # English model instead of producing German-model garbage spans ("CEO John
+    # Smith of Acme Corp" as ONE name). Deterministic stopword counting — no
+    # dependency, no model call.
+    _doc_lang = _dominant_lang(text)
     for _ner_lang in ("de", "en"):
         try:
             if not is_available(_ner_lang):
                 continue
             ner_findings = scan_text(
                 text, lang=_ner_lang, max_findings=max_findings,
-                name_precision=bool((cfg or {}).get("name_precision_gate")))
+                name_precision=bool((cfg or {}).get("name_precision_gate")),
+                trusted=(_ner_lang == _doc_lang))
             for f in ner_findings:
                 if f.get("rule_id") == "name":
                     name_spans.append((f["start"], f["end"]))
