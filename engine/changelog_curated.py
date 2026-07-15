@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.349.0",
+        "date": "2026-07-15",
+        "title": "Weniger Fehlalarme bei der Namenserkennung",
+        "body": "Die Datenschutz-Prüfung meldet deutlich seltener Fehlalarme: "
+                "Allgemeine Wörter wie „Lebenslauf“, „Vermögen“, „money "
+                "laundering“ oder „Prosecutor“ und Länder-/Regionsnamen wie "
+                "„Bulgaria“ oder „Balkan“ werden nicht mehr fälschlich als "
+                "Personennamen erkannt. Das betraf vor allem englische und "
+                "gemischtsprachige Texte und führte bei anonymisierten "
+                "Web-Recherchen zu unnötigen Freigabe-Rückfragen. Echte Namen "
+                "— deutsche wie englische — werden weiterhin zuverlässig "
+                "erkannt und geschützt.",
+        "audience": "user",
+        "versions": ["9.349.0"],
+    },
+    {
         "version": "9.348.0",
         "date": "2026-07-15",
         "title": "Datenschutz einfacher: ein zentrales Regelwerk statt Projekt-Presets",

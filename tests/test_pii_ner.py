@@ -575,5 +575,104 @@ class TestEnglishNERUnion(unittest.TestCase):
         self.assertIn("Maria Schmidt", names)
 
 
+@unittest.skipUnless(ENGLISH_AVAILABLE and GERMAN_AVAILABLE,
+                     "en/de spaCy models not installed")
+class TestNERFalsePositiveHardening(unittest.TestCase):
+    """v9.349.0 — the FP flood measured in the live DD run: the English model
+    tagged German/English common words as names ('Lebenslauf', 'money
+    laundering', 'Prosecutor'), and every country/nationality as a place
+    ('Bulgaria', 'Balkan'). Those flooded the web-consent dialog and destroyed
+    usability. English now contributes person NAMES only, via the strict span
+    gate; German title-case-prose suffixes were extended."""
+
+    @classmethod
+    def setUpClass(cls):
+        pii_ner.load_models(("de", "en"))
+        import brain
+        cls.brain = brain
+
+    _CFG = {"enabled": True, "name_precision_gate": True,
+            "confidence_lower": 0.0, "confidence_upper": 1.0,
+            "rule_overrides": {"name": "warn", "organisation": "warn"},
+            "categories": {"contact": {"action": "warn"},
+                           "business_id": {"action": "warn"}}}
+
+    def _names(self, text):
+        # Only person-NAME findings. Explicit deterministic cfg (do NOT merge
+        # the developer's live config — its enabled/overrides vary).
+        return {text[f["start"]:f["end"]] for f in
+                self.brain._pii_scan_text(text, cfg=self._CFG)
+                if f["rule_id"] == "name"}
+
+    def _pii_values(self, text):
+        # ALL detected PII surface values regardless of rule_id — used where the
+        # point is "detected at all", since the model sometimes labels a proper
+        # name PER vs ORG depending on ambiguous context (both anonymise fine).
+        return {text[f["start"]:f["end"]] for f in
+                self.brain._pii_scan_text(text, cfg=self._CFG)}
+
+    def test_typed_prompt_only_real_subject(self):
+        # The actual typed DD prompt: the real person is detected as PII (name
+        # or org — the model wavers on ambiguous context, both anonymise), and
+        # NONE of the topic words leak as findings.
+        text = ("Bitte führe eine umfassende websuche zu Hristo Atanasov "
+                "Kovachki durch. Prüfe Lebenslauf, Vermögen, Geldwäsche, "
+                "Finanzkriminalität.")
+        pii = self._pii_values(text)
+        self.assertIn("Hristo Atanasov Kovachki", pii)
+        for fp in ("Lebenslauf", "Prüfe Lebenslauf", "Vermögen", "Geldwäsche",
+                   "Finanzkriminalität"):
+            self.assertNotIn(fp, pii, f"FP not suppressed: {fp}")
+
+    def test_english_topic_words_not_names(self):
+        for text in ("The prosecutor opened a money laundering investigation.",
+                     "Kovachki operates in Bulgaria in the Balkan energy sector.",
+                     "Latest news about the coal plants in Bulgaria.",
+                     "Kovesi leads the European Public Prosecutor's Office."):
+            names = self._names(text)
+            for fp in ("Bulgaria", "Balkan", "money laundering", "News",
+                       "the European Public Prosecutor's Office", "Prosecutor",
+                       "Kovesi", "Latest"):
+                self.assertNotIn(fp, names,
+                                 f"FP not suppressed in {text!r}: {fp}")
+
+    def test_english_person_still_caught_even_when_mislabelled_org(self):
+        # en_core_web_md tags the subject on adverse-media prose; the name must
+        # still surface (PER or coerced ORG→name), and the country must not.
+        pii = self._pii_values("Adverse media on Hristo Atanasov Kovachki, Bulgaria.")
+        self.assertIn("Hristo Atanasov Kovachki", pii)
+        self.assertNotIn("Bulgaria", pii)
+
+    def test_german_title_case_prose_suffix_dropped(self):
+        names = self._names("Bestätigte Beteiligungen. Dieser Bericht. "
+                            "Nationalität Bulgarisch.")
+        for fp in ("Bestätigte Beteiligungen", "Dieser Bericht",
+                   "Nationalität Bulgarisch"):
+            self.assertNotIn(fp, names)
+
+    def test_real_surnames_survive_the_suffix_gate(self):
+        # Direct gate test: the extended title-case-prose suffix list must NOT
+        # eat real two-token names ending in tricky syllables. Tested at the
+        # gate (end-to-end depends on the model tagging them, which wavers).
+        gate = pii_ner._passes_name_precision_gate
+        for first, last in [("Peter", "Fürst"), ("Anna", "Probst"),
+                            ("Klaus", "Forster"), ("Maria", "Petersen"),
+                            ("Jan", "Hansen"), ("Erik", "Ernst")]:
+            v = f"{first} {last}"
+            ctx = f"Der Kunde {v} unterschrieb."
+            self.assertTrue(gate(v, ctx, ctx.index(v)),
+                            f"real name wrongly rejected by suffix gate: {v}")
+
+    def test_prose_pairs_rejected_by_suffix_gate(self):
+        # The FP class the suffix extension targets: two capitalised German
+        # prose nouns the model tags as PER.
+        gate = pii_ner._passes_name_precision_gate
+        for v in ("Bestätigte Beteiligungen", "Dieser Bericht",
+                  "Nationalität Bulgarisch", "Merkmal Daten"):
+            ctx = f"Text. {v}. Text."
+            self.assertFalse(gate(v, ctx, ctx.index(v)),
+                             f"prose pair wrongly kept: {v}")
+
+
 if __name__ == "__main__":
     unittest.main()

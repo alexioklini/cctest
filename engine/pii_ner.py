@@ -30,13 +30,52 @@ _LOAD_FAILED: set[str] = set()
 _LABEL_MAP = {
     # German (de_core_news_*) uses the WikiNER scheme (PER/LOC/ORG); English
     # (en_core_web_*) uses OntoNotes (PERSON/GPE/LOC/ORG). Map both so the
-    # M9.3 English recall net actually surfaces PERSON spans.
+    # M9.3 English recall net can surface PERSON spans.
     "PER": "name",
     "PERSON": "name",
     "LOC": "address",
     "GPE": "address",
     "ORG": "organisation",
 }
+
+# M9.3-hardening (v9.349.0): the ENGLISH model runs ONLY as a narrow PERSON
+# recall net, exactly like the `#recall` net — never as a full address/org
+# detector. On mixed/German content en_core_web_md is grossly imprecise: it
+# tags whole connective spans as PERSON ("Lebenslauf von Hristo …"), a bare
+# German word as ORG ("Bitte"), and every country/nationality as GPE/NORP
+# (Bulgaria, Balkan). Those false positives flooded the web-consent dialog in
+# the live DD run and destroy usability. So English contributes PERSON only,
+# and each PERSON span additionally passes the STRICT recall-net gate (all
+# tokens capitalised, ≥2 substantial tokens, no stop/connective words) — not
+# the loose main-model path that trusts the model's span. German is unchanged.
+_MAIN_MODEL_LANGS = frozenset({"de"})  # langs whose spans we trust directly
+
+
+def _lang_allows_label(lang: str, rule_id: str) -> bool:
+    """A non-main-model language (English) contributes ONLY person NAMES — but
+    from BOTH its PERSON and ORG labels, because en_core_web_md unreliably tags
+    a real person's proper name as ORG on adverse-media prose ("Hristo Atanasov
+    Kovachki" → ORG). Both are re-tested as `name` and must clear the strict
+    span gate, so genuine orgs ("the European Prosecutor's Office") and bare
+    words ("Bitte") don't sneak through. English never contributes address."""
+    if lang in _MAIN_MODEL_LANGS:
+        return True
+    return rule_id in ("name", "organisation")
+
+
+def _strict_name_span_ok(value: str, toks: list[str]) -> bool:
+    """The narrow recall-net name gate, factored out: EVERY token capitalised
+    (kills lowercase connectives like 'von'/'of'/'the'), ≥2 substantial tokens,
+    and no token is a stop/connective word. Used for the English recall net and
+    the sm recall net so a swallowed multi-word span ('Lebenslauf von …',
+    'the European Prosecutor') can never pass."""
+    if len(toks) < 2 or not all(t[:1].isupper() for t in toks):
+        return False
+    if sum(1 for t in toks if len(t.rstrip(".")) >= 2) < 2:
+        return False  # need two substantial tokens ("M M" never)
+    if any(t.lower().strip(".,") in _RECALL_STOP_TOKENS for t in toks):
+        return False
+    return True
 
 # Display labels surfaced in PII findings (mirrors the regex `label` field).
 _LABEL_DISPLAY = {
@@ -69,9 +108,19 @@ _MAX_SCAN_CHARS = 50_000
 _HONORIFICS = {"herr", "frau", "hr", "fr", "dr", "mag", "prof", "dipl",
                "ing", "mmag", "ddr", "dipl.-ing", "frau dr", "herr dr"}
 _NAME_NOUN_SUFFIX = _re.compile(
-    r"(ung|heit|keit|schaft|tion|rechten|recht|kontakte|vorfall|vorfalls|"
-    r"prinzip|vorschläge|wörter|person|personen|verarbeitern|verarbeitung|"
-    r"button|binding|transformer)$", _re.IGNORECASE)
+    r"(ung|ungen|heit|heiten|keit|keiten|schaft|schaften|tion|tionen|"
+    r"rechten|recht|kontakte|vorfall|vorfalls|prinzip|vorschläge|wörter|"
+    r"person|personen|verarbeitern|verarbeitung|button|binding|transformer|"
+    # v9.349.0: German title-case-prose FP suffixes measured on the real DD
+    # report (participles/adjectives/plurals/common report nouns that the
+    # German model tags as PER: "Bestätigte Beteiligungen", "Dieser Bericht",
+    # "Merkmal Daten", "Nationalität Bulgarisch", "Kopiert Drucken"). Verified
+    # against 48 real German surnames — zero collateral. Adjectives that double
+    # as surnames (Stark, Groß, Reich, Ernst…) are structurally safe: none end
+    # in these syllables.
+    r"igt|igte|iert|ierte|isch|bericht|daten|merkmal|kategorie|tät|icht|"
+    r"bindung|beteiligung|unternehmen|kraftwerke|druck|drucken|kopiert)$",
+    _re.IGNORECASE)
 _NON_NAME_TOKENS = {"pre-trained", "transformer", "delete", "button", "admin",
                     "rechten", "binding", "data", "owner", "ticket", "review"}
 # Recall-net stop tokens (v9.342.0): German function words / adverbs /
@@ -87,6 +136,16 @@ _RECALL_STOP_TOKENS = frozenset({
     "schon", "noch", "dann", "wenn", "aber", "oder", "nicht", "sehr",
     "auch", "sowie", "bereits", "zuerst", "zuletzt", "damit", "dabei",
     "dazu", "jedoch", "außerdem", "enthält", "haben", "hatte", "sind",
+    # German connectives/prepositions that the English model swallows into a
+    # PERSON span ("Lebenslauf VON Hristo …", "Prüfe DEN Lebenslauf").
+    "von", "vom", "der", "die", "das", "den", "dem", "des", "ein", "eine",
+    "prüfe", "lebenslauf", "vermögen",
+    # English connectives/prepositions + generic nouns the OntoNotes model
+    # over-includes ("THE European Prosecutor's OFFICE", "money LAUNDERING").
+    "the", "of", "and", "for", "about", "with", "from", "to", "in", "on",
+    "at", "by", "a", "an", "office", "prosecutor", "laundering", "money",
+    "news", "latest", "report", "sector", "energy", "coal", "plant",
+    "european", "public", "bank",
 })
 _HONORIFIC_NEAR = _re.compile(
     r"\b(Herr|Frau|Hr|Fr|Dr|Mag|Prof|Dipl|Ing|MMag|DDr)\.?\s*$")
@@ -412,9 +471,23 @@ def scan_text(text: str, *, lang: str = "de",
         rule_id = _LABEL_MAP.get(ent.label_)
         if not rule_id:
             continue
+        # M9.3-hardening: a non-main-model language (English) contributes only
+        # person NAMES (from PERSON and ORG labels — en mislabels real names as
+        # ORG on adverse-media prose); its GPE/LOC are noise (Bulgaria, Balkan).
+        if not _lang_allows_label(lang, rule_id):
+            continue
         value = ent.text.strip()
         if len(value) < _MIN_ENTITY_CHARS:
             continue
+        # English: coerce ORG→name and require the STRICT span gate (all tokens
+        # capitalised, ≥2 substantial, no stop/connective words). This keeps a
+        # mislabelled real name ("Hristo Atanasov Kovachki"→ORG) while dropping
+        # genuine orgs ("the European Prosecutor's Office") and bare words
+        # ("Bitte", "money laundering"). German keeps its loose trusted path.
+        if lang not in _MAIN_MODEL_LANGS:
+            if not _strict_name_span_ok(value, value.split()):
+                continue
+            rule_id = "name"
         if not _passes_shape_gate(value, rule_id):
             continue
         # Opt-in NER-precision gate: tighten `name` (German-common-noun FP mode)
@@ -469,14 +542,8 @@ def scan_text(text: str, *, lang: str = "de",
                 if any(ent.start_char < e and ent.end_char > s
                        for s, e in taken):
                     continue  # overlaps a main-model finding
-                toks = value.split()
-                if len(toks) < 2 or not all(t[:1].isupper() for t in toks):
-                    continue
-                if sum(1 for t in toks if len(t.rstrip(".")) >= 2) < 2:
-                    continue  # need two substantial tokens ("M M" never)
-                if any(t.lower().strip(".,") in _RECALL_STOP_TOKENS
-                       for t in toks):
-                    continue  # inflected verb/adverb → title-case prose, not a name
+                if not _strict_name_span_ok(value, value.split()):
+                    continue  # <2 caps / connective / stop-word → prose, not a name
                 if not _passes_shape_gate(value, "name"):
                     continue
                 if name_precision and not _passes_name_precision_gate(

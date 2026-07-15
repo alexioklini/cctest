@@ -5583,7 +5583,15 @@
   "gdpr_scanner": {
     "enabled": false,
     "server_log": false,
+    "name_precision_gate": true,
+    "block_unscannable_on_cloud": false,
+    "confidence_lower": 0.5,
+    "confidence_upper": 0.85,
     "default_local_fallback_model": "gemma-4-12B-it-qat-4bit",
+    "background_pii_action": "anonymise",
+    "background_ask_action": "anonymise",
+    "background_anonymise_fail_action": "swap_to_local",
+    "web_egress": "refuse",
     "categories": {
       "secrets": {
         "action": "block"
@@ -5597,9 +5605,6 @@
       "financial": {
         "action": "block"
       },
-      "business_id": {
-        "action": "ignore"
-      },
       "contact": {
         "action": "ignore"
       },
@@ -5611,6 +5616,9 @@
       },
       "bare_id": {
         "action": "warn"
+      },
+      "business_id": {
+        "action": "ignore"
       }
     },
     "rule_overrides": {
@@ -5621,13 +5629,39 @@
       "dob": "block"
     },
     "min_occurrences": {
+      "date": 10,
+      "jp_mynumber": 10,
+      "pl_pesel": 5,
+      "no_fnr": 5,
+      "gr_amka": 5,
+      "bg_egn": 5,
+      "ro_cnp": 5,
+      "be_national": 5,
+      "se_personnummer": 5,
+      "ca_sin": 5,
+      "uk_nhs": 5,
+      "cz_rc": 5,
+      "es_dni_nie": 5,
+      "dk_cpr": 5,
+      "at_svnr": 3,
+      "us_ssn": 3,
+      "credit_card": 3,
+      "phone": 3,
+      "generic_secret_assignment": 3,
+      "svnr_ctx": 3,
+      "ssn_ctx_loose": 3,
+      "insurance_number_ctx": 3,
+      "id_card_ctx": 3,
+      "drivers_license_ctx": 3,
+      "passport_ctx_loose": 3,
+      "bank_account_ctx": 3,
+      "health_insurance_ctx": 3,
       "anthropic_key": 1,
       "aws_access_key": 1,
       "aws_secret_key": 1,
       "azure_account_key": 1,
       "azure_storage_conn": 1,
       "basic_auth_url": 1,
-      "generic_secret_assignment": 3,
       "github_app_token": 1,
       "github_pat": 1,
       "google_api_key": 1,
@@ -5643,69 +5677,37 @@
       "stripe_test": 1,
       "twilio_sid": 1,
       "ar_dni": 1,
-      "at_svnr": 3,
-      "be_national": 5,
-      "bg_egn": 5,
       "br_cpf": 1,
-      "ca_sin": 5,
       "ch_ahv": 1,
-      "cz_rc": 5,
       "de_steuerid": 1,
-      "dk_cpr": 5,
-      "es_dni_nie": 5,
       "fr_insee": 1,
-      "gr_amka": 5,
       "hu_taj": 1,
       "ie_pps": 1,
       "in_aadhaar": 1,
       "it_codicefiscale": 1,
-      "jp_mynumber": 10,
       "kr_rrn": 1,
       "mx_curp": 1,
       "nl_bsn": 1,
-      "no_fnr": 5,
-      "pl_pesel": 5,
       "pt_nif": 1,
-      "ro_cnp": 5,
-      "se_personnummer": 5,
       "sg_nric": 1,
       "tw_nid": 1,
-      "uk_nhs": 5,
       "uk_nino": 1,
-      "us_ssn": 3,
       "us_ssn_ctx": 1,
-      "drivers_license_ctx": 3,
-      "health_insurance_ctx": 3,
-      "id_card_ctx": 3,
-      "insurance_number_ctx": 3,
-      "passport_ctx_loose": 3,
-      "ssn_ctx_loose": 3,
-      "svnr_ctx": 3,
-      "bank_account_ctx": 3,
-      "credit_card": 3,
       "iban": 1,
       "br_cnpj": 1,
       "organisation": 1,
       "tax_id_ctx": 1,
       "email": 3,
       "name": 3,
-      "phone": 3,
       "ipv4": 1,
       "ipv6": 1,
       "address": 3,
-      "date": 10,
       "dob": 3,
       "passport": 1,
       "bare_identifier": 1
     },
-    "email_allowlist": [
-      "@wienerprivatbank.com"
-    ],
-    "background_pii_action": "anonymise",
-    "background_anonymise_fail_action": "swap_to_local",
-    "name_precision_gate": true,
     "count_points": {
-      "anthropic_key": [
+      "pem_private_key": [
         1,
         2
       ],
@@ -5717,55 +5719,11 @@
         1,
         2
       ],
-      "azure_account_key": [
-        1,
-        2
-      ],
-      "azure_storage_conn": [
-        1,
-        2
-      ],
-      "basic_auth_url": [
-        1,
-        2
-      ],
-      "generic_secret_assignment": [
-        2,
-        3
-      ],
       "github_app_token": [
         1,
         2
       ],
       "github_pat": [
-        1,
-        2
-      ],
-      "google_api_key": [
-        1,
-        2
-      ],
-      "google_oauth_client": [
-        1,
-        2
-      ],
-      "jwt": [
-        1,
-        2
-      ],
-      "mailgun_key": [
-        1,
-        2
-      ],
-      "openai_key": [
-        1,
-        2
-      ],
-      "pem_private_key": [
-        1,
-        2
-      ],
-      "sendgrid_key": [
         1,
         2
       ],
@@ -5777,6 +5735,14 @@
         1,
         2
       ],
+      "google_api_key": [
+        1,
+        2
+      ],
+      "google_oauth_client": [
+        1,
+        2
+      ],
       "stripe_live": [
         1,
         2
@@ -5785,95 +5751,63 @@
         1,
         2
       ],
+      "openai_key": [
+        1,
+        2
+      ],
+      "anthropic_key": [
+        1,
+        2
+      ],
       "twilio_sid": [
         1,
         2
       ],
-      "ar_dni": [
+      "sendgrid_key": [
         1,
         2
       ],
-      "at_svnr": [
+      "mailgun_key": [
+        1,
+        2
+      ],
+      "jwt": [
+        1,
+        2
+      ],
+      "azure_storage_conn": [
+        1,
+        2
+      ],
+      "azure_account_key": [
+        1,
+        2
+      ],
+      "basic_auth_url": [
+        1,
+        2
+      ],
+      "generic_secret_assignment": [
         2,
         3
-      ],
-      "be_national": [
-        3,
-        5
-      ],
-      "bg_egn": [
-        3,
-        5
-      ],
-      "br_cpf": [
-        1,
-        2
-      ],
-      "ca_sin": [
-        3,
-        5
-      ],
-      "ch_ahv": [
-        1,
-        2
-      ],
-      "cz_rc": [
-        3,
-        5
       ],
       "de_steuerid": [
         1,
         2
       ],
-      "dk_cpr": [
+      "uk_nino": [
+        1,
+        2
+      ],
+      "uk_nhs": [
         3,
         5
-      ],
-      "es_dni_nie": [
-        3,
-        5
-      ],
-      "fr_insee": [
-        1,
-        2
-      ],
-      "gr_amka": [
-        3,
-        5
-      ],
-      "hu_taj": [
-        1,
-        2
-      ],
-      "ie_pps": [
-        1,
-        2
-      ],
-      "in_aadhaar": [
-        1,
-        2
-      ],
-      "it_codicefiscale": [
-        1,
-        2
-      ],
-      "jp_mynumber": [
-        5,
-        10
-      ],
-      "kr_rrn": [
-        1,
-        2
-      ],
-      "mx_curp": [
-        1,
-        2
       ],
       "nl_bsn": [
         1,
         2
       ],
-      "no_fnr": [
+      "be_national": [
         3,
         5
       ],
@@ -5885,13 +5819,73 @@
         1,
         2
       ],
+      "se_personnummer": [
+        3,
+        5
+      ],
+      "dk_cpr": [
+        3,
+        5
+      ],
+      "no_fnr": [
+        3,
+        5
+      ],
+      "ch_ahv": [
+        1,
+        2
+      ],
+      "cz_rc": [
+        3,
+        5
+      ],
       "ro_cnp": [
         3,
         5
       ],
-      "se_personnummer": [
+      "hu_taj": [
+        1,
+        2
+      ],
+      "gr_amka": [
         3,
         5
+      ],
+      "bg_egn": [
+        3,
+        5
+      ],
+      "ie_pps": [
+        1,
+        2
+      ],
+      "br_cpf": [
+        1,
+        2
+      ],
+      "ca_sin": [
+        3,
+        5
+      ],
+      "mx_curp": [
+        1,
+        2
+      ],
+      "ar_dni": [
+        1,
+        2
+      ],
+      "in_aadhaar": [
+        1,
+        2
+      ],
+      "jp_mynumber": [
+        5,
+        10
+      ],
+      "kr_rrn": [
+        1,
+        2
       ],
       "sg_nric": [
         1,
@@ -5901,11 +5895,19 @@
         1,
         2
       ],
-      "uk_nhs": [
+      "at_svnr": [
+        2,
+        3
+      ],
+      "fr_insee": [
+        1,
+        2
+      ],
+      "es_dni_nie": [
         3,
         5
       ],
-      "uk_nino": [
+      "it_codicefiscale": [
         1,
         2
       ],
@@ -5917,23 +5919,7 @@
         1,
         2
       ],
-      "drivers_license_ctx": [
-        2,
-        3
-      ],
-      "health_insurance_ctx": [
-        2,
-        3
-      ],
-      "id_card_ctx": [
-        2,
-        3
-      ],
-      "insurance_number_ctx": [
-        2,
-        3
-      ],
-      "passport_ctx_loose": [
+      "svnr_ctx": [
         2,
         3
       ],
@@ -5941,15 +5927,23 @@
         2,
         3
       ],
-      "svnr_ctx": [
+      "insurance_number_ctx": [
         2,
         3
       ],
-      "bank_account_ctx": [
+      "id_card_ctx": [
         2,
         3
       ],
-      "credit_card": [
+      "drivers_license_ctx": [
+        2,
+        3
+      ],
+      "passport_ctx_loose": [
+        2,
+        3
+      ],
+      "health_insurance_ctx": [
         2,
         3
       ],
@@ -5957,11 +5951,15 @@
         1,
         2
       ],
-      "br_cnpj": [
-        1,
-        2
+      "credit_card": [
+        2,
+        3
       ],
-      "organisation": [
+      "bank_account_ctx": [
+        2,
+        3
+      ],
+      "br_cnpj": [
         1,
         2
       ],
@@ -5969,11 +5967,11 @@
         1,
         2
       ],
-      "email": [
-        2,
-        3
+      "organisation": [
+        1,
+        2
       ],
-      "name": [
+      "email": [
         2,
         3
       ],
@@ -5989,7 +5987,11 @@
         1,
         2
       ],
-      "address": [
+      "passport": [
+        1,
+        2
+      ],
+      "dob": [
         2,
         3
       ],
@@ -5997,23 +5999,208 @@
         1,
         3
       ],
-      "dob": [
+      "mrz": [
+        1,
+        2
+      ],
+      "name": [
         2,
         3
       ],
-      "passport": [
-        1,
-        2
+      "address": [
+        2,
+        3
       ],
       "bare_identifier": [
         1,
         2
       ]
     },
-    "confidence_lower": 0.5,
-    "confidence_upper": 0.85,
-    "background_ask_action": "anonymise",
-    "web_egress": "refuse"
+    "email_allowlist": [
+      "@wienerprivatbank.com"
+    ],
+    "catalog": {
+      "rule_categories": {
+        "pem_private_key": "secrets",
+        "aws_access_key": "secrets",
+        "aws_secret_key": "CHANGE_ME_RANDOM_SECRET",
+        "github_app_token": "YOUR_TOKEN",
+        "github_pat": "secrets",
+        "slack_token": "YOUR_TOKEN",
+        "slack_webhook": "secrets",
+        "google_api_key": "YOUR_API_KEY",
+        "google_oauth_client": "secrets",
+        "stripe_live": "secrets",
+        "stripe_test": "secrets",
+        "openai_key": "secrets",
+        "anthropic_key": "secrets",
+        "twilio_sid": "secrets",
+        "sendgrid_key": "secrets",
+        "mailgun_key": "secrets",
+        "jwt": "secrets",
+        "azure_storage_conn": "secrets",
+        "azure_account_key": "secrets",
+        "basic_auth_url": "secrets",
+        "generic_secret_assignment": "CHANGE_ME_RANDOM_SECRET",
+        "de_steuerid": "national_id",
+        "uk_nino": "national_id",
+        "uk_nhs": "national_id",
+        "nl_bsn": "national_id",
+        "be_national": "national_id",
+        "pl_pesel": "national_id",
+        "pt_nif": "national_id",
+        "se_personnummer": "national_id",
+        "dk_cpr": "national_id",
+        "no_fnr": "national_id",
+        "ch_ahv": "national_id",
+        "cz_rc": "national_id",
+        "ro_cnp": "national_id",
+        "hu_taj": "national_id",
+        "gr_amka": "national_id",
+        "bg_egn": "national_id",
+        "ie_pps": "national_id",
+        "br_cpf": "national_id",
+        "ca_sin": "national_id",
+        "mx_curp": "national_id",
+        "ar_dni": "national_id",
+        "in_aadhaar": "national_id",
+        "jp_mynumber": "national_id",
+        "kr_rrn": "national_id",
+        "sg_nric": "national_id",
+        "tw_nid": "national_id",
+        "at_svnr": "national_id",
+        "fr_insee": "national_id",
+        "es_dni_nie": "national_id",
+        "it_codicefiscale": "national_id",
+        "us_ssn": "national_id",
+        "us_ssn_ctx": "national_id",
+        "svnr_ctx": "national_id_ctx",
+        "ssn_ctx_loose": "national_id_ctx",
+        "insurance_number_ctx": "national_id_ctx",
+        "id_card_ctx": "national_id_ctx",
+        "drivers_license_ctx": "national_id_ctx",
+        "passport_ctx_loose": "national_id_ctx",
+        "health_insurance_ctx": "national_id_ctx",
+        "iban": "financial",
+        "credit_card": "financial",
+        "bank_account_ctx": "financial",
+        "br_cnpj": "business_id",
+        "tax_id_ctx": "business_id",
+        "organisation": "business_id",
+        "email": "contact",
+        "phone": "contact",
+        "ipv4": "network",
+        "ipv6": "network",
+        "passport": "personal",
+        "dob": "personal",
+        "date": "personal",
+        "mrz": "personal",
+        "name": "contact",
+        "address": "personal",
+        "bare_identifier": "bare_id"
+      },
+      "category_labels": {
+        "secrets": "CHANGE_ME_RANDOM_SECRET",
+        "national_id": "Nationale IDs (prüfsummengeprüft)",
+        "national_id_ctx": "ID-ähnliche Werte (kontextbasiert)",
+        "financial": "Finanzen (IBAN, Karten, Konten)",
+        "business_id": "Unternehmens-IDs (keine personenbezogenen Daten)",
+        "contact": "Kontaktdaten (E-Mails, Telefon, Namen)",
+        "network": "Netzwerkadressen (IP)",
+        "personal": "Biografisch (Reisepass, Geburtsdatum, Adresse)",
+        "bare_id": "Reine numerische Bezeichner"
+      },
+      "default_category_actions": {
+        "secrets": "CHANGE_ME_RANDOM_SECRET",
+        "national_id": "warn",
+        "national_id_ctx": "warn",
+        "financial": "warn",
+        "contact": "ignore",
+        "network": "ignore",
+        "personal": "warn",
+        "bare_id": "warn",
+        "business_id": "ignore"
+      },
+      "rule_labels": {
+        "pem_private_key": "Privater Schlüssel",
+        "aws_access_key": "AWS-Access-Key-ID",
+        "aws_secret_key": "CHANGE_ME_RANDOM_SECRET",
+        "github_app_token": "YOUR_TOKEN",
+        "github_pat": "Persönliches GitHub-Zugriffstoken",
+        "slack_token": "YOUR_TOKEN",
+        "slack_webhook": "Slack webhook URL",
+        "google_api_key": "YOUR_API_KEY",
+        "google_oauth_client": "Google-OAuth-Client-ID",
+        "stripe_live": "Stripe-Live-Key",
+        "stripe_test": "Stripe-Test-Key",
+        "openai_key": "OpenAI-API-Key",
+        "anthropic_key": "Anthropic-API-Key",
+        "twilio_sid": "Twilio-Account-SID",
+        "sendgrid_key": "SendGrid-API-Key",
+        "mailgun_key": "Mailgun-API-Key",
+        "jwt": "JWT",
+        "azure_storage_conn": "Azure-Storage-Verbindungszeichenfolge",
+        "azure_account_key": "Azure-Account-Key",
+        "basic_auth_url": "Zugangsdaten in URL",
+        "generic_secret_assignment": "CHANGE_ME_RANDOM_SECRET",
+        "email": "E-Mail-Adresse",
+        "iban": "IBAN",
+        "ipv4": "IPv4-Adresse",
+        "ipv6": "IPv6-Adresse",
+        "us_ssn": "US-Sozialversicherungsnummer",
+        "us_ssn_ctx": "US-Sozialversicherungsnummer",
+        "at_svnr": "Österreichische Sozialversicherungsnummer",
+        "fr_insee": "Französische INSEE / NIR",
+        "de_steuerid": "Deutsche Steuer-ID",
+        "uk_nino": "UK National Insurance Number",
+        "uk_nhs": "UK-NHS-Nummer",
+        "nl_bsn": "Niederländische BSN",
+        "be_national": "Belgische Nationalnummer",
+        "pl_pesel": "Polnische PESEL",
+        "pt_nif": "Portugiesische NIF",
+        "se_personnummer": "Schwedische Personnummer",
+        "dk_cpr": "Dänische CPR",
+        "no_fnr": "Norwegische Fødselsnummer",
+        "ch_ahv": "Schweizer AHV",
+        "cz_rc": "Tschechische rodné číslo",
+        "ro_cnp": "Rumänische CNP",
+        "hu_taj": "Ungarische TAJ",
+        "gr_amka": "Griechische AMKA",
+        "bg_egn": "Bulgarische EGN",
+        "ie_pps": "Irische PPS",
+        "br_cpf": "Brasilianische CPF",
+        "br_cnpj": "Brasilianische CNPJ",
+        "ca_sin": "Kanadische SIN",
+        "mx_curp": "Mexikanische CURP",
+        "ar_dni": "Argentinische DNI",
+        "in_aadhaar": "Indische Aadhaar",
+        "jp_mynumber": "Japanische My Number",
+        "kr_rrn": "Koreanische RRN",
+        "sg_nric": "Singapurische NRIC/FIN",
+        "tw_nid": "Taiwanesische National-ID",
+        "credit_card": "Kreditkartennummer",
+        "phone": "Telefonnummer",
+        "es_dni_nie": "Spanische DNI/NIE",
+        "it_codicefiscale": "Italienische Codice Fiscale",
+        "passport": "Reisepassnummer (heuristisch)",
+        "dob": "Geburtsdatum",
+        "date": "Datum (personenbezogen-gegated)",
+        "mrz": "MRZ (maschinenlesbare Ausweiszone)",
+        "svnr_ctx": "Sozialversicherungsnummer (wahrscheinlich)",
+        "ssn_ctx_loose": "Sozialversicherungsnummer (wahrscheinlich)",
+        "tax_id_ctx": "Steueridentifikationsnummer (wahrscheinlich)",
+        "insurance_number_ctx": "Versicherungsnummer (wahrscheinlich)",
+        "id_card_ctx": "Ausweisnummer (wahrscheinlich)",
+        "drivers_license_ctx": "Führerscheinnummer (wahrscheinlich)",
+        "passport_ctx_loose": "Reisepassnummer (wahrscheinlich)",
+        "bank_account_ctx": "Bankkontonummer (wahrscheinlich)",
+        "health_insurance_ctx": "Krankenversicherungsnummer (wahrscheinlich)",
+        "name": "Name (spaCy NER, Deutsch)",
+        "address": "Adresse / Ort (spaCy NER, Deutsch)",
+        "organisation": "Organisation (spaCy NER, Deutsch)",
+        "bare_identifier": "Reiner numerischer Bezeichner"
+      }
+    }
   },
   "quotas": {
     "enabled": true,
