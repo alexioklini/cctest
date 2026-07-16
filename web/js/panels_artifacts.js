@@ -615,6 +615,42 @@ async function loadArtifactVersion(version) {
   const sel = document.getElementById('artifact-version-select');
   if (sel) sel.value = version;
 
+  // Provenance strip (Phase B): Code / Env / Anfrage / Zeit chips for THIS
+  // version. Pre-migration rows and write_file/execute_command versions have
+  // no produced_by → only the generic chips show; fully empty → hidden.
+  const provEl = document.getElementById('artifact-provenance');
+  if (provEl) {
+    provEl.innerHTML = '';
+    provEl.classList.add('hidden');
+    const provArts = state.activeChat ? (state.artifacts[state.activeChat.sessionId] || []) : [];
+    const provArt = provArts.find(a => a.id === artifactId);
+    const provVer = (provArt?.versions || []).find(v => Number(v.version) === Number(version));
+    if (provVer && (provVer.produced_by || provVer.env_snapshot)) {
+      const chips = [];
+      if (provVer.produced_by) {
+        // Click opens the producing script's artifact (registered under the
+        // same session with the script name).
+        const srcArt = provArts.find(a => a.name === provVer.produced_by);
+        chips.push(srcArt
+          ? `<button class="artifact-prov-chip clickable" title="Erzeugendes Skript öffnen" onclick="openArtifactPanel('${esc(srcArt.id)}')">Code: ${esc(provVer.produced_by)}</button>`
+          : `<span class="artifact-prov-chip" title="Erzeugendes Skript">Code: ${esc(provVer.produced_by)}</span>`);
+      }
+      if (provVer.env_snapshot) {
+        const envShort = provVer.env_snapshot.length > 34
+          ? provVer.env_snapshot.slice(0, 34) + '…' : provVer.env_snapshot;
+        chips.push(`<span class="artifact-prov-chip" title="${esc(provVer.env_snapshot)}">Env: ${esc(envShort)}</span>`);
+      }
+      if (provVer.message_idx != null) {
+        chips.push(`<span class="artifact-prov-chip" title="Erzeugt in dieser Anfrage">Anfrage ${esc(String(provVer.message_idx))}</span>`);
+      }
+      if (provVer.created_at) {
+        chips.push(`<span class="artifact-prov-chip" title="Zeitpunkt">${esc(new Date(provVer.created_at * 1000).toLocaleString())}</span>`);
+      }
+      provEl.innerHTML = chips.join('');
+      provEl.classList.remove('hidden');
+    }
+  }
+
   const container = document.getElementById('artifact-content');
   container.innerHTML = '<div class="artifact-empty"><div class="wave-bars"><span></span><span></span><span></span></div></div>';
 
@@ -1376,6 +1412,8 @@ function updateArtifactRegistry(sessionId, eventData) {
       action: eventData.action,
       created_at: Date.now() / 1000,
       message_idx: msgIdx,
+      produced_by: eventData.produced_by || null,
+      env_snapshot: eventData.env_snapshot || null,
     });
   } else {
     // New artifact
@@ -1391,6 +1429,8 @@ function updateArtifactRegistry(sessionId, eventData) {
         action: eventData.action,
         created_at: Date.now() / 1000,
         message_idx: msgIdx,
+        produced_by: eventData.produced_by || null,
+        env_snapshot: eventData.env_snapshot || null,
       }],
     });
   }

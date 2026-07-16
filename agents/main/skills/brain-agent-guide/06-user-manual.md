@@ -1615,6 +1615,27 @@ anzeigen"-Schalter, der den Inhalt direkt in der Karte rendert.
 Jeder Schreib-/Bearbeitungsvorgang erzeugt eine **Artifact-Version**
 (5 MB-Limit). Artifact-Panel → Versions-Auswahl zum Vergleichen.
 
+### Nachweiskette (Provenance, v9.357.0)
+
+Jede Zahl führt auf ihren Code zurück: hat ein **Python- oder R-Skript**
+eine Datei erzeugt (Diagramm, CSV-Ergebnis, Auswertung), zeigt das
+Artifact-Panel unter der Kopfzeile **Herkunfts-Chips** für die gewählte
+Version:
+- **Code** — das erzeugende Skript (z. B. `script_3.py`); ein Klick öffnet
+  den Skript-Quelltext als eigenes Artefakt. So ist prüfbar, WIE eine Zahl
+  berechnet wurde.
+- **Env** — die Rechenumgebung (Python-/Paketversionen bzw. R-Version) zum
+  Zeitpunkt der Erzeugung; vollständig per Tooltip.
+- **Anfrage N** + **Zeitstempel** — welcher Chat-Turn die Version erzeugte
+  und wann.
+
+Dateien, die der Agent direkt schrieb (`write_file`) oder die per
+Shell-Befehl entstanden, tragen bewusst KEINE Code-/Env-Chips — lieber
+ehrlich leer als geraten. Ältere Versionen (vor v9.357.0) zeigen ebenfalls
+keine Chips. Relevanz: Modellvalidierung/Prüfung (BCBS 239 / MaRisk
+AT 4.3.2) — Ergebnisdatei, erzeugender Code, Datenstand-Zeitpunkt und
+Environment hängen an einer Stelle zusammen.
+
 ### Design-Modus (HTML-Artefakte per Klick verfeinern, v9.351.0)
 
 Auf **HTML-Artefakten** (One-Pager, Reports, Landing Pages) gibt es in der

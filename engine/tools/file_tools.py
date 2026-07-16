@@ -4415,6 +4415,70 @@ def _append_to_tool_result(res_json: str, suffix: str) -> str:
     return res_json + suffix
 
 
+# --- Environment snapshots (Quant-Workbench Phase B provenance) -------------
+# Short 'py3.14|numpy 2.4.2|pandas 3.0.2|…' strings stored on every artifact
+# version a python_exec/r_exec script produced — computed once per process
+# start (per venv) and cached. The package list is the quant-relevant probe
+# set; only installed packages appear. For python_exec the SUBPROCESS runs the
+# same interpreter with venv_path prepended to PYTHONPATH, so venv dist-info
+# versions win over the server's own where both exist.
+
+_ENV_SNAPSHOT_PKGS = (
+    "numpy", "pandas", "scipy", "statsmodels", "arch", "QuantLib",
+    "duckdb", "pyarrow", "matplotlib", "seaborn", "scikit-learn", "openpyxl",
+)
+_env_snapshot_cache: dict[str, str] = {}
+
+
+def _env_snapshot_py(venv_path: str = "") -> str:
+    key = f"py:{venv_path or ''}"
+    cached = _env_snapshot_cache.get(key)
+    if cached is not None:
+        return cached
+    import importlib.metadata as _md
+    versions: dict[str, str] = {}
+    try:
+        if venv_path and os.path.isdir(venv_path):
+            for dist in _md.distributions(path=[venv_path]):
+                try:
+                    versions[(dist.metadata["Name"] or "").lower()] = dist.version
+                except Exception:
+                    continue
+        for pkg in _ENV_SNAPSHOT_PKGS:
+            if pkg.lower() not in versions:
+                try:
+                    versions[pkg.lower()] = _md.version(pkg)
+                except Exception:
+                    continue
+        parts = [f"py{sys.version_info.major}.{sys.version_info.minor}"]
+        parts += [f"{pkg} {versions[pkg.lower()]}"
+                  for pkg in _ENV_SNAPSHOT_PKGS if pkg.lower() in versions]
+        snap = "|".join(parts)
+    except Exception:
+        snap = f"py{sys.version_info.major}.{sys.version_info.minor}"
+    _env_snapshot_cache[key] = snap
+    return snap
+
+
+def _env_snapshot_r() -> str:
+    cached = _env_snapshot_cache.get("r")
+    if cached is not None:
+        return cached
+    snap = "R"
+    try:
+        rscript = shutil.which("Rscript")
+        if rscript:
+            out = subprocess.run([rscript, "--version"], capture_output=True,
+                                 text=True, timeout=10)
+            m = re.search(r"version\s+([\d.]+)", out.stdout + out.stderr)
+            if m:
+                snap = f"R {m.group(1)}"
+    except Exception:
+        pass
+    _env_snapshot_cache["r"] = snap
+    return snap
+
+
 def tool_python_exec(args: dict) -> str:
     """Execute Python code in an isolated subprocess with artifact folder as cwd."""
     import brain as _brain
@@ -4611,13 +4675,15 @@ def tool_python_exec(args: dict) -> str:
             _script_key = script_name
         changed = _changed_files(watch_dir, pre_files,
                                  exclude={script_name, _script_key})
+        _env_snap = _env_snapshot_py(venv_path)
         if changed and agent:
             created = []
             for fname, was_new in changed:
                 fpath = os.path.join(watch_dir, fname)
                 if os.path.isfile(fpath):
                     _brain._after_file_write(
-                        fpath, "created" if was_new else "modified", agent_id)
+                        fpath, "created" if was_new else "modified", agent_id,
+                        produced_by=script_name, env_snapshot=_env_snap)
                     created.append(fname)
             if created:
                 result["artifacts"] = created
@@ -4638,7 +4704,9 @@ def tool_python_exec(args: dict) -> str:
                     counter += 1
                 with open(artifact_path, "w") as af:
                     af.write(output)
-                _brain._after_file_write(artifact_path, "created", agent_id)
+                _brain._after_file_write(artifact_path, "created", agent_id,
+                                         produced_by=script_name,
+                                         env_snapshot=_env_snap)
                 result["artifacts"] = [os.path.basename(artifact_path)]
                 # For large outputs, replace inline data with a reference so the
                 # summariser doesn't ingest a megabyte of stdout. Small outputs
@@ -4779,13 +4847,15 @@ def tool_r_exec(args: dict) -> str:
             _script_key = script_name
         changed = _changed_files(watch_dir, pre_files,
                                  exclude={script_name, _script_key})
+        _env_snap = _env_snapshot_r()
         if changed and agent:
             created = []
             for fname, was_new in changed:
                 fpath = os.path.join(watch_dir, fname)
                 if os.path.isfile(fpath):
                     _brain._after_file_write(
-                        fpath, "created" if was_new else "modified", agent_id)
+                        fpath, "created" if was_new else "modified", agent_id,
+                        produced_by=script_name, env_snapshot=_env_snap)
                     created.append(fname)
             if created:
                 result["artifacts"] = created
@@ -4799,7 +4869,9 @@ def tool_r_exec(args: dict) -> str:
                     counter += 1
                 with open(artifact_path, "w") as af:
                     af.write(output)
-                _brain._after_file_write(artifact_path, "created", agent_id)
+                _brain._after_file_write(artifact_path, "created", agent_id,
+                                         produced_by=script_name,
+                                         env_snapshot=_env_snap)
                 result["artifacts"] = [os.path.basename(artifact_path)]
                 if len(output) > 1000:
                     lines = output.splitlines()

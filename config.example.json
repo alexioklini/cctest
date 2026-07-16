@@ -5333,6 +5333,53 @@
       "profile": "balanced",
       "_audio_backfilled": true,
       "_caps_canonical": true
+    },
+    "moonshotai/kimi-k3": {
+      "enabled": false,
+      "shortname": "kimi-k3",
+      "display_name": "kimi-k3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/moonshotai/kimi-k3": {
+      "enabled": false,
+      "shortname": "kimi-k3",
+      "display_name": "kimi-k3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "moonshotai/kimi-k3",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/meta/muse-spark-1.1": {
+      "enabled": false,
+      "shortname": "muse-spark-1.1",
+      "display_name": "muse-spark-1.1",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "meta/muse-spark-1.1",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

@@ -271,11 +271,24 @@ Team CRUD + ACL grants (which agents/models a team or user can access).
 ### chats.db → artifacts / artifact_versions
 `artifacts(id, session_id, path, role(intermediate|output), mime, size,
 created_at, …)`. `artifact_versions(artifact_id, version, content_blob,
-size, created_at, message_idx)` — 5MB cap per version. `message_idx` is the
-**1-based producing-turn number** ("Anfrage N") used by the right-panel
-artifact grouping (count of user messages at write time — NOT an array
-position; a position would drift on the client, whose message array expands
-the in-memory tool rows that never reach the DB).
+size, created_at, message_idx, produced_by, env_snapshot)` — 5MB cap per
+version. `message_idx` is the **1-based producing-turn number** ("Anfrage N")
+used by the right-panel artifact grouping (count of user messages at write
+time — NOT an array position; a position would drift on the client, whose
+message array expands the in-memory tool rows that never reach the DB).
+
+**Provenance (v9.357.0, Quant-Workbench B — die Nachweiskette)**:
+`produced_by TEXT` = Name des erzeugenden Skripts (`script_3.py`), gesetzt
+NUR von `python_exec`/`r_exec` für Dateien, die ihr Skript geschrieben hat;
+`env_snapshot TEXT` = Ausführungsumgebung (`py3.14|numpy 2.5.1|…` bzw.
+`R 4.6.1`, einmal pro Prozessstart je venv berechnet + gecacht,
+`file_tools._env_snapshot_py/_r`). `write_file`/`execute_command`-Versionen
+und Pre-Migration-Zeilen sind ehrlich NULL (kein Raten; UI blendet die
+Chips dann aus). Kwarg-Kette: exec-Tool → `_after_file_write(produced_by=,
+env_snapshot=)` → `_register_artifact_version` → `add_artifact_version`;
+der `artifact_updated`-SSE-Payload trägt beide Felder. UI: Chips
+Code/Env/Anfrage/Zeit im Versions-Detail (`#artifact-provenance`), der
+Code-Chip öffnet das Skript-Artefakt per Klick.
 
 ### chats.db → active_turns
 `session_id TEXT PK, turn_id TEXT, model TEXT, started_at REAL`.

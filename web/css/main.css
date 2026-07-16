@@ -4214,6 +4214,35 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 .artifact-version-select:focus { border-color: var(--accent-brand); outline: none; }
 
+/* Provenance chips (Phase B): Code / Env / Anfrage / Zeit under the header */
+.artifact-provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-200);
+  background: var(--bg-100);
+}
+.artifact-prov-chip {
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 1px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-200);
+  background: var(--bg-000);
+  color: var(--text-300);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.artifact-prov-chip.clickable {
+  cursor: pointer;
+  color: var(--accent-brand);
+  font-family: inherit;
+}
+.artifact-prov-chip.clickable:hover { border-color: var(--accent-brand); }
+
 .artifact-content {
   flex: 1;
   overflow: auto;

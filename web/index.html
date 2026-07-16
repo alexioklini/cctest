@@ -1820,6 +1820,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <select class="artifact-version-select" id="artifact-version-select" onchange="loadArtifactVersion(this.value)"></select>
       </div>
     </div>
+    <!-- Provenance chips for the selected version (Phase B: Code/Env/Turn/Zeit;
+         filled by loadArtifactVersion, hidden when the version has no data) -->
+    <div class="artifact-provenance hidden" id="artifact-provenance"></div>
     <div class="artifact-content" id="artifact-content"></div>
     <div class="artifact-actions" id="artifact-actions">
       <button class="artifact-action-btn" onclick="copyArtifact()" title="Kopieren">

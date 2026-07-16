@@ -423,6 +423,20 @@ class ChatDB:
                 conn.execute("ALTER TABLE artifact_versions ADD COLUMN thumbnail BLOB")
             except sqlite3.OperationalError:
                 pass
+            # Provenance (Quant-Workbench Phase B): which code produced this
+            # version (script path relative to the session folder, e.g.
+            # 'script_3.py') and the execution environment it ran in
+            # ('py3.14|numpy 2.4.2|…'). NULL = pre-migration row or a write
+            # with no attributable script (write_file, execute_command —
+            # honestly empty rather than guessed).
+            try:
+                conn.execute("ALTER TABLE artifact_versions ADD COLUMN produced_by TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                conn.execute("ALTER TABLE artifact_versions ADD COLUMN env_snapshot TEXT")
+            except sqlite3.OperationalError:
+                pass
             # ── Multi-user migrations ──
             # Add user_id to sessions (migration)
             try:
@@ -1240,11 +1254,12 @@ class ChatDB:
 
     @staticmethod
     @_db_safe(default=None)
-    def add_artifact_version(artifact_id, version, content, size, message_idx, action, thumbnail=None):
+    def add_artifact_version(artifact_id, version, content, size, message_idx, action, thumbnail=None,
+                             produced_by=None, env_snapshot=None):
         with _db_conn() as conn:
             conn.execute(
-                "INSERT INTO artifact_versions (artifact_id, version, content, size, message_idx, action, thumbnail) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (artifact_id, version, content, size, message_idx, action, thumbnail))
+                "INSERT INTO artifact_versions (artifact_id, version, content, size, message_idx, action, thumbnail, produced_by, env_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (artifact_id, version, content, size, message_idx, action, thumbnail, produced_by, env_snapshot))
             conn.commit()
 
     @staticmethod
@@ -1292,9 +1307,10 @@ class ChatDB:
                 # version to the turn that produced it (latest user message's
                 # array position at write time) so the UI groups by turn.
                 vers = conn.execute(
-                    "SELECT version, size, action, created_at, message_idx FROM artifact_versions WHERE artifact_id = ? ORDER BY version",
+                    "SELECT version, size, action, created_at, message_idx, produced_by, env_snapshot FROM artifact_versions WHERE artifact_id = ? ORDER BY version",
                     (d["id"],)).fetchall()
-                d["versions"] = [{"version": v[0], "size": v[1], "action": v[2], "created_at": v[3], "message_idx": v[4]} for v in vers]
+                d["versions"] = [{"version": v[0], "size": v[1], "action": v[2], "created_at": v[3], "message_idx": v[4],
+                                  "produced_by": v[5], "env_snapshot": v[6]} for v in vers]
                 # Artifact-level anchor: the creating turn (first version).
                 d["message_idx"] = d["versions"][0]["message_idx"] if d["versions"] else None
                 results.append(d)
@@ -1384,9 +1400,10 @@ class ChatDB:
                 return None
             d = dict(row)
             vers = conn.execute(
-                "SELECT version, size, action, created_at FROM artifact_versions WHERE artifact_id = ? ORDER BY version",
+                "SELECT version, size, action, created_at, produced_by, env_snapshot FROM artifact_versions WHERE artifact_id = ? ORDER BY version",
                 (artifact_id,)).fetchall()
-            d["versions"] = [{"version": v[0], "size": v[1], "action": v[2], "created_at": v[3]} for v in vers]
+            d["versions"] = [{"version": v[0], "size": v[1], "action": v[2], "created_at": v[3],
+                              "produced_by": v[4], "env_snapshot": v[5]} for v in vers]
             return d
 
     @staticmethod

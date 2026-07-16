@@ -347,3 +347,14 @@ zwischen Fragen geladen"), VERSION. Handover-Notiz in dieses Dokument (Abschnitt
   Test-Infra per-Maschine: postgresql@17 (brew-Service), DB `braintest`
   (50k-Zeilen `positionen`, Role `brain_ro`), psycopg2-binary im
   Server-Interpreter. Damit ist Phase D KOMPLETT. Nächste Phase: B oder C.
+- 2026-07-16: **Phase B ABGESCHLOSSEN** (v9.357.0). Migration + Kwarg-Kette +
+  UI-Chips + SSE exakt nach Plan; Setzer python_exec/r_exec (inkl.
+  output.txt-Fallback), execute_command/write_file ehrlich NULL (per Test
+  gepinnt). env_snapshot liest venv-dist-info via
+  `importlib.metadata.distributions(path=[venv])` (kein Subprozess nötig;
+  venv gewinnt über Server-site-packages, da der exec-Subprozess mit
+  PYTHONPATH=venv läuft). Erfolgskriterien live: PNG per python_exec →
+  Chips `script_1.py` + Env-String im Panel, Klick öffnet das Skript
+  (Playwright im echten Browser verifiziert); Versionen ohne Provenance
+  (render_diagram, Pre-Migration) blenden die Leiste aus, kein Bruch.
+  ABWEICHUNG: keine — Plan 1:1. Nächste Phase: C (Notebook-Renderer).

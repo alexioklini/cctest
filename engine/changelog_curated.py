@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.357.0",
+        "date": "2026-07-16",
+        "title": "Jede Zahl führt auf ihren Code zurück",
+        "body": "Erzeugt ein Python- oder R-Skript eine Datei (Diagramm, "
+                "Auswertung, Ergebnistabelle), zeigt die Datei-Ansicht jetzt "
+                "deren Herkunft: welches Skript sie erzeugt hat (ein Klick "
+                "öffnet den Code), mit welchen Programm- und Paketversionen "
+                "gerechnet wurde und in welcher Anfrage sie entstand. Damit "
+                "sind Auswertungen für Prüfung und Modellvalidierung "
+                "lückenlos nachvollziehbar.",
+        "audience": "user",
+        "versions": ["9.357.0"],
+    },
+    {
         "version": "9.356.0",
         "date": "2026-07-16",
         "title": "Firmendatenbanken sicher anbinden",
