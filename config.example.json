@@ -5266,25 +5266,6 @@
       "profile": "balanced",
       "_caps_canonical": true
     },
-    "voxtral-mini-asr-streaming-mellon-greek-solutions-2606": {
-      "enabled": false,
-      "shortname": "voxtral-mini-asr-streaming-mellon-greek-solutions-2606",
-      "display_name": "voxtral-mini-asr-streaming-mellon-greek-solutions-2606",
-      "icon": "🎤",
-      "priority": 45,
-      "capabilities": [
-        "audio_transcription"
-      ],
-      "thinking_format": "none",
-      "max_context": 32768,
-      "max_output": 4096,
-      "inference": {},
-      "raw_formats": [],
-      "provider": "mistral-direct",
-      "profile": "balanced",
-      "_audio_backfilled": true,
-      "_caps_canonical": true
-    },
     "voxtral-mini-tts-mellon-greek-2606-solutions": {
       "enabled": false,
       "shortname": "voxtral-mini-tts-mellon-greek-2606-solutions",
@@ -5302,6 +5283,55 @@
       "provider": "mistral-direct",
       "profile": "balanced",
       "_audio_backfilled": true,
+      "_caps_canonical": true
+    },
+    "voxtral-mini-asr-streaming-mellon-greek-2606-solutions": {
+      "enabled": false,
+      "shortname": "voxtral-mini-asr-streaming-mellon-greek-2606-solutions",
+      "display_name": "voxtral-mini-asr-streaming-mellon-greek-2606-solutions",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_audio_backfilled": true,
+      "_caps_canonical": true
+    },
+    "k3": {
+      "enabled": false,
+      "shortname": "k3",
+      "display_name": "k3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "kimi-coding",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "kwaipilot/kat-coder-pro-v2.5:free": {
+      "enabled": false,
+      "shortname": "kat-coder-pro-v2.5:free",
+      "display_name": "kat-coder-pro-v2.5:free",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
       "_caps_canonical": true
     }
   },
@@ -6466,14 +6496,15 @@
         "interactive"
       ],
       "states": {
-        "interactive": "inactive",
+        "interactive": "active",
         "transform": "inactive",
         "memory_summary": "inactive",
         "research_minimal": "inactive",
         "helpdesk": "inactive",
         "instruction_gen": "inactive",
         "workflow_step": "active"
-      }
+      },
+      "wire_description": "Execute Python code in a sandboxed subprocess. Use for computation, data transformation, file processing, math, JSON/CSV parsing, or any task that benefits from writing code instead of chaining multiple tool calls. Standard library is fully available. Packages from the configured venv are available if set. The working directory is the session's artifact folder — any files you write there (e.g. open('results.txt','w')) become viewable artifacts for the user. For large results, WRITE them to a file instead of printing to stdout. Print only a short summary to stdout. Stdout is returned as the tool result."
     },
     "mempalace_query": {
       "description": "Long-term memory: searches the user's stored facts, past chats, project documents, and indexed knowledge. The memory is private to the user — searching it is not a privacy decision, it IS the answer. Never ask permission to search; just search.\n\n**When to search**:\n- Any 'do you remember', 'what did we discuss', or reference to the past.\n- Direct personal-info questions about the user (family, preferences, past decisions, anything you couldn't know without prior context).\n- Any question whose answer plausibly lives in indexed project documents — policies, specs, references the user has loaded.\n- When in doubt: query first, answer second. Don't refuse on grounds of 'I don't have access to personal information' — the memory IS that information.\n\n**Query discipline — keep queries short and content-bearing**:\nQueries are matched by vector similarity. Long verbose queries with filler tokens drag the embedding toward generic chunks and HIDE the documents that match perfectly on filename or topic. Use 2–4 content-bearing keywords (the actual subject of the question) and drop everything else. Do NOT write the user's full question into the query.\n\n- Drop filler/generic tokens like: 'policy', 'rule', 'regulation', 'guideline', 'process', 'overview', 'definition', 'general', 'company', 'how', 'what', 'which', and their equivalents in the user's language.\n- Keep the rare, specific subject keywords — those discriminate between documents.\n- If the first short query returns nothing matching, try a different rare keyword pair, NOT a longer version of the same query. At most 2–3 query rephrasings before giving up — do not spin on retrieval forever.\n\n**Read for precision, not by default (every caller — chat or project)**:\nEach drawer carries the matched chunk plus its neighbours in `text` — a ~2-2.5 KB window of the source that matched your query. For most questions this window is enough to answer. A drawer backed by a real document on disk has `content_via:\"snippet+optional_read\"` and a `read_path`: call `read_document(path=<drawer.read_path>)` when EITHER (a) you need an exact verbatim quote, a precise figure/number, or table content, OR (b) the answer to the question is NOT fully contained in the window — the window is an excerpt, so if it cuts off mid-topic or the relevant detail clearly continues beyond it, read the source rather than answering from a partial chunk. If the window DOES fully answer the question, answer from it directly — do NOT read just to be thorough (that wastes tokens). Never quote the chunk as if it were the whole document. Drawers with `content_via:\"snippet\"` (chat history, profile, artifacts) carry their full verbatim content inline — there is no file to read. If you do read and `read_document` errors, re-issue with the corrected path or refuse cleanly — NEVER fall back to training data. Documented hallucination causes on indexed corpora: (a) treating an excerpt chunk as the complete passage, (b) answering from training data after a read_document error.\n\n**Saving**: when the user says 'remember this' or wants to persist a fact / decision / preference, call `save_chat_to_memory`.\n\n---\n\n**Project memory layer (when invoked inside a project chat)**:\nThis project has a dedicated, isolated memory store. By default `mempalace_query` searches ONLY this knowledge layer (mined documents) — it does NOT include past chat turns or chat summaries. This is deliberate: a wrong answer in an earlier turn must never outrank the underlying source document. If the user explicitly asks about something said earlier in this project's chats ('what did we discuss', 'remember when I said'), call `mempalace_query` again with `include_chat_history=true` to search the chat layer.\n\n**Don't pass these arguments**:\n- `wing` — set automatically by Brain\n- `room` — unless you have verified the exact room name from a previous successful result. Brain's project miner uses `room='general'` for all policy/document content; invented values like 'document' or 'documentation' silently return zero drawers and lead to fabricated 'not in the documents' answers. The default (no room filter) searches everything in the wing — that is what you want.\n- `include_chat_history=true` for 'how is X calculated' / 'what does the policy say' questions — that flag switches the search to the PROJECT CHAT wing (past conversations) instead of the PROJECT KNOWLEDGE wing (the actual indexed documents). Use it ONLY when the user explicitly references prior chat ('what did we discuss about X', 'remember when I said Y').\n\n**Opening a drawer's source document**: every drawer that is backed by a file on disk carries a `read_path` (an absolute path to the curated `.brain-extracted/<name>.<ext>.md` companion) and sometimes a `read_path_original` (the original binary). To read the full source, call `read_document(path=<drawer.read_path>)` verbatim — prefer `read_path` (the curated `.md`: better tables/headings/OCR, and it's the exact text the search ranked) over `read_path_original`. Do NOT pass `source_file=...` (wrong parameter) and do NOT construct paths from basenames. Use `read_path_original` only when `read_path` errors or is empty.\n\n**When you cite a drawer's source**: name the ORIGINAL file, not the extracted companion — if `source_file` ends in `.brain-extracted/<name>.<ext>.md`, cite `<name>.<ext>` (e.g. `policy.pdf`, never `policy.pdf.md`), basename only, no path. Do NOT invent paragraph/section numbers (`§3.2`); the `.md` companions do not preserve original numbering, so any `§N` would be fabricated. Add a locator only if the read text genuinely shows one (`Page N`, `Slide N`, `Sheet \"Name\"`).",
@@ -8539,6 +8570,26 @@
       }
     },
     "identity_consistency": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "r_exec": {
       "description": "",
       "when_to_use": "",
       "warnings": "",

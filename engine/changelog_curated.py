@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.354.0",
+        "date": "2026-07-16",
+        "title": "Diagramme, Quant-Statistik und R-Skripte",
+        "body": "Der Assistent kann jetzt direkt im Chat Diagramme als Bild "
+                "erzeugen (z. B. Verteilungen, Zeitreihen) und "
+                "finanzmathematische Auswertungen rechnen — Regressionen, "
+                "Volatilitätsmodelle und Bewertungsfunktionen stehen bereit. "
+                "Zusätzlich führt er bestehenden R-Code aus: Ergebnisse und "
+                "erzeugte Dateien (etwa CSV-Tabellen oder Plots) erscheinen "
+                "wie gewohnt im Artefakt-Panel. Auch längere Berechnungen "
+                "laufen jetzt zuverlässig durch.",
+        "audience": "user",
+        "versions": ["9.354.0"],
+    },
+    {
         "version": "9.353.1",
         "date": "2026-07-16",
         "title": "Artefakt-Änderungen in älteren Chats wieder sichtbar",

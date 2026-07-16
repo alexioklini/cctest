@@ -29,6 +29,7 @@ import glob as globmod
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -4661,5 +4662,158 @@ def tool_python_exec(args: dict) -> str:
         # timeout and a user-cancel both `return` early, and leaving the links
         # behind would permanently shadow the project inside the output folder.
         # Idempotent, so running twice is harmless.
+        if _wd_cm:
+            _unlink_project_links(script_dir)
+
+
+def tool_r_exec(args: dict) -> str:
+    """Execute R code via Rscript in an isolated subprocess — mirror of
+    tool_python_exec (same cwd resolution, artifact diff, GDPR stdout pass,
+    per-tool kill registration). R has no venv_path equivalent: packages come
+    from the system R library."""
+    import brain as _brain
+    code = args.get("code", "")
+    if not code.strip():
+        return _err("r_exec: no code provided")
+
+    rscript = shutil.which("Rscript")
+    if not rscript:
+        return _err("r_exec: Rscript not found on this server — R is not installed.")
+
+    _cfg = _brain.get_tool_config().get("r_exec", {})
+    timeout = args.get("timeout", _cfg.get("timeout", 120))
+    max_output = _cfg.get("max_output_chars", 50000)
+
+    _wr, _ = _resolve_artifact_dir()
+    if _wr:
+        work_dir = _wr
+    else:
+        import tempfile
+        work_dir = os.path.join(tempfile.gettempdir(), "brain-rexec")
+    os.makedirs(work_dir, exist_ok=True)
+
+    watch_dir = _artifact_watch_dir(work_dir) or work_dir
+    pre_files = _snapshot_dir(watch_dir)
+
+    _wd_cm = get_request_context().working_dir
+    script_dir = _code_mode_write_base(_wd_cm) if _wd_cm else work_dir
+    os.makedirs(script_dir, exist_ok=True)
+
+    exec_cwd = work_dir
+    if _wd_cm:
+        exec_cwd = script_dir
+        _link_project_into(script_dir, _wd_cm)
+
+    counter = 1
+    while os.path.exists(os.path.join(script_dir, f"script_{counter}.R")):
+        counter += 1
+    script_name = f"script_{counter}.R"
+    script_path = os.path.join(script_dir, script_name)
+    with open(script_path, "w") as f:
+        f.write(code)
+    agent = get_request_context().current_agent or getattr(_brain, "_current_agent", None)
+    agent_id = (agent.agent_id if agent else "main")
+    session_id = get_request_context().current_session_id or ""
+    _brain._after_file_write(script_path, "created", agent_id)
+
+    env = _inject_out_dir_env(os.environ.copy())
+
+    _proc_key = None
+    try:
+        try:
+            from engine.context import report_tool_progress
+            report_tool_progress(phase="Läuft", note="R-Skript")
+        except Exception:
+            pass
+        proc = subprocess.Popen(
+            [rscript, script_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL, cwd=exec_cwd, env=env,
+            start_new_session=True,
+        )
+        _proc_key = register_tool_process(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            import signal as sig
+            try:
+                os.killpg(proc.pid, sig.SIGKILL)
+            except OSError:
+                proc.kill()
+            stdout, stderr = proc.communicate(timeout=5)
+            output = stdout.decode("utf-8", errors="replace")
+            if stderr:
+                output += "\n--- stderr ---\n" + stderr.decode("utf-8", errors="replace")
+            if len(output) > max_output:
+                output = output[:max_output] + "\n... (truncated)"
+            return _err(f"r_exec: timed out after {timeout}s\n{output}")
+        finally:
+            unregister_tool_process(_proc_key)
+        if proc.returncode is not None and proc.returncode < 0:
+            import signal as sig
+            if proc.returncode == -sig.SIGKILL:
+                return _err("r_exec: cancelled by user (process killed).")
+
+        output = stdout.decode("utf-8", errors="replace")
+        if stderr:
+            err_text = stderr.decode("utf-8", errors="replace")
+            err_text = err_text.replace(script_path, "<r_exec>")
+            output += ("\n--- stderr ---\n" + err_text) if output else err_text
+        if len(output) > max_output:
+            output = output[:max_output] + "\n... (truncated)"
+
+        # Same transparent-anonymisation seam as python_exec stdout.
+        output = _brain._gdpr_anon_tool_text(output, "r_exec:stdout")
+
+        result = {"exit_code": proc.returncode, "output": output, "script": script_name}
+
+        _stray = _stray_write_warning(code, work_dir if (session_id and agent) else None)
+        if _stray:
+            result["output"] = (result.get("output") or "") + _stray
+
+        if _wd_cm:
+            _unlink_project_links(script_dir)
+        try:
+            _script_key = os.path.relpath(script_path, watch_dir)
+        except ValueError:
+            _script_key = script_name
+        changed = _changed_files(watch_dir, pre_files,
+                                 exclude={script_name, _script_key})
+        if changed and agent:
+            created = []
+            for fname, was_new in changed:
+                fpath = os.path.join(watch_dir, fname)
+                if os.path.isfile(fpath):
+                    _brain._after_file_write(
+                        fpath, "created" if was_new else "modified", agent_id)
+                    created.append(fname)
+            if created:
+                result["artifacts"] = created
+
+        if output and proc.returncode == 0 and not changed and agent:
+            try:
+                artifact_path = os.path.join(script_dir, "output.txt")
+                counter = 1
+                while os.path.exists(artifact_path):
+                    artifact_path = os.path.join(script_dir, f"output_{counter}.txt")
+                    counter += 1
+                with open(artifact_path, "w") as af:
+                    af.write(output)
+                _brain._after_file_write(artifact_path, "created", agent_id)
+                result["artifacts"] = [os.path.basename(artifact_path)]
+                if len(output) > 1000:
+                    lines = output.splitlines()
+                    result["output"] = (
+                        f"Output saved as artifact {os.path.basename(artifact_path)} "
+                        f"({len(lines)} lines, {len(output):,} chars). "
+                        f"The user can view it directly. Summarize what was computed, do NOT repeat the data."
+                    )
+            except Exception:
+                pass
+
+        return _ok(result)
+    except Exception as e:
+        return _err(f"r_exec: {e}")
+    finally:
         if _wd_cm:
             _unlink_project_links(script_dir)

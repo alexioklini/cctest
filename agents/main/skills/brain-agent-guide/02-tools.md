@@ -637,6 +637,16 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   (project root) hold the absolute paths.
   **`execute_command` is different**: it keeps cwd = project root (its commands
   are mostly reads across the source tree), so it must write via `$BRAIN_OUT`.
+  **Quant-Pakete (v9.354.0)**: über den konfigurierten `venv_path`
+  (`tools_config.json → python_exec`) stehen zusätzlich matplotlib, seaborn,
+  statsmodels, arch und QuantLib bereit (Plots, VaR/GARCH, Regressionen);
+  duckdb/pyarrow/openpyxl sind global installiert. Default-Timeout ist 120 s.
+- `r_exec(code, timeout?)` — R-Skripte via `Rscript` (v9.354.0), Spiegel von
+  `python_exec`: gleiche cwd-Logik (Artefakt-Ordner), gleicher Ordner-Diff
+  (geschriebene Dateien — `write.csv`, `png()` — registrieren sich als
+  Artefakte), gleicher GDPR-Pass auf stdout, per-Tool-Kill. Für bestehenden
+  R-Code und R-spezifische Statistik; für Python weiterhin `python_exec`.
+  Default-Timeout 120 s. Pakete kommen aus der System-R-Library (kein venv).
 
 ## Delegation / workers
 
@@ -1019,7 +1029,7 @@ mcp           mcp_connect mcp_disconnect mcp_servers
 skills        use_skill
 nodes         list_nodes
 thinking      think sequential_thinking calibrate
-code_exec     python_exec
+code_exec     python_exec r_exec
 audio         transcribe_audio generate_audio_overview
 translation   translate_text translate_document detect_language
               list_glossaries get_glossary

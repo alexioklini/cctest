@@ -352,6 +352,27 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "r_exec",
+        "description": (
+            "Execute R code via Rscript in a sandboxed subprocess. "
+            "Use for existing R code, R-specific statistics (e.g. actuarial/chain-ladder "
+            "packages), or when the user supplies R scripts. For Python use python_exec. "
+            "The working directory is the session's artifact folder — any files the script "
+            "writes there (e.g. write.csv(df, 'results.csv'), png('plot.png')) become "
+            "viewable artifacts for the user. For large results, WRITE them to a file "
+            "instead of printing. Print only a short summary; stdout is returned as the "
+            "tool result."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "R code to execute. Use cat()/print() for output. Write large results to files instead of printing."},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (default: from config, typically 120)"},
+            },
+            "required": ["code"],
+        },
+    },
+    {
         "name": "web_fetch",
         "description": (
             "Fetch content from a URL. Returns the response body as text. "
