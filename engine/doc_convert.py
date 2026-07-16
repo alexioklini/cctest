@@ -93,7 +93,7 @@ def _run_with_timeout(fn, timeout_secs: float):
     return box.get("result")
 
 SUPPORTED_EXTS = {".pdf", ".docx", ".pptx", ".xlsx", ".xlsm", ".xls", ".xlsb",
-                  ".csv", ".tsv", ".eml", ".msg", ".epub", ".zip"}
+                  ".csv", ".tsv", ".eml", ".msg", ".epub", ".zip", ".ipynb"}
 
 # Ad-hoc cache for files outside any project input folder (chat attachments,
 # arbitrary paths the agent reads via read_document). Each entry is a
@@ -1988,6 +1988,52 @@ def _email_to_markdown(msg) -> str:
     return "\n".join(parts) + "\n"
 
 
+def _extract_ipynb(path: str) -> tuple[str, str | None]:
+    """Jupyter notebook → markdown (Quant-Workbench C ingest). stdlib-json on
+    purpose — NO nbformat dependency (plan guardrail): markdown cells verbatim,
+    code cells as ```-fences (language from kernelspec), outputs text/plain
+    only (images/HTML are render-time concerns, not mining content)."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            nb = json.load(f)
+    except Exception as e:
+        return "", f"ipynb parse failed: {type(e).__name__}: {e}"
+    cells = nb.get("cells")
+    if not isinstance(cells, list):
+        return "", "ipynb: no cells array"
+    meta = nb.get("metadata") or {}
+    lang = ((meta.get("kernelspec") or {}).get("language")
+            or (meta.get("language_info") or {}).get("name") or "python")
+
+    def _join(v):
+        return "".join(v) if isinstance(v, list) else (v or "")
+
+    parts = []
+    for cell in cells:
+        if not isinstance(cell, dict):
+            continue
+        src = _join(cell.get("source")).rstrip("\n")
+        ctype = cell.get("cell_type")
+        if ctype == "markdown":
+            if src:
+                parts.append(src)
+        elif ctype == "code":
+            if src:
+                parts.append(f"```{lang}\n{src}\n```")
+            for out in cell.get("outputs") or []:
+                if not isinstance(out, dict):
+                    continue
+                text = ""
+                if out.get("output_type") == "stream":
+                    text = _join(out.get("text"))
+                else:
+                    text = _join((out.get("data") or {}).get("text/plain"))
+                text = text.rstrip("\n")
+                if text:
+                    parts.append(f"```\n{text}\n```")
+    return "\n\n".join(parts) + ("\n" if parts else ""), None
+
+
 _EXTRACTORS = {
     ".pdf": _extract_pdf,
     ".docx": _extract_docx,
@@ -2003,6 +2049,7 @@ _EXTRACTORS = {
     ".msg": _extract_msg,
     ".epub": _extract_markitdown_only,
     ".zip": _extract_markitdown_only,
+    ".ipynb": _extract_ipynb,  # NOT in _MARKITDOWN_EXTS — stdlib-json path only
 }
 
 

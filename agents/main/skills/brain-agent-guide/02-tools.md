@@ -376,6 +376,25 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
   `xlsx_inspect`/`xlsx_query`; `.parquet/.duckdb` (oder riesige CSVs) →
   `data_query`.
 
+**Jupyter-Notebooks (.ipynb) als Artefakt (v9.358.0, Quant-Workbench C):**
+- `.ipynb` ist erstklassiges Artefakt: `_ARTIFACT_TYPE_MAP` → Typ `notebook`,
+  Rolle `output` (Prüfartefakt, NICHT intermediate). Das Artefakt-Panel
+  rendert die Zellen: Markdown via `renderMarkdown`, Code via hljs (Sprache
+  aus `metadata.kernelspec.language`), Outputs `image/png` als `<img data:>`,
+  `text/plain`/`stream` als `<pre>`, `application/json` über den
+  Tree-Renderer — und **`text/html`-Outputs IMMER in einem eigenen voll
+  gesandboxten iframe** (`sandbox=""`, nie ins Panel-DOM — XSS-Fläche).
+  Parse-Fehler → Fallback auf Code-Ansicht. Jede Version = prüfbarer Stand
+  (Versions-Auswahl im Panel). Die AUSFÜHRUNG von Zellen kommt erst mit
+  Phase A (Kernel) — in C schreibt der Agent das Notebook-JSON selbst
+  (python_exec, stdlib json; Outputs eingebettet).
+- **Ingest**: `doc_convert._extract_ipynb` (stdlib-json, KEIN nbformat) —
+  markdown-Zellen verbatim, Code als ```-Fences, Outputs nur text/plain;
+  `.ipynb` in `SUPPORTED_EXTS` + `_EXTRACTORS`, bewusst NICHT in
+  `_MARKITDOWN_EXTS`. Damit laufen Notebooks durch Projekt-Mining
+  (Companion-`.md`), PII-Scan und Klassifizierung (ein Dispatcher, vier
+  Konsumenten).
+
 **db_query — Warehouse-Konnektor (v9.356.0, Quant-Workbench D2):**
 - **`db_query(source, sql, out?)`** (documents-Gruppe, `engine/tools/data_tools.py`):
   EIN read-only SELECT gegen eine vom Admin **konfigurierte externe Datenbank**

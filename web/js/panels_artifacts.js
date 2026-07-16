@@ -893,6 +893,68 @@ function renderArtifactContent(content, type, name, encoding) {
       // call). Don't dump base64 into hljs — point back at the proper viewer.
       container.innerHTML = `<div class="artifact-empty">Binärdokument — über „Öffnen / Herunterladen" ansehen (keine Quelltext-Ansicht).</div>`;
       break;
+    case 'notebook': {
+      // .ipynb (Quant-Workbench C): render cells. Defensive parse — anything
+      // that isn't a well-formed notebook falls through to the code view.
+      let nb = null;
+      try { nb = JSON.parse(content); } catch (_) { /* fallthrough below */ }
+      if (!nb || !Array.isArray(nb.cells)) {
+        container.innerHTML = `<pre class="artifact-code"><code>${esc(content)}</code></pre>`;
+        break;
+      }
+      const nbMeta = nb.metadata || {};
+      const nbLangRaw = ((nbMeta.kernelspec || {}).language
+        || (nbMeta.language_info || {}).name || 'python').toLowerCase();
+      const nbLang = (typeof hljs !== 'undefined' && hljs.getLanguage(nbLangRaw)) ? nbLangRaw : 'plaintext';
+      const joinSrc = (v) => Array.isArray(v) ? v.join('') : (v || '');
+      const parts = [];
+      const jsonOuts = [];  // painted via the tree renderer AFTER innerHTML
+      for (const cell of nb.cells) {
+        if (!cell || typeof cell !== 'object') continue;
+        const src = joinSrc(cell.source);
+        if (cell.cell_type === 'markdown') {
+          parts.push(`<div class="nb-cell nb-md msg-content">${renderMarkdown(src)}</div>`);
+          continue;
+        }
+        if (cell.cell_type !== 'code') {
+          if (src) parts.push(`<div class="nb-cell"><pre class="artifact-code"><code>${esc(src)}</code></pre></div>`);
+          continue;
+        }
+        let hl;
+        try { hl = hljs.highlight(src, { language: nbLang }).value; }
+        catch (_) { hl = esc(src); }
+        parts.push(`<div class="nb-cell nb-code"><pre class="artifact-code"><code class="hljs language-${nbLang}">${hl}</code></pre></div>`);
+        for (const out of (cell.outputs || [])) {
+          if (!out || typeof out !== 'object') continue;
+          const data = out.data || {};
+          if (out.output_type === 'error') {
+            const tb = (out.traceback || []).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+            parts.push(`<div class="nb-out nb-err"><pre class="artifact-code">${esc(tb)}</pre></div>`);
+          } else if (data['image/png']) {
+            const b64 = joinSrc(data['image/png']).replace(/\n/g, '');
+            parts.push(`<div class="nb-out"><img src="data:image/png;base64,${esc(b64)}" alt="output"></div>`);
+          } else if (data['text/html']) {
+            // Foreign HTML from an executed notebook — NEVER into the panel
+            // DOM (XSS surface). Fully sandboxed own iframe (no scripts, no
+            // same-origin): tables/static HTML render, nothing executes.
+            parts.push(`<div class="nb-out"><iframe class="nb-html" sandbox="" srcdoc="${esc(joinSrc(data['text/html']))}"></iframe></div>`);
+          } else if (data['application/json'] && typeof _terminalPaintTree === 'function') {
+            const idx = jsonOuts.length;
+            jsonOuts.push(JSON.stringify(data['application/json'], null, 2));
+            parts.push(`<div class="nb-out nb-json" data-nbjson="${idx}"></div>`);
+          } else {
+            const t = out.output_type === 'stream' ? joinSrc(out.text) : joinSrc(data['text/plain']);
+            if (t) parts.push(`<div class="nb-out"><pre class="artifact-code">${esc(t)}</pre></div>`);
+          }
+        }
+      }
+      container.innerHTML = `<div class="nb-view">${parts.join('')}</div>`;
+      container.querySelectorAll('[data-nbjson]').forEach(el => {
+        try { _terminalPaintTree(el, jsonOuts[Number(el.dataset.nbjson)], 'json'); }
+        catch (_) { el.innerHTML = `<pre class="artifact-code">${esc(jsonOuts[Number(el.dataset.nbjson)])}</pre>`; }
+      });
+      break;
+    }
     case 'code':
     default: {
       // JSON/XML artifacts → the collapsible data tree from the bottom-panel

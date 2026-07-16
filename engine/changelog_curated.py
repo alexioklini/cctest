@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.358.0",
+        "date": "2026-07-16",
+        "title": "Jupyter-Notebooks als Ergebnisdokument",
+        "body": "Der Assistent kann Analysen jetzt als Jupyter-Notebook "
+                "(.ipynb) abliefern — Bericht, Rechenweg und Ergebnisse "
+                "(Diagramme, Tabellen) in einer Datei. Die Datei-Ansicht "
+                "zeigt die Zellen direkt an: formatierter Text, Code mit "
+                "Hervorhebung, eingebettete Grafiken. Jede Änderung bleibt "
+                "als eigene Version aufrufbar, und Notebooks in Projekten "
+                "fließen in das durchsuchbare Projektwissen ein.",
+        "audience": "user",
+        "versions": ["9.358.0"],
+    },
+    {
         "version": "9.357.0",
         "date": "2026-07-16",
         "title": "Jede Zahl führt auf ihren Code zurück",

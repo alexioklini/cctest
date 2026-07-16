@@ -358,3 +358,14 @@ zwischen Fragen geladen"), VERSION. Handover-Notiz in dieses Dokument (Abschnitt
   (Playwright im echten Browser verifiziert); Versionen ohne Provenance
   (render_diagram, Pre-Migration) blenden die Leiste aus, kein Bruch.
   ABWEICHUNG: keine — Plan 1:1. Nächste Phase: C (Notebook-Renderer).
+- 2026-07-16: **Phase C ABGESCHLOSSEN** (v9.358.0). Alle 4 Schritte Plan-1:1
+  (Typ-Map, Renderer-Case mit sandbox-iframe für text/html, _extract_ipynb
+  stdlib-json, write_file-Steering-Satz). Alle 4 Erfolgskriterien live erfüllt
+  (glm-5.2 + Playwright-DOM-Check): md/code/PNG rendern, HTML-Output
+  nachweislich NUR im `sandbox=\"\"`-iframe (kein <table> im Panel-DOM),
+  v1/v2 einzeln aufrufbar, Companion-.md via convert_one, js_gate grün
+  (net-globals 2006 unverändert). Ergänzt über den Plan hinaus: error-Outputs
+  (ANSI-bereinigte Tracebacks, rot) + application/json-Fallback auf <pre>.
+  Damit sind **Phasen 0, D1, D2, B, C komplett** — offen ist nur noch
+  Phase A (persistente Kernel; größtes Risiko, braucht jupyter_client/
+  IRkernel + KernelManager + Kill-Matrix; vor Start User-Go einholen).

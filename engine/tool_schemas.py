@@ -42,7 +42,11 @@ TOOL_DEFINITIONS = [
             "session's artifact folder and auto-promotes to the Artifacts panel. "
             "WRITES ARE RESTRICTED TO THE ARTIFACT FOLDER: an absolute path, or a "
             "relative path containing '..', that resolves OUTSIDE it is REFUSED with "
-            "an error — pass a plain relative filename, never an absolute path."
+            "an error — pass a plain relative filename, never an absolute path. "
+            "Analysis RESULTS are welcome as a Jupyter notebook (.ipynb with "
+            "markdown + code cells and embedded outputs/PNGs, e.g. written via "
+            "python_exec) — the panel renders the cells, and each version is an "
+            "auditable snapshot."
         ),
         "input_schema": {
             "type": "object",

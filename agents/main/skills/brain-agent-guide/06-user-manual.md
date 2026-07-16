@@ -1615,6 +1615,19 @@ anzeigen"-Schalter, der den Inhalt direkt in der Karte rendert.
 Jeder Schreib-/Bearbeitungsvorgang erzeugt eine **Artifact-Version**
 (5 MB-Limit). Artifact-Panel → Versions-Auswahl zum Vergleichen.
 
+### Jupyter-Notebooks (.ipynb, v9.358.0)
+
+Analyse-Ergebnisse kann der Assistent als **Jupyter-Notebook** liefern —
+Bericht (Markdown), Rechenweg (Code) und Ergebnisse (Tabellen, Diagramme)
+in EINER Datei. Das Artefakt-Panel rendert die Zellen direkt: Text
+formatiert, Code mit Syntax-Hervorhebung, eingebettete Diagramme als Bild,
+Tabellen sicher in einem isolierten Rahmen. Jede Änderung erzeugt wie
+gewohnt eine neue Version — ältere Stände bleiben über die Versions-Auswahl
+einzeln aufrufbar, jede Version ist ein prüfbarer Stand. Notebooks in
+Projekt-Ordnern werden wie andere Dokumente durchsuchbar gemacht (Inhalt
+der Zellen landet im Projektwissen). Hinweis: die Zellen werden angezeigt,
+nicht in der App ausgeführt.
+
 ### Nachweiskette (Provenance, v9.357.0)
 
 Jede Zahl führt auf ihren Code zurück: hat ein **Python- oder R-Skript**
