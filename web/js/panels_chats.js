@@ -426,6 +426,7 @@ function updateStatusBar() {
   // state + cached backend availability (mirrors the other composer toggles —
   // controls are the source of truth, so repaint on every status-bar pass).
   if (typeof refreshDeepResearchButton === 'function') refreshDeepResearchButton();
+  if (typeof refreshDesignContextButton === 'function') refreshDesignContextButton();
 
   // Final pass: hide role-restricted items. Runs last so it wins over the
   // data-driven branches above (e.g. cost-wrap re-show on cost data arrival).

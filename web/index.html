@@ -580,6 +580,28 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
           </div>
         </div>
       </div>
+      <div class="project-panel-section" id="project-design-section">
+        <div class="project-panel-section-header">
+          <span class="project-panel-section-title">Design-System</span>
+        </div>
+        <div class="project-panel-section-body">
+          <div class="project-panel-help">
+            Wird bei Design-Turns (Design-Modus im Artefakt-Panel oder
+            Paletten-Knopf im Eingabefeld) als verbindliche Gestaltungsvorgabe
+            mitgegeben — Entwürfe im Projekt bleiben so markenkonsistent.
+            Leer = neutrale Gestaltung.
+          </div>
+          <div id="project-design-body"></div>
+          <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+            <button class="btn-secondary" type="button" onclick="generateProjectDesignSystemFromUrl()">Aus Website generieren…</button>
+            <button class="btn-secondary" type="button" onclick="generateProjectDesignSystemFromDoc()">Aus CI-Dokument generieren…</button>
+            <span style="flex:1"></span>
+            <button class="btn-primary" type="button" onclick="saveProjectDesignSystem()">Speichern</button>
+          </div>
+          <input type="file" id="project-design-doc-input" style="display:none" onchange="_designDocPicked(this)">
+          <div id="project-design-gen-status" style="display:none;font-size:12px;margin-top:8px;color:var(--text-400)"></div>
+        </div>
+      </div>
       <div class="project-panel-section" id="project-kg-section">
         <div class="project-panel-section-header">
           <span class="project-panel-section-title">Wissensgraph (KG)</span>
@@ -1955,6 +1977,16 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
              microscope; distinct from the research-MODE book icon. -->
         <button class="composer-btn" data-id="btn-deep-research" data-composer-toggle="btn-deep-research" onclick="toggleDeepResearch()" title="Deep Research: aus — klicken, um den nächsten Turn als tiefe Recherche auszuführen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="5" r="2.6"/><path d="M4.5 20v-2a4.5 4.5 0 0 1 9 0v2"/><path d="M16 3l3.5 0M17.75 3v5.2l2.4 4.1a1.6 1.6 0 0 1-1.4 2.4h-2a1.6 1.6 0 0 1-1.4-2.4l2.4-4.1V3"/><line x1="16.3" y1="11" x2="19.2" y2="11"/></svg>
+        </button>
+        <!-- Design-Turn toggle (Design-Modus Phase B): when active, sends
+             body.design_context=true so the server injects the PROJECT's
+             Design-System (colors/fonts/tone/CSS) wire-only into the turn —
+             the explicit "Design-Einstieg" for creating a NEW draft in CI.
+             Comment-applies from the design canvas set the flag implicitly
+             (DesignCanvas.isActive() in api.js), independent of this toggle.
+             Palette icon. -->
+        <button class="composer-btn" data-id="btn-design-context" data-composer-toggle="btn-design-context" onclick="toggleDesignContext()" title="Design-Turn: aus — klicken, damit Entwürfe das Design-System des Projekts anwenden">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18h1.8a2 2 0 0 0 1.4-3.4 2 2 0 0 1 1.4-3.4H19a3 3 0 0 0 3-3A8.2 8.2 0 0 0 12 3z"/><circle cx="7.5" cy="11" r="1.15" fill="currentColor" stroke="none"/><circle cx="11" cy="7.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="15.8" cy="7.8" r="1.15" fill="currentColor" stroke="none"/></svg>
         </button>
         <button class="composer-btn" data-id="btn-refine" data-composer-toggle="btn-refine" onclick="refineInput()" title="Nachricht vor dem Senden überarbeiten">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>

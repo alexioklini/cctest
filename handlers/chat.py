@@ -318,6 +318,59 @@ def _build_pinned_sources(agent_id, project_name, pinned):
     return head + "\n\n" + "\n\n---\n\n".join(blocks), used
 
 
+def _build_design_context_preamble(agent_id, project_name):
+    """Design-Turn (body.design_context, Design-Modus Phase B): render the
+    project's `design_system` (project.json, editor: Projekt-Seite →
+    Design-System) as a wire-only preamble so design turns follow the project's
+    CI (colors/fonts/logo/tone/CSS base). Injected ONLY on turns the client
+    deterministically flags as design turns (Design-Modus active on an HTML
+    artifact) — a normal Q&A turn in the same project never carries it.
+    Wire-only like the Websuche preamble: nothing enters session.messages/DB,
+    the warm-pool KV prefix stays byte-stable. Returns '' when there is no
+    project, no design_system, or all fields are empty."""
+    if not project_name:
+        return ""
+    try:
+        import brain as _engine
+        cfg = _engine.ProjectManager.get_project(agent_id, project_name) or {}
+    except Exception:
+        return ""
+    ds = cfg.get("design_system") or {}
+    if not isinstance(ds, dict):
+        return ""
+    colors = [c for c in (ds.get("colors") or [])
+              if isinstance(c, dict) and str(c.get("hex") or "").strip()]
+    font_h = str(ds.get("font_heading") or "").strip()
+    font_b = str(ds.get("font_body") or "").strip()
+    logo = str(ds.get("logo_url") or "").strip()
+    tone = str(ds.get("tone") or "").strip()
+    css = str(ds.get("css_snippet") or "").strip()
+    if not (colors or font_h or font_b or logo or tone or css):
+        return ""
+    lines = ["[PROJEKT-DESIGN-SYSTEM — verbindliche Gestaltungsvorgaben für "
+             "diesen Design-Auftrag. Setze sie in HTML-Artefakten konsequent "
+             "um; weiche nur ab, wo der Nutzer es ausdrücklich verlangt.]"]
+    if colors:
+        lines.append("Farben: " + ", ".join(
+            f"{str(c.get('hex')).strip()}"
+            + (f" ({str(c.get('role') or '').strip()})"
+               if str(c.get("role") or "").strip() else "")
+            for c in colors))
+    if font_h:
+        lines.append(f"Schrift Überschriften: {font_h}")
+    if font_b:
+        lines.append(f"Schrift Fließtext: {font_b}")
+    if logo:
+        lines.append(f"Logo: {logo} (als <img> mit dieser URL einbinden, "
+                     "nicht nachzeichnen)")
+    if tone:
+        lines.append(f"Tonalität/Sprache: {tone}")
+    if css:
+        lines.append("CSS-Basis (in <style> übernehmen und darauf aufbauen):\n"
+                     "```css\n" + css + "\n```")
+    return "\n".join(lines)
+
+
 def _inject_web_preamble_into_wire(messages, preamble):
     """Return a transient wire copy of `messages` with `preamble` prepended to
     the LAST user message's content. The original list + message dicts are NOT
@@ -3531,7 +3584,7 @@ def _run_deep_research_turn(session, sid, message, live, *, saved_paths=None,
     return {"reply": card, "error": None, "_dr_meta": meta, "_dr_files": _dr_files}
 
 
-def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False, pinned_sources=None):
+def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False, pinned_sources=None, design_context=False):
     """Run one chat turn for `session`, end to end.
 
     Extracted verbatim from the former `_handle_chat.worker()` closure (it
@@ -4860,6 +4913,19 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         engine.get_request_context()._discipline_meta = _discipline_meta
                     except Exception:
                         pass
+                    # Design-Turn (Design-Modus Phase B): the client flags turns
+                    # sent while Design-Modus is active on an HTML artifact
+                    # (body.design_context, deterministic — no classifier). Inject
+                    # the project's design_system as a wire-only preamble so the
+                    # edit follows the project CI. Same ephemeral seam as the
+                    # Websuche preamble (never persisted, KV prefix untouched).
+                    if design_context:
+                        _design_pre = _build_design_context_preamble(
+                            session.agent_id,
+                            engine.get_request_context().project or project_name)
+                        if _design_pre:
+                            _wire_messages = _inject_web_preamble_into_wire(
+                                _wire_messages, _design_pre)
                     # Session attachments (v9.138.0): wire-only reminder, EVERY turn,
                     # of the documents attached so far in this chat so a later turn
                     # can still read them via read_document — the upload-turn notice
@@ -7838,6 +7904,10 @@ class ChatHandlerMixin:
             content_blocks=content_blocks, disk_files=disk_files,
             auto_route=auto_route, want_auto=want_auto, deep_research=deep_research,
             pinned_sources=pinned_sources,
+            # Design-Turn-Flag (Design-Modus Phase B): the client sets it while
+            # Design-Modus is active on an HTML artifact → the worker injects
+            # the project's design_system wire-only.
+            design_context=bool(body.get("design_context", False)),
             # Interactive clients (web chat + terminal chat) send this flag —
             # it gates the MoA delegate-plan review (headless callers: none).
             interactive=bool(body.get("interactive")),

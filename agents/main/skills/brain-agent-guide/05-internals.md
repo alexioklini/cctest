@@ -2191,6 +2191,18 @@ collect inputs (`ask_user_for_file`), execute the plan agentically
   (per-session 🪨 toggle) else `caveman_system` (per-model default). Input-side
   compression happens ONLY during refinement (`/v1/refine` rule-compresses the
   refined query text). Warmup needs no caveman handling.
+- **Design-System is wire-injected the same way (v9.352.0, Design-Modus
+  Phase B)**: `project.json → design_system` (colors/fonts/logo_url/tone/
+  css_snippet, shape-coerced in `update_project`) is rendered by
+  `handlers/chat._build_design_context_preamble` and prepended wire-only
+  (`_inject_web_preamble_into_wire`) — ONLY on turns whose `POST /v1/chat`
+  body carries `design_context: true`. The flag is set deterministically by
+  the client (design canvas active on an HTML artifact, or the composer
+  palette toggle `state.activeChat.designContext`) — no classifier. Never in
+  `_build_system_prompt`, never persisted; empty design_system → no-op.
+  Prefill: `POST .../design-system/generate` (see 01-api) — raw-HTML+CSS
+  fetch for `{url}` sources, shared doc pipeline for `{file}`, one
+  `background_call` (cost_purpose `design_system_gen`), review-before-save.
 - **Shared domain logic (no parallel impl)**: a scheduled task runs the SAME
   domain logic as a chat in its domain. Two shared functions on `brain` do it:
   `apply_domain_context(agent_id, project|project_id, user_id,

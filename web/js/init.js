@@ -518,6 +518,36 @@ async function refreshDeepResearchButton() {
   }
 }
 
+// ── Design-Turn toggle (composer palette — Design-Modus Phase B) ──────────
+// When active, every send carries body.design_context=true and the server
+// injects the PROJECT's design_system wire-only (colors/fonts/tone/CSS) —
+// the explicit "Design-Einstieg" for creating a new draft in CI. Per-chat
+// boolean on state.activeChat.designContext, read at send time by
+// API.streamChat (which ALSO sets the flag implicitly while the design
+// canvas is active — comment-applies need no toggle). Inert server-side
+// unless the session's project has a non-empty design_system.
+function toggleDesignContext() {
+  const chat = state.activeChat;
+  if (!chat) return;
+  chat.designContext = !chat.designContext;
+  refreshDesignContextButton();
+  showToast(chat.designContext
+    ? 'Design-Turn: an — Entwürfe wenden das Design-System des Projekts an'
+    : 'Design-Turn: aus');
+}
+
+function refreshDesignContextButton() {
+  const chat = state.activeChat;
+  const on = !!(chat && chat.designContext);
+  for (const btn of _composerToggleEls('btn-design-context')) {
+    btn.classList.toggle('active', on);
+    btn.style.color = on ? '#8b5cf6' : '';  // violet when on (design accent)
+    btn.title = on
+      ? 'Design-Turn: an — Entwürfe wenden das Design-System des Projekts an (klicken zum Ausschalten)'
+      : 'Design-Turn: aus — klicken, damit Entwürfe das Design-System des Projekts anwenden';
+  }
+}
+
 // Caveman mode icon set — one per level. Metaphor: off = fastest/modern
 // (spaceship), down through car, horse, to campfire = primitive.
 // Shared icon-toggle button used by every refine-with-AI surface

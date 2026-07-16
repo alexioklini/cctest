@@ -1642,6 +1642,30 @@ Wissenswertes:
   ausschalten.
 - Es zählt als normaler Chat-Turn (Verlauf, Kosten, Abbrechen wie üblich).
 
+### Design-System pro Projekt (markenkonsistente Entwürfe, v9.352.0)
+
+Auf der **Projekt-Seite** gibt es die Sektion **„Design-System"**: Farben
+(hex + Rolle, z. B. „#0F3D68 · Primär"), Schrift für Überschriften und
+Fließtext, Logo-URL, Tonalität und optional ein CSS-Snippet. Gespeichert
+wird pro Projekt; leer = neutrale Gestaltung.
+
+**Wann greift es?** Bei **Design-Turns** — deterministisch, ohne Raten:
+1. Solange der **Design-Modus** auf einem HTML-Artefakt aktiv ist (also
+   auch beim „Kommentare anwenden"), und/oder
+2. wenn der **Paletten-Knopf** im Eingabefeld aktiviert ist (violett =
+   an) — der explizite Einstieg, um einen *neuen* Entwurf gleich im
+   Marken-Look erstellen zu lassen (z. B. „Erstelle einen One-Pager …").
+
+Das Design-System wird dem Agenten dann als verbindliche Vorgabe zur
+Nachricht mitgegeben (nur für diesen Turn; es landet nicht im Verlauf und
+gilt nicht für normale Frage-Antwort-Turns im Projekt).
+
+**Automatisch vorbefüllen:** „Aus Website generieren…" (Adresse der
+Firmen-Website angeben — Farben/Schriften werden aus deren HTML/CSS
+destilliert) oder „Aus CI-Dokument generieren…" (Styleguide/CI-PDF
+hochladen). Das Ergebnis füllt nur das Formular — geprüft und übernommen
+wird erst mit **Speichern**.
+
 ---
 
 ## Wiki

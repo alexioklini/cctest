@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.352.0",
+        "date": "2026-07-16",
+        "title": "Design-System: Entwürfe im eigenen Markenauftritt",
+        "body": "Hinterlegen Sie pro Projekt ein Design-System — Farben, "
+                "Schriften, Logo, Tonalität und optional ein CSS-Snippet. "
+                "Bei Design-Turns (im Design-Modus oder über den neuen "
+                "Paletten-Knopf im Eingabefeld) hält sich jeder Entwurf "
+                "automatisch daran, sodass alle Ergebnisse eines Projekts "
+                "markenkonsistent aussehen. Auf Wunsch füllt die KI das "
+                "Design-System aus Ihrer Website oder einem CI-Dokument "
+                "vor — Sie prüfen und speichern.",
+        "audience": "user",
+        "versions": ["9.352.0"],
+    },
+    {
         "version": "9.351.0",
         "date": "2026-07-16",
         "title": "Design-Modus: Entwürfe per Klick verfeinern",

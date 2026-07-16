@@ -321,6 +321,18 @@ streaming call, per-USER history, fixed read-only tool set. See
   ready|error|cancelled), phase, model, error, result_md (only when ready),
   steps[] (live tool-call log)}`
 - `POST .../projects/<name>/instruction-gen/<gen_id>/cancel` — abort the run (manage)
+- `POST .../projects/<name>/design-system/generate` — (v9.352.0, Design-Modus
+  Phase B) distill a design_system proposal from ONE source: `{url}` (company
+  website — fetched RAW html + up to 3 same-host stylesheets, NOT the markdown
+  path, because colors/fonts live in CSS) | `{file: {name, content(b64)}}` (CI
+  document via the shared doc pipeline, 25 MB cap) | `{text}` (pasted excerpt).
+  One synchronous background LLM call (cost_purpose `design_system_gen`,
+  GDPR/classification-gated) → `{design_system: {colors:[{hex,role}],
+  font_heading, font_body, logo_url, tone, css_snippet}, model}` for REVIEW —
+  saving still goes through the normal project update (manage). The saved
+  `project.json → design_system` is injected wire-only into turns that carry
+  `body.design_context: true` on `POST /v1/chat` (deterministic client flag:
+  design canvas active, or the composer palette toggle)
 - `GET .../projects/<name>/image` — project thumbnail
 - `POST .../projects/<name>/generate` — generate a grounded output from the
   project's sources. Body `{kind: study_guide|briefing|faq|timeline|audio_overview

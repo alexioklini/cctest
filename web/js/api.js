@@ -372,6 +372,7 @@ class API {
   static deleteProjectInstructionFile(agent, name, filename) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files/${encodeURIComponent(filename)}`); }
   // AI-generation of project instructions (agentic, review-before-save).
   static generateProjectInstructions(agent, name, prompt) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/generate-instructions`, { prompt }); }
+  static generateProjectDesignSystem(agent, name, payload) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/design-system/generate`, payload); }
   static getInstructionGen(agent, name, genId) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-gen/${encodeURIComponent(genId)}`); }
   static cancelInstructionGen(agent, name, genId) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-gen/${encodeURIComponent(genId)}/cancel`, {}); }
 
@@ -611,6 +612,16 @@ class API {
     // (set by toggleDeepResearch()); the button visual mirrors the same state.
     if (state.activeChat && state.activeChat.deepResearch) {
       body.deep_research = true;
+    }
+
+    // Design-Turn flag (Design-Modus Phase B): deterministic, no classifier.
+    // True when the user armed the composer palette toggle (explicit design
+    // entry for a NEW draft) OR while the design canvas is active on an HTML
+    // artifact (comment-applies + follow-up sends). The server then injects
+    // the project's design_system wire-only; inert without one.
+    if ((state.activeChat && state.activeChat.designContext)
+        || (typeof DesignCanvas !== 'undefined' && DesignCanvas.isActive())) {
+      body.design_context = true;
     }
 
     // Manual web-search: the enabled entries of the Websuche basket. The

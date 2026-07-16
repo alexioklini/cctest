@@ -1744,6 +1744,191 @@ class ProjectsHandlerMixin:
         instruction_gen.request_cancel(gen_id)
         self._send_json({"gen_id": gen_id, "status": "cancelling"})
 
+    # ----- Design-System aus Website/CI-Dokument generieren (Phase B) ----------
+    # ONE synchronous background LLM call that distills a design_system proposal
+    # ({colors:[{hex,role}], font_heading, font_body, logo_url, tone,
+    # css_snippet}) from a source the user names. The result is RETURNED for
+    # review in the editor — never saved here (Save goes through
+    # update_project like any manual edit). Source variants:
+    #   {url}  — the company website. Fetched RAW (html + up to 3 same-host
+    #            stylesheets): brand colors/fonts live in CSS, which the
+    #            markdown conversion of tool_web_fetch would strip.
+    #   {file} — {name, content(base64)}: an uploaded CI document, extracted
+    #            via the shared doc pipeline (extract_attachment_text).
+    #   {text} — pasted excerpt of a CI guide.
+
+    _DESIGN_GEN_SYSTEM = (
+        "Du bist ein Corporate-Design-Analyst. Aus dem gelieferten Material "
+        "(Website-HTML/CSS oder CI-Dokument) destillierst du ein kompaktes "
+        "Design-System. Antworte mit GENAU EINEM JSON-Objekt, ohne Fließtext "
+        "davor oder danach, im Schema:\n"
+        '{"colors": [{"hex": "#RRGGBB", "role": "Primär"}], '
+        '"font_heading": "", "font_body": "", "logo_url": "", '
+        '"tone": "", "css_snippet": ""}\n'
+        "Regeln: colors = die 3–6 wichtigsten Markenfarben mit kurzer Rolle "
+        "(z. B. Primär, Akzent, Fläche, Text) — echte Werte aus dem Material, "
+        "keine erfundenen. font_heading/font_body aus font-family/@font-face/"
+        "Font-Links. logo_url nur, wenn eine absolute Logo-Bild-URL eindeutig "
+        "erkennbar ist, sonst leer. tone = 1–2 Sätze zur Tonalität der Texte. "
+        "css_snippet = optional ein kurzer :root-Block mit CSS-Variablen aus "
+        "den gefundenen Werten. Unbekannte Felder leer lassen, nie raten.")
+
+    def _design_gen_fetch_site(self, url: str) -> str:
+        """Fetch raw HTML + up to 3 same-host stylesheets for design analysis.
+        Deliberately NOT tool_web_fetch: its markdown conversion drops the CSS
+        the colors/fonts live in. Caps keep the LLM input bounded."""
+        import re as _re
+        import urllib.request
+        from urllib.parse import urljoin, urlparse
+
+        def _get(u, cap):
+            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0 (BrainAgent design-system)"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.read(cap).decode("utf-8", errors="replace")
+
+        html = _get(url, 400_000)
+        chunks = [f"### Seite: {url}\n\n{html[:60_000]}"]
+        hrefs = _re.findall(
+            r'<link[^>]+rel=["\']?stylesheet["\']?[^>]*href=["\']([^"\']+)["\']',
+            html, _re.IGNORECASE)
+        hrefs += _re.findall(
+            r'<link[^>]+href=["\']([^"\']+)["\'][^>]*rel=["\']?stylesheet',
+            html, _re.IGNORECASE)
+        seen = set()
+        host = urlparse(url).netloc
+        for href in hrefs:
+            css_url = urljoin(url, href)
+            p = urlparse(css_url)
+            if p.scheme not in ("http", "https") or css_url in seen:
+                continue
+            # Same host + font CDNs (Google Fonts links name the families).
+            if p.netloc != host and "fonts.googleapis" not in p.netloc:
+                continue
+            seen.add(css_url)
+            if len(seen) > 3:
+                break
+            try:
+                chunks.append(f"### Stylesheet: {css_url}\n\n{_get(css_url, 100_000)[:20_000]}")
+            except Exception as e:
+                chunks.append(f"### Stylesheet: {css_url}\n(nicht ladbar: {e})")
+        return "\n\n".join(chunks)
+
+    def _handle_project_design_system_generate(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/design-system/generate
+        Body: {url} | {text} | {file: {name, content}} (content base64).
+        Returns {design_system} for review — nothing is saved here."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        if self._project_access_check(agent_id, proj_name, require_manage=True) is None:
+            return
+        body = self._read_json() or {}
+        url = str(body.get("url") or "").strip()
+        text = str(body.get("text") or "").strip()
+        file_in = body.get("file") or {}
+        source = ""
+        try:
+            if url:
+                if not url.lower().startswith(("http://", "https://")):
+                    url = "https://" + url
+                source = self._design_gen_fetch_site(url)
+            elif isinstance(file_in, dict) and file_in.get("content"):
+                import base64
+                import tempfile
+                fname = os.path.basename(str(file_in.get("name") or "ci-dokument"))
+                ext = os.path.splitext(fname)[1] or ".txt"
+                raw = base64.b64decode(str(file_in["content"]), validate=False)
+                if len(raw) > 25 * 1024 * 1024:
+                    self._send_json({"error": "Datei zu groß (max. 25 MB)"}, 400)
+                    return
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tf:
+                    tf.write(raw)
+                    tmp_path = tf.name
+                try:
+                    extracted, kind = engine.extract_attachment_text(tmp_path)
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+                if kind != "text" or not (extracted or "").strip():
+                    self._send_json({"error": f"Aus „{fname}“ ließ sich kein Text "
+                                              "extrahieren"}, 422)
+                    return
+                source = f"### CI-Dokument: {fname}\n\n{extracted}"
+            elif text:
+                source = f"### CI-Auszug (vom Nutzer eingefügt)\n\n{text}"
+        except Exception as e:
+            self._send_json({"error": f"Quelle konnte nicht geladen werden: {e}"}, 502)
+            return
+        if not source.strip():
+            self._send_json({"error": "url, file oder text erforderlich"}, 400)
+            return
+        source = source[:120_000]
+
+        model = engine._background_model_default()
+        deanon = engine._identity_deanon
+        try:
+            model, (source,), deanon = engine.gdpr_pick_model_for_background(
+                model, [source], purpose="design_system_gen")
+        except engine.GDPRBlockedError as e:
+            self._send_json({"error": f"Durch GDPR-/Klassifikations-Richtlinie "
+                                      f"blockiert: {e}"}, 503)
+            return
+        if not model:
+            self._send_json({"error": "Kein Hintergrund-Modell konfiguriert"}, 503)
+            return
+
+        from . import sidecar_proxy
+        res = sidecar_proxy.background_call(
+            messages=[{"role": "user", "content":
+                       source + "\n\nExtrahiere jetzt das Design-System als JSON."}],
+            model=model,
+            system_prompt=self._DESIGN_GEN_SYSTEM,
+            purpose="transform",
+            cost_purpose="design_system_gen",
+            agent_id=agent_id,
+            project=proj_name,
+            user_id=(getattr(self, "_auth_user", None) or {}).get("id"),
+            max_rounds=1,
+        )
+        if res.get("error") and not (res.get("reply") or "").strip():
+            self._send_json({"error": str(res["error"])[:400]}, 502)
+            return
+        reply = deanon((res.get("reply") or "").strip())
+        # Defensive JSON parse: strip fences, take the outermost {...}.
+        if reply.startswith("```"):
+            reply = reply.split("\n", 1)[-1]
+            if reply.rstrip().endswith("```"):
+                reply = reply.rstrip()[:-3]
+        start, end = reply.find("{"), reply.rfind("}")
+        try:
+            parsed = json.loads(reply[start:end + 1]) if start != -1 and end > start else {}
+        except (ValueError, TypeError):
+            parsed = {}
+        if not isinstance(parsed, dict) or not parsed:
+            self._send_json({"error": "Das Modell lieferte kein auswertbares "
+                                      "Design-System", "raw": reply[:1000]}, 502)
+            return
+        # Shape-coerce exactly like update_project will on Save, so the editor
+        # previews what would actually persist.
+        ds = {}
+        cols = []
+        for c in (parsed.get("colors") or [])[:12]:
+            if isinstance(c, dict) and str(c.get("hex") or "").strip():
+                cols.append({"hex": str(c["hex"]).strip()[:32],
+                             "role": str(c.get("role") or "").strip()[:40]})
+        if cols:
+            ds["colors"] = cols
+        for k, cap in (("font_heading", 200), ("font_body", 200),
+                       ("logo_url", 500), ("tone", 1000), ("css_snippet", 6000)):
+            v = str(parsed.get(k) or "").strip()
+            if v:
+                ds[k] = v[:cap]
+        self._send_json({"design_system": ds, "model": model})
+
     def _handle_multipart_ingest(self, agent_id: str, project_name) -> dict:
         """Parse multipart/form-data upload and ingest the file."""
         content_type = self.headers.get("Content-Type", "")

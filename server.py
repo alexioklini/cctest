@@ -2343,6 +2343,9 @@ class BrainAgentHandler(
             self._handle_project_generate_instructions(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/instruction-gen/" in path and path.endswith("/cancel"):
             self._handle_project_instruction_gen_cancel(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/design-system/generate"):
+            # MUST match before the generic endswith("/generate") branch below.
+            self._handle_project_design_system_generate(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/generate"):
             self._handle_project_generate(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and "/outputs/" in path and path.endswith("/rename"):

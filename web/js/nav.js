@@ -92,6 +92,7 @@ function navigateTo(view, opts) {
         refreshThinkingButton();
   if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
   if (typeof refreshDeepResearchButton === 'function') refreshDeepResearchButton();
+  if (typeof refreshDesignContextButton === 'function') refreshDesignContextButton();
         if (typeof updateStatusBar === 'function') updateStatusBar();
         updateSendButton();
         renderFilePreviews();

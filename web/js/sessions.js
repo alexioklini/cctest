@@ -661,6 +661,7 @@ function newChat(opts) {
   // composer toggle (the button is the source of truth at send time).
   chat.deepResearch = false;
   if (typeof refreshDeepResearchButton === 'function') refreshDeepResearchButton();
+  if (typeof refreshDesignContextButton === 'function') refreshDesignContextButton();
   // Fresh chat → empty Websuche basket. Prevents the previous chat's marked
   // URLs from silently coming along into the new conversation.
   chat.webBasket = [];
