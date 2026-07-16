@@ -104,12 +104,18 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   with an error (v9.153.0). Same restriction on `write_document`. (CLI/warmup
   with no session: unrestricted fallback.)
 - `edit_file(path, old_string, new_string, replace_all?)` — exact-string edit.
-  **Rescue (9.309.0)**: when the exact match finds nothing, two tolerant passes
+  **Rescue (9.309.0)**: when the exact match finds nothing, tolerant passes
   run — typographic normalization (curly quotes/dashes/nbsp/zero-width) and
   whole-line matching with trailing-whitespace tolerance + a uniform indent
   delta (new_string is re-indented by that delta). A UNIQUE tolerant match is
   applied (result carries `rescued: <mode>` + a note); an ambiguous one errors.
   Edits that matched exactly before behave byte-identically.
+  **Rescue 3 (9.353.2, `anchor-span`)**: for LONG old_strings (≥200 chars)
+  whose MIDDLE the model garbled — opaque encoded blobs like data-URI SVGs /
+  base64 images (the design-mode hero case). The first/last 32 chars must
+  match verbatim as anchors; the span between them is replaced only when its
+  length is within ±35% of old_string AND difflib similarity ≥0.80, so a
+  mis-anchored pair never swallows unrelated content. Same ambiguity contract.
 - `list_directory(path, recursive?)` — ls
 - `search_files(root, pattern, ...)` — grep / find
 - `execute_command(cmd, cwd?, timeout?)` — shell. NO TTY, no stdin,

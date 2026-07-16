@@ -315,6 +315,58 @@ def _edit_apply_line_regions(content: str, regions, new_string: str) -> str:
     return "\n".join(file_lines)
 
 
+# Rescue 3 (anchor-based, v9.353.2): thresholds. Fires only for LONG
+# old_strings — the failure mode is an opaque encoded blob in the middle
+# (URL-encoded SVG data-URI, base64 image) that the model cannot reproduce
+# byte-exactly (the design-mode hero-image case, chat 58e3c521). Short
+# old_strings never reach it (rescues 1+2 cover those; an anchor match on a
+# short span would be a guess).
+_EDIT_RESCUE3_MIN_CHARS = 200   # minimum old_string length to attempt anchors
+_EDIT_RESCUE3_ANCHOR = 32       # prefix/suffix anchor length (verbatim)
+_EDIT_RESCUE3_MIN_RATIO = 0.80  # matched span vs old_string similarity floor
+_EDIT_RESCUE3_LEN_TOL = 0.35    # span length within ±35% of len(old_string)
+
+
+def _edit_rescue_anchors(content: str, old_string: str):
+    """Anchor-based match for long old_strings whose MIDDLE the model garbled.
+    The first/last _EDIT_RESCUE3_ANCHOR chars of old_string must match
+    VERBATIM; the span between them is accepted only when (a) its length is
+    within ±35% of len(old_string) and (b) its difflib similarity to
+    old_string is >= 0.80 — so a mis-anchored pair can never silently swallow
+    unrelated content. Per prefix occurrence the best-ratio valid span wins.
+    Returns a list of (start, end) regions (one per prefix occurrence that
+    yielded a valid span); the caller applies the same ambiguity contract as
+    the other rescues (N>1 without replace_all → refuse)."""
+    import difflib
+    if len(old_string) < _EDIT_RESCUE3_MIN_CHARS:
+        return []
+    pre = old_string[:_EDIT_RESCUE3_ANCHOR]
+    suf = old_string[-_EDIT_RESCUE3_ANCHOR:]
+    min_len = int(len(old_string) * (1 - _EDIT_RESCUE3_LEN_TOL))
+    max_len = int(len(old_string) * (1 + _EDIT_RESCUE3_LEN_TOL))
+    regions = []
+    pos = content.find(pre)
+    while pos != -1:
+        best = None  # (ratio, start, end)
+        # Every suffix occurrence whose span stays inside the length window.
+        spos = content.find(suf, pos + len(pre), pos + max_len)
+        while spos != -1:
+            end = spos + len(suf)
+            span = content[pos:end]
+            if len(span) >= min_len:
+                sm = difflib.SequenceMatcher(None, old_string, span)
+                if (sm.real_quick_ratio() >= _EDIT_RESCUE3_MIN_RATIO
+                        and sm.quick_ratio() >= _EDIT_RESCUE3_MIN_RATIO):
+                    ratio = sm.ratio()
+                    if ratio >= _EDIT_RESCUE3_MIN_RATIO and (best is None or ratio > best[0]):
+                        best = (ratio, pos, end)
+            spos = content.find(suf, spos + 1, pos + max_len)
+        if best:
+            regions.append((best[1], best[2]))
+        pos = content.find(pre, pos + 1)
+    return regions
+
+
 def tool_edit_file(args: dict) -> str:
     import brain as _brain
     path = args.get("path", "")
@@ -358,6 +410,24 @@ def tool_edit_file(args: dict) -> str:
                         line_regions = line_regions[:1]
                     content = _edit_apply_line_regions(content, line_regions, new_string)
                     rescued, count = "whitespace-indent", len(line_regions)
+                else:
+                    # Rescue 3: anchor-based replacement of a LONG span whose
+                    # middle the model garbled (opaque encoded blobs — data-URI
+                    # SVGs, base64). Verbatim prefix/suffix anchors + similarity
+                    # + length-window guards; see _edit_rescue_anchors.
+                    anchor_regions = _edit_rescue_anchors(content, old_string)
+                    if len(anchor_regions) > 1 and not replace_all:
+                        return _err(f"edit_file: old_string not found verbatim; an "
+                                    f"anchor-based match is AMBIGUOUS "
+                                    f"({len(anchor_regions)} places) — provide a "
+                                    f"more specific match or use replace_all=true")
+                    if anchor_regions:
+                        for start, end in sorted(anchor_regions, reverse=True):
+                            content = content[:start] + new_string + content[end:]
+                            if not replace_all:
+                                break
+                        rescued = "anchor-span"
+                        count = len(anchor_regions) if replace_all else 1
             if rescued:
                 with open(path, "w") as f:
                     f.write(content)
