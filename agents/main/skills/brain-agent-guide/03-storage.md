@@ -531,6 +531,10 @@ indexed by design). A `.sql`/`.dbq` with ≥1 SQL symbol counts as `indexed`.
   referenced by absolute path in `schedules.attachments[]`. NEVER copy
   per-run; same file reused every fire.
 - Session artifacts: `agents/main/artifacts/<YYYY-MM-DD>_<sid_prefix>/`.
+  The date is the FIRST-USE date and stays fixed for the session's lifetime:
+  an existing `*_<sid>` folder is reused on later days (v9.353.1 — before
+  that, every day re-stamped a fresh empty folder, so shell edits of day-1
+  artifacts in a multi-day chat were invisible to versioning).
 - Binary→markdown companions: `<dir>/.brain-extracted/<filename>.<ext>.md`
   with `<!-- brain-source: <abs path> -->` link back.
 - Chat attachments at upload time: `/tmp/brain-attachments/<sid>/<file>`,

@@ -86,13 +86,36 @@ def _err(msg: str) -> str:
 # --- Artifact session folder ----------------------------------------------
 
 def _get_artifact_session_folder(session_id: str) -> str:
-    """Return session folder name for artifacts: <date>_<session_prefix>"""
+    """Return session folder name for artifacts: <date>_<session_prefix>.
+
+    The date is the FIRST-USE date: an existing `*_<session_id>` folder is
+    REUSED, so a session keeps ONE artifact folder for life. Stamping the
+    current date on every resolve (the old behavior) gave a multi-day session
+    a fresh EMPTY folder on day 2 — default cwd, the execute_command/
+    python_exec write-watch snapshot and the preamble pointer then all aimed
+    at the new folder, so a shell edit of a day-1 artifact was invisible to
+    versioning (chat 58e3c521: design-turn edit landed on disk, but no
+    artifact_versions row / artifact_updated ever fired). Searched across all
+    agents' artifact dirs (session ids are unique); oldest hit wins for
+    determinism. Falls back to today's stamp for a brand-new session."""
     cache_key = f"_artifact_folder_{session_id}"
     cached = get_request_context()._dynamic.get(cache_key)
     if cached:
         return cached
-    from datetime import datetime as _dt
-    folder = f"{_dt.now().strftime('%Y-%m-%d')}_{session_id}"
+    folder = ""
+    try:
+        import glob as _glob
+        import brain as _brain
+        hits = _glob.glob(os.path.join(
+            _brain.AGENTS_DIR, "*", "artifacts", f"????-??-??_{session_id}"))
+        dirs = sorted(os.path.basename(h) for h in hits if os.path.isdir(h))
+        if dirs:
+            folder = dirs[0]
+    except Exception:
+        folder = ""
+    if not folder:
+        from datetime import datetime as _dt
+        folder = f"{_dt.now().strftime('%Y-%m-%d')}_{session_id}"
     get_request_context()._dynamic[cache_key] = folder
     return folder
 

@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.353.1",
+        "date": "2026-07-16",
+        "title": "Artefakt-Änderungen in älteren Chats wieder sichtbar",
+        "body": "In Chats, die über mehrere Tage liefen, konnte es passieren, "
+                "dass eine Überarbeitung eines Artefakts zwar ausgeführt, aber "
+                "im Artefakt-Panel nicht als neue Version angezeigt wurde. Das "
+                "ist behoben — jede Sitzung nutzt jetzt dauerhaft denselben "
+                "Ablageordner, und Änderungen erscheinen zuverlässig als neue "
+                "Version in der Vorschau.",
+        "audience": "user",
+        "versions": ["9.353.1"],
+    },
+    {
         "version": "9.353.0",
         "date": "2026-07-16",
         "title": "Entwürfe als PDF und PowerPoint exportieren",
