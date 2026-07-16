@@ -1087,7 +1087,8 @@ TOOL_DEFINITIONS = [
             "for a data-quality audit: duplicate rows, numeric outliers, "
             "orphan join keys (values missing on one side), and a formula/"
             "dependency map of what the workbook computes. Legacy .xls/.ods "
-            "files are read too (converted transparently)."
+            "files are read too (converted transparently). For .parquet/"
+            ".duckdb files (or huge CSVs) use data_query instead."
         ),
         "input_schema": {
             "type": "object",
@@ -1253,6 +1254,39 @@ TOOL_DEFINITIONS = [
                 "compare": {"type": "string", "description": "'formulas' = diff formula strings; 'formats' = diff cell formatting (rows still matched by value key)"},
             },
             "required": ["path_a", "path_b"],
+        },
+    },
+    {
+        "name": "data_query",
+        "description": (
+            "Run ONE read-only SQL SELECT (DuckDB dialect) directly against "
+            ".parquet, .csv/.tsv and .duckdb files — the columnar path for "
+            "BIG data extracts: files are scanned lazily server-side, so a "
+            "GROUP BY over a million-row Parquet takes under a second and "
+            "the data never enters the chat. Each file becomes a view named "
+            "after the file stem (tables inside a .duckdb keep their names); "
+            "every result lists the views with row counts, and an SQL error "
+            "echoes the full schema (view + column names/types) — use those "
+            "identifiers verbatim, never guess. Filtering, JOINs across "
+            "files (parquet × csv works), GROUP BY, window functions — all "
+            "without writing code. Do NOT load such files via python_exec/"
+            "pandas. Only SELECT/WITH is allowed; writes (INSERT/COPY TO) "
+            "and access to any other file are blocked at the engine level. "
+            "Returns up to 50 rows as a table plus the total row count; pass "
+            "out='name.csv' to save the FULL result (up to 200k rows) as an "
+            "artifact. For .xlsx/.json/.xml files use xlsx_inspect → "
+            "xlsx_query instead. Example: sql=\"SELECT branch, SUM(betrag) "
+            "FROM trades GROUP BY branch\"."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the .parquet/.csv/.tsv/.duckdb file"},
+                "paths": {"type": "array", "items": {"type": "string"}, "description": "Several files in one SQL session (alternative to path)"},
+                "sql": {"type": "string", "description": "One SELECT statement (DuckDB dialect). View names = file stems; use names from a previous result or error echo verbatim."},
+                "out": {"type": "string", "description": "Optional relative .csv filename — writes the full result to your artifact folder"},
+            },
+            "required": ["sql"],
         },
     },
     {

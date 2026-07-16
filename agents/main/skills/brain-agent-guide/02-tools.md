@@ -352,6 +352,30 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
   den rohen Patch. Abgrenzung: TABELLARISCHE Daten → `xlsx_diff` (matcht
   Zeilen per Schlüssel), Text/Code → `text_diff`.
 
+**data_query — SQL über Parquet/CSV/DuckDB (v9.355.0, Quant-Workbench D1):**
+- **`data_query(path|paths, sql, out?)`** (documents-Gruppe,
+  `engine/tools/data_tools.py`): EIN read-only SQL SELECT (DuckDB-Dialekt)
+  **direkt gegen `.parquet`/`.csv`/`.tsv`/`.duckdb`-Dateien** — der
+  Columnar-Pfad für GROSSE Datenextrakte. Anders als xlsx_query (lädt Zeilen
+  in In-Memory-SQLite) scannt DuckDB die Dateien **lazy über Views**: ein
+  GROUP BY über 1 Mio. Parquet-Zeilen läuft in Millisekunden, nichts wird
+  vorab geladen. Jede Datei wird eine View mit dem Datei-Stem als Namen
+  (Tabellen in einer `.duckdb` behalten ihre Namen); **jedes Ergebnis listet
+  die Views mit Zeilenzahlen**, ein SQL-Fehler echot das volle Schema
+  (Selbstkorrektur in einer Runde — es gibt bewusst KEIN data_inspect).
+  Cross-Format-JOINs (parquet × csv) funktionieren. Anzeige 50 Zeilen +
+  row_count; `out='name.csv'` schreibt das volle Ergebnis (Kappe 200k
+  Zeilen) als Artefakt. **Read-only dreischichtig**: (a) derselbe
+  SELECT/WITH-Prefix-Check + Multi-Statement-Reject wie xlsx_query
+  (importiert, nicht kopiert), (b) Quellen sind Views bzw.
+  READ_ONLY-attachte DBs, (c) Engine-Lockdown — `allowed_paths` = exakt die
+  Eingabedateien, `enable_external_access=false`, `lock_configuration=true`;
+  COPY TO und Zugriffe auf ANDERE Dateien scheitern in DuckDB selbst.
+  Datei-Kappe 512 MB (Sanity-Bound; bewusst über xlsx_querys 30 MB — dort
+  wird materialisiert, hier gestreamt). Abgrenzung: `.xlsx/.json/.xml` →
+  `xlsx_inspect`/`xlsx_query`; `.parquet/.duckdb` (oder riesige CSVs) →
+  `data_query`.
+
 ## OCR — deterministic local scan toolset (group `ocr`, v9.293.1)
 
 Read text out of SCANNED IMAGES / PHOTOS / scanned PDFs **deterministically** —
@@ -1011,6 +1035,7 @@ core          read_file write_file edit_file list_directory search_files
               execute_command tool_search ask_user
 documents     read_document write_document edit_document render_diagram
               xlsx_inspect xlsx_query xlsx_create xlsx_edit xlsx_diff text_diff
+              data_query
 ocr           ocr_inspect ocr_extract ocr_region ocr_fields ocr_tables
 doc_checks    mrz_verify doc_dates_check identity_consistency
 memory        mempalace_query save_chat_to_memory

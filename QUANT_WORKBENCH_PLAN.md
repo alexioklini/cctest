@@ -311,3 +311,21 @@ zwischen Fragen geladen"), VERSION. Handover-Notiz in dieses Dokument (Abschnitt
   (b) `r` zu `_ARTIFACT_INTERMEDIATE_EXTS` ergänzt (Skript-Rollen-Parität py/R).
   (c) r_exec bewusst NICHT in `GDPR_ARGS_DEANON_TOOLS` (deny-by-default; der
   Local-Safe-Check parst kein R) und NICHT in `_WORKFLOW_STEP_TOOLS`. Nächste Phase: D1.
+- 2026-07-16: **Phase D1 ABGESCHLOSSEN** (v9.355.0). `data_query` gebaut
+  (`engine/tools/data_tools.py`, 4 Sites, Gruppe documents; `_check_select_only`/
+  `_sanitize_name` aus xlsx_tools IMPORTIERT). Erfolgskriterien live verifiziert
+  (glm-5.2): 1-Mio-Zeilen-Parquet-Aggregat, Tool-Latenz 0.025 s (<5 s), nur das
+  Aggregat im Chat, Schema-Echo-Selbstkorrektur in einer Runde; die drei
+  Rejections (INSERT/COPY TO/Multi-Statement) explizit getestet
+  (`tests/test_data_tools.py`, 14 Tests). ABWEICHUNGEN/FUNDE: (a) Schicht (c)
+  präzisiert — `SET enable_external_access=false` allein hätte die LAZY-Views
+  gebrochen; gelöst über `allowed_paths` = exakt die Eingabedateien +
+  `lock_configuration=true` (blockt auch Re-Enable). Reihenfolge-Invariante:
+  `.duckdb` MUSS vor dem Lockdown READ_ONLY-attacht werden (WAL-Sidecars).
+  (b) Datei-Kappe 512 MB statt „30 MB wie xlsx_query" — die 30 MB existieren
+  wegen SQLite-Materialisierung; data_query streamt, 30 MB hätte D1s Zweck
+  (große Extrakte) konterkariert. Ergebnis-Kappe 200k Zeilen wie geplant.
+  (c) Kein data_inspect nötig: jedes Ergebnis listet die Views, Fehler echoen
+  das Schema. (d) data_query in `GDPR_ARGS_DEANON_TOOLS` + `_WORKFLOW_STEP_TOOLS`
+  (Parität xlsx_query, anders als r_exec). Nächste Phase: D2 — erst nach
+  validiertem D1-Betrieb bzw. User-Go (braucht lokale Test-Postgres).

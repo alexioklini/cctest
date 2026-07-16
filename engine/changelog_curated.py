@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.355.0",
+        "date": "2026-07-16",
+        "title": "Große Datenextrakte direkt per SQL abfragen",
+        "body": "Parquet-, CSV- und DuckDB-Dateien lassen sich jetzt direkt "
+                "im Chat mit SQL auswerten — Filter, Verknüpfungen und "
+                "Aggregate über Millionen Zeilen in Sekunden, ohne dass die "
+                "Rohdaten in den Chat gelangen. Der Zugriff ist strikt "
+                "lesend: Ihre Dateien können dabei nicht verändert werden. "
+                "Vollständige Ergebnisse speichert der Assistent auf Wunsch "
+                "als CSV-Datei im Artefakt-Bereich.",
+        "audience": "user",
+        "versions": ["9.355.0"],
+    },
+    {
         "version": "9.354.0",
         "date": "2026-07-16",
         "title": "Diagramme, Quant-Statistik und R-Skripte",

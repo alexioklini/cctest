@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.354.0"
+VERSION = "9.355.0"
 VERSION_DATE = "2026-07-16"
 CHANGELOG = [
+    ("9.355.0", "2026-07-16", "feat(Quant-Workbench Phase D1 — data_query: read-only SQL über Parquet/CSV/DuckDB via DuckDB; Plan QUANT_WORKBENCH_PLAN.md). NEUES TOOL data_query(path|paths, sql, out?) (4 Sites / 3 Dateien, Gruppe documents, engine/tools/data_tools.py NEU): EIN read-only SELECT (DuckDB-Dialekt) DIREKT gegen .parquet/.csv/.tsv/.duckdb-Dateien — der Columnar-Pfad für große Extrakte. Anders als xlsx_query (materialisiert Zeilen in In-Memory-SQLite, 30-MB-Kappe) scannt DuckDB die Dateien LAZY über Views: GROUP BY über 1-Mio-Zeilen-Parquet in 25 ms gemessen, nichts wird vorab geladen. Je Datei eine View mit sanitisiertem Stem-Namen (_sanitize_name aus xlsx_tools wiederverwendet; Tabellen einer .duckdb behalten ihre Namen, bei Mehrdatei-Sessions stem_-geprefixt); JEDES Ergebnis listet die Views mit Zeilenzahlen und ein SQL-Fehler echot das volle Schema (Selbstkorrektur in einer Runde — bewusst KEIN data_inspect-Tool). READ-ONLY DREISCHICHTIG (xlsx_query-Prinzip übersetzt, DuckDB hat keinen sqlite-Authorizer): (a) derselbe SELECT/WITH-Prefix-Check + Multi-Statement-Reject — _check_select_only aus xlsx_tools IMPORTIERT, nicht kopiert (Single-Fix-Point); (b) Quellen sind Views bzw. READ_ONLY-attachte DBs; (c) Engine-Lockdown: allowed_paths = exakt die Eingabedateien → enable_external_access=false → Views → lock_configuration=true — COPY TO, Lesen ANDERER Dateien (read_csv_auto('/etc/…')), ATTACH und Re-Enable scheitern in DuckDB selbst (PermissionException), live inkl. COPY TO auf einen erlaubten Input-Pfad verifiziert. REIHENFOLGE-INVARIANTE: .duckdb-Dateien MÜSSEN vor enable_external_access=false attacht werden (ATTACH braucht WAL-Sidecars außerhalb allowed_paths); die Lazy-Views funktionieren nach dem Lockdown weiter, weil ihre Dateien in allowed_paths stehen. Anzeige 50 Zeilen + row_count; out='name.csv' schreibt das volle Ergebnis via _enforce_artifact_path + _after_file_write; Ergebnis durch _gdpr_anon_tool_text. GUARDRAILS: Ergebnis-Kappe 200k Zeilen (fetchmany+1-Overflow-Detektion, wie xlsx_query — nichts Bulk erreicht das Modell); Datei-Kappe 512 MB statt 30 MB (BEWUSSTE Abweichung vom Plan-Wortlaut: die 30 MB von xlsx_query existieren wegen der SQLite-Materialisierung, data_query streamt — 30 MB hätte den Zweck von D1, große Extrakte, konterkariert). WIRING: TOOL_DEFINITIONS (mit gegenseitiger Abgrenzung xlsx_inspect↔data_query + Anti-pandas-Steering), TOOL_GROUPS documents, TOOL_DISPATCH direkte Fn-Ref, TOOL_ICONS 'D'/TOOL_VERBS 'Querying Data Files', GDPR_ARGS_DEANON_TOOLS (wie xlsx_query: SQL/Pfade müssen auf Realwerten laufen) + _WORKFLOW_STEP_TOOLS (Parität xlsx_query), config.example.json tool_settings (workflow_step active). xlsx_query bleibt UNVERÄNDERT. Tests: tests/test_data_tools.py NEU (14 — die drei Plan-Rejections EXPLIZIT: INSERT, COPY TO inkl. Datei-existiert-nicht-Assert, Multi-Statement; dazu Engine-Block fremder Datei-Reads ohne Inhalts-Leak, SET-Reject, Schema-Echo, Parquet×CSV-Cross-JOIN, .duckdb-Tabellen, 50-Zeilen-Display-Kappe, 200k-Result-Kappe, out=CSV-Roundtrip, unsupported-ext→xlsx_query-Hinweis, missing file); test_dispatch_symmetry + test_xlsx_tools + test_tool_optimize_gate grün. ERFOLGSKRITERIEN D1 live verifiziert (glm-5.2, Test-Session gelöscht): 1-Mio-Zeilen-Parquet 'Summe je Monat' → Runde 1 rät Spalte 'datum', Schema-Echo, Runde 2 korrekt — nur das 12-Zeilen-Aggregat im Chat, Tool-Latenz 0.025 s (<5 s). Schema-Änderung → Warm-Pool-Prefix re-primt einmalig (legitim). Server-Restart nötig. Skill 02-tools (data_query-Block + Gruppen-Map) + kuratierter Eintrag (user) im selben Commit. Nächste Phase: D2 (Warehouse-Konnektor) erst nach User-Go."),
     ("9.354.0", "2026-07-16", "feat(Quant-Workbench Phase 0 — Environment: Quant-Python + R-Laufzeit; Plan QUANT_WORKBENCH_PLAN.md). QUANT-VENV: .venv_quant (Homebrew python3.14, ABI-gleich mit dem Server-Interpreter — venv_path wird als PYTHONPATH injiziert, Interpreter bleibt sys.executable) mit matplotlib 3.11/seaborn/statsmodels 0.14.6/arch 8.0/QuantLib 1.43 (py3.14-Wheel vorhanden, kein Weglassen nötig); .gitignore + tools_config.json → python_exec.venv_path gesetzt, timeout 30→120 (Analysen; Phase A entlastet später). R: brew install r (4.6.1), Rscript-Smoke OK. NEU r_exec-Tool (4 Sites / 3 Dateien, Gruppe code_exec): engine/tools/file_tools.tool_r_exec als Spiegel von tool_python_exec — Rscript statt sys.executable, kein PYTHONPATH-Analog (System-R-Library), gleiche cwd-/Code-Mode-Logik, gleicher (mtime,size)-Ordner-Diff für Artefakt-Registrierung, gleicher _gdpr_anon_tool_text-Pass auf stdout ('r_exec:stdout'), register_tool_process für per-Tool-Kill, Timeout-Default 120 (brain-Default-Block r_exec ergänzt); Schema in TOOL_DEFINITIONS mit gegenseitiger Abgrenzung ('für Python nutze python_exec'); Dispatch = direkte Fn-Ref. BEWUSST NICHT in GDPR_ARGS_DEANON_TOOLS (deny-by-default: R-Code-Args behalten Fakes — der Python-Import-Check von _deanon_string_is_local_safe parst kein R) und NICHT in _WORKFLOW_STEP_TOOLS (kein belegter Bedarf). PARITÄT: 'r' in _ARTIFACT_INTERMEDIATE_EXTS (script_N.R war Rolle output, script_N.py intermediate). GEFUNDEN+GEFIXT dabei: python_exec stand global auf states.interactive=inactive (Alt-Seed) — Chat-Turns wichen auf execute_command + selbstgebautes venv aus; via POST /v1/tools/settings auf active gesetzt (config.json tool_settings; r_exec wurde beim Boot-Seed automatisch interactive-active). ERFOLGSKRITERIEN live verifiziert (glm-5.2, Test-Sessions gelöscht): (1) 'plotte Normalverteilung als PNG' → EIN python_exec-Round, PNG-Artefakt role=output; (2) import statsmodels+arch aus dem venv OK (0.14.6/8.0.0); (3) r_exec Chain-Ladder-artiges Beispiel (data.frame + aggregate) → stdout korrekt, write.csv-Datei als Artefakt registriert; (4) 90s-sleep-Skript läuft durch (elapsed 90.07s, Timeout-Erhöhung wirksam). py_compile OK (brain, file_tools, tool_schemas); Tests test_dispatch_symmetry + test_file_tools_characterization 41/41 grün. Schema-Änderung → Warm-Pool-Prefix invalidiert einmalig (legitim, re-primt). Server-Restart nötig. Skill 02-tools + kuratierter Eintrag (user) im selben Commit."),
     ("9.353.2", "2026-07-16", "feat(edit_file Rescue 3 'anchor-span' — der in 9.353.1 offen gelassene Auslöser): lange old_strings, deren MITTE das Modell nicht byte-genau reproduziert (opake encodierte Blobs: URL-encodierte SVG-data-URIs, base64-Bilder — der Design-Modus-Hero-Fall aus Chat 58e3c521), scheiterten mit old_string-not-found; Rescue 1 (Typografie) und 2 (Zeilen/Indent) greifen dort konstruktionsbedingt nicht → das Modell wich auf Shell-Rewrites aus. NEU engine/tools/file_tools._edit_rescue_anchors: die ersten/letzten 32 Zeichen des old_string müssen VERBATIM matchen (Präfix-/Suffix-Anker); der Span dazwischen wird nur ersetzt, wenn (a) seine Länge im ±35%-Fenster von len(old_string) liegt UND (b) difflib.SequenceMatcher-Ähnlichkeit ≥0.80 (real_quick/quick_ratio-Prefilter, dann ratio) — ein fehl verankertes Paar kann nie stillschweigend fremden Inhalt verschlucken. Pro Präfix-Vorkommen gewinnt der Best-Ratio-Span; Mehrdeutigkeit (mehrere Präfix-Treffer mit gültigem Span) → gleicher Ambiguity-Vertrag wie Rescue 1/2 (Fehler ohne replace_all). Nur für old_strings ≥200 Zeichen (_EDIT_RESCUE3_MIN_CHARS — kurze Spans wären Raterei; Rescues 1+2 decken sie). Ergebnis trägt rescued:'anchor-span' + Re-Read-Hinweis. GOLD-PROBE am echten Fall: der originale fehlgeschlagene edit_file-Call (old_string 1469 Zeichen, nicht verbatim in v1) findet jetzt GENAU 1 Region (Span 1480 Zeichen, similarity 0.991), Ersatz wendet den Hero-Farbwechsel an. NEU tests/test_edit_rescue.py::TestAnchorRescue (5: garbled-middle trifft echten Span, <200-Zeichen nie, unähnlicher Span verweigert, Längenfenster verweigert, 2 Präfix-Vorkommen → ambiguous 2 Regionen); 18/18 grün. py_compile OK. Kein Schema/Prompt → KV-Prefix unberührt; Server-Restart nötig. Skill 02-tools im selben Commit. KEIN kuratierter Eintrag (unsichtbare Robustheit)."),
     ("9.353.1", "2026-07-16", "fix(Artefakt-Ordner pro Session STABIL — Mehrtages-Sessions verloren Versionierung von Shell-Edits; User-Fund am Design-Turn in Chat 58e3c521): SYMPTOM: Design-Kommentar-Turn schrieb die Datei (Disk-mtime + Inhalt korrekt), aber KEINE neue Artefakt-Version, kein artifact_updated — das Panel (rendert artifact_versions.content, nicht Disk) zeigte weiter den alten Stand. KETTE: (1) edit_file scheiterte ehrlich mit old_string-not-found (riesiger URL-encodierter SVG-data-URI, nicht byte-genau reproduziert; beide Edit-Rescues greifen dort konstruktionsbedingt nicht); (2) Modell wich auf execute_command aus: cd <Tag-1-Ordner> && python3 -c write_text — Änderung landete auf Disk; (3) WURZEL: engine/tool_exec._get_artifact_session_folder stempelte bei JEDER Auflösung das HEUTIGE Datum → die Session vom 13.07. bekam am 16.07. einen frischen LEEREN Ordner 2026-07-16_<sid>; Default-cwd, execute_command/python_exec-Write-Watch-Snapshot UND Präambel-Pointer zeigten alle dorthin, der Shell-Write in den Tag-1-Ordner war für _register_new_artifacts unsichtbar (kein _after_file_write → keine Version, kein SSE); (4) auch _stray_write_warning schwieg (absoluter Pfad nur im cd — Regex verlangt Datei-Endung; Datei selbst relativ referenziert). FIX am Choke-Point: _get_artifact_session_folder REUSED jetzt einen existierenden `????-??-??_<session_id>`-Ordner (Glob über ALLE Agents-Artifacts-Dirs — Session-IDs sind eindeutig; ältester Treffer gewinnt deterministisch; Cache pro RequestContext unverändert), stempelt heute nur noch für wirklich neue Sessions → eine Session behält EINEN Artefakt-Ordner lebenslang, Tag-2-Shell-Edits liegen wieder im Watch-Dir und versionieren. Ein erfolgreiches edit_file/write_file war nie betroffen (ruft _after_file_write direkt mit dem echten Pfad; _is_artifact_path matcht jeden artifacts/-Pfad). NACHREGISTRIERT für den betroffenen Chat: Disk-Stand als artifact_versions v2 (blob, 70571 B — Hero-Farbwechsel enthalten), leerer 2026-07-16_58e3c521438a-Ordner entfernt. VERIFIZIERT live: /content?version=2 liefert neuen Inhalt; Unit-Probe _get_artifact_session_folder('58e3c521438a')→'2026-07-13_…' (Reuse) vs. neue SID→Heute-Stempel. py_compile OK; Server-Restart nötig. Skill 03-storage im selben Commit. KURATIERTER Eintrag (user, klein). OFFEN/Beobachten: edit_file-Robustheit auf langen data-URI-Strings (Design-Modus trifft das öfter — ggf. Rescue 3: Anker-basiertes Ersetzen) — bewusst NICHT in diesem Fix."),
@@ -1445,7 +1446,7 @@ TOOL_GROUPS = {
     "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
     "documents": {"read_document", "write_document", "edit_document", "render_diagram",
                   "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff",
-                  "text_diff"},
+                  "text_diff", "data_query"},
     "ocr": {"ocr_inspect", "ocr_extract", "ocr_region", "ocr_fields", "ocr_tables"},
     # Deterministic document verification (L1, PII-parity): checks run
     # server-side on raw data, verdicts are PII-free → immune to anonymisation.
@@ -2310,7 +2311,7 @@ _WORKFLOW_STEP_TOOLS = {
     # Documents incl. spreadsheets + diagrams.
     "read_document", "write_document", "edit_document", "render_diagram",
     "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff",
-    "text_diff",
+    "text_diff", "data_query",
     # Web research.
     "web_fetch", "exa_search", "searxng_search",
     "science_search", "dev_search", "image_search", "news_search",
@@ -4183,7 +4184,7 @@ GDPR_ARGS_DEANON_TOOLS = frozenset({
     "execute_command", "python_exec",
     "ocr_inspect", "ocr_extract", "ocr_region", "ocr_fields", "ocr_tables",
     "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff",
-    "text_diff",
+    "text_diff", "data_query",
     "mrz_verify", "doc_dates_check", "identity_consistency",
     # M3 (G9) — the LLM Wiki is LOCAL storage, so what lands on disk must be the
     # REAL values, not the model's fakes.
@@ -15639,7 +15640,7 @@ TOOL_ICONS = {
     "calibrate": "*",
     "read_document": "D", "write_document": "D", "edit_document": "D",
     "xlsx_inspect": "D", "xlsx_query": "D", "xlsx_create": "D", "xlsx_edit": "D",
-    "xlsx_diff": "D", "text_diff": "D",
+    "xlsx_diff": "D", "text_diff": "D", "data_query": "D",
     "ocr_inspect": "D", "ocr_extract": "D", "ocr_region": "D", "ocr_fields": "D",
     "ocr_tables": "D",
     "mrz_verify": "D", "doc_dates_check": "D", "identity_consistency": "D",
@@ -15668,6 +15669,7 @@ TOOL_VERBS = {
     "xlsx_inspect": "Inspecting Spreadsheet", "xlsx_query": "Querying Spreadsheet",
     "xlsx_create": "Creating Spreadsheet", "xlsx_edit": "Editing Spreadsheet",
     "xlsx_diff": "Comparing Spreadsheets", "text_diff": "Comparing Files",
+    "data_query": "Querying Data Files",
     "ocr_inspect": "Profiling Scan", "ocr_extract": "Reading Scan (OCR)",
     "ocr_region": "Reading Region (OCR)", "ocr_fields": "Extracting Fields (OCR)",
     "ocr_tables": "Extracting Table (OCR)",
@@ -16169,6 +16171,7 @@ from engine.tools.xlsx_tools import (  # noqa: E402
     tool_xlsx_diff,
 )
 from engine.tools.diff_tools import tool_text_diff  # noqa: E402
+from engine.tools.data_tools import tool_data_query  # noqa: E402
 from engine.tools.ocr_tools import (  # noqa: E402
     tool_ocr_inspect,
     tool_ocr_extract,
@@ -16359,6 +16362,7 @@ TOOL_DISPATCH = {
     "xlsx_edit": tool_xlsx_edit,
     "xlsx_diff": tool_xlsx_diff,
     "text_diff": tool_text_diff,
+    "data_query": tool_data_query,
     "ocr_inspect": tool_ocr_inspect,
     "ocr_extract": tool_ocr_extract,
     "ocr_region": tool_ocr_region,
