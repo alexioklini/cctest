@@ -329,3 +329,21 @@ zwischen Fragen geladen"), VERSION. Handover-Notiz in dieses Dokument (Abschnitt
   das Schema. (d) data_query in `GDPR_ARGS_DEANON_TOOLS` + `_WORKFLOW_STEP_TOOLS`
   (Parität xlsx_query, anders als r_exec). Nächste Phase: D2 — erst nach
   validiertem D1-Betrieb bzw. User-Go (braucht lokale Test-Postgres).
+- 2026-07-16: **Phase D2 ABGESCHLOSSEN** (v9.356.0, User-Go im selben Chat).
+  `db_query(source, sql, out?)` + `config.json → data_sources` (Boot-Copy in
+  server.py — 9.294.3-Falle vermieden). Alle 3 Erfolgskriterien live erfüllt:
+  SELECT liefert (glm-5.2 erkundet information_schema selbst), INSERT von
+  Schicht 1 UND nachweisbar von Schicht 2 abgelehnt (Owner-Credentials +
+  direkter INSERT → `ReadOnlySqlTransaction`, Test im Log), Postgres mitten in
+  der Session gestoppt → sauberer Tool-Fehler, kein Turn-Abbruch.
+  ABWEICHUNGEN/FUNDE: (a) NUR type=postgres verdrahtet — mssql/snowflake/oracle
+  wären untestbare spekulative Branches; fail-loud »not wired yet«, Nachrüsten
+  = ein isolierter Branch in `_connect_readonly` sobald ein echter DSN existiert.
+  (b) SECURITY-Beifang: `scripts/scrub_config.py` redigierte `dsn` nicht —
+  DSN-Passwörter wären via pre-commit in config.example.json geleckt; Marker +
+  Platzhalter ergänzt. (c) Server-side (named) Cursor statt Default-Cursor —
+  psycopg2 lädt sonst das ganze Resultset in den Brain-Prozess. (d) db_query
+  NICHT in `_WORKFLOW_STEP_TOOLS` (externe DB, deny-by-default wie r_exec).
+  Test-Infra per-Maschine: postgresql@17 (brew-Service), DB `braintest`
+  (50k-Zeilen `positionen`, Role `brain_ro`), psycopg2-binary im
+  Server-Interpreter. Damit ist Phase D KOMPLETT. Nächste Phase: B oder C.

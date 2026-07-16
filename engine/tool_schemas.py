@@ -1290,6 +1290,33 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "db_query",
+        "description": (
+            "Run ONE read-only SQL SELECT against a CONFIGURED external "
+            "database/warehouse source (set up by the admin in config.json → "
+            "data_sources; currently PostgreSQL). Pass the configured source "
+            "NAME — if it is wrong, the error lists the available names. The "
+            "connection is read-only at session level AND the configured DB "
+            "user must be a read-only grant, so writes are impossible; only "
+            "SELECT/WITH passes. Explore an unknown schema with e.g. "
+            "sql=\"SELECT table_name FROM information_schema.tables WHERE "
+            "table_schema='public'\" — never guess table names. A server-side "
+            "statement timeout caps runaway queries. Returns up to 50 rows "
+            "plus the total row count; pass out='name.csv' to save the FULL "
+            "result (up to 200k rows) as an artifact. For FILES (.parquet/"
+            ".csv/.duckdb) use data_query, for .xlsx use xlsx_query."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Configured data-source name (config.json → data_sources; wrong name → error lists the available ones)"},
+                "sql": {"type": "string", "description": "One SELECT statement (dialect of the source, e.g. PostgreSQL)"},
+                "out": {"type": "string", "description": "Optional relative .csv filename — writes the full result to your artifact folder"},
+            },
+            "required": ["source", "sql"],
+        },
+    },
+    {
         "name": "text_diff",
         "description": (
             "Compare two TEXT files (source code, configs, SQL, markdown, "

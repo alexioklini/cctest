@@ -221,3 +221,160 @@ def tool_data_query(args: dict) -> str:
             conn.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# db_query — warehouse connector (Quant-Workbench D2)
+# ---------------------------------------------------------------------------
+# Sources live in config.json → data_sources (gitignored, per-machine — the
+# crawl4ai pattern): [{name, type, dsn|env_key, options?}]. Read-only again in
+# three layers: (1) the shared SELECT/WITH prefix check, (2) session-level
+# read-only where the driver API supports it (postgres:
+# default_transaction_read_only via set_session), (3) OPERATIONAL REQUIREMENT
+# documented in every result — the configured DB user MUST be a read-only
+# grant; layers 1+2 are belt and braces on top of that, not a substitute.
+# There is deliberately NO db_list_sources tool: the schema never names the
+# per-machine sources; the model learns them from the error of a wrong guess.
+
+DB_QUERY_STATEMENT_TIMEOUT_MS = 60_000
+DB_CONNECT_TIMEOUT_S = 10
+_DB_READONLY_NOTE = ("session read-only (layer 2); operational requirement: "
+                     "the configured DB user must hold read-only grants only "
+                     "(layer 3)")
+
+
+def _data_sources() -> list[dict]:
+    import brain as _brain
+    return _brain._server_config().get("data_sources") or []
+
+
+def _resolve_db_source(name: str) -> dict:
+    srcs = _data_sources()
+    for s in srcs:
+        if (s.get("name") or "").strip() == name:
+            return s
+    avail = ", ".join(sorted((s.get("name") or "?") for s in srcs)) or \
+        "(none configured — admin: config.json → data_sources)"
+    raise ValueError(f"unknown source '{name}' — available: {avail}")
+
+
+def _source_dsn(src: dict) -> str:
+    dsn = (src.get("dsn") or "").strip()
+    if not dsn and src.get("env_key"):
+        dsn = (os.environ.get(src["env_key"]) or "").strip()
+        if not dsn:
+            raise ValueError(
+                f"source '{src.get('name')}': env var '{src['env_key']}' "
+                f"is not set (server environment)")
+    if not dsn:
+        raise ValueError(
+            f"source '{src.get('name')}' has neither 'dsn' nor 'env_key'")
+    return dsn
+
+
+def _connect_readonly(src: dict):
+    """Connect per source type with layer-2 read-only enforcement.
+    Returns (conn, exec_cursor) — exec_cursor streams (server-side cursor)
+    so a huge SELECT never materialises client-side."""
+    stype = (src.get("type") or "postgres").strip().lower()
+    opts = src.get("options") or {}
+    if stype != "postgres":
+        # Deliberate: only wire what we can validate (D2 success criteria run
+        # against postgres). Adding snowflake/mssql/oracle is one isolated
+        # branch here once a real DSN exists to test against.
+        raise ValueError(
+            f"source type '{stype}' is not wired yet — supported: postgres. "
+            f"(The read-only-grant requirement will apply there too.)")
+    try:
+        import psycopg2  # lazy — only db_query users pay the import
+    except ImportError:
+        raise RuntimeError(
+            "psycopg2 is not installed in the server interpreter — "
+            "pip3 install psycopg2-binary --break-system-packages")
+    conn = psycopg2.connect(
+        _source_dsn(src),
+        connect_timeout=int(opts.get("connect_timeout") or DB_CONNECT_TIMEOUT_S))
+    # Layer 2: the SESSION refuses writes regardless of the user's grants.
+    conn.set_session(readonly=True)
+    setup = conn.cursor()
+    timeout_ms = int(opts.get("statement_timeout_ms")
+                     or DB_QUERY_STATEMENT_TIMEOUT_MS)
+    setup.execute("SET statement_timeout = %s", (str(timeout_ms),))
+    setup.close()
+    # Named cursor = server-side: rows stream in fetchmany-sized batches.
+    cur = conn.cursor(name="brain_db_query")
+    return conn, cur
+
+
+def tool_db_query(args: dict) -> str:
+    import brain as _brain
+    source = (args.get("source") or "").strip()
+    if not source:
+        return _err("db_query: 'source' is required (a configured "
+                    "data_sources name)")
+    sql = args.get("sql") or ""
+    sel_err = _check_select_only(sql)
+    if sel_err:
+        return _err(f"db_query: {sel_err}")
+    sql = sql.strip().rstrip(";")
+    conn = None
+    try:
+        src = _resolve_db_source(source)
+        conn, cur = _connect_readonly(src)
+    except (ValueError, RuntimeError) as e:
+        return _err(f"db_query: {e}")
+    except Exception as e:
+        # Unreachable host, refused connection, auth failure — clean tool
+        # error, never a turn abort.
+        return _err(f"db_query: connection failed: {type(e).__name__}: {e}")
+    try:
+        try:
+            cur.execute(sql)
+            rows = cur.fetchmany(DATA_MAX_RESULT_ROWS + 1)
+        except Exception as e:
+            # SQL errors carry the server's own hint text (unknown column
+            # etc.); schema exploration is a SELECT on information_schema.
+            return _err(f"db_query: {type(e).__name__}: "
+                        f"{str(e).strip()}\n(Explore the schema with e.g. "
+                        f"SELECT table_name FROM information_schema.tables "
+                        f"WHERE table_schema='public')")
+        if len(rows) > DATA_MAX_RESULT_ROWS:
+            return _err(f"db_query: result exceeds {DATA_MAX_RESULT_ROWS:,} "
+                        f"rows — aggregate or filter in SQL")
+        headers = [d[0] for d in cur.description or []]
+        row_count = len(rows)
+        md = _markdown_table(headers, rows[:QUERY_DISPLAY_ROWS])
+        if row_count > QUERY_DISPLAY_ROWS:
+            md += (f"\n\n_({row_count:,} rows total, showing first "
+                   f"{QUERY_DISPLAY_ROWS} — pass out='name.csv' to save the "
+                   f"full result)_")
+        out_info = None
+        out_name = (args.get("out") or "").strip()
+        if out_name:
+            from engine.tools.file_tools import _enforce_artifact_path
+            if not out_name.lower().endswith(".csv"):
+                out_name += ".csv"
+            out_path, perr = _enforce_artifact_path(out_name, "db_query")
+            if perr:
+                return perr
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f, delimiter=";")
+                w.writerow(headers)
+                w.writerows(rows)
+            agent = get_request_context().current_agent
+            _brain._after_file_write(
+                out_path, "created", agent.agent_id if agent else "main")
+            out_info = {"path": out_path, "rows": row_count}
+        md = _brain._gdpr_anon_tool_text(md, f"db_query:{source}")
+        res = {"source": source, "row_count": row_count, "result": md,
+               "read_only": _DB_READONLY_NOTE}
+        if out_info:
+            res["saved"] = out_info
+        return _ok(res)
+    except Exception as e:
+        return _err(f"db_query: {type(e).__name__}: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass

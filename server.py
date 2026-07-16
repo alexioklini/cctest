@@ -3750,6 +3750,9 @@ def main():
     server_config["sidecar"] = file_config.get("sidecar", {}) or {}
     server_config["searxng"] = file_config.get("searxng", {}) or {}
     server_config["crawl4ai"] = file_config.get("crawl4ai", {}) or {}
+    # External warehouse sources for db_query (gitignored, per-machine —
+    # [{name, type, dsn|env_key, options?}]; the DB user MUST be read-only).
+    server_config["data_sources"] = file_config.get("data_sources", []) or []
     server_config["codebase_memory"] = file_config.get("codebase_memory", {}) or {}
     # warmup block was never loaded from config.json — every wcfg.get(...) in the
     # keeper + WarmSessionPool fell back to code defaults, so config.json →

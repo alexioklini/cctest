@@ -376,6 +376,30 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
   `xlsx_inspect`/`xlsx_query`; `.parquet/.duckdb` (oder riesige CSVs) →
   `data_query`.
 
+**db_query — Warehouse-Konnektor (v9.356.0, Quant-Workbench D2):**
+- **`db_query(source, sql, out?)`** (documents-Gruppe, `engine/tools/data_tools.py`):
+  EIN read-only SELECT gegen eine vom Admin **konfigurierte externe Datenbank**
+  (`config.json → data_sources`, gitignored/per-Maschine wie der crawl4ai-Block:
+  `[{name, type, dsn|env_key, options?}]`; aktuell verdrahtet: **postgres** —
+  weitere Typen erst bei realem, testbarem Bedarf). **Read-only dreischichtig**:
+  (1) derselbe SELECT/WITH-Prefix-Check + Multi-Statement-Reject wie
+  xlsx_query/data_query; (2) **Session-Read-only** — psycopg2
+  `set_session(readonly=True)`, ein INSERT stirbt am Server mit
+  `ReadOnlySqlTransaction`, selbst wenn der DB-User schreiben dürfte;
+  (3) **Betriebsvoraussetzung** (in jedem Tool-Ergebnis dokumentiert): der in
+  data_sources hinterlegte DB-User MUSS ein Read-only-Grant sein — Schichten
+  1+2 sind Gürtel+Hosenträger obendrauf, kein Ersatz. Serverseitiger
+  **Statement-Timeout** (Default 60 s, `options.statement_timeout_ms`);
+  server-side Cursor (benannt) — große Ergebnisse materialisieren nie
+  client-seitig; Ergebnis-Kappe 200k Zeilen; Anzeige 50 + row_count;
+  `out='name.csv'` als Artefakt; GDPR-Pass. **Kein db_list_sources** (bewusst):
+  die Tool-Beschreibung nennt die per-Maschine-Quellen nicht — ein falscher
+  `source`-Name liefert die verfügbaren Namen in der Fehlermeldung.
+  Schema-Erkundung per SELECT auf `information_schema` (der SQL-Fehler
+  verweist darauf). Abgerissene/nicht erreichbare Verbindung → sauberer
+  Tool-Fehler, kein Turn-Abbruch. Credentials: `dsn` wird vom
+  config-Scrubber redigiert (`scripts/scrub_config.py`, Marker `dsn`).
+
 ## OCR — deterministic local scan toolset (group `ocr`, v9.293.1)
 
 Read text out of SCANNED IMAGES / PHOTOS / scanned PDFs **deterministically** —
@@ -1035,7 +1059,7 @@ core          read_file write_file edit_file list_directory search_files
               execute_command tool_search ask_user
 documents     read_document write_document edit_document render_diagram
               xlsx_inspect xlsx_query xlsx_create xlsx_edit xlsx_diff text_diff
-              data_query
+              data_query db_query
 ocr           ocr_inspect ocr_extract ocr_region ocr_fields ocr_tables
 doc_checks    mrz_verify doc_dates_check identity_consistency
 memory        mempalace_query save_chat_to_memory

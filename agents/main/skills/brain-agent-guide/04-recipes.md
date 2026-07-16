@@ -392,6 +392,39 @@ Daily what-changed report between two exports:
    comment, added green, removed red) is the run artifact; the summary is the
    run result (optional per E-Mail via gmail_send im selben Prompt).
 
+## "Datenanbindung" — Warehouse/Datenbank für db_query einrichten (v9.356.0)
+
+Admin-Rezept: eine externe Datenbank (aktuell PostgreSQL) so anbinden, dass
+Analysten sie im Chat per `db_query` read-only abfragen können.
+
+1. **Read-only-DB-User anlegen (Betriebsvoraussetzung, Schicht 3)** — der in
+   Brain hinterlegte User darf NIE Schreibrechte haben:
+   ```sql
+   CREATE ROLE brain_ro LOGIN PASSWORD '…';
+   GRANT CONNECT ON DATABASE meinedb TO brain_ro;
+   GRANT USAGE ON SCHEMA public TO brain_ro;
+   GRANT SELECT ON ALL TABLES IN SCHEMA public TO brain_ro;
+   ```
+2. **`config.json → data_sources`** (per-Maschine, gitignored; Server-Neustart
+   nötig — Boot-Copy):
+   ```json
+   "data_sources": [{
+     "name": "warehouse",
+     "type": "postgres",
+     "dsn": "postgresql://brain_ro:PASS@host:5432/meinedb",
+     "options": {"statement_timeout_ms": 60000, "connect_timeout": 10}
+   }]
+   ```
+   Alternativ `"env_key": "WAREHOUSE_DSN"` statt `dsn` (liest die
+   Server-Umgebung, z. B. aus der launchd-plist).
+3. Danach im Chat: „Frag die Quelle *warehouse*: …" — das Modell erkundet das
+   Schema selbst über `information_schema`. Ein falscher Quellname listet die
+   verfügbaren Namen auf; die Session ist zusätzlich read-only (Schicht 2),
+   INSERT & Co. sind doppelt unmöglich.
+4. Prüfen: `db_query` mit `SELECT 1` — bei „connection refused" läuft die DB
+   nicht oder Host/Port im DSN stimmen nicht (der Fehler kommt als sauberes
+   Tool-Ergebnis zurück, kein Turn-Abbruch).
+
 ## "Mach aus diesem Chat einen Workflow" (KI-Workflow-Generator, v9.290.0)
 
 A good chat (e.g. a forensic passport check the Experten-Gremium planned and

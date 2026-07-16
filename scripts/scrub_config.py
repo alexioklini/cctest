@@ -37,7 +37,8 @@ DST = os.path.join(REPO, "config.example.json")
 # against the LEAF key. Broad on purpose — a false positive (redacting a
 # non-secret) is harmless in an example file; a false negative (leaking a
 # secret) is not.
-SECRET_KEY_MARKERS = ("api_key", "apikey", "secret", "token", "password", "passwd")
+SECRET_KEY_MARKERS = ("api_key", "apikey", "secret", "token", "password", "passwd",
+                      "dsn")  # DSNs embed credentials (postgresql://user:pass@…)
 # Inside provider `api_keys: [{name, key, usage}]` arrays the secret leaf is
 # literally `key` — too generic to add to the markers globally (would redact
 # innocuous "key" fields elsewhere), so handle it positionally.
@@ -55,6 +56,7 @@ PLACEHOLDERS = {
     "secret": "CHANGE_ME_RANDOM_SECRET",
     "password": "YOUR_PASSWORD",
     "passwd": "YOUR_PASSWORD",
+    "dsn": "postgresql://readonly_user:YOUR_PASSWORD@host:5432/dbname",
 }
 
 

@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.356.0",
+        "date": "2026-07-16",
+        "title": "Firmendatenbanken sicher anbinden",
+        "body": "Als Administrator können Sie jetzt externe Datenbanken "
+                "(z. B. ein PostgreSQL-Warehouse) als Datenquelle "
+                "hinterlegen. Analysten fragen diese Quellen danach direkt "
+                "im Chat ab — der Zugriff ist technisch doppelt auf "
+                "Nur-Lesen beschränkt, Schreibzugriffe sind ausgeschlossen. "
+                "Eine Anleitung zur Einrichtung finden Sie im Hilfe-Bereich "
+                "unter „Datenanbindung“.",
+        "audience": "admin",
+        "versions": ["9.356.0"],
+    },
+    {
         "version": "9.355.0",
         "date": "2026-07-16",
         "title": "Große Datenextrakte direkt per SQL abfragen",

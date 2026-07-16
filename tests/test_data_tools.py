@@ -1,10 +1,16 @@
-"""Tests for data_query (engine/tools/data_tools.py) — Quant-Workbench D1.
+"""Tests for data_query + db_query (engine/tools/data_tools.py) — Quant-
+Workbench D1 + D2.
 
 The read-only contract is the point of this suite (plan: the three rejections
 explicit — INSERT, COPY TO, multi-statement): layer (a) is the shared
 SELECT/WITH prefix check, layer (c) is the DuckDB engine lockdown
 (allowed_paths + enable_external_access=false + lock_configuration), which
 must also block file reads OUTSIDE the passed inputs from within a SELECT.
+
+db_query (D2): layer 2 must be provable INDEPENDENTLY of layer 1 — a direct
+INSERT on the tool's own connection has to die in the SESSION
+(ReadOnlySqlTransaction), not in the prefix check. The db suite needs the
+local test postgres (dbname=braintest) and skips cleanly without it.
 
 Run: python3 -m unittest tests.test_data_tools -v
 """
@@ -189,6 +195,132 @@ class TestDataQuery(_DataFixture):
         out = self._q(path="nope.parquet", sql="SELECT 1")
         self.assertIn("error", out)
         self.assertIn("not found", out["error"])
+
+
+# ---------------------------------------------------------------------------
+# db_query (D2)
+# ---------------------------------------------------------------------------
+
+_PG_DSN = "postgresql://brain_ro:brain_ro_test@localhost:5432/braintest"
+_PG_OWNER_DSN = "dbname=braintest host=localhost"
+
+
+def _pg_available() -> bool:
+    try:
+        import psycopg2
+        conn = psycopg2.connect(_PG_DSN, connect_timeout=2)
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+_HAVE_PG = _pg_available()
+
+from unittest import mock  # noqa: E402
+
+_TEST_SOURCES = [
+    {"name": "braintest", "type": "postgres", "dsn": _PG_DSN,
+     "options": {"statement_timeout_ms": 60000, "connect_timeout": 5}},
+    # Layer-2 proof source: OWNER credentials (may write by grant) — the
+    # session read-only must still block writes.
+    {"name": "braintest_owner", "type": "postgres", "dsn": _PG_OWNER_DSN},
+    {"name": "dead_db", "type": "postgres",
+     "dsn": "postgresql://x:x@localhost:59999/nope",
+     "options": {"connect_timeout": 2}},
+    {"name": "exotic", "type": "snowflake", "dsn": "irrelevant"},
+]
+
+
+@unittest.skipUnless(_HAVE_PG, "local test postgres (braintest) not available")
+class TestDbQuery(unittest.TestCase):
+    def setUp(self):
+        self._sid = "datatools-test-" + uuid.uuid4().hex[:8]
+        self.enterContext(request_context(
+            current_session_id=self._sid, current_agent=_FakeAgent()))
+        self.enterContext(mock.patch.object(
+            data_tools, "_data_sources", return_value=_TEST_SOURCES))
+
+    def tearDown(self):
+        try:
+            import shutil
+            from engine.tools.file_tools import _resolve_artifact_dir
+            with request_context(current_session_id=self._sid,
+                                 current_agent=_FakeAgent()):
+                art_dir, _ = _resolve_artifact_dir()
+            if art_dir and self._sid in art_dir and os.path.isdir(art_dir):
+                shutil.rmtree(art_dir)
+        except Exception:
+            pass
+
+    def _q(self, **args):
+        return json.loads(data_tools.tool_db_query(args))
+
+    def test_select_works(self):
+        out = self._q(source="braintest",
+                      sql="SELECT COUNT(*) AS n, SUM(stueck) AS s FROM positionen")
+        self.assertEqual(out["row_count"], 1)
+        self.assertIn("| 50000 | 12525000 |", out["result"])
+        self.assertIn("read-only", out["read_only"])
+
+    def test_rejects_insert_layer1(self):
+        out = self._q(source="braintest",
+                      sql="INSERT INTO positionen (filiale_id, isin, stueck, kurs) "
+                          "VALUES (1,'X',1,1)")
+        self.assertIn("error", out)
+        self.assertIn("SELECT", out["error"])
+
+    def test_layer2_blocks_insert_on_the_session(self):
+        """Layer 2 proof, independent of layer 1: a direct INSERT on the
+        tool's OWN connection (owner creds — grants would allow the write)
+        must die in the read-only SESSION."""
+        src = data_tools._resolve_db_source("braintest_owner")
+        conn, cur = data_tools._connect_readonly(src)
+        try:
+            plain = conn.cursor()
+            with self.assertRaises(Exception) as ctx:
+                plain.execute("INSERT INTO positionen "
+                              "(filiale_id, isin, stueck, kurs) VALUES (1,'X',1,1)")
+            self.assertIn("read-only", str(ctx.exception))
+        finally:
+            conn.close()
+
+    def test_rejects_multi_statement(self):
+        out = self._q(source="braintest",
+                      sql="SELECT 1; DELETE FROM positionen")
+        self.assertIn("error", out)
+        self.assertIn("ONE statement", out["error"])
+
+    def test_unknown_source_lists_available(self):
+        out = self._q(source="nope", sql="SELECT 1")
+        self.assertIn("error", out)
+        self.assertIn("braintest", out["error"])
+
+    def test_unwired_type_fails_loud(self):
+        out = self._q(source="exotic", sql="SELECT 1")
+        self.assertIn("error", out)
+        self.assertIn("snowflake", out["error"])
+        self.assertIn("postgres", out["error"])
+
+    def test_dead_connection_clean_error(self):
+        out = self._q(source="dead_db", sql="SELECT 1")
+        self.assertIn("error", out)
+        self.assertIn("connection failed", out["error"])
+
+    def test_sql_error_hints_information_schema(self):
+        out = self._q(source="braintest", sql="SELECT nope FROM positionen")
+        self.assertIn("error", out)
+        self.assertIn("information_schema", out["error"])
+
+    def test_out_writes_full_csv(self):
+        out = self._q(source="braintest",
+                      sql="SELECT * FROM positionen WHERE filiale_id = 1 "
+                          "ORDER BY id",
+                      out="fil1.csv")
+        self.assertEqual(out["saved"]["rows"], 2000)
+        with open(out["saved"]["path"], encoding="utf-8") as f:
+            lines = f.read().strip().splitlines()
+        self.assertEqual(len(lines), 2001)
 
 
 if __name__ == "__main__":

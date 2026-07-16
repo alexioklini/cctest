@@ -8628,6 +8628,26 @@
         "instruction_gen": "inactive",
         "workflow_step": "active"
       }
+    },
+    "db_query": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
     }
   },
   "research_mode_disciplines": {
@@ -9054,5 +9074,16 @@
       "input": 0.09,
       "output": 1.1
     }
-  }
+  },
+  "data_sources": [
+    {
+      "name": "braintest",
+      "type": "postgres",
+      "dsn": "postgresql://readonly_user:YOUR_PASSWORD@host:5432/dbname",
+      "options": {
+        "statement_timeout_ms": 60000,
+        "connect_timeout": 10
+      }
+    }
+  ]
 }
