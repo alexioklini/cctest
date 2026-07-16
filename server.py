@@ -1944,6 +1944,8 @@ class BrainAgentHandler(
             self._handle_artifact_content(path)
         elif path.startswith("/v1/artifacts/") and path.endswith("/thumbnail"):
             self._handle_artifact_thumbnail(path)
+        elif path.startswith("/v1/artifacts/") and path.endswith("/export"):
+            self._handle_artifact_export(path)
         elif path.startswith("/v1/artifacts/") and path.endswith("/download"):
             self._handle_artifact_download(path)
         elif path == "/v1/tools/result":

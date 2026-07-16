@@ -2364,6 +2364,105 @@ class AdminArtifactsHandlers:
         self.end_headers()
         self.wfile.write(data)
 
+    def _handle_artifact_export(self, path):
+        """GET /v1/artifacts/<id>/export?format=pdf|pptx&version=N — export an
+        HTML artifact (Design-Modus Phase C). `pdf`: print-accurate Chromium
+        render via the crawl4ai render service (POST /pdf). `pptx`: image
+        slides — one <section data-slide> = one slide, each screenshotted via
+        POST /screenshot and placed full-bleed on a 16:9 slide with python-pptx
+        (pixel-accurate, deliberately NOT editable in PowerPoint — V1 per the
+        plan; the UI menu says so honestly). Graceful degrade: render service
+        down/unconfigured → 503 with a clear German message, no fallback."""
+        from urllib.parse import urlparse, parse_qs
+        import base64
+        parts = path.split("/")
+        artifact_id = parts[3] if len(parts) >= 5 else ""
+        qs = parse_qs(urlparse(self.path).query)
+        version = qs.get("version", [None])[0]
+        fmt = (qs.get("format", [""])[0] or "").lower()
+        if fmt not in ("pdf", "pptx"):
+            self._send_json({"error": "format=pdf|pptx erforderlich"}, 400)
+            return
+
+        artifact = ChatDB.get_artifact(artifact_id)
+        if not artifact:
+            self._send_json({"error": "Artifact not found"}, 404)
+            return
+        if not str(artifact.get("name", "")).lower().endswith((".html", ".htm")):
+            self._send_json({"error": "Export gibt es nur für HTML-Artefakte"}, 400)
+            return
+        ver_data = ChatDB.get_artifact_content(artifact_id, version)
+        html = (ver_data or {}).get("content")
+        if html is None:
+            # Disk fallback (>5MB versions store no content) — same as /content.
+            try:
+                with open(artifact["path"], "rb") as f:
+                    html = f.read()
+            except Exception:
+                self._send_json({"error": "Version content not available"}, 404)
+                return
+        if isinstance(html, bytes):
+            html = html.decode("utf-8", errors="replace")
+
+        base_name = artifact["name"].rsplit(".", 1)[0]
+        if fmt == "pdf":
+            res = engine._crawl4ai_pdf(html)
+            if not res.get("success"):
+                self._send_json({"error": "PDF-Export nicht möglich — der "
+                                          "Render-Dienst (crawl4ai) ist nicht "
+                                          f"erreichbar: {res.get('error', '')}"},
+                                503)
+                return
+            data = base64.b64decode(res["pdf_b64"])
+            filename = f"{base_name}.pdf"
+            ct = "application/pdf"
+        else:
+            # PPTX needs the deck convention — fail loud with the fix, don't
+            # guess slide boundaries from arbitrary HTML.
+            if "data-slide" not in html:
+                self._send_json({"error": "Dieses Artefakt ist kein Foliendeck: "
+                                          "es enthält keine <section data-slide>-"
+                                          "Abschnitte. Bitte den Entwurf als Deck "
+                                          "anlegen lassen (jede Folie eine "
+                                          "<section data-slide> im 16:9-Raster)."},
+                                422)
+                return
+            res = engine._crawl4ai_screenshots(html, "section[data-slide]",
+                                               1280, 720)
+            if not res.get("success") or not res.get("images"):
+                self._send_json({"error": "PPTX-Export nicht möglich — der "
+                                          "Render-Dienst (crawl4ai) ist nicht "
+                                          f"erreichbar: {res.get('error', '')}"},
+                                503)
+                return
+            import io
+            from pptx import Presentation
+            from pptx.util import Inches
+            prs = Presentation()
+            prs.slide_width = Inches(13.333)   # 16:9
+            prs.slide_height = Inches(7.5)
+            blank = prs.slide_layouts[6]
+            for img_b64 in res["images"]:
+                slide = prs.slides.add_slide(blank)
+                slide.shapes.add_picture(
+                    io.BytesIO(base64.b64decode(img_b64)), 0, 0,
+                    width=prs.slide_width, height=prs.slide_height)
+            buf = io.BytesIO()
+            prs.save(buf)
+            data = buf.getvalue()
+            filename = f"{base_name}.pptx"
+            ct = ("application/vnd.openxmlformats-officedocument"
+                  ".presentationml.presentation")
+
+        self.send_response(200)
+        self.send_header("Content-Type", ct)
+        self.send_header("Content-Length", len(data))
+        self.send_header("Content-Disposition",
+                         f'attachment; filename="{filename}"')
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _handle_tool_result_download(self):
         """GET /v1/tools/result?session_id=X&tool_use_id=Y — serve the complete,
         uncapped tool result text that _apply_tool_result_budget spilled to disk

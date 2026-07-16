@@ -2203,6 +2203,19 @@ collect inputs (`ask_user_for_file`), execute the plan agentically
   Prefill: `POST .../design-system/generate` (see 01-api) — raw-HTML+CSS
   fetch for `{url}` sources, shared doc pipeline for `{file}`, one
   `background_call` (cost_purpose `design_system_gen`), review-before-save.
+- **Design-Modus export (v9.353.0, Phase C)**: the crawl4ai render service
+  gained `POST /pdf {html}` (Chromium `page.pdf()`, A4, print_background,
+  prefer_css_page_size) and `POST /screenshot {html, selector}` (one PNG per
+  matching element, DOM order, device_scale_factor 2) — both drive Playwright
+  directly (crawl4ai's own flags only do whole pages). Brain mirrors them as
+  `_crawl4ai_pdf`/`_crawl4ai_screenshots` (graceful degrade — service down
+  is a clear 503 at the export endpoint, never a fallback render).
+  `GET /v1/artifacts/<id>/export` builds PDF directly or PPTX via python-pptx
+  (16:9, one full-bleed image per `<section data-slide>`; hard 422 without
+  the sections). Every design turn's wire preamble carries the deck
+  convention (`_DESIGN_DECK_CONVENTION`) so the agent writes exportable
+  decks. Restarting the render service is needed after updating it
+  (`POST /v1/crawl4ai/restart`).
 - **Shared domain logic (no parallel impl)**: a scheduled task runs the SAME
   domain logic as a chat in its domain. Two shared functions on `brain` do it:
   `apply_domain_context(agent_id, project|project_id, user_id,

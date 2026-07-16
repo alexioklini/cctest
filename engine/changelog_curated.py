@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.353.0",
+        "date": "2026-07-16",
+        "title": "Entwürfe als PDF und PowerPoint exportieren",
+        "body": "HTML-Entwürfe lassen sich jetzt direkt aus dem Artefakt-Panel "
+                "exportieren: als druckgenaues PDF oder — bei Foliendecks — "
+                "als PowerPoint-Datei (eine Folie pro Abschnitt, pixelgenau "
+                "als Bild-Folien). Der neue „Export“-Knopf erscheint auf "
+                "jedem HTML-Artefakt; Design-Entwürfe werden automatisch so "
+                "angelegt, dass sie sich sauber exportieren lassen.",
+        "audience": "user",
+        "versions": ["9.353.0"],
+    },
+    {
         "version": "9.352.0",
         "date": "2026-07-16",
         "title": "Design-System: Entwürfe im eigenen Markenauftritt",

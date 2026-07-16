@@ -1834,6 +1834,13 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
         Design
       </button>
+      <!-- Export menu (Design-Modus Phase C): HTML / PDF (Chromium-Render) /
+           PPTX (Bild-Folien aus <section data-slide>). Only on HTML artifacts;
+           menu logic lives in DesignCanvas (no extra global). -->
+      <button class="artifact-action-btn hidden" id="artifact-export-btn" onclick="DesignCanvas.exportMenu(event)" title="Exportieren — HTML, PDF (druckgenau) oder PPTX (Foliendeck)">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        Export ▾
+      </button>
       <button class="artifact-action-btn" id="artifact-source-btn" onclick="toggleArtifactSource()" title="Quelltext anzeigen">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         Code

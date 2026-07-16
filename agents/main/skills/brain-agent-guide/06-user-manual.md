@@ -1666,6 +1666,28 @@ destilliert) oder „Aus CI-Dokument generieren…" (Styleguide/CI-PDF
 hochladen). Das Ergebnis füllt nur das Formular — geprüft und übernommen
 wird erst mit **Speichern**.
 
+### Export: PDF & PowerPoint (v9.353.0)
+
+Auf jedem **HTML-Artefakt** gibt es in der Aktionsleiste den Knopf
+**„Export ▾"** mit drei Wegen:
+
+- **HTML herunterladen** — die Datei selbst, selbständig lauffähig.
+- **Als PDF exportieren** — druckgenau im echten Browser gerendert
+  (Chromium). Ideal für One-Pager und Reports.
+- **Als PPTX exportieren** — nur für **Foliendecks**: jede
+  `<section data-slide>` im Entwurf wird eine Folie. Die Folien sind
+  pixelgenaue **Bild-Folien** — sie sehen in PowerPoint/Keynote exakt aus
+  wie die Vorschau, sind dort aber **nicht als Text editierbar**.
+
+Wissenswertes:
+- Design-Entwürfe werden automatisch exportfähig angelegt (der Agent kennt
+  die Folien-Konvention bei Design-Turns).
+- Ist der Entwurf kein Deck (keine `data-slide`-Abschnitte), erklärt die
+  PPTX-Fehlermeldung, wie man den Agenten das Deck anlegen lässt.
+- PDF/PPTX brauchen den Render-Dienst (crawl4ai). Ist er auf diesem Server
+  nicht eingerichtet, kommt eine klare Fehlermeldung — der HTML-Download
+  funktioniert immer.
+
 ---
 
 ## Wiki

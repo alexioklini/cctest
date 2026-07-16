@@ -253,5 +253,77 @@ const DesignCanvas = (() => {
     sendMessage();
   }
 
-  return { isActive, resetFor, toggle, render };
+  // ── Export-Menü (Phase C) ────────────────────────────────────────────────
+  // HTML (bestehender Download) · PDF (Chromium-Render, druckgenau) · PPTX
+  // (Bild-Folien: eine <section data-slide> = eine Folie — pixelgenau, aber
+  // bewusst NICHT in PowerPoint editierbar; das Menü sagt das ehrlich).
+  // Lebt im DesignCanvas-IIFE, damit kein weiteres Global entsteht.
+  function _closeExportMenu() {
+    document.querySelector('.design-export-menu')?.remove();
+  }
+
+  async function _exportFetch(format) {
+    const id = state.activeArtifactId;
+    const ver = state.activeArtifactVersion;
+    if (!id) return;
+    showToast(format === 'pdf' ? 'PDF wird erzeugt …' : 'PPTX wird erzeugt …');
+    try {
+      const url = `${BASE_URL}/v1/artifacts/${id}/export?format=${format}` +
+                  (ver ? `&version=${encodeURIComponent(ver)}` : '');
+      const r = await fetch(url, { headers: API._headers() });
+      if (!r.ok) {
+        let msg = `Export fehlgeschlagen (${r.status})`;
+        try { msg = (await r.json()).error || msg; } catch (_) {}
+        showToast(msg, true);
+        return;
+      }
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = /filename="([^"]+)"/.exec(disp);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = m ? m[1] : `export.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    } catch (e) {
+      showToast('Export fehlgeschlagen: ' + (e.message || e), true);
+    }
+  }
+
+  function exportMenu(ev) {
+    ev?.stopPropagation?.();
+    if (document.querySelector('.design-export-menu')) { _closeExportMenu(); return; }
+    const menu = document.createElement('div');
+    menu.className = 'design-export-menu';
+    menu.innerHTML = `
+      <div class="design-export-item" data-fmt="html">
+        <strong>HTML herunterladen</strong>
+        <small>Die Datei selbst — selbständig lauffähig</small>
+      </div>
+      <div class="design-export-item" data-fmt="pdf">
+        <strong>Als PDF exportieren</strong>
+        <small>Chromium-Render — druckgenau</small>
+      </div>
+      <div class="design-export-item" data-fmt="pptx">
+        <strong>Als PPTX exportieren</strong>
+        <small>Eine &lt;section data-slide&gt; = eine Folie (Bild-Folien, nicht editierbar)</small>
+      </div>`;
+    const r = ev?.target?.closest('button')?.getBoundingClientRect();
+    menu.style.left = Math.max(8, (r ? r.right : 300) - 300) + 'px';
+    menu.style.top = ((r ? r.top : 100) - 8) + 'px';
+    menu.style.transform = 'translateY(-100%)';
+    menu.onclick = (e) => {
+      const item = e.target.closest('.design-export-item');
+      if (!item) return;
+      _closeExportMenu();
+      if (item.dataset.fmt === 'html') { downloadArtifact(); return; }
+      _exportFetch(item.dataset.fmt);
+    };
+    document.body.appendChild(menu);
+    setTimeout(() => document.addEventListener('click', _closeExportMenu, { once: true }), 0);
+  }
+
+  return { isActive, resetFor, toggle, render, exportMenu };
 })();

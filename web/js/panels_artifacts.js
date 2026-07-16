@@ -608,8 +608,9 @@ async function loadArtifactVersion(version) {
   if (!artifactId) return;
   // Hidden by default; renderArtifactContent re-shows it for plan-like md.
   document.getElementById('artifact-workflow-btn')?.classList.add('hidden');
-  // Same for the design-mode button — only html artifacts re-show it.
+  // Same for the design-mode + export buttons — only html artifacts re-show them.
   document.getElementById('artifact-design-btn')?.classList.add('hidden');
+  document.getElementById('artifact-export-btn')?.classList.add('hidden');
   state.activeArtifactVersion = version;
   const sel = document.getElementById('artifact-version-select');
   if (sel) sel.value = version;
@@ -822,8 +823,9 @@ function renderArtifactContent(content, type, name, encoding) {
   // Ausführungsplan aussehen (Schritt/Step/Phase-Überschriften).
   _artifactUpdateWorkflowBtn(ext, content, name);
 
-  // Design-Modus: nur auf html-Artefakten anbieten (design_canvas.js).
+  // Design-Modus + Export: nur auf html-Artefakten anbieten (design_canvas.js).
   document.getElementById('artifact-design-btn')?.classList.toggle('hidden', type !== 'html');
+  document.getElementById('artifact-export-btn')?.classList.toggle('hidden', type !== 'html');
 
   if (state.artifactSourceMode && type !== 'image') {
     // Source view — always raw text

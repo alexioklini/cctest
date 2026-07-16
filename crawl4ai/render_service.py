@@ -19,6 +19,20 @@ Endpoints:
                                      crawl4ai-markdown. SECOND fallback, tried by
                                      Brain only after /render still comes back
                                      thin/blocked. Same result shape as /render.
+  POST /pdf {html,...}            -> (Design-Modus Phase C) render a raw HTML
+                                     STRING in Chromium and print it via
+                                     page.pdf() -> {"success", "pdf_b64", "error"}.
+  POST /screenshot {html, selector?, width?, height?}
+                                  -> (Phase C) render a raw HTML string and
+                                     screenshot each element matching `selector`
+                                     (deck export: one PNG per <section
+                                     data-slide>), or the full page when no
+                                     selector -> {"success", "images": [b64,...],
+                                     "error"}.
+
+The /pdf + /screenshot endpoints drive Playwright DIRECTLY (crawl4ai depends on
+it, so it is guaranteed present in this venv) — crawl4ai's own screenshot/pdf
+flags only cover whole pages, not per-element clips.
 """
 import argparse
 import asyncio
@@ -144,6 +158,70 @@ def _run_coro(coro):
     return fut.result()
 
 
+# ── Playwright-direct browser for /pdf + /screenshot (Phase C) ──────────────
+# Separate from the crawl4ai crawler (whose Playwright page is not exposed):
+# one lazily-started headless Chromium, kept warm on the shared loop. Every
+# request gets a FRESH page (cheap) so requests can't leak state into each
+# other; the browser itself is the expensive part and is shared.
+_pw = None
+_pw_browser = None
+
+
+async def _ensure_pw_browser():
+    global _pw, _pw_browser
+    if _pw_browser is None or not _pw_browser.is_connected():
+        from playwright.async_api import async_playwright
+        if _pw is None:
+            _pw = await async_playwright().start()
+        _pw_browser = await _pw.chromium.launch(headless=True)
+    return _pw_browser
+
+
+async def _pdf_from_html(html: str, timeout_ms: int) -> dict:
+    """Print a raw HTML string to PDF via Chromium's page.pdf(). Print-accurate:
+    backgrounds on, CSS @page size honoured when the document declares one."""
+    import base64
+    browser = await _ensure_pw_browser()
+    page = await browser.new_page(viewport={"width": 1280, "height": 720})
+    try:
+        await page.set_content(html, wait_until="networkidle",
+                               timeout=timeout_ms)
+        pdf = await page.pdf(format="A4", print_background=True,
+                             prefer_css_page_size=True)
+        return {"success": True, "pdf_b64": base64.b64encode(pdf).decode(),
+                "error": ""}
+    finally:
+        await page.close()
+
+
+async def _screenshots_from_html(html: str, selector: str, width: int,
+                                 height: int, timeout_ms: int) -> dict:
+    """Render a raw HTML string and screenshot each element matching
+    `selector` in DOM order (deck export: <section data-slide> = one slide),
+    or the full page when no selector is given. Returns base64 PNGs."""
+    import base64
+    browser = await _ensure_pw_browser()
+    page = await browser.new_page(viewport={"width": width, "height": height},
+                                  device_scale_factor=2)  # crisp on projectors
+    try:
+        await page.set_content(html, wait_until="networkidle",
+                               timeout=timeout_ms)
+        images = []
+        if selector:
+            for el in await page.query_selector_all(selector):
+                await el.scroll_into_view_if_needed()
+                images.append(base64.b64encode(
+                    await el.screenshot(type="png")).decode())
+        else:
+            images.append(base64.b64encode(
+                await page.screenshot(type="png", full_page=True)).decode())
+        return {"success": bool(images), "images": images,
+                "count": len(images),
+                "error": "" if images else "no matching elements"}
+    finally:
+        await page.close()
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):  # quiet — supervisor tags our stdout
         pass
@@ -164,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = self.path.split("?")[0]
-        if path not in ("/render", "/render_stealth"):
+        if path not in ("/render", "/render_stealth", "/pdf", "/screenshot"):
             self._send(404, {"error": "not found"})
             return
         try:
@@ -172,6 +250,28 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, TypeError):
             self._send(400, {"error": "invalid JSON"})
+            return
+        # /pdf + /screenshot take a raw HTML string, not a URL.
+        if path in ("/pdf", "/screenshot"):
+            html = body.get("html") or ""
+            if not html.strip():
+                self._send(400, {"error": "no html"})
+                return
+            timeout_ms = int(body.get("timeout_ms", 30000))
+            try:
+                if path == "/pdf":
+                    coro = _pdf_from_html(html, timeout_ms)
+                else:
+                    coro = _screenshots_from_html(
+                        html,
+                        (body.get("selector") or "").strip(),
+                        int(body.get("width", 1280)),
+                        int(body.get("height", 720)),
+                        timeout_ms)
+                self._send(200, _run_coro(coro))
+            except Exception as e:
+                self._send(200, {"success": False,
+                                 "error": f"{type(e).__name__}: {e}"[:500]})
             return
         url = (body.get("url") or "").strip()
         if not url:

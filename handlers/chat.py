@@ -318,26 +318,39 @@ def _build_pinned_sources(agent_id, project_name, pinned):
     return head + "\n\n" + "\n\n---\n\n".join(blocks), used
 
 
+# Deck/export convention for design turns (Design-Modus Phase C): rides on
+# EVERY design turn (with or without a project design_system) so the agent
+# writes decks the PPTX exporter can split into slides and pages the PDF
+# printer renders cleanly. Wire-only like everything else in this preamble.
+_DESIGN_DECK_CONVENTION = (
+    "[DESIGN-KONVENTION: Falls ein FOLIENDECK gewünscht ist, lege jede Folie "
+    "als eigene <section data-slide> im 16:9-Raster an (1280×720 px Basis, "
+    "in sich abgeschlossen gestylt) — nur so ist der Entwurf als PPTX "
+    "exportierbar. Einseiter/Reports brauchen keine sections; sie werden als "
+    "PDF druckgenau exportiert (print-taugliches CSS hilft).]")
+
+
 def _build_design_context_preamble(agent_id, project_name):
-    """Design-Turn (body.design_context, Design-Modus Phase B): render the
-    project's `design_system` (project.json, editor: Projekt-Seite →
-    Design-System) as a wire-only preamble so design turns follow the project's
-    CI (colors/fonts/logo/tone/CSS base). Injected ONLY on turns the client
-    deterministically flags as design turns (Design-Modus active on an HTML
-    artifact) — a normal Q&A turn in the same project never carries it.
-    Wire-only like the Websuche preamble: nothing enters session.messages/DB,
-    the warm-pool KV prefix stays byte-stable. Returns '' when there is no
-    project, no design_system, or all fields are empty."""
-    if not project_name:
-        return ""
-    try:
-        import brain as _engine
-        cfg = _engine.ProjectManager.get_project(agent_id, project_name) or {}
-    except Exception:
-        return ""
-    ds = cfg.get("design_system") or {}
+    """Design-Turn (body.design_context, Design-Modus Phase B+C): the wire-only
+    preamble every design turn carries. Always contains the deck/export
+    convention (_DESIGN_DECK_CONVENTION, Phase C — so the agent writes
+    PPTX-exportable decks); additionally renders the project's `design_system`
+    (project.json, editor: Projekt-Seite → Design-System) when one is set, so
+    the draft follows the project's CI (colors/fonts/logo/tone/CSS base).
+    Injected ONLY on turns the client deterministically flags as design turns
+    — a normal Q&A turn in the same project never carries it. Wire-only like
+    the Websuche preamble: nothing enters session.messages/DB, the warm-pool
+    KV prefix stays byte-stable."""
+    ds = {}
+    if project_name:
+        try:
+            import brain as _engine
+            cfg = _engine.ProjectManager.get_project(agent_id, project_name) or {}
+            ds = cfg.get("design_system") or {}
+        except Exception:
+            ds = {}
     if not isinstance(ds, dict):
-        return ""
+        ds = {}
     colors = [c for c in (ds.get("colors") or [])
               if isinstance(c, dict) and str(c.get("hex") or "").strip()]
     font_h = str(ds.get("font_heading") or "").strip()
@@ -346,8 +359,9 @@ def _build_design_context_preamble(agent_id, project_name):
     tone = str(ds.get("tone") or "").strip()
     css = str(ds.get("css_snippet") or "").strip()
     if not (colors or font_h or font_b or logo or tone or css):
-        return ""
-    lines = ["[PROJEKT-DESIGN-SYSTEM — verbindliche Gestaltungsvorgaben für "
+        return _DESIGN_DECK_CONVENTION
+    lines = [_DESIGN_DECK_CONVENTION,
+             "[PROJEKT-DESIGN-SYSTEM — verbindliche Gestaltungsvorgaben für "
              "diesen Design-Auftrag. Setze sie in HTML-Artefakten konsequent "
              "um; weiche nur ab, wo der Nutzer es ausdrücklich verlangt.]"]
     if colors:
