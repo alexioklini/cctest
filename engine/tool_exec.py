@@ -316,6 +316,14 @@ def kill_tool_process(turn_id: str, tool_use_id: str) -> bool:
         proc = _tool_procs.get((turn_id, tool_use_id))
     if proc is None:
         return False
+    # Kernel handle (engine/kernels.SessionKernel) instead of a Popen: escalate
+    # instead of SIGKILL — 1st cancel interrupts (kernel + state survive), 2nd
+    # cancel hard-kills the kernel process group.
+    if hasattr(proc, "cancel_escalate"):
+        try:
+            return bool(proc.cancel_escalate())
+        except Exception:
+            return False
     import signal as _sig
     try:
         os.killpg(proc.pid, _sig.SIGKILL)

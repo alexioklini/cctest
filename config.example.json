@@ -8695,6 +8695,66 @@
         "instruction_gen": "inactive",
         "workflow_step": "inactive"
       }
+    },
+    "kernel_exec": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "kernel_status": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "kernel_restart": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
     }
   },
   "research_mode_disciplines": {

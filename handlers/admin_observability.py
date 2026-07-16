@@ -2070,3 +2070,54 @@ class AdminObservabilityHandlers:
             return
         stats = engine._context_manager.get_stats(session_id)
         self._send_json(stats)
+
+    def _handle_kernel_status(self):
+        """GET /v1/kernel/status?session_id=X — persistent-kernel state for the
+        status-bar badge (session-scoped, refreshed on session open)."""
+        from urllib.parse import parse_qs, urlparse
+        qs = parse_qs(urlparse(self.path).query)
+        session_id = (qs.get("session_id") or [""])[0]
+        if not session_id:
+            self._send_json({"error": "Missing session_id"}, 400)
+            return
+        if self._session_access_check(session_id) is None:
+            return
+        from engine.kernels import kernel_manager
+        self._send_json(kernel_manager.status(session_id))
+
+    def _handle_kernel_restart(self):
+        """POST /v1/kernel/restart {session_id} — restart the session's
+        persistent kernel (badge button). No running kernel → 200 alive:false;
+        with one → fresh kernel of the same language, state discarded."""
+        body = self._read_json()
+        session_id = body.get("session_id", "")
+        if not session_id:
+            self._send_json({"error": "Missing session_id"}, 400)
+            return
+        if self._session_access_check(session_id, require_manage=True) is None:
+            return
+        session = sessions.get(session_id)
+        if not session:
+            self._send_json({"error": "Session not found"}, 404)
+            return
+        from engine.kernels import kernel_manager
+        prev = kernel_manager.get(session_id)
+        if prev is None:
+            self._send_json({"alive": False,
+                             "note": "no kernel running for this session"})
+            return
+        # Outside a turn there is no request context — resolve the kernel cwd
+        # (session artifact folder) directly from the session row.
+        folder = engine._get_artifact_session_folder(session_id)
+        cwd = os.path.join(engine.AGENTS_DIR, session.agent_id or "main",
+                           "artifacts", folder)
+        cfg = engine.get_tool_config()
+        venv_path = (cfg.get("python_exec") or {}).get("venv_path", "")
+        max_kernels = (cfg.get("kernel_exec") or {}).get("max_kernels", 3)
+        try:
+            kernel_manager.restart(session_id, prev.lang, cwd, venv_path,
+                                   max_kernels)
+        except RuntimeError as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        self._send_json(kernel_manager.status(session_id))

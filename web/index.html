@@ -1652,6 +1652,14 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span class="status-label">Warteschlange</span>
       <span class="status-value" id="status-queue-label">0/0</span>
     </div>
+    <div class="status-item" id="status-kernel" style="display:none;gap:4px" title="Persistenter Kernel dieser Sitzung">
+      <span class="warmup-dot warm" id="status-kernel-dot"></span>
+      <span class="status-label">Kernel</span>
+      <span class="status-value" id="status-kernel-label">—</span>
+      <button class="compact-btn" id="status-kernel-restart-btn" onclick="KernelBadge.restart()" title="Kernel neu starten (Variablen gehen verloren)" style="padding:1px 4px;display:inline-flex;align-items:center">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+      </button>
+    </div>
     <div class="status-item" style="margin-left:auto;gap:6px">
       <span class="status-value" id="status-session"></span>
       <button class="compact-btn" id="status-summary-btn" onclick="exportChatSummary()" title="Zusammenfassung des Chats als Markdown in Artefakte speichern" style="padding:2px 6px;display:inline-flex;align-items:center">
@@ -2114,6 +2122,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_background.js"></script>
 <script src="js/panels_artifacts.js"></script>
 <script src="js/design_canvas.js"></script>
+<script src="js/kernel_badge.js"></script>
 <script src="js/panels_workdir.js"></script>
 <script src="js/panels_termchat.js"></script>
 <script src="js/panels_agentpane.js"></script>

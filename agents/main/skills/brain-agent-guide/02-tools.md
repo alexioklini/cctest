@@ -691,8 +691,10 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
 ## Code execution
 
 - `python_exec(code, timeout?)` — subprocess (`sys.executable`).
-  Working dir = session's artifact folder. State persists across calls
-  within a session. Files written auto-register as artifacts.
+  Working dir = session's artifact folder. Each call is a FRESH process —
+  no in-memory state carries over (files on disk persist; for in-memory
+  state across calls see `kernel_exec` below). Files written
+  auto-register as artifacts.
   **In a code-mode project** (v9.312.12) the cwd is this chat's — or this
   sub-agent's — output folder (`chats/<title>_<date>_<id>/[subagents/<task>/]`),
   NOT the project root. So a plain relative write (`open('report.html','w')`)
@@ -714,6 +716,25 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   Artefakte), gleicher GDPR-Pass auf stdout, per-Tool-Kill. Für bestehenden
   R-Code und R-spezifische Statistik; für Python weiterhin `python_exec`.
   Default-Timeout 120 s. Pakete kommen aus der System-R-Library (kein venv).
+- **Persistente Kernel (v9.359.0, Quant-Workbench Phase A)** — Zustand
+  ÜBERLEBT zwischen Tool-Calls und Turns (Jupyter: ipykernel/IRkernel als
+  eigene Subprozesse, EIN Kernel pro Chat-Session, max. 3 gleichzeitig,
+  Idle-Abbau nach ~20 min, stirbt mit Brain-Restart):
+  - `kernel_exec(code, lang='python'|'r', timeout?)` — startet den
+    Session-Kernel lazy beim ersten Call. Großen Datensatz EINMAL laden,
+    dann über Folgefragen iterieren (kein Neuladen). cwd = Artefakt-Ordner;
+    geschriebene Dateien + `plt.show()`/R-`plot()`-PNGs (als
+    `kernel_plot_N.png`) registrieren sich als Artefakte mit Provenance
+    `produced_by='kernel#N'` + Env-Snapshot. stdout läuft durch den
+    GDPR-Pass. Timeout → Interrupt (Kernel + Variablen überleben);
+    Cancel-Eskalation: 1. Abbruch = Interrupt, 2. = Kernel-Kill.
+    NUR im interaktiven Chat (Scheduler/Background → `python_exec`/`r_exec`).
+  - `kernel_status()` — Sprache, Uptime, RSS, Exec-Zähler, definierte
+    Top-Level-Namen (erst prüfen, dann ggf. neu laden).
+  - `kernel_restart(lang?)` — expliziter Neustart bzw. Sprachwechsel
+    (python↔r); ALLE Variablen gehen verloren.
+  UI: Statusleisten-Badge „Kernel · py/R · RSS" mit Neustart-Knopf;
+  Endpoints `GET /v1/kernel/status?session_id=` + `POST /v1/kernel/restart`.
 
 ## Delegation / workers
 
@@ -1097,7 +1118,7 @@ mcp           mcp_connect mcp_disconnect mcp_servers
 skills        use_skill
 nodes         list_nodes
 thinking      think sequential_thinking calibrate
-code_exec     python_exec r_exec
+code_exec     python_exec r_exec kernel_exec kernel_status kernel_restart
 audio         transcribe_audio generate_audio_overview
 translation   translate_text translate_document detect_language
               list_glossaries get_glossary

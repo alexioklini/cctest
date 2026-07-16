@@ -2480,6 +2480,32 @@ Only on approval does it open a new chat, attach BOTH .md files, and seed a
 artifact is already saved in the source chat. No zip bundle is attached (the
 model can't read inside a zip; the zip-bundle export is a separate feature).
 
+## Persistente Kernel (KernelManager, v9.359.0)
+
+`engine/kernels.py` → Singleton `kernel_manager`: Jupyter-Kernel (ipykernel /
+IRkernel) als eigene OS-Subprozesse, EIN Kernel pro Chat-Session
+(Key = `session_id`), max. 3 gleichzeitig (LRU-Verdrängung, nie eines
+laufenden Execs), Idle-Reaper 20 min (`server_daemons._kernel_reaper_loop`,
+`idle_timeout_s` live aus `tools_config.json → kernel_exec`). Kernelspecs
+werden pro Start generiert (`.venv_quant/brain-kernelspecs/`): der
+Python-Kernel läuft mit dem SERVER-Interpreter + `PYTHONPATH=.venv_quant`
+(identische Paket-Semantik wie `python_exec`), der R-Kernel mit
+`R --slave -e 'IRkernel::main()'`. Ein Exec gleichzeitig pro Kernel
+(`exec_lock`); iopub-Outputs: `stream`→Text, `image/png`→Datei in den
+Session-Ordner (registriert mit Phase-B-Provenance `produced_by='kernel#N'`),
+`error`→ANSI-bereinigter Traceback.
+
+Kill-Pfad dreifach: (a) `kill_tool_process` dispatcht auf
+`cancel_escalate`-Handles — 1. Cancel = `interrupt_kernel` (Zustand
+überlebt), 2. Cancel = SIGKILL der Prozessgruppe; Timeout analog
+(Interrupt → 5 s Frist → Hard-Kill + Pool-Drop). (b) UI-Restart-Button
+(`POST /v1/kernel/restart`). (c) Brain-Shutdown killt alle
+(`server.py` finally + atexit) — Kernel überleben einen Restart BEWUSST
+nicht (wie der in-process Loop). SSE `kernel_status` (in
+`_PASSTHROUGH_EVENTS`, handlers/chat.py) füttert den Statusleisten-Badge.
+Interactive-only: Boot-Seed lässt die Tools in allen restringierten
+Purposes inaktiv, plus fail-loud-Guard gegen `sched-*`/bg_task-Kontexte.
+
 ## Tools — adding a new one
 
 4 edit sites in `brain.py`:

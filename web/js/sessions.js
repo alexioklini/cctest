@@ -134,12 +134,18 @@ async function openSession(sessionId, agentId) {
   chat._expandedHints = new Set();
   // Real chat open — drop any sticky scheduled-run selection.
   state.activeScheduledRunId = null;
+  // Kernel-Badge: alten Session-Zustand sofort ausblenden; der Zustand der
+  // neuen Session wird nach dem Laden asynchron nachgezogen (unten).
+  if (typeof KernelBadge !== 'undefined') KernelBadge.reset();
 
   let resumeStreaming = false;
   let resumeStreamingText = '';
 
   try {
     const data = await API.getSessionMessages(sessionId);
+    // Kernel-Badge der neuen Session nachladen (fire-and-forget; SSE deckt
+    // nur laufende Turns ab, ein bestehender Kernel wäre sonst unsichtbar).
+    if (typeof KernelBadge !== 'undefined') KernelBadge.refresh(sessionId);
     const rawMessages = data.messages || [];
     if (data.model) {
       chat.model = data.model;

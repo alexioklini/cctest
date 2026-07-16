@@ -3789,3 +3789,26 @@ def _warmup_keeper_loop(srv):
             print(f"[warmup-keeper] loop error: {type(e).__name__}: {e}")
             time.sleep(30)
 
+
+
+def _kernel_reaper_loop(srv):
+    """Reap idle persistent Jupyter kernels (Quant-Workbench Phase A).
+
+    Sweeps every 60s; a kernel idle longer than kernel_exec.idle_timeout_s
+    (default 20 min, read live from tools_config so GUI edits apply without
+    restart) is shut down. The next kernel_exec starts a fresh one
+    transparently — models are told state can vanish and to reload."""
+    time.sleep(30)  # let boot settle
+    while True:
+        try:
+            from engine.kernels import kernel_manager
+            idle_s = int((engine.get_tool_config().get("kernel_exec") or {})
+                         .get("idle_timeout_s", 1200) or 1200)
+            n = kernel_manager.reap_idle(idle_s)
+            if n:
+                print(f"[kernel-reaper] shut down {n} idle kernel(s) "
+                      f"(>{idle_s}s)", flush=True)
+        except Exception as e:
+            print(f"[kernel-reaper] loop error: {type(e).__name__}: {e}",
+                  flush=True)
+        time.sleep(60)

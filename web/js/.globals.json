@@ -1127,6 +1127,7 @@
     "isStuckToBottom": "writable",
     "isTabletViewport": "writable",
     "jumpToTurn": "writable",
+    "KernelBadge": "writable",
     "kgOpenProject": "writable",
     "kgQueryEntity": "writable",
     "kgReextract": "writable",

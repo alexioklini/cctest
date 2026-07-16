@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.359.0",
+        "date": "2026-07-16",
+        "title": "Daten bleiben zwischen Fragen geladen",
+        "body": "Bei Datenanalysen im Chat kann der Assistent jetzt eine "
+                "dauerhafte Python- oder R-Arbeitsumgebung nutzen: große "
+                "Datensätze werden einmal geladen und stehen für alle "
+                "Folgefragen sofort bereit — jede weitere Auswertung dauert "
+                "Sekundenbruchteile statt eines Neuladens. Diagramme aus "
+                "dieser Umgebung erscheinen automatisch als Dateien samt "
+                "Herkunftsnachweis. Die Statusleiste zeigt die laufende "
+                "Umgebung (Sprache und Speicherbedarf) mit einem Knopf zum "
+                "Neustart; nach etwa 20 Minuten ohne Nutzung räumt sie sich "
+                "selbst auf.",
+        "audience": "user",
+        "versions": ["9.359.0"],
+    },
+    {
         "version": "9.358.0",
         "date": "2026-07-16",
         "title": "Jupyter-Notebooks als Ergebnisdokument",

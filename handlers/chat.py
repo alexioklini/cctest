@@ -2664,7 +2664,10 @@ def make_artifact_event_callback(session_id: str):
                            # Generic live tool progress (report_tool_progress):
                            # phase/%/page-i-of-N for the running tool card.
                            # Display-only — never persisted.
-                           "tool_progress")
+                           "tool_progress",
+                           # Persistent-kernel badge (kernel_exec/restart emit
+                           # after each execution). Display-only.
+                           "kernel_status")
 
     def _cb(event_type, data):
         if event_type not in _ARTIFACT_EVENTS and event_type not in _PASSTHROUGH_EVENTS:

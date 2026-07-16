@@ -877,6 +877,12 @@ function buildStreamCallbacks(chat, isActive) {
       file_created: (d) => {
         chat.files.push(d);
       },
+      kernel_status: (d) => {
+        // Persistenter-Kernel-Badge (kernel_exec) — nur für die aktive Session
+        // rendern; Replay beim Re-Attach stellt den Zustand automatisch wieder her.
+        if (!isActive()) return;
+        if (typeof KernelBadge !== 'undefined') KernelBadge.apply(d);
+      },
       artifact_updated: (d) => {
         chat.files.push(d);
         updateArtifactRegistry(chat.sessionId, d);

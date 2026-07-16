@@ -621,6 +621,13 @@ class SessionManager:
             get_worker_registry().abort_session(session_id, "session_deleted")
         except Exception:
             pass
+        # A deleted session's persistent kernel has no owner left — shut it
+        # down now instead of waiting for the idle reaper.
+        try:
+            from engine.kernels import kernel_manager
+            kernel_manager.shutdown(session_id)
+        except Exception:
+            pass
         with self._lock:
             self._sessions.pop(session_id, None)
         ChatDB.delete_session(session_id)
@@ -1786,6 +1793,8 @@ class BrainAgentHandler(
             self._handle_context_config_get()
         elif path.startswith("/v1/context/stats"):
             self._handle_context_stats()
+        elif path.startswith("/v1/kernel/status"):
+            self._handle_kernel_status()
         elif path == "/v1/mempalace/stats":
             self._handle_mempalace_stats()
         elif path == "/v1/mempalace/classifier":
@@ -2392,6 +2401,8 @@ class BrainAgentHandler(
             self._handle_classify_probe()
         elif path == "/v1/context/compact":
             self._handle_context_compact()
+        elif path == "/v1/kernel/restart":
+            self._handle_kernel_restart()
         elif path == "/v1/context/uncompact":
             self._handle_context_uncompact()
         elif path == "/v1/context/config":
@@ -4533,6 +4544,11 @@ def main():
     # unless config.json → chat_cleanup.enabled is true.
     threading.Thread(target=server_daemons._chat_cleanup_loop, args=(_srv,), daemon=True, name="chat-cleanup").start()
 
+    # Kernel reaper — shuts down persistent Jupyter kernels (kernel_exec) idle
+    # longer than kernel_exec.idle_timeout_s (default 20 min). Kernels start
+    # lazily on first kernel_exec; this thread only reaps.
+    threading.Thread(target=server_daemons._kernel_reaper_loop, args=(_srv,), daemon=True, name="kernel-reaper").start()
+
     # Warmup keeper — fires minimal prefill requests at models flagged with
     # warmup=true so their first real turn lands on a warm KV cache. Runs
     # sequentially (max_concurrent default 1) to avoid saturating the local
@@ -4646,6 +4662,14 @@ def main():
             engine._scheduler.stop()
         if engine._mcp_manager:
             engine._mcp_manager.stop_all()
+        # Persistent Jupyter kernels die WITH Brain (by design, like the
+        # in-process loop). Without this, launchctl restart leaves zombie
+        # ipykernel/IRkernel processes behind.
+        try:
+            from engine.kernels import kernel_manager
+            kernel_manager.shutdown_all()
+        except Exception:
+            pass
         server.server_close()
 
 

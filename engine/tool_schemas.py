@@ -344,7 +344,9 @@ TOOL_DEFINITIONS = [
             "The working directory is the session's artifact folder — any files you write there "
             "(e.g. open('results.txt','w')) become viewable artifacts for the user. "
             "For large results, WRITE them to a file instead of printing to stdout. "
-            "Print only a short summary to stdout. Stdout is returned as the tool result."
+            "Print only a short summary to stdout. Stdout is returned as the tool result. "
+            "Each call is a FRESH process (no state carries over) — for iterating on "
+            "large loaded data across multiple steps, use kernel_exec instead."
         ),
         "input_schema": {
             "type": "object",
@@ -365,7 +367,9 @@ TOOL_DEFINITIONS = [
             "writes there (e.g. write.csv(df, 'results.csv'), png('plot.png')) become "
             "viewable artifacts for the user. For large results, WRITE them to a file "
             "instead of printing. Print only a short summary; stdout is returned as the "
-            "tool result."
+            "tool result. Each call is a FRESH process (no state carries over) — for "
+            "iterating on large loaded data across multiple steps, use kernel_exec "
+            "with lang='r' instead."
         ),
         "input_schema": {
             "type": "object",
@@ -374,6 +378,56 @@ TOOL_DEFINITIONS = [
                 "timeout": {"type": "integer", "description": "Timeout in seconds (default: from config, typically 120)"},
             },
             "required": ["code"],
+        },
+    },
+    {
+        "name": "kernel_exec",
+        "description": (
+            "Execute code on this chat session's PERSISTENT kernel (Jupyter: Python "
+            "or R). Unlike python_exec/r_exec, variables, DataFrames and loaded data "
+            "SURVIVE between calls and between turns — load a large dataset once, "
+            "then iterate on it without reloading. One kernel per session; the first "
+            "call starts it (lang='python' default, lang='r' for R). "
+            "The kernel's working directory is the session's artifact folder — files "
+            "written with relative paths become viewable artifacts, and plots shown "
+            "via matplotlib plt.show() or R plot() are captured as PNG artifacts "
+            "automatically. Print only short summaries; write large results to files. "
+            "For one-shot scripts or scheduled tasks use python_exec/r_exec instead. "
+            "The kernel is memory-bounded and idle-reaped after ~20 min — if state "
+            "is gone, reload it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Code to execute on the persistent kernel. Python or R must match the session kernel's language."},
+                "lang": {"type": "string", "enum": ["python", "r"], "description": "Kernel language (default python). A session has ONE kernel; switching languages requires kernel_restart."},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (default: from config, typically 120). On timeout the kernel is interrupted but survives (state preserved)."},
+            },
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "kernel_status",
+        "description": (
+            "Show this session's persistent kernel state: language, uptime, memory "
+            "(RSS), execution count and the top-level variable names currently "
+            "defined. Use to check whether previously loaded data is still available "
+            "before re-loading it."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "kernel_restart",
+        "description": (
+            "Restart this session's persistent kernel (or start one). ALL in-memory "
+            "state (variables, DataFrames) is lost. Use to recover from a broken "
+            "kernel state or to switch language via lang='python'|'r'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "lang": {"type": "string", "enum": ["python", "r"], "description": "Language for the fresh kernel (default: same as before, else python)."},
+            },
         },
     },
     {

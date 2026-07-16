@@ -369,3 +369,34 @@ zwischen Fragen geladen"), VERSION. Handover-Notiz in dieses Dokument (Abschnitt
   Damit sind **Phasen 0, D1, D2, B, C komplett** — offen ist nur noch
   Phase A (persistente Kernel; größtes Risiko, braucht jupyter_client/
   IRkernel + KernelManager + Kill-Matrix; vor Start User-Go einholen).
+- 2026-07-16: **Phase A ABGESCHLOSSEN** (v9.359.0, User-Go via „mach weiter").
+  Kern-Mechanik VOR der Verdrahtung standalone validiert (Probe mit
+  Server-Interpreter: Zustand über Execs, matplotlib-inline-PNG, Interrupt
+  überlebt, pgrep leer nach Shutdown; R analog). `engine/kernels.py`
+  (KernelManager-Singleton) + `engine/tools/kernel_tools.py`
+  (kernel_exec/kernel_status/kernel_restart, 4 Sites) + Reaper
+  (`_kernel_reaper_loop`) + Badge (`kernel_badge.js`, KernelBadge-IIFE,
+  Baseline 2006→2007) + SSE `kernel_status` + Endpoints
+  `/v1/kernel/{status,restart}`. Alle 5 Erfolgskriterien live erfüllt
+  (glm-5.2 + Playwright; 1-Mio-Parquet Turn 1 0.785 s → Turn 2 Aggregat ohne
+  Neuladen, R-Objekt-Persistenz + plot()-PNG mit `kernel#2`-Chip,
+  Kill-Matrix, Reaper-Log, 3-Session-Isolation + echte LRU-Verdrängung).
+  ABWEICHUNGEN/FUNDE: (a) jupyter_client zusätzlich im SERVER-Interpreter
+  installiert (Brain importiert es; Plan nannte nur .venv_quant — ipykernel
+  liegt dort, Kernel-Launch = Server-Interpreter + PYTHONPATH=venv via
+  generierte Kernelspecs in `.venv_quant/brain-kernelspecs/`).
+  (b) Kill-Matrix-Detail: interaktiver Chat-Stopp erreicht ein laufendes
+  Tool sonst NICHT (Loop pollt nur zwischen Runden) — kernel_exec pollt
+  deshalb denselben Cancel-Seam wie ask_user (`_ask_turn_cancelled`) →
+  Interrupt mit Zustands-Erhalt; die 2-stufige Eskalation (Interrupt→Kill)
+  läuft über cancel_escalate-Handles in kill_tool_process (Unit-getestet).
+  (c) `user_expressions` liefert bei silent=True leer — Namens-Introspektion
+  nutzt silent=False + store_history=False (kein History-Bump); R via
+  ls()-Mini-Exec (IRkernel ignoriert user_expressions).
+  (d) Interactive-only doppelt: Purpose-Seed (kein restricted-Basis-Set)
+  + fail-loud-Guard gegen sched-*/bg_task (Fan-out-Subagents teilen die
+  Session-ID — geteilter Kernel wäre Leak-Fläche). (e) BEIFANG: Kernel
+  einer GELÖSCHTEN Session lebte bis zum Reaper weiter →
+  SessionManager.delete beendet ihn jetzt sofort. (f) 02-tools.md
+  behauptete fälschlich „State persists across calls" für python_exec —
+  korrigiert. **DAMIT IST DER QUANT-WORKBENCH-PLAN KOMPLETT (0/D/B/C/A).**

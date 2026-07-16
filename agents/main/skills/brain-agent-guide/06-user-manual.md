@@ -1649,6 +1649,34 @@ keine Chips. Relevanz: Modellvalidierung/Prüfung (BCBS 239 / MaRisk
 AT 4.3.2) — Ergebnisdatei, erzeugender Code, Datenstand-Zeitpunkt und
 Environment hängen an einer Stelle zusammen.
 
+### Persistente Analyse-Umgebung (Kernel, v9.359.0)
+
+Bei Datenanalysen im Chat kann der Assistent eine **dauerhafte Python-
+oder R-Arbeitsumgebung** („Kernel") nutzen: ein großer Datensatz wird
+EINMAL geladen und bleibt für alle Folgefragen im Speicher — jede weitere
+Auswertung antwortet in Sekundenbruchteilen, statt die Daten neu zu laden.
+Sie müssen dafür nichts tun; der Assistent entscheidet selbst, wann sich
+die dauerhafte Umgebung lohnt (typisch: „lade die Positionsdaten und dann
+schauen wir uns verschiedene Auswertungen an").
+
+- **Statusleiste**: läuft eine Umgebung, erscheint unten ein Badge
+  **„Kernel · py/R · Speicher"**. Der Punkt daneben zeigt grün (bereit)
+  bzw. pulsierend (rechnet gerade). Per Tooltip sehen Sie Laufzeit und
+  Anzahl der Ausführungen.
+- **Neustart-Knopf** (im Badge): verwirft alle geladenen Variablen und
+  startet die Umgebung frisch — nützlich, wenn eine Analyse „hängen"
+  bleibt oder Sie sauber neu beginnen möchten.
+- **Diagramme** aus der Umgebung (z. B. matplotlib oder R-`plot()`)
+  erscheinen automatisch als Datei im Artifacts-Panel — inklusive
+  Nachweiskette (Herkunfts-Chip `kernel#N` + Environment, siehe oben).
+- **Automatisches Aufräumen**: nach etwa 20 Minuten ohne Nutzung beendet
+  sich die Umgebung selbst; die nächste Analyse startet transparent eine
+  neue (geladene Daten müssen dann erneut geladen werden). Ein
+  Server-Neustart beendet alle Umgebungen ebenfalls.
+- **Grenzen**: pro Chat-Sitzung EINE Umgebung (Python ODER R, max. 3
+  gleichzeitig auf dem Server); geplante Aufgaben und Hintergrund-Agenten
+  nutzen bewusst weiterhin die einmaligen Skript-Werkzeuge.
+
 ### Design-Modus (HTML-Artefakte per Klick verfeinern, v9.351.0)
 
 Auf **HTML-Artefakten** (One-Pager, Reports, Landing Pages) gibt es in der
