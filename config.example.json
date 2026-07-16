@@ -5233,6 +5233,76 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false
+    },
+    "voxtral-mini-asr-streaming-mellon-greek-2606-solutions": {
+      "enabled": false,
+      "shortname": "voxtral-mini-asr-streaming-mellon-greek-2606-solutions",
+      "display_name": "voxtral-mini-asr-streaming-mellon-greek-2606-solutions",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_audio_backfilled": true,
+      "_caps_canonical": true
+    },
+    "voxtral-mini-tts-mellon-greek-2606-solutions": {
+      "enabled": false,
+      "shortname": "voxtral-mini-tts-mellon-greek-2606-solutions",
+      "display_name": "voxtral-mini-tts-mellon-greek-2606-solutions",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "tts"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "mistral-direct",
+      "profile": "balanced",
+      "_audio_backfilled": true,
+      "_caps_canonical": true
+    },
+    "Kilo/x-ai/grok-4.5": {
+      "enabled": false,
+      "shortname": "grok-4.5",
+      "display_name": "grok-4.5",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "base_model_id": "x-ai/grok-4.5",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "Kilo/~x-ai/grok-latest": {
+      "enabled": false,
+      "shortname": "grok-latest",
+      "display_name": "grok-latest",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "base_model_id": "~x-ai/grok-latest",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

@@ -1808,6 +1808,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Herunterladen
       </button>
+      <button class="artifact-action-btn hidden" id="artifact-design-btn" onclick="DesignCanvas.toggle()" title="Design-Modus — Elemente in der Vorschau anklicken und Änderungswünsche als Kommentare sammeln">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+        Design
+      </button>
       <button class="artifact-action-btn" id="artifact-source-btn" onclick="toggleArtifactSource()" title="Quelltext anzeigen">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
         Code
@@ -2067,6 +2071,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
 <script src="js/panels_websuche.js"></script>
 <script src="js/panels_background.js"></script>
 <script src="js/panels_artifacts.js"></script>
+<script src="js/design_canvas.js"></script>
 <script src="js/panels_workdir.js"></script>
 <script src="js/panels_termchat.js"></script>
 <script src="js/panels_agentpane.js"></script>

@@ -1615,6 +1615,33 @@ anzeigen"-Schalter, der den Inhalt direkt in der Karte rendert.
 Jeder Schreib-/Bearbeitungsvorgang erzeugt eine **Artifact-Version**
 (5 MB-Limit). Artifact-Panel → Versions-Auswahl zum Vergleichen.
 
+### Design-Modus (HTML-Artefakte per Klick verfeinern, v9.351.0)
+
+Auf **HTML-Artefakten** (One-Pager, Reports, Landing Pages) gibt es in der
+Aktionsleiste des Artifact-Panels den Knopf **„Design"** (Stift-Symbol). Er
+schaltet die Vorschau in den Design-Modus:
+
+1. **Element anklicken** — beim Überfahren wird das Element blau umrandet,
+   ein Klick öffnet eine Kommentar-Blase (mit dem CSS-Selektor des Elements
+   als Referenz).
+2. **Änderungswunsch notieren** — z. B. „Headline kürzer, maximal eine
+   Zeile" → **Kommentar hinzufügen**. Der Wunsch erscheint als nummerierter
+   Pin auf der Vorschau und als Chip in der Leiste unten. Beliebig viele
+   Kommentare sammeln; einzelne per ✕ entfernen.
+3. **„N Kommentare anwenden"** — alle Wünsche gehen als *eine* normale
+   Chat-Nachricht an den Agenten. Er bearbeitet die Datei, und die Vorschau
+   aktualisiert sich automatisch mit der neuen Version.
+
+Wissenswertes:
+- Der Design-Modus funktioniert nur auf der **aktuellen Version** des
+  Artefakts (auf älteren Versionen erscheint ein Hinweis).
+- Nach jeder Aktualisierung werden offene (nicht angewendete) Pins
+  verworfen — die Vorschau hat sich geändert, die Anker wären unzuverlässig.
+- Links im Entwurf sind im Design-Modus deaktiviert (Klick = kommentieren,
+  nicht navigieren). Zum normalen Ansehen den Design-Modus einfach wieder
+  ausschalten.
+- Es zählt als normaler Chat-Turn (Verlauf, Kosten, Abbrechen wie üblich).
+
 ---
 
 ## Wiki

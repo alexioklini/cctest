@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.351.0",
+        "date": "2026-07-16",
+        "title": "Design-Modus: Entwürfe per Klick verfeinern",
+        "body": "HTML-Entwürfe (One-Pager, Reports, Landing Pages) lassen sich "
+                "jetzt direkt in der Vorschau überarbeiten: Schalten Sie im "
+                "Artefakt-Panel den neuen Design-Modus ein, klicken Sie ein "
+                "Element an und notieren Sie Ihren Änderungswunsch als Kommentar. "
+                "Alle gesammelten Kommentare werden mit einem Klick angewendet — "
+                "der Agent setzt sie um und die Vorschau aktualisiert sich "
+                "automatisch, jede Fassung bleibt als Version erhalten.",
+        "audience": "user",
+        "versions": ["9.351.0"],
+    },
+    {
         "version": "9.350.0",
         "date": "2026-07-15",
         "title": "Namenserkennung erkennt jetzt die Sprache",

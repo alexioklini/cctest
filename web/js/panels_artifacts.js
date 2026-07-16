@@ -563,6 +563,7 @@ async function openArtifactPanel(artifactId, version) {
   state.activeArtifactId = artifactId;
   state.artifactSourceMode = false;
   document.getElementById('artifact-source-btn')?.classList.remove('active');
+  DesignCanvas.resetFor(artifactId);
 
   // Find artifact in registry
   const chat = state.activeChat;
@@ -607,6 +608,8 @@ async function loadArtifactVersion(version) {
   if (!artifactId) return;
   // Hidden by default; renderArtifactContent re-shows it for plan-like md.
   document.getElementById('artifact-workflow-btn')?.classList.add('hidden');
+  // Same for the design-mode button — only html artifacts re-show it.
+  document.getElementById('artifact-design-btn')?.classList.add('hidden');
   state.activeArtifactVersion = version;
   const sel = document.getElementById('artifact-version-select');
   if (sel) sel.value = version;
@@ -819,6 +822,9 @@ function renderArtifactContent(content, type, name, encoding) {
   // Ausführungsplan aussehen (Schritt/Step/Phase-Überschriften).
   _artifactUpdateWorkflowBtn(ext, content, name);
 
+  // Design-Modus: nur auf html-Artefakten anbieten (design_canvas.js).
+  document.getElementById('artifact-design-btn')?.classList.toggle('hidden', type !== 'html');
+
   if (state.artifactSourceMode && type !== 'image') {
     // Source view — always raw text
     container.innerHTML = `<pre class="artifact-code"><code>${esc(content)}</code></pre>`;
@@ -827,6 +833,7 @@ function renderArtifactContent(content, type, name, encoding) {
 
   switch (type) {
     case 'html':
+      if (DesignCanvas.isActive()) { DesignCanvas.render(container, content); break; }
       container.innerHTML = `<iframe sandbox="allow-scripts allow-same-origin" srcdoc="${esc(content)}" style="width:100%;height:100%;border:none"></iframe>`;
       break;
     case 'svg':

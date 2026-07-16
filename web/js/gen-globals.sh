@@ -96,6 +96,7 @@ event
 structuredClone
 getComputedStyle
 matchMedia
+CSS
 HTMLElement
 Node
 NodeList

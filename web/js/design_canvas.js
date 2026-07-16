@@ -1,0 +1,257 @@
+// design_canvas.js — Design-Modus für HTML-Artefakte (v9.351.0, Phase A des
+// Design-Modus-Plans). Kommentar-Loop statt Layout-Editor: der Nutzer klickt
+// Elemente in der gerenderten Vorschau an, sammelt Änderungswünsche als Pins
+// und schickt sie als EINEN normalen Chat-Turn ab (der Agent editiert per
+// edit_file; artifact_updated rendert die Canvas neu). Die UI schreibt NIE
+// selbst ins Artefakt — ein Schreiber (der Agent), jede Änderung versioniert.
+//
+// Das Artefakt-iframe ist sandbox="allow-scripts allow-same-origin" mit
+// srcdoc → same-origin, also wird das Dokument DIREKT vom Host aus
+// instrumentiert (Hover-Highlight, Klick-Picker). Kein Script-Inject in den
+// Artefakt-Quelltext, kein postMessage nötig.
+//
+// Ein Global (DesignCanvas); aufgerufen aus panels_artifacts.js
+// (renderArtifactContent html-Case + openArtifactPanel) und index.html
+// (artifact-design-btn). Global <script>, no modules.
+
+const DesignCanvas = (() => {
+  let _active = false;
+  let _artifactId = null;     // Artefakt, für das der Modus aktiviert wurde
+  let _comments = [];         // {selector, preview, text, el}
+  let _iframe = null;
+  let _overlay = null;
+  let _bar = null;
+  let _hoverEl = null;
+  let _rafPending = false;
+
+  function isActive() { return _active; }
+
+  // Beim Öffnen eines ANDEREN Artefakts den Modus verwerfen (openArtifactPanel).
+  function resetFor(artifactId) {
+    if (artifactId !== _artifactId) {
+      _artifactId = artifactId;
+      _active = false;
+      _comments = [];
+      _syncBtn();
+    }
+  }
+
+  function _syncBtn() {
+    document.getElementById('artifact-design-btn')?.classList.toggle('active', _active);
+  }
+
+  function _registryEntry() {
+    const arts = state.artifacts[state.activeChat?.sessionId] || [];
+    return arts.find(a => a.id === state.activeArtifactId) || null;
+  }
+
+  function toggle() {
+    const container = document.getElementById('artifact-content');
+    if (!container || container._rawType !== 'html') return;
+    if (!_active) {
+      // Nur auf der aktuellen Version: Kommentare gegen einen alten Stand
+      // würden ins Leere editieren (edit_file arbeitet auf der Datei).
+      const reg = _registryEntry();
+      const versions = reg?.versions || [];
+      const latest = reg?.latest_version || (versions.length ? versions[versions.length - 1].version : null);
+      if (latest && Number(state.activeArtifactVersion) !== Number(latest)) {
+        showToast('Design-Modus geht nur auf der aktuellen Version', true);
+        return;
+      }
+      if (state.artifactSourceMode) toggleArtifactSource();
+    }
+    _active = !_active;
+    _artifactId = state.activeArtifactId;
+    _comments = [];
+    _syncBtn();
+    renderArtifactContent(container._rawContent, container._rawType,
+                          container._rawName, container._rawEncoding);
+  }
+
+  // Ersatz für den plain-iframe-Zweig in renderArtifactContent (html-Case).
+  // Jeder (Re-)Render verwirft offene Pins — nach artifact_updated können
+  // Selektoren ungültig sein (Fail loud statt falsch verankern).
+  function render(container, content) {
+    _comments = [];
+    container.innerHTML = '';
+    const root = document.createElement('div');
+    root.className = 'design-canvas';
+    const frame = document.createElement('div');
+    frame.className = 'design-canvas-frame';
+    _iframe = document.createElement('iframe');
+    _iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+    _overlay = document.createElement('div');
+    _overlay.className = 'design-overlay';
+    frame.appendChild(_iframe);
+    frame.appendChild(_overlay);
+    _bar = document.createElement('div');
+    _bar.className = 'design-commentbar';
+    root.appendChild(frame);
+    root.appendChild(_bar);
+    container.appendChild(root);
+    _iframe.addEventListener('load', _instrument);
+    _iframe.srcdoc = content;
+    _renderBar();
+  }
+
+  function _instrument() {
+    const doc = _iframe?.contentDocument;
+    if (!doc) return;
+    const st = doc.createElement('style');
+    st.textContent = '.__bd-hover{outline:2px solid #3b82f6 !important;outline-offset:2px;cursor:crosshair !important;}';
+    (doc.head || doc.documentElement).appendChild(st);
+    doc.addEventListener('mouseover', (e) => {
+      _hoverEl?.classList?.remove('__bd-hover');
+      _hoverEl = _pickable(e.target) ? e.target : null;
+      _hoverEl?.classList?.add('__bd-hover');
+    }, true);
+    doc.addEventListener('mouseout', () => {
+      _hoverEl?.classList?.remove('__bd-hover');
+      _hoverEl = null;
+    }, true);
+    // capture + preventDefault: blockt auch Link-Navigation im Entwurf.
+    doc.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (_pickable(e.target)) _openBubble(e.target);
+    }, true);
+    _iframe.contentWindow.addEventListener('scroll', _scheduleReposition, true);
+    _iframe.contentWindow.addEventListener('resize', _scheduleReposition);
+  }
+
+  function _pickable(el) {
+    return el && el.nodeType === 1 && el.tagName !== 'HTML' && el.tagName !== 'BODY';
+  }
+
+  // Deterministischer CSS-Pfad: id → kürzeste eindeutige nth-of-type-Kette.
+  function _cssPath(el) {
+    const parts = [];
+    let node = el;
+    while (node && node.nodeType === 1 && node.tagName !== 'HTML' && node.tagName !== 'BODY') {
+      if (node.id) { parts.unshift(`#${CSS.escape(node.id)}`); return parts.join(' > '); }
+      let sel = node.tagName.toLowerCase();
+      const parent = node.parentElement;
+      if (parent) {
+        const same = Array.from(parent.children).filter(c => c.tagName === node.tagName);
+        if (same.length > 1) sel += `:nth-of-type(${same.indexOf(node) + 1})`;
+      }
+      parts.unshift(sel);
+      node = parent;
+    }
+    return parts.join(' > ');
+  }
+
+  function _closeBubble() {
+    _overlay?.querySelector('.design-bubble')?.remove();
+  }
+
+  function _openBubble(el) {
+    if (!_overlay) return;
+    _closeBubble();
+    const selector = _cssPath(el);
+    const preview = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    const bubble = document.createElement('div');
+    bubble.className = 'design-bubble';
+    bubble.innerHTML = `
+      <span class="design-bubble-sel" title="${esc(selector)}">${esc(selector)}</span>
+      <textarea placeholder="Was soll hier geändert werden?"></textarea>
+      <div class="design-bubble-row">
+        <button class="design-btn" data-act="cancel">Abbrechen</button>
+        <button class="design-btn primary" data-act="add">Kommentar hinzufügen</button>
+      </div>`;
+    const r = el.getBoundingClientRect();
+    const box = _overlay.getBoundingClientRect();
+    bubble.style.left = Math.max(8, Math.min(r.left, box.width - 280)) + 'px';
+    bubble.style.top = Math.max(8, Math.min(r.bottom + 6, box.height - 140)) + 'px';
+    bubble.querySelector('[data-act="cancel"]').onclick = _closeBubble;
+    bubble.querySelector('[data-act="add"]').onclick = () => {
+      const text = bubble.querySelector('textarea').value.trim();
+      if (!text) return;
+      _comments.push({ selector, preview, text, el });
+      _closeBubble();
+      _renderPins();
+      _renderBar();
+    };
+    _overlay.appendChild(bubble);
+    bubble.querySelector('textarea').focus();
+  }
+
+  function _renderPins() {
+    if (!_overlay) return;
+    _overlay.querySelectorAll('.design-pin').forEach(p => p.remove());
+    _comments.forEach((c, i) => {
+      const pin = document.createElement('div');
+      pin.className = 'design-pin';
+      pin.textContent = String(i + 1);
+      pin.title = c.text;
+      _overlay.appendChild(pin);
+      c._pin = pin;
+    });
+    _reposition();
+  }
+
+  function _scheduleReposition() {
+    if (_rafPending) return;
+    _rafPending = true;
+    requestAnimationFrame(() => { _rafPending = false; _reposition(); });
+  }
+
+  function _reposition() {
+    for (const c of _comments) {
+      if (!c._pin) continue;
+      if (!c.el || !c.el.isConnected) { c._pin.style.display = 'none'; continue; }
+      const r = c.el.getBoundingClientRect();
+      c._pin.style.display = '';
+      c._pin.style.left = (r.right - 10) + 'px';
+      c._pin.style.top = (r.top - 10) + 'px';
+    }
+  }
+
+  function _removeComment(i) {
+    _comments.splice(i, 1);
+    _renderPins();
+    _renderBar();
+  }
+
+  function _renderBar() {
+    if (!_bar) return;
+    if (!_comments.length) {
+      _bar.innerHTML = '<span class="design-bar-hint">Element in der Vorschau anklicken, um einen Änderungswunsch zu notieren</span>';
+      return;
+    }
+    const chips = _comments.map((c, i) =>
+      `<span class="design-chip" title="${esc(c.selector)}"><span class="design-chip-num">${i + 1}</span>${esc(c.text.slice(0, 48))}<button class="design-chip-x" data-i="${i}" title="Entfernen">&times;</button></span>`
+    ).join('');
+    _bar.innerHTML = `${chips}<span class="design-bar-spacer"></span>
+      <button class="design-btn" data-act="clear">Verwerfen</button>
+      <button class="design-btn primary" data-act="apply">${_comments.length} ${_comments.length === 1 ? 'Kommentar' : 'Kommentare'} anwenden</button>`;
+    _bar.querySelectorAll('.design-chip-x').forEach(b => {
+      b.onclick = () => _removeComment(Number(b.dataset.i));
+    });
+    _bar.querySelector('[data-act="clear"]').onclick = () => { _comments = []; _renderPins(); _renderBar(); };
+    _bar.querySelector('[data-act="apply"]').onclick = apply;
+  }
+
+  // Alle gesammelten Kommentare als EIN normaler Chat-Turn über die
+  // bestehende Send-Pipeline (Queue/GDPR/Streaming inklusive).
+  function apply() {
+    if (!_comments.length) return;
+    const name = document.getElementById('artifact-content')?._rawName || 'Artefakt';
+    const lines = _comments.map((c, i) =>
+      `${i + 1}. \`${c.selector}\`${c.preview ? ` („${c.preview}…“)` : ''}: ${c.text}`);
+    const prompt = `Überarbeite das Artefakt „${name}“ per edit_file (kein Neuschreiben). ` +
+      `Änderungswünsche, je mit CSS-Selektor des gemeinten Elements:\n` +
+      lines.join('\n') +
+      `\nSetze die Änderungen im Layout-System der Seite um (bestehendes CSS/Grid/Flex anpassen; ` +
+      `keine absoluten Positionen, keine Inline-Style-Overrides).`;
+    const input = _composerInputEl();
+    if (!input) { showToast('Kein Chat-Eingabefeld gefunden', true); return; }
+    _comments = [];
+    _renderPins();
+    _renderBar();
+    input.value = prompt;
+    sendMessage();
+  }
+
+  return { isActive, resetFor, toggle, render };
+})();
