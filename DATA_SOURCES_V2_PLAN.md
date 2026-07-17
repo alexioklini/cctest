@@ -32,6 +32,12 @@ WAS existiert), die **Nutzung im Kontext** legen Projekt-Config bzw. Chat-Auswah
    zusätzlich bei der Konfig angibt" — damit das Modell NICHT bei jeder Nutzung
    das Schema neu ermitteln muss, sondern beim Ansprechen der Quelle schon weiß,
    wie es zu den Daten kommt bzw. korrekt schreibt.
+9. **Maximale lokale Auslagerung** (Nachtrag gleicher Tag): Verarbeitung wie beim
+   xlsx-/OCR-Toolset deterministisch auf dem Server — ein LLM sieht Rohdaten nur
+   in zwingenden Fällen. DSGVO-Begründung: bei großen Datenmengen ist
+   Anonymisierung/Deanonymisierung bzw. Ausweichen auf ein lokales Modell nicht
+   immer möglich oder sinnvoll — der bessere Schutz ist, dass Massendaten den
+   LLM-Kontext GAR NICHT erreichen.
 
 ---
 
@@ -342,7 +348,48 @@ Stufe 3 ist der dokumentierte Pfad:
   Modell nachweislich Erkundungs-Runden. Bei rw: Persistier-Muster aus dem
   Steckbrief wird befolgt (INSERT landet in der dokumentierten Tabelle/Spalten).
 
-### Phase 8 — Docs + Release
+### Phase 8 — Datensparsame Verarbeitungskette (User-Entscheidung 9)
+
+**E13 — Datenminimierung by design: der LLM-Kontext bekommt SCHEMA + AGGREGATE,
+nie Massendaten.** Das xlsx-/OCR-Prinzip (Modell orchestriert, Server rechnet
+deterministisch) auf externe Quellen ausgedehnt. Der Steckbrief (Phase 7) ist die
+Voraussetzung: ein Modell, das Schema + Rezepte kennt, kann BLIND orchestrieren —
+es formuliert SQL/Code über Feldnamen, ohne je eine Datenzeile zu sehen. Damit
+entfällt für Massendaten das Anonymisierungs-/Deanonymisierungs-Problem strukturell
+(nichts im Kontext = nichts zu schützen), statt es per lokalem Modell oder
+PII-Lauf über Millionen Zeilen zu erschlagen.
+
+1. **`context_preview` pro Quelle** (`none|head|full`, Default `head` = heutige
+   50 Zeilen): bei `none` liefert db_query/rest_query in den Kontext NUR
+   Spaltenliste + row_count + (bei out=) Artefakt-Pfad — keine einzige Rohzeile.
+   GDPR-Pass über den Preview bleibt für `head/full`; bei `none` gibt es nichts
+   zu anonymisieren. Zusätzlich Tool-Parameter `preview` (darf den Quellen-Default
+   nur RESTRIKTIVER machen, nie lockerer).
+2. **Parquet-Export**: `out='name.parquet'` zusätzlich zu CSV (pyarrow ist im
+   Server-Python, Quant-Workbench Phase 0) — der SQL-/REST-Extrakt wird EINMAL
+   gezogen und landet als Artefakt; alle Folgeanalysen laufen lokal.
+3. **Deterministische Kette dokumentiert + getestet**: `db_query(out=x.parquet)`
+   → `data_query`/DuckDB-Aggregate/Joins/Pivots über das Artefakt →
+   `xlsx_create`/Charts via `kernel_exec` — Rohdaten fließen ausschließlich
+   Server-seitig (Session-Artefakt-Ordner), das Modell sieht Schema, Zeilenzahlen
+   und die (kleinen) Aggregat-Ergebnisse. rest_query-Analogon: `out='x.json'` →
+   data_query kann JSON (v9.318-Grid-Pipeline).
+4. **Tool-Prosa als Steering**: db_query-/rest_query-/data_query-Beschreibungen
+   nennen die Kette explizit („large results: export once, aggregate locally via
+   data_query — do NOT page raw rows through the conversation"); der Steckbrief
+   kann sie pro Quelle konkretisieren. Kein neues Gating — Steering + Defaults
+   reichen für v1 (das Modell KANN bei `head` weiter kleine Ergebnisse direkt
+   lesen; `none` erzwingt die Kette für sensible Quellen hart).
+5. Tests: `context_preview:none` → Tool-Ergebnis enthält nachweislich keine
+   Datenzeile (Characterization über das Ergebnis-JSON); Parquet-Roundtrip
+   db_query→data_query zeilenidentisch zu CSV; preview-Parameter kann nicht
+   lockern. **Erfolgskriterium (live):** Analyse-Frage über eine strict-Quelle
+   (braintest mit `context_preview:none`) läuft Ende-zu-Ende — Query → Parquet →
+   DuckDB-Aggregat → Chart — mit einem CLOUD-Modell; der Trace beweist: keine
+   Rohzeile im Kontext, nur Schema/Zeilenzahlen/Aggregate. Kein GDPR-Block, kein
+   Zwang zum lokalen Modell, kein Anonymisierungslauf über Massendaten.
+
+### Phase 9 — Docs + Release
 - Skill: 01-api (neue Endpoints + Felder inkl. generate_guide), 02-tools (Modus +
   Scope im db_query-Block, rest_query-Block, Steckbrief-Injektion), 04-recipes
   (Datenanbindung: MSSQL-Rezept inkl. db_datareader, rw-Warnung,
