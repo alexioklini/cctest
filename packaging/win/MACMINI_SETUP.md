@@ -157,3 +157,38 @@ HTTP-Endpoints; ein weiterer Dienst ist also nur ein weiterer Provider-Eintrag
   jedes zusätzlich geladene Modell kostet Unified Memory des M4.
 - Log-Check auf dem Mac mini: oMLX-Admin → Logs (Fehler 401 = api_key-
   Mismatch mit dem Windows-config.json; 404 model not found = Reload vergessen).
+
+## 6. Minimal-Profil des Windows-Setups: SearXNG, crawl4ai und Qdrant auf dem Mac mini
+
+Nur nötig, wenn die Windows-Installation mit der Checkbox **„Minimal-Installation"**
+eingerichtet wurde (spart ~1,3 GB auf dem Client — Abwägung siehe
+`WIN_FOOTPRINT_ANALYSIS.md` im Windows-Bundle). Der Windows-Server erwartet die
+drei Dienste dann auf der **gleichen IP wie oMLX**, Standard-Ports:
+
+| Dienst | Port | Zweck auf Windows |
+|---|---|---|
+| SearXNG | 8088 | Websuche (`searxng_search` + Websuche-Tab) |
+| crawl4ai-Render | 8422 | JS-Seiten → Markdown (`web_fetch`-Fallback; Ausfall degradiert graceful) |
+| Qdrant | 6333 | MemPalace-Vektor-DB (Gedächtnis-Suche!) |
+
+Einrichtung (einmalig, alle Dienste müssen auf **0.0.0.0** lauschen, nicht 127.0.0.1):
+
+1. **Qdrant**: Release-Binary (macOS-arm64) oder `brew install qdrant`; als
+   launchd-Dienst mit eigenem Storage-Pfad (z. B. `~/qdrant-brainwin/`) und
+   `QDRANT__SERVICE__HTTP_PORT=6333`. Läuft auf dem Mini bereits ein Qdrant
+   für andere Zwecke: zweite Instanz mit eigenem Port + Pfad, und den Port in
+   `brain-env.bat` auf dem Windows-Client nachziehen. Optional absichern:
+   `QDRANT__SERVICE__API_KEY` setzen (dann `MEMPALACE_QDRANT_API_KEY` in
+   `brain-env.bat` ergänzen).
+2. **SearXNG**: searxng-Checkout vom Build-Mac übernehmen, macOS-venv bauen
+   (`python3 -m venv ~/.venv_searxng && … pip install -r searxng/requirements.txt`),
+   Start `python -m searx.webapp` mit cwd im Checkout und einer settings.yml
+   mit `bind_address: "0.0.0.0"`, Port 8088 (Muster: Produktions-Mac).
+3. **crawl4ai**: `.venv_crawl4ai` wie auf dem Produktions-Mac (crawl4ai +
+   playwright, `playwright install chromium`), Start `crawl4ai/render_service.py`,
+   Port 8422, Bind 0.0.0.0.
+4. macOS-Firewall: Ports 8088/8422/6333 für den Windows-Client freigeben.
+
+**RAM-Warnung**: Chromium-Renders (Spitzen mehrere hundert MB) und Qdrant
+konkurrieren mit dem Unified Memory des geladenen Chat-Modells — vor dem Umzug
+freies RAM bei geladenem Modell messen.

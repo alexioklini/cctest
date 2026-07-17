@@ -11,9 +11,12 @@
 # (oMLX, OpenAI-compatible, reached over the LAN — provider "Lokal").
 #
 # Outputs:
-#   packaging/win/dist/BrainAgent-<version>-win-x64/    (portable tree)
-#   packaging/win/dist/BrainAgent-<version>-win-x64.zip (portable zip)
-#   packaging/win/dist/BrainAgent-<version>-setup.exe   (NSIS, if makensis present)
+#   packaging/win/dist/BrainAgent-<version>-win-x64/                (portable tree)
+#   packaging/win/dist/BrainAgent-<version>-win-x64.zip             (portable zip, Handweg)
+#   packaging/win/dist/components/<name>-<sha12>.zip + Manifest     (Delta-Updates/Release)
+#   packaging/win/dist/BrainAgent-<version>-payload.zip             (Airgap: Vollpaket)
+#   packaging/win/dist/BrainAgent-<version>-payload-app-only.zip    (Airgap: nur App-Update)
+#   packaging/win/dist/BrainAgent-setup.exe                         (kleiner Bootstrapper, NSIS)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -160,7 +163,11 @@ echo "  -> Assembling portable tree..."
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR/app"
 
-cp -R "$BUILD/python" "$OUT_DIR/python"
+# rsync -a (statt cp -R) erhaelt die mtimes aus dem Build-Cache — die
+# Komponenten-Zips (Abschnitt 10) sind dadurch build-uebergreifend
+# byte-stabil und Delta-Updates erkennen "unveraendert".
+mkdir -p "$OUT_DIR/python"
+rsync -a "$BUILD/python/" "$OUT_DIR/python/"
 rm -f "$OUT_DIR/python/.py-ver"
 
 # Brain source — allowlist (v9.365 layout: engine/handlers/server_lib/frontends)
@@ -205,13 +212,16 @@ mkdir -p "$OUT_DIR/hf-cache"
 rsync -a "$BUILD/hf-cache/hub" "$OUT_DIR/hf-cache/"
 rsync -a "$VS" "$OUT_DIR/"
 mkdir -p "$OUT_DIR/browsers"
-cp "$DOWN/chromium-${CHROMIUM_REV}-win64.zip" "$OUT_DIR/browsers/chromium-win64.zip"
-cp "$DOWN/chromium-headless-shell-${HEADLESS_REV}-win64.zip" \
+cp -p "$DOWN/chromium-${CHROMIUM_REV}-win64.zip" "$OUT_DIR/browsers/chromium-win64.zip"
+cp -p "$DOWN/chromium-headless-shell-${HEADLESS_REV}-win64.zip" \
    "$OUT_DIR/browsers/chromium-headless-shell-win64.zip"
 cat > "$OUT_DIR/browsers/revisions.txt" <<EOF
 chromium=$CHROMIUM_REV
 chromium_headless_shell=$HEADLESS_REV
 EOF
+# Fixe mtime: die Datei liegt in der websearch-Komponente — ohne das wuerde
+# jeder Build deren sha kippen und Delta-Updates laufen leer.
+touch -t 202601010000 "$OUT_DIR/browsers/revisions.txt"
 
 # ------------------------------------------------------- 7. config.json seed
 # Multi-user server on the Windows client: bind 0.0.0.0 (10 test / 70 target
@@ -317,6 +327,7 @@ cp "$HERE/install.ps1" "$OUT_DIR/install.ps1"
 cp "$HERE/BrainAgent.bat.tmpl" "$OUT_DIR/BrainAgent.bat"
 cp "$HERE/stop.bat.tmpl" "$OUT_DIR/stop.bat"
 cp "$HERE/MACMINI_SETUP.md" "$OUT_DIR/MACMINI_SETUP.md"
+cp "$HERE/WIN_FOOTPRINT_ANALYSIS.md" "$OUT_DIR/WIN_FOOTPRINT_ANALYSIS.md"
 
 cat > "$OUT_DIR/README.txt" <<README
 Brain Agent v${VERSION} — Windows x64 (Bank-Testausrollung)
@@ -328,8 +339,32 @@ Mac mini M4 im LAN (oMLX auf Port 8000) — der Client braucht dorthin
 Netzwerkzugriff. Faellt der Mac mini aus, rechnet das Embedding automatisch
 lokal weiter (CPU, langsamer); Chat braucht den Mac mini zwingend.
 
-Schnellstart
-------------
+Schnellstart A — setup.exe (empfohlen)
+--------------------------------------
+1. BrainAgent-setup.exe starten; daneben liegt (airgapped) die Payload-Datei
+   BrainAgent-<ver>-payload.zip — der Assistent findet sie automatisch.
+   Alternativ Quelle "Online": laedt die Komponenten vom GitHub-Release
+   bzw. einem internen Mirror (URL im Assistenten editierbar).
+2. Der Assistent erkennt eine BESTEHENDE Installation und bietet dann ein
+   Update an: es werden nur GEAENDERTE Komponenten geholt; config.json,
+   Chats, Gedaechtnis und brain-env.bat werden nie angefasst. Fuer ein
+   reines Versions-Update genuegt airgapped die kleine Datei
+   BrainAgent-<ver>-payload-app-only.zip (App-Code ohne Dependencies).
+3. "Minimal-Installation" (Checkbox, nur Neuinstallation): Websuche
+   (SearXNG+crawl4ai+Chromium), Qdrant und der Embedding-Offline-Fallback
+   bleiben weg (~0,9 statt ~2,1 GB) und laufen stattdessen auf dem Mac mini
+   — Einrichtung dort: MACMINI_SETUP.md Abschnitt 6; Abwaegung:
+   WIN_FOOTPRINT_ANALYSIS.md. Standard bleibt die Voll-Installation.
+4. Danach: Startmenue -> "Brain-Agent starten" (oder BrainAgent.bat).
+   Browser: http://<dieser-rechner>:8420 (initial admin / admin — Passwort
+   sofort aendern). Beenden: stop.bat.
+Silent/Automation:
+   setup.exe /S [/MODE=install|update] [/SOURCE=offline|online]
+            [/PAYLOAD=<zip>] [/URL=<base-url>] [/NODEPS] [/MINIMAL]
+Online-Downloads respektieren HTTPS_PROXY (curl.exe).
+
+Schnellstart B — portables Zip (Handweg, vollstaendig offline)
+--------------------------------------------------------------
 1. Ordner an einen beliebigen Ort entpacken (z. B. C:\\BrainAgent\\).
 2. Rechtsklick auf install.ps1 -> "Mit PowerShell ausfuehren"
    (einmalig; fragt die IP des Mac mini und die Modell-ID ab).
@@ -383,11 +418,88 @@ echo "  -> Packaging zip..."
 rm -f "$DIST/${OUT_NAME}.zip"
 (cd "$DIST" && zip -qr "${OUT_NAME}.zip" "$OUT_NAME")
 
-# --------------------------------------------------------- 10. setup.exe
+# ------------------------------- 10. Komponenten-Zips + Manifest + Payloads
+# Update-Architektur (setup.exe v2): das Bundle wird in 5 Komponenten-Zips
+# zerlegt (content-addressed: <name>-<sha12>.zip — unveraenderte Komponenten
+# behalten Dateiname UND sha ueber Versionen hinweg, Delta-Updates laden nur
+# Geaendertes). manifest.json ist der Vertrag mit setup_stage1.ps1.
+echo "  -> Building component zips + manifest..."
+COMP="$DIST/components"
+mkdir -p "$COMP"
+MANIFEST="$COMP/BrainAgent-win-manifest.json"
+rm -f "$COMP/.entries"
+
+comp_zip() {  # $1=name  $2..=Pfade relativ zu OUT_DIR (dirs und/oder files)
+  local name="$1"; shift
+  local tmp="$COMP/.tmp-${name}.zip"
+  rm -f "$tmp"
+  (cd "$OUT_DIR" && find "$@" \( -type f -o -type l \) | LC_ALL=C sort | zip -X -q "$tmp" -@)
+  local sha; sha="$(shasum -a 256 "$tmp" | cut -d' ' -f1)"
+  local fname="${name}-${sha:0:12}.zip"
+  if [[ -f "$COMP/$fname" ]]; then rm -f "$tmp"; else mv "$tmp" "$COMP/$fname"; fi
+  echo "$name|$fname|$sha|$(stat -f%z "$COMP/$fname")" >> "$COMP/.entries"
+  echo "     $name -> $fname ($(du -sh "$COMP/$fname" | cut -f1))"
+}
+# Die Pfadlisten muessen zu den "dirs" im Manifest passen (Swap-Ziele von
+# setup_stage1.ps1); Top-Level-Skripte reisen in der app-Komponente mit.
+comp_zip app       app install.ps1 BrainAgent.bat stop.bat README.txt MACMINI_SETUP.md WIN_FOOTPRINT_ANALYSIS.md
+comp_zip python    python
+comp_zip websearch venv-site browsers
+comp_zip qdrant    qdrant
+comp_zip hfcache   hf-cache
+
+python3 - "$COMP/.entries" "$MANIFEST" "$VERSION" <<'EOF'
+import json, sys
+entries_path, manifest_path, version = sys.argv[1:4]
+META = {  # name -> (required, dirs, title)
+    "app":       (True,  ["app"],                    "Brain-Agent Programmcode + Skripte"),
+    "python":    (True,  ["python"],                 "Python 3.13 Runtime + Bibliotheken"),
+    "websearch": (False, ["venv-site", "browsers"],  "Websuche lokal (SearXNG + crawl4ai + Chromium)"),
+    "qdrant":    (False, ["qdrant"],                 "Qdrant Vektor-DB lokal"),
+    "hfcache":   (False, ["hf-cache"],               "Embedding-Offline-Fallback (ONNX)"),
+}
+components = []
+for line in open(entries_path, encoding="utf-8"):
+    if not line.strip():
+        continue
+    name, fname, sha, size = line.strip().split("|")
+    required, dirs, title = META[name]
+    components.append({"name": name, "file": fname, "sha256": sha, "size": int(size),
+                       "required": required, "dirs": dirs, "title": title})
+assert len(components) == len(META), "component set mismatch"
+json.dump({"product": "BrainAgent", "schema": 1, "version": version,
+           "components": components},
+          open(manifest_path, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
+print("     manifest:", manifest_path)
+EOF
+rm -f "$COMP/.entries"
+
+# Payload-Dateien (die "zweite Datei" neben setup.exe fuer den Airgap-Weg):
+#   -payload.zip           komplett (Erstinstallation + Deps-Updates)
+#   -payload-app-only.zip  nur App — das leichtgewichtige Versions-Update
+echo "  -> Building payload zips..."
+PAYSTAGE="$COMP/.paystage"
+rm -rf "$PAYSTAGE"; mkdir -p "$PAYSTAGE"
+cp "$MANIFEST" "$PAYSTAGE/manifest.json"
+APP_FILE=""
+while IFS='|' read -r name fname; do
+  ln "$COMP/$fname" "$PAYSTAGE/$fname"
+  [[ "$name" == "app" ]] && APP_FILE="$fname"
+done < <(python3 -c 'import json,sys
+for c in json.load(open(sys.argv[1]))["components"]: print(c["name"] + "|" + c["file"])' "$MANIFEST")
+rm -f "$DIST/BrainAgent-${VERSION}-payload.zip" "$DIST/BrainAgent-${VERSION}-payload-app-only.zip"
+(cd "$PAYSTAGE" && zip -0 -X -q "$DIST/BrainAgent-${VERSION}-payload.zip" manifest.json *.zip)
+(cd "$PAYSTAGE" && zip -0 -X -q "$DIST/BrainAgent-${VERSION}-payload-app-only.zip" manifest.json "$APP_FILE")
+rm -rf "$PAYSTAGE"
+
+# --------------------------------------------------- 11. setup.exe (klein)
+# Versionsunabhaengiger Bootstrapper (~2 MB): enthaelt nur setup_stage1.ps1;
+# Nutzdaten kommen aus Payload-Datei oder Online-Quelle. Muss nur neu verteilt
+# werden, wenn sich die Installer-LOGIK aendert (SETUP_VERSION in installer.nsi).
 if command -v makensis >/dev/null 2>&1; then
-  echo "  -> Building setup.exe (NSIS)..."
-  makensis -V2 -DVERSION="$VERSION" -DSRCDIR="$OUT_DIR" \
-           -DOUTFILE="$DIST/BrainAgent-${VERSION}-setup.exe" \
+  echo "  -> Building setup.exe (NSIS bootstrapper)..."
+  makensis -V2 -DVERSION="$VERSION" -DSTAGE1="$HERE/setup_stage1.ps1" \
+           -DOUTFILE="$DIST/BrainAgent-setup.exe" \
            "$HERE/installer.nsi"
 else
   echo "  !! makensis not found — skipping setup.exe (brew install makensis)"
@@ -397,6 +509,9 @@ ZIP_SIZE=$(du -sh "$DIST/${OUT_NAME}.zip" | cut -f1)
 DIR_SIZE=$(du -sh "$OUT_DIR" | cut -f1)
 echo "==> Done:"
 echo "    $OUT_DIR  ($DIR_SIZE uncompressed)"
-echo "    $DIST/${OUT_NAME}.zip  ($ZIP_SIZE)"
-[[ -f "$DIST/BrainAgent-${VERSION}-setup.exe" ]] && \
-  echo "    $DIST/BrainAgent-${VERSION}-setup.exe  ($(du -sh "$DIST/BrainAgent-${VERSION}-setup.exe" | cut -f1))"
+echo "    $DIST/${OUT_NAME}.zip  ($ZIP_SIZE)  [portabler Handweg]"
+echo "    $DIST/BrainAgent-${VERSION}-payload.zip  ($(du -sh "$DIST/BrainAgent-${VERSION}-payload.zip" | cut -f1))  [Airgap: Vollpaket]"
+echo "    $DIST/BrainAgent-${VERSION}-payload-app-only.zip  ($(du -sh "$DIST/BrainAgent-${VERSION}-payload-app-only.zip" | cut -f1))  [Airgap: nur App-Update]"
+echo "    $COMP/  (Komponenten + Manifest fuer GitHub-Release/Mirror)"
+[[ -f "$DIST/BrainAgent-setup.exe" ]] && \
+  echo "    $DIST/BrainAgent-setup.exe  ($(du -sh "$DIST/BrainAgent-setup.exe" | cut -f1))"

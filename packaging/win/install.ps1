@@ -3,19 +3,39 @@
 # OFFLINE-FIRST: alle Assets liegen im Bundle; Netz wird nur angefasst, wenn
 # ein Asset fehlt (Bank-Firewall kann PyPI/CDNs blocken).
 # Keine Admin-Rechte noetig (Ausnahme: Firewall-Regel + ODBC-MSI, s. Hinweise).
+# Wird auch von setup_stage1.ps1 (setup.exe) aufgerufen:
+#   -Update            Update-Lauf (keine Abfragen, config.json bleibt unangetastet)
+#   -RecreateVenvs     csv (searxng,crawl4ai): Venv verwerfen + neu aus dem Bundle
+#   -SkipComponents    csv (websearch,qdrant,hfcache): Minimal-Profil — Dienste
+#                      laufen auf dem Mac mini statt lokal (URLs werden gepatcht)
 param(
     [string]$MacminiIp = "",
     [string]$ModelId = "",
-    [switch]$Silent
+    [switch]$Silent,
+    [switch]$Update,
+    [string]$RecreateVenvs = "",
+    [string]$SkipComponents = ""
 )
 $ErrorActionPreference = "Stop"
 $Bundle = $PSScriptRoot
 $Data = if ($env:BRAIN_DATA_DIR) { $env:BRAIN_DATA_DIR } else { Join-Path $env:LOCALAPPDATA "BrainAgent" }
 $Py = Join-Path $Bundle "python\python.exe"
 
-Write-Host "== Brain-Agent Installation ==" -ForegroundColor Cyan
+$skipComps = @()
+if ($SkipComponents) { $skipComps = @($SkipComponents.Split(",") | ForEach-Object { $_.Trim() }) }
+$skipWebsearch = $skipComps -contains "websearch"
+$skipQdrant = $skipComps -contains "qdrant"
+$recreateList = @()
+if ($RecreateVenvs) { $recreateList = @($RecreateVenvs.Split(",") | ForEach-Object { $_.Trim() }) }
+
+if ($Update) {
+    Write-Host "== Brain-Agent Update ==" -ForegroundColor Cyan
+} else {
+    Write-Host "== Brain-Agent Installation ==" -ForegroundColor Cyan
+}
 Write-Host "Bundle: $Bundle"
 Write-Host "Daten:  $Data"
+if ($skipComps.Count) { Write-Host "Minimal-Profil, uebersprungen: $($skipComps -join ', ')" }
 
 if (-not (Test-Path $Py)) { throw "python\python.exe fehlt im Bundle." }
 
@@ -41,7 +61,7 @@ if ($freshConfig) {
     }
     $patch = @"
 import json, secrets, sys
-cfg_path, data_dir, ip, model = sys.argv[1:5]
+cfg_path, data_dir, ip, model, skip_web = sys.argv[1:6]
 cfg = json.load(open(cfg_path, encoding='utf-8'))
 prov = cfg['providers']['Lokal']
 prov['base_url'] = prov['base_url'].replace('MACMINI_IP', ip)
@@ -57,6 +77,15 @@ mp = cfg.setdefault('mempalace', {})
 if mp.get('palace_path') in ('', 'PALACE_PATH_PLACEHOLDER'):
     import os
     mp['palace_path'] = os.path.join(data_dir, 'mempalace')
+if skip_web == '1':
+    # Minimal-Profil: SearXNG + crawl4ai laufen auf dem Mac mini (MACMINI_SETUP.md
+    # Abschnitt 6); lokale Supervisoren aus, Tools sprechen die Remote-URLs.
+    sx_cfg = cfg.setdefault('searxng', {})
+    sx_cfg['auto_start'] = False
+    sx_cfg['url'] = 'http://%s:8088' % ip
+    c4 = cfg.setdefault('crawl4ai', {})
+    c4['auto_start'] = False
+    c4['url'] = 'http://%s:8422' % ip
 json.dump(cfg, open(cfg_path, 'w', encoding='utf-8'), indent=2, ensure_ascii=False)
 sx = data_dir + '\\searxng_settings.yml'
 try:
@@ -68,15 +97,23 @@ except FileNotFoundError:
     pass
 print('config.json gepatcht: Mac mini =', ip, '| Modell =', model or '(offen)')
 "@
-    & $Py -c $patch $cfgPath $Data $MacminiIp $ModelId
+    $skipWebArg = if ($skipWebsearch) { "1" } else { "0" }
+    & $Py -c $patch $cfgPath $Data $MacminiIp $ModelId $skipWebArg
 } else {
     Write-Host "config.json existiert bereits — wird NICHT ueberschrieben." -ForegroundColor Yellow
+    if ($skipWebsearch -and -not $Update) {
+        Write-Host "WARNUNG (Minimal-Profil): die bestehende config.json behaelt ihre Websuche-URLs. Fuer Remote-Betrieb searxng.url/crawl4ai.url auf den Mac mini stellen (auto_start: false) — oder config.json loeschen und das Setup erneut ausfuehren." -ForegroundColor Yellow
+    }
 }
 
 # ---- 3. Venvs fuer SearXNG + crawl4ai (offline aus dem Bundle)
-function New-BrainVenv([string]$name, [string]$sitePayload, [string]$onlineFallback) {
+function New-BrainVenv([string]$name, [string]$sitePayload, [string]$onlineFallback, [bool]$recreate = $false) {
     $venv = Join-Path $Data $name
     $venvPy = Join-Path $venv "Scripts\python.exe"
+    if ($recreate -and (Test-Path $venv)) {
+        Write-Host "$name wird neu aufgebaut (Bundle-Payload hat sich geaendert)..."
+        Remove-Item -Recurse -Force $venv
+    }
     if (Test-Path $venvPy) {
         Write-Host "$name existiert bereits — uebersprungen."
         return
@@ -93,13 +130,19 @@ function New-BrainVenv([string]$name, [string]$sitePayload, [string]$onlineFallb
         if ($LASTEXITCODE -ne 0) { throw "pip-Fallback fuer $name fehlgeschlagen" }
     }
 }
-New-BrainVenv ".venv_searxng" (Join-Path $Bundle "venv-site\searxng") "-r $Data\searxng\requirements.txt"
-New-BrainVenv ".venv_crawl4ai" (Join-Path $Bundle "venv-site\crawl4ai") "crawl4ai==0.8.6 playwright==1.60.0 playwright-stealth==2.0.3"
+if ($skipWebsearch) {
+    Write-Host "Websuche-Venvs uebersprungen (Minimal-Profil — SearXNG/crawl4ai laufen auf dem Mac mini)."
+} else {
+    New-BrainVenv ".venv_searxng" (Join-Path $Bundle "venv-site\searxng") "-r $Data\searxng\requirements.txt" ($recreateList -contains "searxng")
+    New-BrainVenv ".venv_crawl4ai" (Join-Path $Bundle "venv-site\crawl4ai") "crawl4ai==0.8.6 playwright==1.60.0 playwright-stealth==2.0.3" ($recreateList -contains "crawl4ai")
+}
 
 # ---- 4. Playwright-Chromium (offline aus dem Bundle entpacken)
 $mspw = Join-Path $env:LOCALAPPDATA "ms-playwright"
 $revFile = Join-Path $Bundle "browsers\revisions.txt"
-if (Test-Path $revFile) {
+if ($skipWebsearch) {
+    Write-Host "Chromium uebersprungen (Minimal-Profil)."
+} elseif (Test-Path $revFile) {
     $revs = @{}
     Get-Content $revFile | ForEach-Object {
         $k, $v = $_ -split "=", 2
@@ -142,10 +185,38 @@ try {
     Write-Host "WARNUNG: Mac mini unter $baseUrl NICHT erreichbar — IP/Firewall pruefen (oMLX muss auf 0.0.0.0:8000 lauschen)." -ForegroundColor Yellow
 }
 
+# ---- 6. brain-env.bat (Minimal-Profil: Qdrant remote auf dem Mac mini)
+# Liegt im DATEN-Verzeichnis (ueberlebt Bundle-Updates); BrainAgent.bat call't
+# die Datei vor dem Setzen der Defaults. Bei -Update nie anfassen (respektiert
+# manuelle Aenderungen); bei Neuinstallation spiegelt sie das gewaehlte Profil.
+$envBat = Join-Path $Data "brain-env.bat"
+if (-not $Update) {
+    if ($skipQdrant) {
+        $miniHost = ([uri]$baseUrl).Host
+        @(
+            "@echo off",
+            "rem Von install.ps1 erzeugt (Minimal-Profil): Qdrant laeuft auf dem Mac mini.",
+            "set `"MEMPALACE_QDRANT_URL=http://${miniHost}:6333`"",
+            "set `"BRAIN_QDRANT_LOCAL=0`""
+        ) | Set-Content -Path $envBat -Encoding ASCII
+        Write-Host "brain-env.bat geschrieben: Qdrant remote (http://${miniHost}:6333) — Dienst auf dem Mac mini noetig, s. MACMINI_SETUP.md Abschnitt 6." -ForegroundColor Yellow
+    } elseif (Test-Path $envBat) {
+        Remove-Item $envBat
+        Write-Host "brain-env.bat entfernt (Voll-Profil: Qdrant laeuft wieder lokal)."
+    }
+}
+
 Write-Host ""
-Write-Host "== Installation abgeschlossen ==" -ForegroundColor Cyan
+if ($Update) {
+    Write-Host "== Update abgeschlossen ==" -ForegroundColor Cyan
+} else {
+    Write-Host "== Installation abgeschlossen ==" -ForegroundColor Cyan
+}
 Write-Host "Start:  BrainAgent.bat   |   Stopp:  stop.bat"
 Write-Host "Web-UI: http://localhost:8420  (initial admin / admin — Passwort aendern!)"
+if ($skipWebsearch) {
+    Write-Host "Minimal-Profil: Websuche/JS-Rendering erwarten SearXNG (8088) + crawl4ai (8422) auf dem Mac mini — MACMINI_SETUP.md Abschnitt 6." -ForegroundColor Yellow
+}
 Write-Host ""
 Write-Host "Optionale Schritte (Admin-Rechte):"
 Write-Host " - LAN-Freigabe: netsh advfirewall firewall add rule name=""BrainAgent"" dir=in action=allow protocol=TCP localport=8420"
