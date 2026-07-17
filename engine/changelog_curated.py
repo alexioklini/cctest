@@ -85,9 +85,11 @@ CURATED_CHANGELOG: list[dict] = [
                 "haben nun einen Export-Knopf: sie werden layout-treu in ein "
                 "bearbeitbares Word-Dokument umgewandelt (Textboxen, "
                 "Tabellen, Bilder und Spalten bleiben erhalten). Sie finden "
-                "den Eintrag im „Export ▾“-Menü des jeweiligen Artefakts.",
+                "den Eintrag im „Export ▾“-Menü des jeweiligen Artefakts. "
+                "Seit 9.364.1 werden Bilder dabei automatisch auf die "
+                "Seitengröße eingepasst statt in Originalgröße eingebettet.",
         "audience": "user",
-        "versions": ["9.360.0", "9.361.0"],
+        "versions": ["9.360.0", "9.361.0", "9.364.1"],
     },
     {
         "version": "9.359.0",

@@ -64,6 +64,25 @@ def _html_to_docx_bytes(html: str) -> bytes:
 
     doc = Document()
     _SafeHtmlToDocx().add_html_to_document(str(soup), doc)
+    # Bilder auf die nutzbare Textbreite kappen (Seitenverhältnis erhalten):
+    # add_picture ohne width übernimmt die NATIVE Pixelgröße — ein Retina-
+    # Screenshot oder Chart-PNG wird 20-50 Zoll breit und ragt weit über die
+    # Seite hinaus (User-Fund am Export von Chat ea024875). Nach dem Build
+    # über doc.inline_shapes geklammert statt im handle_img-Override, damit
+    # BEIDE Einfüge-Zweige (data-URI-Override UND htmldocx' eigener Pfad für
+    # Datei-/URL-Quellen) denselben Deckel bekommen.
+    sec = doc.sections[0]
+    usable_w = int(sec.page_width - sec.left_margin - sec.right_margin)
+    usable_h = int(sec.page_height - sec.top_margin - sec.bottom_margin)
+    for shape in doc.inline_shapes:
+        if shape.width > usable_w:
+            shape.height = int(shape.height * usable_w / shape.width)
+            shape.width = usable_w
+        # Hochformatige Diagramme: höher als eine Seite wird von Word
+        # abgeschnitten — auch die Höhe deckeln.
+        if shape.height > usable_h:
+            shape.width = int(shape.width * usable_h / shape.height)
+            shape.height = usable_h
     buf = io.BytesIO()
     doc.save(buf)
     return buf.getvalue()
