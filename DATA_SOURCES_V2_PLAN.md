@@ -1,4 +1,4 @@
-# Datenquellen v2 — MSSQL, Read/Write-Modus, Projekt-/Chat-Scoping — Umsetzungsplan
+# Datenquellen v2 — MSSQL, REST, Read/Write-Modus, Projekt-/Chat-Scoping — Umsetzungsplan
 
 **Stand:** 2026-07-17, Basis v9.363.0. Erarbeitet in der Session „Datenquellen-Admin-GUI"
 (Commit d841397a) — dieser Plan setzt DIREKT auf der dort gebauten Welle auf und ist für
@@ -21,6 +21,11 @@ WAS existiert), die **Nutzung im Kontext** legen Projekt-Config bzw. Chat-Auswah
 4. **1–2 Klicks**: Datenbank(en) auswählen + optional auf Tabellen einschränken — fertig.
 5. **Read-only vs. Read/Write pro Quelle** im Admin-GUI definiert — die abgesetzten
    SQL-Kommandos müssen sich danach richten.
+6. **REST-APIs als zweite Quellen-Klasse** (Nachtrag gleicher Tag): generelle
+   Abfragemöglichkeit strukturierter externer Daten (SQL **und** REST) via Chat —
+   gleiche Policy-, Scoping- und Auswahl-Mechanik für beide Klassen.
+7. **Konkreter Anwendungsfall: Hyland OnBase** (Nachtrag gleicher Tag) — siehe
+   Anhang A; treibt MSSQL (Phase 1) + Tabellen-Whitelist (Phase 3) + REST (Phase 6).
 
 ---
 
@@ -214,10 +219,50 @@ dessen Scope); sched-Sessions OHNE Projekt → kein Scope → deny (O1).
    Frage läuft; Tabellen-Einschränkung im Panel greift im nächsten Turn;
    Auswahl überlebt Reload (Session-persistiert, nicht localStorage).
 
-### Phase 6 — Docs + Release
+### Phase 6 — REST-Quellen (zweite Quellen-Klasse, User-Entscheidung 6)
+
+**E10 — REST-Quelle = admin-konfigurierte Base-URL, NIE freies Fetchen.** Das ist die
+harte Abgrenzung zu `web_fetch`: `rest_query` erreicht AUSSCHLIESSLICH die vom Admin
+hinterlegte `base_url` — Pfade werden angehängt und validiert (kein absolutes http…,
+kein `..`, kein Schema-Wechsel). Dadurch ist SSRF strukturell ausgeschlossen und die
+Quelle ist ein DATENPUNKT wie eine DB, kein Browser.
+
+1. Quellen-Shape-Erweiterung (`data_sources`, gleiche Liste, GUI-Formular
+   verzweigt nach Typ): `{name, type:"rest", base_url, auth:{kind: none|bearer|
+   header|basic, secret|env_key, header_name?}, access_mode: ro|rw,
+   allowed_paths?: ["/api/v1/…"], options:{timeout_s, max_response_kb}}`.
+   Secret maskiert wie DSN (leer beim Edit = unverändert; Scrubber-Marker
+   `secret` in scripts/scrub_config.py ergänzen — prüfen ob schon gedeckt).
+2. NEUES TOOL `rest_query(source, path, method?, params?, body?, out?)`
+   (4 Sites / 3 Dateien, Gruppe documents, `engine/tools/data_tools.py`):
+   - Policy-Gate: DERSELBE `data_access_allowed` (WER-Achse gilt für alle
+     Quellen-Klassen); Scope-Gate: DERSELBE `data_source_scope` (WAS-Achse) —
+     statt Tabellen wirken **Pfad-Präfixe** als Ressourcen-Restriktion
+     (Verallgemeinerung: SQL-Quelle → Tabellen, REST-Quelle → Pfade; eine
+     Scope-Shape `{name: [ressourcen]}` für beide).
+   - `access_mode`: ro = nur GET/HEAD; rw = +POST/PUT/PATCH/DELETE.
+   - Ergebnis: JSON hübsch + gekappt (max_response_kb, Default 256), non-JSON
+     als Text gekappt, `out='name.json|csv'` als Artefakt (JSON-Array →
+     CSV-Flatten best effort), GDPR-Pass (`rest_query:<source>`),
+     Fehler = sauberes Tool-Ergebnis (Timeout/4xx/5xx mit Body-Auszug).
+   - httpx ist im Server-Python (der Loop nutzt es) — kein neues Dep.
+3. GUI: Admin-Formular Typ-Zweig REST; Projekt-Sektion + Right Panel zeigen
+   SQL- und REST-Quellen UNIFORM (Picker-Label „Tabellen" ↔ „Pfade").
+   Tables-Endpoint-Analogon für REST: `allowed_paths` aus der Quellen-Config
+   als Vorschlagsliste (KEIN Discovery-Call — REST hat kein information_schema).
+4. Tests: Lokaler Stub-HTTP-Server im Test (stdlib, das render_service-Muster):
+   ro blockt POST, Pfad-Whitelist positiv/negativ, Pfad-Escape (`..`, absolute
+   URL) geblockt, Auth-Header gesetzt, Kappe greift, Timeout sauber.
+   **Erfolgskriterium (live):** konfigurierte REST-Quelle (z. B. interne API)
+   im Right Panel angehakt → Chat-Frage führt GET aus und zitiert Felder;
+   POST auf ro-Quelle verweigert mit Modus-Fehlertext.
+5. NICHT in `_WORKFLOW_STEP_TOOLS`, IN `GDPR_ARGS_DEANON_TOOLS` (wie db_query).
+
+### Phase 7 — Docs + Release
 - Skill: 01-api (3 neue Endpoints + Felder), 02-tools (Modus + Scope im
-  db_query-Block), 04-recipes (Datenanbindung: MSSQL-Rezept inkl. db_datareader,
-  rw-Warnung, Projekt-/Chat-Scoping-Anleitung), 06-user-manual (DE: Admin-Tab-Update,
+  db_query-Block, rest_query-Block), 04-recipes (Datenanbindung: MSSQL-Rezept inkl.
+  db_datareader, rw-Warnung, Projekt-/Chat-Scoping-Anleitung, REST-Quelle,
+  OnBase-Rezept aus Anhang A), 06-user-manual (DE: Admin-Tab-Update,
   Projekt-Sektion, Right-Panel-Tab), 05-internals (Scope-Mechanik), SKILL.md-Bump.
 - Kuratierte Einträge: einer `admin` (MSSQL + rw + Scoping-Verwaltung), einer
   `user` (Datenquellen im Chat/Projekt in 2 Klicks nutzen).
@@ -244,3 +289,50 @@ dessen Scope); sched-Sessions OHNE Projekt → kein Scope → deny (O1).
 - **O4 — MSSQL-Docker auf Apple Silicon:** Rosetta-Emulation kann zäh sein; wenn
   unbrauchbar, Alternative: echter MSSQL des Users (DSN liefern lassen) — Phase 1
   NICHT mit ungetestetem Treiber-Code abschließen ([[feedback_phase_a_then_validate]]).
+- **O5 — REST-Pagination/Discovery:** rest_query paginiert NICHT automatisch
+  (das Modell folgt selbst next-Links innerhalb der erlaubten Pfade); kein
+  OpenAPI-Auto-Discovery in v1 — `allowed_paths` + Quellen-Beschreibung tragen
+  die Semantik. Erst bei Bedarf erweitern.
+
+---
+
+## Anhang A — Anwendungsfall Hyland OnBase (Recherche 2026-07-17)
+
+OnBase (Hyland ECM/DMS) läuft auf **SQL Server oder Oracle** — die MSSQL-Anbindung
+aus Phase 1 ist damit der direkte Weg. Zwei Anbindungswege, beide von diesem Plan
+abgedeckt:
+
+**Weg 1 — Read-only-SQL auf die OnBase-DB (empfohlen für Abfragen/Analysen):**
+- Hyland dokumentiert das Reporting-Schema offiziell im **Database Reporting Guide**
+  (docs.hyland.com): `ITEMDATA` = eine Zeile pro Dokument (PK `itemnum`),
+  `DOCTYPE` = Dokumenttypen (Join auf ITEMDATA), `KEYITEM###`/`KEYTABLE###` =
+  Keyword-Werte (Cross-Reference pro Keyword-Typ), `DISKGROUP`/`ITEMDATAPAGE` =
+  physische Ablage, dazu Workflow-Tabellen. Metadaten-Analysen (Volumen je
+  Dokumenttyp, Keyword-Auswertungen, Workflow-Durchlaufzeiten) sind reine
+  SELECT-Joins über diese Tabellen.
+- **Hylands Database Use Policy** (Database Reference Guide, Appendix A): direkte
+  Queries sind „against Hyland's recommendation", aber SELECT ist als einziges
+  DML explizit zulässig; Bedingungen: DBA-Review der Query-Pläne, Performance-
+  Rücksicht auf die Produktions-DB. Konsequenzen für uns:
+  1. OnBase-Quelle IMMER als `access_mode: ro` anlegen (unser Statement-Gate
+     erzwingt Hylands SELECT-only-Policy technisch);
+  2. bevorzugt gegen eine **Reporting-Replica** (Read-only-AG-Replica/Snapshot)
+     statt der Produktions-DB — im Rezept dokumentieren;
+  3. DB-Login nur `db_datareader` (Schicht 3, das MSSQL-Rezept aus Phase 1);
+  4. **Tabellen-Whitelist aus Phase 3 passt exakt**: OnBase-Quelle im Projekt auf
+     `ITEMDATA, DOCTYPE, KEYITEM…`-Sicht beschränken, der Rest der ~1000
+     OnBase-Tabellen bleibt unsichtbar für den Agenten.
+- Damit ist OnBase NUR Konfiguration (Quelle + Whitelist), kein Code über
+  Phase 1–5 hinaus.
+
+**Weg 2 — OnBase Document REST API (Hyland API Server):** neuere Foundation-Versionen
+bieten eine REST-API (Dokument-Retrieval, Keyword-Typen/-Werte, Upload) über den
+Hyland API Server (IIS, OAuth/IIS-Auth je Umgebung). Für Dokument-INHALTE und aktive
+Integrationen der richtige Weg — als `type: rest`-Quelle (Phase 6) mit `base_url` des
+API Servers, Bearer/Header-Auth und `allowed_paths` auf die Query-Endpoints. Für reine
+Metadaten-Analysen ist Weg 1 mächtiger (SQL-Aggregate); Weg 2 ergänzt, wenn Inhalte
+oder Hyland-supportete Zugriffe gefordert sind.
+
+Quellen: Hyland Database Reporting Guide (ITEMDATA/Database Tables, docs.hyland.com),
+Database Reference Guide Appendix A „Database Use Policy → Accessing the Database to
+Retrieve Data", OnBase Document REST API (Content-Composer-Doku, docs.hyland.com).
