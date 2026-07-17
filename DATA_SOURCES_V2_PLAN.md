@@ -38,6 +38,11 @@ WAS existiert), die **Nutzung im Kontext** legen Projekt-Config bzw. Chat-Auswah
    Anonymisierung/Deanonymisierung bzw. Ausweichen auf ein lokales Modell nicht
    immer möglich oder sinnvoll — der bessere Schutz ist, dass Massendaten den
    LLM-Kontext GAR NICHT erreichen.
+10. **Bank-verifizierter MSSQL-Verbindungsweg** (Nachtrag 2026-07-17): `pyodbc` +
+    „ODBC Driver 17 for SQL Server" ist der EINZIGE Weg, der im Netz der Bank
+    nachweislich funktioniert (funktionierendes Specimen: `sync_service.py` eines
+    bestehenden internen Tools; die Herleitung war aufwendig — Auszüge in
+    Anhang B). E3 entsprechend REVIDIERT: pymssql/FreeTDS verworfen.
 
 ---
 
@@ -51,7 +56,8 @@ WAS existiert), die **Nutzung im Kontext** legen Projekt-Config bzw. Chat-Auswah
 | Boot-Copy: `data_sources` + `data_sources_access` aus config.json | `server.py` main() ~Z.3766 |
 | Typ-Gate: nur `postgres` verdrahtet, andere fail-loud; GUI-Typ-Dropdown liest `wired_types` aus dem GET | `data_tools.py` `_connect_readonly`; `_genTab_data_sources` |
 | `sqlglot 30.12.0` IST im Server-Python (Homebrew py3.14) | live verifiziert 2026-07-17 |
-| `pymssql` FEHLT im Server-Python | live verifiziert 2026-07-17 |
+| `pymssql` FEHLT im Server-Python (inzwischen irrelevant — E3 nutzt pyodbc; ob `pyodbc` + msodbcsql17 installiert sind, ist Phase-1-Aufgabe) | live verifiziert 2026-07-17 |
+| Bank-Specimen: pyodbc + „ODBC Driver 17 for SQL Server", `SERVER=host,port` (Komma), OHNE Encrypt-Params, Windows-Auth via `Trusted_Connection=yes`, Login-/Query-Timeout getrennt | Anhang B (aus `sync_service.py`, im Banknetz produktiv) |
 | Projekt-Feld-Whitelist (`web_urls` etc.) — neue project.json-Felder MÜSSEN hier rein | `brain.py:7357` (`ProjectManager.update_project`, Whitelist-Loop ~Z.7377) |
 | `code_mode` ist NICHT editierbar (fix bei Anlage) — Code-Projekte sind normale Projekte mit Flag; eine neue Settings-Sektion rendert in beiden | `brain.py` update_project NOTE |
 | Web-URLs-Editor als Muster für die Projekt-Sektion | `web/js/panels_projects.js:2076` ff. (speichert via `API.updateProject(..., {web_urls})`) |
@@ -84,11 +90,36 @@ Modus (ro/rw) → Tabellen.
 - **Kein Mining**: Der Scope ist reine Laufzeit-Berechtigung. project-sync,
   MemPalace, KG fassen Datenquellen NICht an (explizites Nicht-Ziel).
 
-**E3 — MSSQL via `pymssql`** (pip-Wheel mit eingebettetem FreeTDS; `pyodbc` bräuchte
-die msodbcsql18-Systeminstallation — vermeiden). DSN bleibt EIN URL-Feld in der GUI
-(`mssql://user:pass@host:1433/db`), Brain parst selbst (`urllib.parse`). Timeouts:
-`pymssql.connect(login_timeout=connect_timeout, timeout=statement_timeout)` — das
-`timeout`-Argument ist der Query-Timeout (Äquivalent zum Postgres-`statement_timeout`).
+**E3 — MSSQL via `pyodbc` + „ODBC Driver 17 for SQL Server"** (REVIDIERT 2026-07-17,
+User-Entscheidung 10 — Konflikt-Auflösung: ursprünglich war `pymssql` geplant, um die
+System-Treiber-Installation zu vermeiden; im Ziel-Banknetz ist aber pyodbc+Driver 17
+der EINZIGE verifiziert funktionierende Weg (Specimen Anhang B). Der Convenience-Vorteil
+von FreeTDS wiegt ein ungetestetes Protokoll-Stack-Risiko genau am kritischen
+Einsatzort nicht auf — pymssql verworfen, nicht als Fallback behalten.)
+- **Verbindungsstring EXAKT nach Specimen** bauen:
+  `DRIVER={ODBC Driver 17 for SQL Server};SERVER=host,port;DATABASE=db;UID=…;PWD=…`
+  — `SERVER=host,port` mit **KOMMA** (nicht `host:port`), und bewusst **OHNE**
+  `Encrypt=`/`TrustServerCertificate=`: Driver 17 default `Encrypt=no` ist das, was
+  im Banknetz funktioniert. NICHT auf Driver 18 „upgraden" (default `Encrypt=yes` →
+  scheitert an on-prem-Servern mit Self-Signed-Zertifikaten).
+- **Treibername konfigurierbar**: `options.odbc_driver` pro Quelle (Default
+  „ODBC Driver 17 for SQL Server"; das Specimen löst dasselbe per env
+  `MSSQL_DRIVER`) — deckt Maschinen ab, auf denen nur ein anderer Treiber liegt.
+- **DSN bleibt EIN URL-Feld** in der GUI (`mssql://user:pass@host:1433/db`), Brain
+  parst selbst (`urllib.parse`) und baut daraus den ODBC-String.
+- **Windows Authentication** als Option (`options.windows_auth: true` → DSN ohne
+  Credentials, `Trusted_Connection=yes;` statt UID/PWD — im Banknetz gängig, das
+  Specimen unterstützt beide Wege). Caveat dokumentieren: vom Brain-Host aus nur
+  nutzbar, wenn der Prozess Domain-/Kerberos-Kontext hat; SQL-Auth ist der Default.
+- **Timeouts nach Specimen, ZWEI getrennte Knöpfe**:
+  `pyodbc.connect(conn_str, timeout=connect_timeout)` ist der **Login**-Timeout;
+  der **Query**-Timeout wird danach als `conn.timeout = statement_timeout` gesetzt
+  (Specimen: 30/60; Test-Connection mit `timeout=5`). Das ist das Äquivalent zum
+  Postgres-`statement_timeout`.
+- **Installation**: `pip3 install pyodbc --break-system-packages` + msodbcsql17
+  (macOS: Microsofts Homebrew-Tap `microsoft/mssql-release`, auf Apple Silicon
+  verfügbar). Auf Windows-Zielsystemen der Bank ist Driver 17 typischerweise
+  bereits installiert.
 
 **E4 — Read-only auf MSSQL ist ehrlich ZWEI-schichtig.** MSSQL hat KEIN Session-Äquivalent
 zu `set_session(readonly=True)` (Read-only gibt es nur DB-weit oder über Grants). Für
@@ -126,7 +157,8 @@ CTE-Namen dürfen nicht als Tabellen-Refs zählen (sqlglot unterscheidet das; Te
   gefiltert auf `data_access_allowed(user)`, NUR `{name, type, access_mode}` — NIE
   DSN/env_key. (Der bestehende admin-GET bleibt unverändert admin-only.)
 - `GET /v1/data-sources/<name>/tables` — Tabellenliste für den Picker
-  (`information_schema.tables` bzw. mssql-Äquivalent), policy-gated, Timeout kurz
+  (`information_schema.tables`; mssql: `INFORMATION_SCHEMA.TABLES WHERE
+  TABLE_TYPE='BASE TABLE'` — bank-erprobt, Anhang B), policy-gated, Timeout kurz
   (5 s), Fehler sauber (Quelle offline → Fehlertext, kein 500).
 - Beide in server.py-GET-Dispatch registrieren; NICHT in `_ADMIN_GET_EXACT`
   (Handler prüft selbst via `data_access_allowed` + `_require_auth`).
@@ -169,12 +201,15 @@ dessen Scope); sched-Sessions OHNE Projekt → kein Scope → deny (O1).
    installiert wird). Test-DB `braintest_ms` mit denselben 50k `positionen` +
    Read-only-Login `brain_ro_ms` (db_datareader) + Owner-Login für den
    Schicht-Beweis. DSN in config.json (gitignored; Scrubber deckt `dsn` schon ab).
-2. `pymssql` ins Server-Python (`pip3 install pymssql --break-system-packages`,
-   Versionsstand im Changelog festhalten).
-3. `data_tools.py`: `_connect_readonly` → um `mssql`-Branch erweitern (DSN-Parse,
-   login_timeout/timeout aus options, Cursor OHNE named-cursor — pymssql streamt
-   via `fetchmany` ohnehin; Ergebnis-Kappe identisch). fail-loud-Text für weitere
-   Typen (snowflake/oracle) bleibt.
+2. `pyodbc` + Treiber ins Server-Python: `pip3 install pyodbc
+   --break-system-packages` + msodbcsql17 via `brew tap microsoft/mssql-release`
+   (Versionsstände im Changelog festhalten).
+3. `data_tools.py`: `_connect_readonly` → um `mssql`-Branch erweitern (DSN-Parse →
+   ODBC-String EXAKT nach E3/Anhang B; connect-`timeout` = Login-Timeout,
+   `conn.timeout` = Query-Timeout aus options; `options.odbc_driver` +
+   `options.windows_auth`; Cursor OHNE named-cursor — pyodbc streamt via
+   `fetchmany`; Ergebnis-Kappe identisch). fail-loud-Text für weitere Typen
+   (snowflake/oracle) bleibt.
 4. Tests (skip-clean ohne lokale MSSQL, das braintest-Muster): SELECT liefert,
    INSERT stirbt an Schicht 1, falscher Quellname listet, tote Verbindung sauber,
    `out=csv`. **Erfolgskriterium:** komplette Suite grün MIT laufendem Docker-MSSQL;
@@ -422,6 +457,8 @@ PII-Lauf über Millionen Zeilen zu erschlagen.
 - **O4 — MSSQL-Docker auf Apple Silicon:** Rosetta-Emulation kann zäh sein; wenn
   unbrauchbar, Alternative: echter MSSQL des Users (DSN liefern lassen) — Phase 1
   NICHT mit ungetestetem Treiber-Code abschließen ([[feedback_phase_a_then_validate]]).
+  Die Tests MÜSSEN denselben Stack fahren wie das Banknetz (pyodbc + msodbcsql17),
+  nicht einen Ersatztreiber — sonst validiert Phase 1 den falschen Pfad.
 - **O5 — REST-Pagination/Discovery:** rest_query paginiert NICHT automatisch
   (das Modell folgt selbst next-Links innerhalb der erlaubten Pfade); kein
   OpenAPI-Auto-Discovery in v1 — `allowed_paths` + Quellen-Steckbrief tragen
@@ -478,3 +515,61 @@ oder Hyland-supportete Zugriffe gefordert sind.
 Quellen: Hyland Database Reporting Guide (ITEMDATA/Database Tables, docs.hyland.com),
 Database Reference Guide Appendix A „Database Use Policy → Accessing the Database to
 Retrieve Data", OnBase Document REST API (Content-Composer-Doku, docs.hyland.com).
+
+---
+
+## Anhang B — Bank-verifiziertes MSSQL-Verbindungs-Specimen (2026-07-17)
+
+Destillat aus `sync_service.py` eines bestehenden internen Bank-Tools — **im Netz der
+Bank produktiv, und dort der einzige funktionierende Weg** (die Herleitung war
+aufwendig; nicht „modernisieren"). Maßgeblich für den `mssql`-Branch in Phase 1.
+
+**Verbindungsaufbau (SQL-Auth und Windows-Auth):**
+
+```python
+import pyodbc
+DRIVER = os.environ.get('MSSQL_DRIVER', 'ODBC Driver 17 for SQL Server')
+
+# SQL Server Authentication
+conn_str = (
+    f"DRIVER={{{DRIVER}}};"
+    f"SERVER={host},{port};"        # KOMMA zwischen Host und Port!
+    f"DATABASE={database};"
+    f"UID={username};"
+    f"PWD={password}"
+)
+# Windows Authentication (Banknetz-Alternative)
+conn_str = (
+    f"DRIVER={{{DRIVER}}};"
+    f"SERVER={host},{port};"
+    f"DATABASE={database};"
+    f"Trusted_Connection=yes;"
+)
+
+conn = pyodbc.connect(conn_str, timeout=30)   # timeout = LOGIN-Timeout (Sekunden)
+conn.timeout = 60                             # QUERY-Timeout, separat setzen
+# Test-Connection im Specimen: pyodbc.connect(conn_str, timeout=5)
+```
+
+**Was das Specimen bewusst NICHT setzt** (und wir auch nicht): `Encrypt=`,
+`TrustServerCertificate=`, `MARS_Connection=`, TDS-Versionen. Driver 17 verbindet
+mit `Encrypt=no`-Default — genau das trägt im Banknetz. Driver 18 würde mit seinem
+`Encrypt=yes`-Default an Self-Signed-Zertifikaten der on-prem-Server scheitern.
+
+**Metadaten-Queries (bank-erprobt, für tables-Endpoint + generate_guide):**
+
+```sql
+-- Datenbanken (ohne Systemdatenbanken):
+SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name
+-- Tabellen:
+SELECT TABLE_NAME FROM [db].INFORMATION_SCHEMA.TABLES
+ WHERE TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME
+-- Spalten (parametrisiert, ?-Platzhalter):
+SELECT COLUMN_NAME FROM [db].INFORMATION_SCHEMA.COLUMNS
+ WHERE TABLE_NAME = ? ORDER BY ORDINAL_POSITION
+```
+
+**Fehlerdiagnose-Mapping** (pyodbc-SQLSTATE, fürs saubere Fehlertext-Handling):
+`08001` = Verbindung (Host/Port/Firewall/TCP-IP-Protokoll), `28000` = Login
+fehlgeschlagen (auch: SQL-Auth-Modus serverseitig deaktiviert), „driver"-Fehler =
+ODBC-Treiber fehlt/falscher Name. Identifier-Quoting durchgängig `[eckige Klammern]`.
