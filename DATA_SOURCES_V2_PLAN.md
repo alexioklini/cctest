@@ -298,6 +298,41 @@ Auslieferungswege, nach Größe gewählt:
   HANDGEPFLEGT mit Auto-Anschub, wie brain-agent-guide.
 - **GUI**: Steckbrief-Textarea im Quellen-Formular (Admin-Tab) + Generieren-Button;
   Projekt-Sektion/Right-Panel zeigen nur ein 📄-Indikator („Steckbrief vorhanden").
+
+**E12 — Eskalationsleiter Quellen-Wissen (User-Präzisierung 2026-07-17).** Bei
+komplexen Schemata (Referenzfall: die interne **Schatten-DB des Kernbankensystems**,
+siehe CoreBanking-SQL-Showcase-Projekt) ist das Wissen PROZEDURAL, nicht deskriptiv —
+„alle aktiven Kunden ermittelt man in Tabelle X, wobei Felder xy den Wert '1' haben
+müssen" ist mit einer Feldbeschreibung nicht abgetan. Drei Stufen, v1 baut 1+2,
+Stufe 3 ist der dokumentierte Pfad:
+
+- **Stufe 1 — Steckbrief** (`guide.md`, oben): Tabellen-/Feld-Semantik, einfache
+  Quellen. Reicht, „damit sich das Modell den Weg ebnet".
+- **Stufe 2 — Quellen-Skill** (`guide.skill`, use_skill-Infra): vollwertige
+  Wissensbasis nach dem brain-agent-guide-Muster (SKILL.md + Referenzdateien),
+  Kern ist eine **Rezept-Bibliothek** „Geschäftsbegriff → verifizierte Query":
+  aktive Kunden, Bestandsabgleich, Stichtags-Joins — je Rezept SQL/REST-Aufruf,
+  Vorbedingungen, bekannte Fallen; bei rw die verbindlichen Persistier-Muster.
+  Zwei Füllwege, damit das nicht Handarbeit bleibt:
+  (a) **Seed aus bestehenden Zugriffsskripten** — die heutigen Skripte im
+  CoreBanking-Showcase-Projekt kodieren das Wissen bereits; ein Bootstrap-Pass
+  (background_call) extrahiert SQL + Kommentare in Rezeptform;
+  (b) **Promotion aus Chats** — der bestehende Skill-Generator (v9.294,
+  „SKILL.md aus Chat") befördert eine bewährte Query-Session per Klick in den
+  Quellen-Skill: was sich das Modell einmal erarbeitet hat, wird kodifiziert
+  statt im nächsten Chat neu ermittelt.
+- **Stufe 3 — MCP-Server pro Quelle** (`mcp_server`-Feld, MCPManager +
+  per-agent mcp.json existieren — Anbindung ist Konfig, kein Umbau): wenn Wissen
+  zu VERHALTEN werden muss. Eskalationskriterien: (1) Rezepte sollen
+  PARAMETRISIERT + deterministisch laufen statt vom Modell adaptiert
+  (compliance-kritische Persistierung → typisiertes Tool
+  `get_active_customers(stichtag)` statt SQL-Vorlage); (2) ein fertiger
+  Hersteller-MCP existiert; (3) dieselben Rezepte werden außerhalb Brains
+  (andere MCP-Clients) gebraucht. Ein selbstgeschriebener Quellen-MCP ist dann
+  der dünne Wrapper über der Stufe-2-Rezept-Bibliothek — die Rezepte sind die
+  Spezifikation. Stand 2026-07: für Hyland OnBase existiert KEIN dedizierter
+  MCP-Server (Hyland baut „Agent Builder"/„Enterprise Agent Mesh" — beobachten,
+  Anhang A).
 - **Tests**: Preamble nur bei gescopter Quelle; Kappe → Skill-Hinweis statt
   Voll-Injektion; `session.messages`/DB tragen NIE Steckbrief-Text (wire-only,
   der v9.17.0-Regressionstest-Gedanke); generate_guide gegen braintest erzeugt
@@ -344,11 +379,12 @@ Auslieferungswege, nach Größe gewählt:
   (das Modell folgt selbst next-Links innerhalb der erlaubten Pfade); kein
   OpenAPI-Auto-Discovery in v1 — `allowed_paths` + Quellen-Steckbrief tragen
   die Semantik. Erst bei Bedarf erweitern.
-- **O6 — MCP-Server-Referenz pro Quelle:** bewusst NICHT in v1. Der Steckbrief
-  (Phase 7) deckt „Modell weiß, wie es zu den Daten kommt" ohne neuen
-  Prozess/Config-Typ; ein per-Quelle-MCP-Server (`mcp_server`-Feld, Tools via
-  MCPManager) wäre die Eskalationsstufe, wenn eine Quelle ECHTE Spezial-Tools
-  braucht statt Wissen — erst bei konkretem Fall.
+- **O6 — MCP-Server-Referenz pro Quelle:** in v1 NICHT gebaut, aber als Stufe 3
+  der Eskalationsleiter (E12) mit Kriterien dokumentiert. Wenn Stufe 3 kommt:
+  `mcp_server`-Feld auf der Quelle, Tools via bestehendem MCPManager; der
+  Quellen-Skill (Stufe 2) ist die Spezifikation des zu schreibenden Servers.
+  Für OnBase: Hyland-Roadmap („Agent Builder"/Agent Mesh) beobachten, bevor
+  selbst gebaut wird.
 - **O7 — OpenAPI-Bootstrap für REST-Steckbriefe:** optionaler zweiter Schritt
   von generate_guide (URL fetchen, verdichten); v1 kann mit handgepflegtem
   REST-Steckbrief starten.
