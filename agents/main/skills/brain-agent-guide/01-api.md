@@ -550,6 +550,16 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
   `{<purpose>: state}` per-use-case map — validated against `_VALID_PURPOSES` ×
   `TOOL_STATES`; an empty/absent map keeps the record scalar-only)
 - `GET /v1/tools/config` / `POST` — integration knobs (API keys, etc.)
+- `GET /v1/data-sources` (admin, v9.363.0) — db_query warehouse sources with
+  MASKED DSNs (`dsn_set`/`dsn_masked`, the password never leaves the server)
+  + the access policy (`access {enabled, roles, teams, users}`, missing
+  config block reported as admins-only) + team/user/role lists for the
+  grant pickers + `wired_types`
+- `POST /v1/data-sources` (admin) — `{action: save_source|delete_source|
+  save_access, ...}`; `save_source` takes `source {name, type, dsn, env_key,
+  options{statement_timeout_ms, connect_timeout}}` + `original_name` (rename;
+  empty `dsn` on edit keeps the stored secret); persists to config.json AND
+  the live server_config — no restart needed
 - `GET /v1/tools/status` — per-tool diagnostic
 - `GET /v1/tools/breakdown?agent=` — token cost per tool
 - `GET /v1/tools/result?session_id=&tool_use_id=` — full, **uncapped**

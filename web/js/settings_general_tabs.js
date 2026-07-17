@@ -3531,3 +3531,166 @@ async function saveWikiConfig() {
     showToast('Speichern fehlgeschlagen: ' + (e.message || e), true);
   }
 }
+
+/* ─── DATENQUELLEN (db_query: Quellen-CRUD + Zugriffs-Policy, v9.363.0) ─── */
+
+async function _genTab_data_sources(C) {
+  let data;
+  try {
+    data = await API.get('/v1/data-sources');
+  } catch (e) {
+    C.innerHTML = P(`<div style="color:var(--text-400)">Datenquellen nicht verfügbar: ${esc(String(e.message || e))}</div>`);
+    return;
+  }
+  state._dataSourcesCache = data;
+  const acc = data.access || {};
+  const roles = acc.roles || [];
+  const nonAdminUsers = (data.users || []).filter(u => u.role !== 'admin');
+  const teams = data.teams || [];
+
+  let html = `<div style="${G('12px')}">`;
+  html += `<div style="font-size:12px;color:var(--text-400)">Externe SQL-Datenbanken für das Agent-Tool <code>db_query</code> (read-only). Der hinterlegte DB-Benutzer <b>muss</b> ein Read-only-Grant sein — die Session wird zusätzlich schreibgeschützt geöffnet.</div>`;
+
+  /* Access policy */
+  html += SEC('Zugriff', 'Wer darf db_query nutzen? Freigaben sind ADDITIV (Rolle ODER Team ODER Benutzer genügt). Administratoren haben immer Zugriff — außer der globale Schalter ist aus, der gilt für alle. Ohne gespeicherte Policy gilt: nur Administratoren.');
+  html += `<div style="padding:12px;border:1px solid var(--border-200);border-radius:10px;${G('10px')}">
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-100)">
+      <input type="checkbox" id="ds-acc-enabled" ${acc.enabled !== false ? 'checked' : ''}>
+      <b>SQL-Datenquellen global aktiviert</b>
+      <span style="font-size:11px;color:var(--text-400)">(aus = für alle gesperrt, auch Admins)</span>
+    </label>
+    <div>
+      <label class="form-label">Benutzertypen (Rollen)</label>
+      <div style="display:flex;gap:16px;font-size:13px;color:var(--text-100)">
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" checked disabled> Admin <span style="font-size:11px;color:var(--text-400)">(immer)</span></label>
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="ds-acc-role-poweruser" ${roles.includes('poweruser') ? 'checked' : ''}> Poweruser</label>
+        <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="ds-acc-role-user" ${roles.includes('user') ? 'checked' : ''}> Benutzer</label>
+      </div>
+    </div>
+    <div style="display:flex;gap:12px">
+      <div style="flex:1">
+        <label class="form-label">Teams (zusätzlich freigeben)</label>
+        <select class="form-select" id="ds-acc-teams" multiple style="width:100%;min-height:70px">
+          ${teams.map(t => `<option value="${esc(t.id)}" ${(acc.teams || []).includes(t.id) ? 'selected' : ''}>${esc(t.name)}</option>`).join('') || '<option disabled>(keine Teams angelegt)</option>'}
+        </select>
+      </div>
+      <div style="flex:1">
+        <label class="form-label">Einzelne Benutzer (zusätzlich freigeben)</label>
+        <select class="form-select" id="ds-acc-users" multiple style="width:100%;min-height:70px">
+          ${nonAdminUsers.map(u => `<option value="${esc(u.id)}" ${(acc.users || []).includes(u.id) ? 'selected' : ''}>${esc(u.display_name)} (${esc(u.role)})</option>`).join('') || '<option disabled>(keine weiteren Benutzer)</option>'}
+        </select>
+      </div>
+    </div>
+    <div><button class="btn-primary" onclick="saveDataSourcesAccess()">Zugriff speichern</button></div>
+  </div>`;
+
+  /* Source list */
+  html += SEC('Konfigurierte Quellen');
+  if ((data.sources || []).length) {
+    for (const s of data.sources) {
+      html += `<div style="${ROW}">
+        <span style="font-size:13px;font-weight:500;color:var(--text-100)">${esc(s.name)}</span>
+        ${BADGE(s.type)}
+        <span style="${MONO};flex:1">${s.dsn_set ? esc(s.dsn_masked) : (s.env_key ? 'env: ' + esc(s.env_key) : '—')}</span>
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="_dsEdit('${esc(s.name)}')">Bearbeiten</button>
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="deleteDataSource('${esc(s.name)}')">Löschen</button>
+      </div>`;
+    }
+  } else {
+    html += `<div style="font-size:12px;color:var(--text-400);padding:8px 0">Noch keine Quellen konfiguriert.</div>`;
+  }
+
+  /* Add/edit form */
+  html += SEC('Quelle hinzufügen / bearbeiten');
+  html += `<div style="padding:12px;border:1px solid var(--border-200);border-radius:10px;${G('8px')}">
+    <input type="hidden" id="ds-original-name" value="">
+    <div style="display:flex;gap:8px">
+      <div style="flex:1"><label class="form-label">Name</label><input class="form-input" id="ds-name" placeholder="z. B. warehouse"></div>
+      <div style="width:160px"><label class="form-label">Typ</label><select class="form-select" id="ds-type" style="width:100%">
+        ${(data.wired_types || ['postgres']).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
+      </select></div>
+    </div>
+    <div><label class="form-label">DSN (Verbindungs-URL, inkl. Read-only-Benutzer)</label>
+      <input class="form-input" id="ds-dsn" type="password" autocomplete="off" placeholder="postgresql://user:pass@host:5432/db — beim Bearbeiten leer lassen = unverändert"></div>
+    <div style="display:flex;gap:8px">
+      <div style="flex:1"><label class="form-label">…oder Env-Variable mit der DSN</label><input class="form-input" id="ds-env-key" placeholder="z. B. WAREHOUSE_DSN"></div>
+      <div style="width:170px"><label class="form-label">Statement-Timeout (ms)</label><input class="form-input" id="ds-timeout" type="number" placeholder="60000"></div>
+      <div style="width:170px"><label class="form-label">Connect-Timeout (s)</label><input class="form-input" id="ds-connect-timeout" type="number" placeholder="10"></div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="btn-primary" onclick="saveDataSource()">Quelle speichern</button>
+      <button class="btn-secondary" onclick="_dsEdit('')">Formular leeren</button>
+    </div>
+  </div></div>`;
+
+  C.innerHTML = P(html);
+}
+
+function _dsEdit(name) {
+  const data = state._dataSourcesCache || {};
+  const s = (data.sources || []).find(x => x.name === name);
+  document.getElementById('ds-original-name').value = s ? s.name : '';
+  document.getElementById('ds-name').value = s ? s.name : '';
+  document.getElementById('ds-type').value = s ? s.type : 'postgres';
+  document.getElementById('ds-dsn').value = '';
+  document.getElementById('ds-env-key').value = s ? (s.env_key || '') : '';
+  document.getElementById('ds-timeout').value = s ? (s.options?.statement_timeout_ms ?? '') : '';
+  document.getElementById('ds-connect-timeout').value = s ? (s.options?.connect_timeout ?? '') : '';
+  if (s) document.getElementById('ds-name').focus();
+}
+
+async function saveDataSource() {
+  const original = document.getElementById('ds-original-name').value.trim();
+  const name = document.getElementById('ds-name').value.trim();
+  const dsn = document.getElementById('ds-dsn').value.trim();
+  const envKey = document.getElementById('ds-env-key').value.trim();
+  if (!name) { showToast('Name ist erforderlich', true); return; }
+  // On a NEW source (no original) either DSN or env var must be given; on
+  // edit an empty DSN means "keep the stored one" (server-side).
+  if (!original && !dsn && !envKey) { showToast('DSN oder Env-Variable angeben', true); return; }
+  try {
+    const r = await API.post('/v1/data-sources', {
+      action: 'save_source',
+      original_name: original,
+      source: {
+        name, dsn, env_key: envKey,
+        type: document.getElementById('ds-type').value,
+        options: {
+          statement_timeout_ms: document.getElementById('ds-timeout').value,
+          connect_timeout: document.getElementById('ds-connect-timeout').value,
+        },
+      },
+    });
+    if (r?.error) { showToast(r.error, true); return; }
+    showToast(`Quelle „${name}" gespeichert`);
+    await _genTab_data_sources(document.getElementById('general-tab-content'));
+  } catch (e) { showToast('Speichern fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function deleteDataSource(name) {
+  if (!confirm(`Datenquelle „${name}" löschen?\n\nLaufende Abfragen sind nicht betroffen; das Tool kennt die Quelle danach nicht mehr.`)) return;
+  try {
+    const r = await API.post('/v1/data-sources', { action: 'delete_source', name });
+    if (r?.error) { showToast(r.error, true); return; }
+    showToast(`Quelle „${name}" gelöscht`);
+    await _genTab_data_sources(document.getElementById('general-tab-content'));
+  } catch (e) { showToast('Löschen fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+async function saveDataSourcesAccess() {
+  const roles = [];
+  if (document.getElementById('ds-acc-role-poweruser')?.checked) roles.push('poweruser');
+  if (document.getElementById('ds-acc-role-user')?.checked) roles.push('user');
+  const sel = (id) => Array.from(document.getElementById(id)?.selectedOptions || []).map(o => o.value).filter(Boolean);
+  try {
+    const r = await API.post('/v1/data-sources', {
+      action: 'save_access',
+      access: {
+        enabled: document.getElementById('ds-acc-enabled')?.checked ?? true,
+        roles, teams: sel('ds-acc-teams'), users: sel('ds-acc-users'),
+      },
+    });
+    if (r?.error) { showToast(r.error, true); return; }
+    showToast('Zugriffs-Policy gespeichert');
+  } catch (e) { showToast('Speichern fehlgeschlagen: ' + (e.message || e), true); }
+}

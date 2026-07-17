@@ -248,6 +248,55 @@ def _data_sources() -> list[dict]:
     return _brain._server_config().get("data_sources") or []
 
 
+# Access policy (v9.363.0): who may use db_query at all. Grants are ADDITIVE
+# (role OR team OR user — the agent/model-permission philosophy: grant present
+# => allowed, admin always bypasses the grant axes). `enabled` is the master
+# switch and turns the feature off for EVERYONE, admins included. A missing
+# config block means ADMINS ONLY — external warehouse credentials default
+# closed, unlike file-based data_query which stays ungated. Edited via the
+# admin GUI (Einstellungen → Datenquellen, POST /v1/data-sources).
+DATA_ACCESS_DEFAULT_ROLES = ("admin",)
+
+
+def data_access_allowed(user_id: str) -> tuple[bool, str]:
+    """Check the db_query access policy for a user id.
+    Returns (allowed, reason) — reason set on deny, for the tool error."""
+    import brain as _brain
+    pol = _brain._server_config().get("data_sources_access") or {}
+    if not pol.get("enabled", True):
+        return False, "data-source access is switched off globally"
+    if user_id == "__system__":
+        return True, ""
+    if not user_id:
+        return False, "no user is associated with this turn"
+    try:
+        from server_lib.auth import AuthDB
+        user = AuthDB.get_user(user_id)
+    except Exception as e:
+        return False, f"user lookup failed: {e}"
+    if not user:
+        return False, "unknown user"
+    if user.get("role") == "admin":
+        return True, ""
+    roles = pol.get("roles")
+    if roles is None:
+        roles = list(DATA_ACCESS_DEFAULT_ROLES)
+    if user.get("role") in roles:
+        return True, ""
+    if user_id in (pol.get("users") or []):
+        return True, ""
+    granted_teams = set(pol.get("teams") or [])
+    if granted_teams:
+        try:
+            member_of = {t["id"] for t in AuthDB.get_user_teams(user_id)}
+        except Exception:
+            member_of = set()
+        if member_of & granted_teams:
+            return True, ""
+    return False, ("no data-source grant for this user (admin: Einstellungen "
+                   "→ Datenquellen — grant by role, team, or user)")
+
+
 def _resolve_db_source(name: str) -> dict:
     srcs = _data_sources()
     for s in srcs:
@@ -308,6 +357,14 @@ def _connect_readonly(src: dict):
 
 def tool_db_query(args: dict) -> str:
     import brain as _brain
+    # Authoritative access gate (v9.363.0). Deliberately IN the tool, not a
+    # per-user tool-list mutation: the tool set stays byte-identical across
+    # users, so the warm-pool KV prefix is untouched. Reaches every dispatch
+    # path (chat, scheduler, workflows, delegation).
+    allowed, why = data_access_allowed(
+        get_request_context().current_user_id or "")
+    if not allowed:
+        return _err(f"db_query: access denied — {why}")
     source = (args.get("source") or "").strip()
     if not source:
         return _err("db_query: 'source' is required (a configured "

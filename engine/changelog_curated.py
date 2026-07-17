@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.363.0",
+        "date": "2026-07-17",
+        "title": "SQL-Datenquellen per GUI verwalten und freigeben",
+        "body": "Externe SQL-Datenbanken für Datenanalysen richten Sie jetzt "
+                "direkt in den Einstellungen ein (Tab „Datenquellen“) statt "
+                "in einer Konfigurationsdatei — Änderungen wirken sofort, "
+                "ohne Server-Neustart, und Passwörter werden nie im Klartext "
+                "angezeigt. Neu ist auch die Zugriffs-Steuerung: ein "
+                "globaler Ein/Ausschalter sowie Freigaben nach Benutzertyp, "
+                "Team oder einzelnem Benutzer legen fest, wer Datenbanken "
+                "im Chat abfragen darf. Ohne ausdrückliche Freigabe haben "
+                "nur Administratoren Zugriff.",
+        "audience": "admin",
+        "versions": ["9.363.0"],
+    },
+    {
         "version": "9.362.0",
         "date": "2026-07-17",
         "title": "Modell-Benchmark deutlich schneller",

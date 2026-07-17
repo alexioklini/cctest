@@ -508,6 +508,140 @@ class AdminConfigHandlers:
             "languages": pii_ner.list_loaded(),
         })
 
+    @staticmethod
+    def _mask_dsn(dsn: str) -> str:
+        """Mask the password portion of a DSN for display (never echo secrets)."""
+        if not dsn:
+            return ""
+        return re.sub(r"://([^:/@]+):([^@]+)@", r"://\1:***@", dsn)
+
+    def _handle_data_sources_get(self):
+        """GET /v1/data-sources — admin-only (gate in _ADMIN_GET_EXACT).
+        Sources with masked DSNs + access policy + team/user lists for the
+        grant pickers in the Datenquellen settings tab."""
+        from server_lib.auth import AuthDB, ROLES
+        from engine.tools.data_tools import DATA_ACCESS_DEFAULT_ROLES
+        sources = []
+        for s in (server_config.get("data_sources") or []):
+            sources.append({
+                "name": s.get("name") or "",
+                "type": s.get("type") or "postgres",
+                "env_key": s.get("env_key") or "",
+                "options": s.get("options") or {},
+                "dsn_set": bool((s.get("dsn") or "").strip()),
+                "dsn_masked": self._mask_dsn((s.get("dsn") or "").strip()),
+            })
+        pol = server_config.get("data_sources_access") or {}
+        access = {
+            "enabled": bool(pol.get("enabled", True)),
+            "roles": pol.get("roles") if pol.get("roles") is not None
+                     else list(DATA_ACCESS_DEFAULT_ROLES),
+            "teams": pol.get("teams") or [],
+            "users": pol.get("users") or [],
+        }
+        try:
+            teams = [{"id": t["id"], "name": t["name"]}
+                     for t in AuthDB.list_teams()]
+        except Exception:
+            teams = []
+        try:
+            users = [{"id": u["id"], "username": u["username"],
+                      "display_name": u.get("display_name") or u["username"],
+                      "role": u["role"]} for u in AuthDB.list_users()]
+        except Exception:
+            users = []
+        self._send_json({"sources": sources, "access": access,
+                         "teams": teams, "users": users,
+                         "roles": list(ROLES), "wired_types": ["postgres"]})
+
+    def _handle_data_sources_post(self):
+        """POST /v1/data-sources — admin-only (gate in _ADMIN_POST_EXACT).
+        Actions: save_source (add/edit; empty dsn on edit keeps the stored
+        one), delete_source, save_access. Persists to config.json AND the
+        live server_config (no restart needed — db_query reads live)."""
+        from server_lib.auth import ROLES
+        body = self._read_json()
+        action = (body.get("action") or "").strip()
+        config_path = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.abspath(__file__))), "config.json")
+        srcs = list(server_config.get("data_sources") or [])
+
+        if action == "save_source":
+            s = body.get("source") or {}
+            name = (s.get("name") or "").strip()
+            if not name:
+                self._send_json({"error": "'name' ist erforderlich"}, 400)
+                return
+            original = (body.get("original_name") or "").strip()
+            others = [x for x in srcs
+                      if (x.get("name") or "") != (original or name)]
+            if any((x.get("name") or "") == name for x in others):
+                self._send_json({"error": f"Quelle '{name}' existiert bereits"}, 400)
+                return
+            opts = {}
+            for k in ("statement_timeout_ms", "connect_timeout"):
+                v = (s.get("options") or {}).get(k)
+                if v not in (None, ""):
+                    try:
+                        opts[k] = int(v)
+                    except (TypeError, ValueError):
+                        self._send_json({"error": f"options.{k} muss eine Zahl sein"}, 400)
+                        return
+            entry = {"name": name,
+                     "type": (s.get("type") or "postgres").strip().lower()}
+            dsn = (s.get("dsn") or "").strip()
+            prev = next((x for x in srcs
+                         if (x.get("name") or "") == (original or name)), None)
+            if not dsn and prev:
+                dsn = (prev.get("dsn") or "").strip()  # keep stored secret
+            if dsn:
+                entry["dsn"] = dsn
+            env_key = (s.get("env_key") or "").strip()
+            if env_key:
+                entry["env_key"] = env_key
+            if not dsn and not env_key:
+                self._send_json({"error": "Entweder DSN oder Env-Variable angeben"}, 400)
+                return
+            if opts:
+                entry["options"] = opts
+            new_srcs = others + [entry]
+            new_srcs.sort(key=lambda x: x.get("name") or "")
+            result_key, result_val = "data_sources", new_srcs
+        elif action == "delete_source":
+            name = (body.get("name") or "").strip()
+            new_srcs = [x for x in srcs if (x.get("name") or "") != name]
+            if len(new_srcs) == len(srcs):
+                self._send_json({"error": f"Quelle '{name}' nicht gefunden"}, 404)
+                return
+            result_key, result_val = "data_sources", new_srcs
+        elif action == "save_access":
+            a = body.get("access") or {}
+            access = {
+                "enabled": bool(a.get("enabled", True)),
+                "roles": [r for r in (a.get("roles") or []) if r in ROLES],
+                "teams": [str(t) for t in (a.get("teams") or [])],
+                "users": [str(u) for u in (a.get("users") or [])],
+            }
+            result_key, result_val = "data_sources_access", access
+        else:
+            self._send_json({"error": f"unknown action '{action}'"}, 400)
+            return
+
+        try:
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    config = json.load(f)
+            config[result_key] = result_val
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=2)
+        except Exception as e:
+            self._send_json({"error": str(e)}, 500)
+            return
+        server_config[result_key] = result_val
+        self._send_json({"ok": True, result_key: result_val
+                         if result_key != "data_sources" else len(result_val)})
+
     def _handle_server_config(self):
         """POST /v1/services/server — update server defaults (default_model, attachment_image_model)."""
         body = self._read_json()

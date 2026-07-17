@@ -542,6 +542,7 @@ class AuthHandlerMixin:
         "/v1/services",
         "/v1/quotas/config",
         "/v1/quotas/admin/users",
+        "/v1/data-sources",
     }
 
     _ADMIN_POST_EXACT = {
@@ -556,6 +557,7 @@ class AuthHandlerMixin:
         "/v1/models/config",
         "/v1/services/server",
         "/v1/services/telegram",
+        "/v1/data-sources",
         "/v1/settings/commands",
         "/v1/mempalace/classifier",
         "/v1/composer/defaults",

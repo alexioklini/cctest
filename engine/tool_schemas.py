@@ -1351,8 +1351,10 @@ TOOL_DEFINITIONS = [
         "name": "db_query",
         "description": (
             "Run ONE read-only SQL SELECT against a CONFIGURED external "
-            "database/warehouse source (set up by the admin in config.json → "
-            "data_sources; currently PostgreSQL). Pass the configured source "
+            "database/warehouse source (set up by the admin in Einstellungen "
+            "→ Datenquellen; currently PostgreSQL). Access is grant-gated per "
+            "user — an 'access denied' error is final for this user, do NOT "
+            "retry. Pass the configured source "
             "NAME — if it is wrong, the error lists the available names. The "
             "connection is read-only at session level AND the configured DB "
             "user must be a read-only grant, so writes are impossible; only "

@@ -1825,6 +1825,8 @@ class BrainAgentHandler(
             self._handle_service_models_get()
         elif path == "/v1/doc-styles":
             self._handle_doc_styles_get()
+        elif path == "/v1/data-sources":
+            self._handle_data_sources_get()
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
         elif path == "/v1/mcp/registry":
@@ -2196,6 +2198,8 @@ class BrainAgentHandler(
             self._handle_telegram_action()
         elif path == "/v1/services/server":
             self._handle_server_config()
+        elif path == "/v1/data-sources":
+            self._handle_data_sources_post()
         elif path == "/v1/mempalace/classifier":
             self._handle_mempalace_classifier_save()
         elif path == "/v1/composer/defaults":
@@ -3764,6 +3768,9 @@ def main():
     # External warehouse sources for db_query (gitignored, per-machine —
     # [{name, type, dsn|env_key, options?}]; the DB user MUST be read-only).
     server_config["data_sources"] = file_config.get("data_sources", []) or []
+    # db_query access policy {enabled, roles, teams, users} — missing block
+    # means admins only (engine/tools/data_tools.data_access_allowed).
+    server_config["data_sources_access"] = file_config.get("data_sources_access", {}) or {}
     server_config["codebase_memory"] = file_config.get("codebase_memory", {}) or {}
     # warmup block was never loaded from config.json — every wcfg.get(...) in the
     # keeper + WarmSessionPool fell back to code defaults, so config.json →

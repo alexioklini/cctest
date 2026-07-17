@@ -399,8 +399,19 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
 - **`db_query(source, sql, out?)`** (documents-Gruppe, `engine/tools/data_tools.py`):
   EIN read-only SELECT gegen eine vom Admin **konfigurierte externe Datenbank**
   (`config.json → data_sources`, gitignored/per-Maschine wie der crawl4ai-Block:
-  `[{name, type, dsn|env_key, options?}]`; aktuell verdrahtet: **postgres** —
-  weitere Typen erst bei realem, testbarem Bedarf). **Read-only dreischichtig**:
+  `[{name, type, dsn|env_key, options?}]`; seit v9.363.0 per Admin-GUI
+  editierbar — Einstellungen → Datenquellen; aktuell verdrahtet: **postgres** —
+  weitere Typen erst bei realem, testbarem Bedarf).
+  **Zugriffs-Policy (v9.363.0)**: `config.json → data_sources_access
+  {enabled, roles, teams, users}` — `enabled` ist der globale Ausschalter
+  (aus = für ALLE, auch Admins), Freigaben sind ADDITIV (Rolle ODER
+  User-Team ODER einzelner User), Admins passieren die Grant-Achsen immer;
+  fehlender Block = nur Admins. Durchgesetzt IM Tool
+  (`data_access_allowed`, `engine/tools/data_tools.py`) — bewusst KEINE
+  per-User-Tool-Listen-Mutation, damit der Warm-Pool-KV-Prefix byte-stabil
+  bleibt; ein abgelehnter Aufruf liefert `access denied` als Tool-Fehler
+  (die Schemabeschreibung sagt dem Modell: nicht wiederholen).
+  **Read-only dreischichtig**:
   (1) derselbe SELECT/WITH-Prefix-Check + Multi-Statement-Reject wie
   xlsx_query/data_query; (2) **Session-Read-only** — psycopg2
   `set_session(readonly=True)`, ein INSERT stirbt am Server mit

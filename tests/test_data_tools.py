@@ -236,8 +236,11 @@ _TEST_SOURCES = [
 class TestDbQuery(unittest.TestCase):
     def setUp(self):
         self._sid = "datatools-test-" + uuid.uuid4().hex[:8]
+        # __system__ passes the v9.363.0 access policy — this suite tests
+        # query mechanics, not the policy (TestDbQueryAccessPolicy does).
         self.enterContext(request_context(
-            current_session_id=self._sid, current_agent=_FakeAgent()))
+            current_session_id=self._sid, current_agent=_FakeAgent(),
+            current_user_id="__system__"))
         self.enterContext(mock.patch.object(
             data_tools, "_data_sources", return_value=_TEST_SOURCES))
 
@@ -321,6 +324,71 @@ class TestDbQuery(unittest.TestCase):
         with open(out["saved"]["path"], encoding="utf-8") as f:
             lines = f.read().strip().splitlines()
         self.assertEqual(len(lines), 2001)
+
+
+class TestDbQueryAccessPolicy(unittest.TestCase):
+    """v9.363.0 db_query access policy: `enabled` is a master switch for
+    EVERYONE (admins included); grants are additive (role OR team OR user);
+    admins bypass the grant axes; a MISSING config block means admins only."""
+
+    def _check(self, pol, *, user, member_of=(), uid="u1"):
+        cfg = {"data_sources_access": pol} if pol is not None else {}
+        with mock.patch.object(brain, "_server_config", return_value=cfg), \
+             mock.patch("server_lib.auth.AuthDB.get_user",
+                        lambda _uid: user), \
+             mock.patch("server_lib.auth.AuthDB.get_user_teams",
+                        lambda _uid: [{"id": t} for t in member_of]):
+            return data_tools.data_access_allowed(uid)
+
+    def test_missing_block_means_admins_only(self):
+        self.assertTrue(self._check(None, user={"role": "admin"})[0])
+        ok, why = self._check(None, user={"role": "user"})
+        self.assertFalse(ok)
+        self.assertIn("grant", why)
+
+    def test_master_switch_off_blocks_even_admins(self):
+        ok, why = self._check({"enabled": False}, user={"role": "admin"})
+        self.assertFalse(ok)
+        self.assertIn("globally", why)
+
+    def test_role_grant(self):
+        pol = {"enabled": True, "roles": ["user"]}
+        self.assertTrue(self._check(pol, user={"role": "user"})[0])
+        self.assertFalse(self._check(pol, user={"role": "poweruser"})[0])
+
+    def test_user_grant(self):
+        pol = {"enabled": True, "roles": [], "users": ["u1"]}
+        self.assertTrue(self._check(pol, user={"role": "user"}, uid="u1")[0])
+        self.assertFalse(self._check(pol, user={"role": "user"}, uid="u2")[0])
+
+    def test_team_grant(self):
+        pol = {"enabled": True, "roles": [], "teams": ["t-fin"]}
+        self.assertTrue(self._check(pol, user={"role": "user"},
+                                    member_of=("t-fin", "t-x"))[0])
+        self.assertFalse(self._check(pol, user={"role": "user"},
+                                     member_of=("t-x",))[0])
+
+    def test_system_and_empty_user(self):
+        pol = {"enabled": True, "roles": []}
+        self.assertTrue(self._check(pol, user=None, uid="__system__")[0])
+        self.assertFalse(self._check(pol, user=None, uid="")[0])
+
+    def test_tool_guard_denies_before_source_resolution(self):
+        """The guard sits at the TOP of tool_db_query — a denied user gets the
+        access error, never a connection attempt (no source config needed)."""
+        with request_context(current_session_id="ds-pol-test",
+                             current_agent=_FakeAgent(),
+                             current_user_id="u1"), \
+             mock.patch.object(brain, "_server_config",
+                               return_value={"data_sources_access":
+                                             {"enabled": True, "roles": []}}), \
+             mock.patch("server_lib.auth.AuthDB.get_user",
+                        lambda _uid: {"role": "user"}), \
+             mock.patch("server_lib.auth.AuthDB.get_user_teams",
+                        lambda _uid: []):
+            out = json.loads(data_tools.tool_db_query(
+                {"source": "braintest", "sql": "SELECT 1"}))
+        self.assertIn("access denied", out["error"])
 
 
 if __name__ == "__main__":

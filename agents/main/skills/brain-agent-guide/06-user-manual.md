@@ -2155,6 +2155,19 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   Matrix oder deaktiviert = der 🧬-Eintrag verschwindet aus dem Verfasser.
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
+- **Datenquellen** (v9.363.0) — externe SQL-Datenbanken für das Analyse-Tool
+  `db_query` (aktuell PostgreSQL), komplett per GUI statt config.json:
+  Quellen anlegen/bearbeiten/löschen (Name, Typ, DSN **oder** Env-Variable,
+  Timeouts; das Passwort wird nur maskiert angezeigt — beim Bearbeiten leer
+  lassen heißt „unverändert"), wirksam **ohne Server-Neustart**. Dazu die
+  **Zugriffs-Steuerung**: ein globaler Ein/Ausschalter (aus = für alle
+  gesperrt, auch Administratoren) und additive Freigaben nach
+  **Benutzertyp** (Administratoren immer; Poweruser und Benutzer
+  zuschaltbar), nach **Team** und nach **einzelnem Benutzer** — es genügt
+  eine der drei Freigaben. Ohne gespeicherte Policy dürfen nur
+  Administratoren zugreifen. Wichtig: Der hinterlegte Datenbank-Benutzer
+  muss ein Read-only-Konto sein; die Verbindung wird zusätzlich
+  schreibgeschützt geöffnet, und nur einzelne SELECT-Abfragen passieren.
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost).
   Bei den Kosten gibt es neben „Kosten ein/aus ($/M)" das Feld **„Kosten
   cached ($/M)"** — der Preis für Tokens aus dem Prompt-Cache (leer = automatisch

@@ -9296,5 +9296,13 @@
         "connect_timeout": 10
       }
     }
-  ]
+  ],
+  "data_sources_access": {
+    "enabled": true,
+    "roles": [
+      "admin"
+    ],
+    "teams": [],
+    "users": []
+  }
 }
