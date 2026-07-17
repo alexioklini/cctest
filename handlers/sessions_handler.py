@@ -691,6 +691,7 @@ class SessionsHandlerMixin:
             resp["gdpr_feedback_ask"] = bool(getattr(session, "gdpr_feedback_ask", False))
             resp["gdpr_details_visible"] = bool(getattr(session, "gdpr_details_visible", False))
             resp["web_basket"] = getattr(session, "web_basket", "") or ""
+            resp["data_sources"] = getattr(session, "data_sources", "") or ""
             resp["pinned_sources"] = getattr(session, "pinned_sources", "") or ""
             resp["message_queue"] = getattr(session, "message_queue", "") or ""
             resp["goal_text"] = getattr(session, "goal_text", "") or ""
@@ -725,6 +726,7 @@ class SessionsHandlerMixin:
                 resp["gdpr_feedback_ask"] = bool(info.get("gdpr_feedback_ask", 0))
                 resp["gdpr_details_visible"] = bool(info.get("gdpr_details_visible", 0))
                 resp["web_basket"] = info.get("web_basket", "") or ""
+                resp["data_sources"] = info.get("data_sources", "") or ""
                 resp["pinned_sources"] = info.get("pinned_sources", "") or ""
                 resp["message_queue"] = info.get("message_queue", "") or ""
                 resp["goal_text"] = info.get("goal_text", "") or ""
@@ -2190,6 +2192,21 @@ class SessionsHandlerMixin:
             s = sessions.get(sid)
             if s:
                 s.web_basket = basket_json
+            self._send_json({"status": "ok", "session_id": sid})
+        elif action == "data_sources":
+            # Persist the per-session data-source selection (DATA_SOURCES_V2
+            # Phase 5). value is a list of {name, tables:[]}; stored as JSON —
+            # the web_basket pattern. Scope enforcement reads it per turn in
+            # handlers/chat.py (plain chats only; projects use project.json).
+            val = body.get("value")
+            try:
+                ds_json = json.dumps(val if isinstance(val, list) else [])
+            except (TypeError, ValueError):
+                ds_json = "[]"
+            ChatDB.update_session_data_sources(sid, ds_json)
+            s = sessions.get(sid)
+            if s:
+                s.data_sources = ds_json
             self._send_json({"status": "ok", "session_id": sid})
         elif action == "pinned_sources":
             # Persist the per-session pinned project sources (v9.305.0). value

@@ -1800,6 +1800,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
         <span class="right-panel-tab-badge" id="tab-badge-websuche">0</span>
       </button>
+      <button class="right-panel-tab" data-tab="datenquellen" onclick="selectRightTab('datenquellen')" title="Datenquellen" id="tab-btn-datenquellen" style="display:none">
+        <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+        <span class="right-panel-tab-badge" id="tab-badge-datenquellen">0</span>
+      </button>
       <button class="right-panel-tab" data-tab="bgtasks" onclick="selectRightTab('bgtasks')" title="Aktivität (Tool-Aufrufe + Hintergrundaufgaben)">
         <svg class="right-panel-tab-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
         <span class="right-panel-tab-badge" id="tab-badge-bgtasks">0</span>
@@ -1922,6 +1926,11 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
     <div class="websuche-basket" id="websuche-basket"
          ondragover="onWebBasketDragOver(event)" ondragleave="onWebBasketDragLeave(event)" ondrop="onWebBasketDrop(event)">
     </div>
+  </div>
+
+  <!-- Datenquellen (per-session db_query scope) pane -->
+  <div class="right-tab-pane" id="tab-pane-datenquellen">
+    <div id="datenquellen-content" style="padding:10px;overflow-y:auto"></div>
   </div>
 
   <!-- Hintergrundaufgaben (detached background tasks) pane -->

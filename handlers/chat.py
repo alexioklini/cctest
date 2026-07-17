@@ -3745,6 +3745,26 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 base_exclude_tools=_base_excl,
             )
 
+            # Data-source scope for PLAIN chats (DATA_SOURCES_V2 Phase 5, E8):
+            # projects were handled inside apply_domain_context (project.json
+            # decides there — the session selection is IGNORED in a project,
+            # one source of truth per context). Without a project the scope
+            # comes from the right-panel selection (sessions.data_sources);
+            # nothing selected = None = db_query denies with the panel hint.
+            if not (project_name or session.project or ""):
+                try:
+                    _ds_sel = json.loads(
+                        getattr(session, "data_sources", "") or "[]")
+                except (TypeError, ValueError):
+                    _ds_sel = []
+                _ds_scope = {}
+                for _e in (_ds_sel if isinstance(_ds_sel, list) else []):
+                    if isinstance(_e, dict) and str(_e.get("name") or "").strip():
+                        _ds_scope[str(_e["name"]).strip()] = [
+                            str(t) for t in (_e.get("tables") or [])]
+                engine.get_request_context().data_source_scope = \
+                    _ds_scope or None
+
             # Classifier-driven tool gating (auto-route + LLM classifier only):
             # reshape this turn's tool DEFERRAL toward the groups the classifier
             # flagged as needed — un-needed groups deferred OUT (still

@@ -232,6 +232,8 @@ async function openSession(sessionId, agentId) {
     // Per-session Websuche basket — load THIS session's own curated sources.
     // Never inherit the basket of the chat we just left.
     if (typeof webBasketLoadFromJson === 'function') webBasketLoadFromJson(data.web_basket || '');
+    // Per-session Datenquellen-Auswahl (db_query-Scope) — same rule.
+    if (typeof dataSourcesLoadFromJson === 'function') dataSourcesLoadFromJson(data.data_sources || '');
     // Per-session pinned project sources (Quellen-Pinning, v9.305.0) — same rule.
     if (typeof pinnedSourcesLoadFromJson === 'function') pinnedSourcesLoadFromJson(data.pinned_sources || '');
     // Per-session message queue — load THIS session's queued messages so a
@@ -672,6 +674,9 @@ function newChat(opts) {
   // URLs from silently coming along into the new conversation.
   chat.webBasket = [];
   if (typeof _refreshWebsuche === 'function') _refreshWebsuche();
+  // Fresh chat → empty Datenquellen-Auswahl (db_query scope), same rule.
+  chat.dataSources = [];
+  if (typeof _dsUpdateTab === 'function') _dsUpdateTab();
   // Fresh chat → ALL GDPR/PII state back to defaults (consent, mapping,
   // per-finding decisions, history scans). Single reset point so nothing leaks
   // from the prior conversation and the field list can't drift.

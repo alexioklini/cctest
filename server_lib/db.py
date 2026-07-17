@@ -526,6 +526,15 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN web_basket TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            # Per-session data-source selection (DATA_SOURCES_V2 Phase 5):
+            # JSON list of {name, tables:[]} — which external DB sources a
+            # PLAIN (project-less) chat may query via db_query; empty tables =
+            # all tables. Project sessions ignore this (the project config
+            # decides). Empty string = nothing selected = db_query denies.
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN data_sources TEXT DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
             # Per-session pinned project sources (v9.305.0): the user-marked set
             # of project documents whose FULL text is injected wire-only into
             # each send (the Websuche-basket pattern for project files). JSON
@@ -2736,6 +2745,16 @@ class ChatDB:
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET web_basket = ? WHERE id = ?",
                         (basket_json or '', session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_data_sources(session_id, ds_json):
+        """Persist the per-session data-source selection. ds_json is a JSON
+        string (list of {name, tables:[]}); '' clears it."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET data_sources = ? WHERE id = ?",
+                        (ds_json or '', session_id))
             conn.commit()
 
     @staticmethod

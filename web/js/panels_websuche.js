@@ -353,3 +353,188 @@ async function toggleAllowFurtherWeb(checked) {
   catch (e) {}
 }
 
+
+/* ───────────────────────────────────────────────────────────
+   Datenquellen — per-session db_query scope (right-panel tab).
+   SEPARATE mechanism from the Websuche basket above (shares only the file):
+   the selection [{name, tables:[]}] decides which EXTERNAL DB SOURCES a
+   plain (project-less) chat may query via db_query — enforcement is
+   server-side (handlers/chat.py sets data_source_scope per turn; the tool
+   gate denies everything unscoped). Persisted per session
+   (sessions.data_sources via manage action 'data_sources', the web_basket
+   pattern — never localStorage). In PROJECT sessions the tab shows the
+   project scope READ-ONLY (project.json decides there — one source of
+   truth per context, E9). Tab is hidden while /v1/data-sources/available
+   is empty (no grant / nothing configured).
+   ─────────────────────────────────────────────────────────── */
+
+function _dsSelArr() {
+  try {
+    const chat = state.activeChat;
+    if (!chat) return [];
+    if (!Array.isArray(chat.dataSources)) chat.dataSources = [];
+    return chat.dataSources;
+  } catch (e) { return []; }
+}
+
+function _saveDataSourcesSel() {
+  const chat = state.activeChat;
+  const sid = chat && chat.sessionId;
+  if (!sid) return;
+  API.post('/v1/sessions/manage', {
+    action: 'data_sources', session_id: sid, value: _dsSelArr(),
+  }).catch(() => {});
+}
+
+// Called by openSession after GET /messages (and by newChat with '').
+function dataSourcesLoadFromJson(jsonStr) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  let arr = [];
+  try { const p = jsonStr ? JSON.parse(jsonStr) : []; if (Array.isArray(p)) arr = p; } catch (e) {}
+  chat.dataSources = arr;
+  _dsUpdateTab();
+  if (state.rightPanelOpen && state.rightPanelTab === 'datenquellen') renderDatenquellenPane();
+}
+
+// Tab button visibility + badge. Availability is fetched ONCE per page load
+// (cache shared with the project-settings section in panels_projects.js).
+async function _dsUpdateTab() {
+  const btn = document.getElementById('tab-btn-datenquellen');
+  const badge = document.getElementById('tab-badge-datenquellen');
+  if (badge) {
+    const n = _dsSelArr().length;
+    badge.textContent = String(n);
+    badge.style.display = n ? '' : 'none';
+  }
+  if (!btn) return;
+  if (!state._dsAvailCache) {
+    try { state._dsAvailCache = await API.get('/v1/data-sources/available'); }
+    catch (e) { btn.style.display = 'none'; return; }
+  }
+  const has = (state._dsAvailCache?.sources || []).length > 0;
+  btn.style.display = (has || state.activeChat?.project) ? '' : 'none';
+}
+
+async function renderDatenquellenPane() {
+  const el = document.getElementById('datenquellen-content');
+  if (!el) return;
+  const chat = state.activeChat;
+  // PROJECT session → read-only view of the project scope (E9).
+  if (chat?.project) {
+    el.innerHTML = '<div style="color:var(--text-400);font-size:12px">Lade Projekt-Konfiguration…</div>';
+    let pcfg = null;
+    try { pcfg = await API.getProject(chat.agent || 'main', chat.project); } catch (e) {}
+    const list = (pcfg?.data_sources || []);
+    el.innerHTML = `<div style="font-size:12px;color:var(--text-400);margin-bottom:10px">
+        Dieser Chat gehört zum Projekt <b>${esc(chat.project)}</b> — die nutzbaren
+        Datenquellen sind <b>im Projekt konfiguriert</b> (Projekt-Einstellungen → Datenquellen).</div>` +
+      (list.length ? list.map(e => `<div style="padding:6px 0;border-bottom:1px solid var(--border-100);font-size:13px">
+        <b>${esc(e.name)}</b>
+        <div style="font-size:11px;color:var(--text-400)">${(e.tables || []).length ? 'Beschränkt auf: ' + e.tables.map(esc).join(', ') : 'alle Tabellen'}</div>
+      </div>`).join('') : '<div style="font-size:12px;color:var(--text-400)">Keine Datenquellen im Projekt freigegeben.</div>');
+    return;
+  }
+  if (!state._dsAvailCache) {
+    try { state._dsAvailCache = await API.get('/v1/data-sources/available'); }
+    catch (e) { el.innerHTML = '<div style="font-size:12px;color:var(--text-400)">Datenquellen nicht verfügbar.</div>'; return; }
+  }
+  const sources = state._dsAvailCache?.sources || [];
+  if (!sources.length) {
+    el.innerHTML = '<div style="font-size:12px;color:var(--text-400)">Keine Datenquellen verfügbar — entweder ist keine konfiguriert oder dir fehlt die Freigabe (Admin: Einstellungen → Datenquellen).</div>';
+    return;
+  }
+  const sel = {};
+  _dsSelArr().forEach(e => { if (e && e.name) sel[e.name] = e.tables || []; });
+  const tblCache = state._dsTablesCache || {};
+  el.innerHTML = `<div style="font-size:12px;color:var(--text-400);margin-bottom:10px">
+      Angehakte Quellen darf dieser Chat per <code>db_query</code> abfragen;
+      optional auf Tabellen einschränken (nichts gewählt = alle). Die Auswahl
+      gilt nur für diese Unterhaltung.</div>` +
+    sources.map(s => {
+      const on = Object.prototype.hasOwnProperty.call(sel, s.name);
+      const tabs = sel[s.name] || [];
+      const modeBadge = s.access_mode === 'rw'
+        ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-200);color:var(--error)">read/write</span>'
+        : '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-200);color:var(--text-400)">read-only</span>';
+      let detail = '';
+      if (on) {
+        const expanded = state._dsSelExpanded === s.name;
+        const known = tblCache[s.name];
+        let picker = '';
+        if (expanded && Array.isArray(known)) {
+          picker = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">' +
+            known.map(t => {
+              const isSel = tabs.includes(t);
+              return `<label style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;border:1px solid var(--border-100);background:${isSel ? 'var(--accent)' : 'var(--bg-200)'};color:${isSel ? '#fff' : 'var(--text-200)'}">` +
+                `<input type="checkbox" style="display:none" ${isSel ? 'checked' : ''} onchange="dsSelToggleTable('${esc(s.name)}','${esc(t)}')">${esc(t)}</label>`;
+            }).join('') +
+            `</div><div style="margin-top:4px"><button class="websuche-bulk-btn" onclick="dsSelClearTables('${esc(s.name)}')">Einschränkung aufheben</button></div>`;
+        } else if (expanded) {
+          picker = '<div style="margin-top:6px;font-size:11px;color:var(--text-400)">Lade Tabellen…</div>';
+        }
+        detail = `<div style="margin:4px 0 2px 24px;font-size:11px;color:var(--text-300)">
+          ${tabs.length ? 'Beschränkt auf: <b>' + tabs.map(esc).join(', ') + '</b>' : 'alle Tabellen'}
+          <button class="websuche-bulk-btn" style="margin-left:6px" onclick="dsSelPickTables('${esc(s.name)}')">${expanded ? 'Zuklappen' : 'Tabellen wählen…'}</button>
+          ${picker}</div>`;
+      }
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--border-100)">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" ${on ? 'checked' : ''} onchange="dsSelToggleSource('${esc(s.name)}', this.checked)">
+          <strong>${esc(s.name)}</strong>
+          <span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-200);color:var(--text-400)">${esc(s.type)}</span>
+          ${modeBadge}
+        </label>${detail}</div>`;
+    }).join('');
+}
+
+function dsSelToggleSource(name, on) {
+  const chat = state.activeChat;
+  if (!chat) return;
+  const list = _dsSelArr().filter(e => e && e.name !== name);
+  if (on) list.push({ name, tables: [] });
+  chat.dataSources = list;
+  if (!on && state._dsSelExpanded === name) state._dsSelExpanded = null;
+  _saveDataSourcesSel();
+  _dsUpdateTab();
+  renderDatenquellenPane();
+}
+
+async function dsSelPickTables(name) {
+  if (state._dsSelExpanded === name) {
+    state._dsSelExpanded = null;
+    renderDatenquellenPane();
+    return;
+  }
+  state._dsSelExpanded = name;
+  renderDatenquellenPane();
+  state._dsTablesCache = state._dsTablesCache || {};
+  if (!Array.isArray(state._dsTablesCache[name])) {
+    try {
+      const r = await API.get('/v1/data-sources/' + encodeURIComponent(name) + '/tables');
+      if (r?.error) { showToast(r.error, true); state._dsSelExpanded = null; }
+      else state._dsTablesCache[name] = r?.tables || [];
+    } catch (e) {
+      showToast('Tabellenliste nicht verfügbar', true);
+      state._dsSelExpanded = null;
+    }
+    renderDatenquellenPane();
+  }
+}
+
+function dsSelToggleTable(name, table) {
+  const entry = _dsSelArr().find(e => e && e.name === name);
+  if (!entry) return;
+  const tabs = entry.tables || [];
+  entry.tables = tabs.includes(table) ? tabs.filter(t => t !== table) : tabs.concat([table]);
+  _saveDataSourcesSel();
+  renderDatenquellenPane();
+}
+
+function dsSelClearTables(name) {
+  const entry = _dsSelArr().find(e => e && e.name === name);
+  if (!entry) return;
+  entry.tables = [];
+  _saveDataSourcesSel();
+  renderDatenquellenPane();
+}

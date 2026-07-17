@@ -384,6 +384,10 @@ class Session:
         # list of {url,title,snippet,query,enabled}. Persists in sessions DB so
         # it never bleeds across chats. Empty string = no basket.
         self.web_basket: str = ""
+        # Per-session data-source selection (DATA_SOURCES_V2 Phase 5): JSON
+        # string of [{name, tables:[]}] — db_query scope for PLAIN chats
+        # (project sessions use the project config instead). '' = none.
+        self.data_sources: str = ""
         # Per-session message queue: JSON list of {id,text} the user typed while
         # a turn was streaming, to auto-send as normal turns once it finishes.
         # Persisted so a reload restores the queue. Empty string = empty.
@@ -487,6 +491,7 @@ class Session:
                 self.gdpr_feedback_ask = bool(info.get("gdpr_feedback_ask", 0))
                 self.gdpr_details_visible = bool(info.get("gdpr_details_visible", 0))
                 self.web_basket = info.get("web_basket", "") or ""
+                self.data_sources = info.get("data_sources", "") or ""
                 self.pinned_sources = info.get("pinned_sources", "") or ""
                 self.message_queue = info.get("message_queue", "") or ""
                 self.goal_text = info.get("goal_text", "") or ""

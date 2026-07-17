@@ -186,6 +186,7 @@ function switchRightTab(tabName) {
   if (tabName === 'references') renderReferencesPane();
   if (tabName === 'artifacts' && !state.activeArtifactId) showArtifactList();
   if (tabName === 'websuche' && typeof renderWebsuchePane === 'function') renderWebsuchePane();
+  if (tabName === 'datenquellen' && typeof renderDatenquellenPane === 'function') renderDatenquellenPane();
   if (tabName === 'bgtasks' && typeof renderBackgroundTasksPane === 'function') {
     if (typeof _bgLiveReconcile === 'function') _bgLiveReconcile();
     renderBackgroundTasksPane();
