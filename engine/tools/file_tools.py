@@ -40,6 +40,7 @@ from engine.tool_exec import (
     _err,
     _get_artifact_session_folder,
     _record_session_read_path,
+    kill_process_tree,
     register_tool_process,
     unregister_tool_process,
 )
@@ -3807,11 +3808,7 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
         # Read stdout line by line, emitting events
         for raw_line in iter(proc.stdout.readline, b''):
             if time.time() > deadline:
-                import signal as sig
-                try:
-                    os.killpg(proc.pid, sig.SIGKILL)
-                except OSError:
-                    proc.kill()
+                kill_process_tree(proc.pid, proc)
                 proc.wait(timeout=5)
                 line_text = _strip_ansi(raw_line.decode("utf-8", errors="replace"))
                 output_lines.append(line_text)
@@ -3829,11 +3826,7 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
         proc.stdout.close()
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        import signal as sig
-        try:
-            os.killpg(proc.pid, sig.SIGKILL)
-        except OSError:
-            proc.kill()
+        kill_process_tree(proc.pid, proc)
         proc.wait(timeout=5)
     finally:
         unregister_tool_process(_proc_key)
@@ -3933,11 +3926,7 @@ def tool_execute_command(args: dict) -> str:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
             # Kill the entire process group
-            import signal as sig
-            try:
-                os.killpg(proc.pid, sig.SIGKILL)
-            except OSError:
-                proc.kill()
+            kill_process_tree(proc.pid, proc)
             stdout, stderr = proc.communicate(timeout=5)
             output = _strip_ansi(stdout.decode("utf-8", errors="replace"))
             if stderr:
@@ -4583,11 +4572,7 @@ def tool_python_exec(args: dict) -> str:
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            import signal as sig
-            try:
-                os.killpg(proc.pid, sig.SIGKILL)
-            except OSError:
-                proc.kill()
+            kill_process_tree(proc.pid, proc)
             stdout, stderr = proc.communicate(timeout=5)
             output = stdout.decode("utf-8", errors="replace")
             if stderr:
@@ -4803,11 +4788,7 @@ def tool_r_exec(args: dict) -> str:
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            import signal as sig
-            try:
-                os.killpg(proc.pid, sig.SIGKILL)
-            except OSError:
-                proc.kill()
+            kill_process_tree(proc.pid, proc)
             stdout, stderr = proc.communicate(timeout=5)
             output = stdout.decode("utf-8", errors="replace")
             if stderr:

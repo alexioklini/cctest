@@ -129,7 +129,8 @@ def _legacy_to_xlsx(path: str) -> str:
     """Convert a .xls/.ods to .xlsx once per (path, mtime) in a tmp cache so
     repeated reads don't pay the soffice round-trip."""
     st = os.stat(path)
-    cache_dir = os.path.join("/tmp", "brain-xlsx-convert")
+    from engine.tool_exec import brain_tmp_root
+    cache_dir = os.path.join(brain_tmp_root(), "brain-xlsx-convert")
     key = re.sub(r"[^0-9a-zA-Z]+", "_", os.path.abspath(path)) \
         + f"_{int(st.st_mtime)}"
     out_dir = os.path.join(cache_dir, key)
@@ -145,7 +146,8 @@ def recalc_workbook(path: str) -> None:
     used by xlsx_create/xlsx_edit `recalc: true` so a follow-up xlsx_query
     sees computed values instead of NULL formula cells."""
     import tempfile
-    out_dir = tempfile.mkdtemp(prefix="xlsx-recalc-", dir="/tmp")
+    from engine.tool_exec import brain_tmp_root
+    out_dir = tempfile.mkdtemp(prefix="xlsx-recalc-", dir=brain_tmp_root())
     produced = _soffice_convert(path, out_dir)
     shutil.move(produced, path)
     shutil.rmtree(out_dir, ignore_errors=True)

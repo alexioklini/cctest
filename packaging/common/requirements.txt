@@ -10,10 +10,30 @@ python-pptx
 reportlab
 Pillow
 PyMuPDF
+pymupdf4llm
 pdfplumber
 networkx
 PyYAML
-mempalace==3.3.4
+# Dependency anchor only: the build replaces the installed mempalace/ package
+# dir with the fully BRAIN-PATCHed copy from the Mac venv (see build_win.sh) —
+# the pin exists to pull the dependency tree (chromadb, huggingface-hub,
+# tokenizers, onnxruntime via chromadb, ...).
+mempalace==3.4.0
+# Binary/macro Excel: .xlsb reader + VBA source extraction (never executed).
+pyxlsb
+oletools
+# SQL lineage (engine/tools/sql_analysis.py, HAVE_SQLGLOT-gated) + data_query.
+sqlglot>=20.0.0
+duckdb
+# Bank MSSQL access (db_query): needs the "ODBC Driver 17 for SQL Server" MSI
+# installed separately on the Windows host (admin) — see DATA_SOURCES_V2_PLAN.md.
+pyodbc; sys_platform == "win32"
+# GDPR/PII NER (engine/pii_ner.py). spaCy has no cp314 wheels at all — the
+# Windows bundle therefore targets Python 3.13 (see build_all.sh); the mac
+# .app bundle (cp314) keeps shipping without NER, hence the win32 gate.
+spacy>=3.8,<4.0; sys_platform == "win32"
+de_core_news_md @ https://github.com/explosion/spacy-models/releases/download/de_core_news_md-3.8.0/de_core_news_md-3.8.0-py3-none-any.whl ; sys_platform == "win32"
+en_core_web_md @ https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl ; sys_platform == "win32"
 # markitdown[outlook]: adds .msg/.epub/.zip support to read_document.
 # Excluded on mac because magika's onnxruntime floor (1.25.0) only ships a
 # macosx_14_0_arm64 wheel, while the bundled python-build-standalone targets

@@ -128,11 +128,8 @@ class SessionKernel:
         pid = self.pid
         try:
             if pid:
-                import signal as _sig
-                try:
-                    os.killpg(pid, _sig.SIGKILL)
-                except (OSError, ProcessLookupError):
-                    os.kill(pid, _sig.SIGKILL)
+                from engine.tool_exec import kill_process_tree
+                kill_process_tree(pid)
             return True
         except Exception:
             return False

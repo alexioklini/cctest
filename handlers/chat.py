@@ -13,6 +13,7 @@ import uuid
 
 import brain as engine
 import pseudonymizer
+from engine.tool_exec import brain_attachments_dir
 from handlers import sidecar_proxy
 # Generic SSE wire formatting (re-exported for callers/tests).
 from server_lib.sse_stream import KEEPALIVE, encode_sse, format_sse  # noqa: F401
@@ -1485,7 +1486,7 @@ def _session_attachment_paths(session_id: str) -> list[str]:
     clears it, so attachments accumulate across the whole chat). Sorted for
     stable order. Empty list when the dir is absent / empty."""
     try:
-        d = os.path.join("/tmp", "brain-attachments", session_id)
+        d = brain_attachments_dir(session_id)
         if not os.path.isdir(d):
             return []
         return sorted(
@@ -7355,7 +7356,7 @@ class ChatHandlerMixin:
 
         if all_attachments:
             raw_formats = engine.get_model_raw_formats(session.model)
-            attach_dir = os.path.join("/tmp", "brain-attachments", session.id)
+            attach_dir = brain_attachments_dir(session.id)
 
             for f in all_attachments:
                 mime = f["media_type"]
@@ -7505,7 +7506,7 @@ class ChatHandlerMixin:
         # Non-empty only when the scanner is on (see below).
         attach_name_map: dict[str, str] = {}
         if disk_files:
-            attach_dir = os.path.join("/tmp", "brain-attachments", session.id)
+            attach_dir = brain_attachments_dir(session.id)
             os.makedirs(attach_dir, exist_ok=True)
 
             # M11 (G14) — NEUTRAL FILENAMES ON DISK.
@@ -8273,7 +8274,7 @@ class ChatHandlerMixin:
         # only used to feed the parser. The chat worker re-saves the file
         # under the real session dir at send time.
         attach_dir_key = session_id or f"_scan/{user['id']}"
-        attach_dir = os.path.join("/tmp", "brain-attachments", attach_dir_key)
+        attach_dir = brain_attachments_dir(attach_dir_key)
         try:
             os.makedirs(attach_dir, exist_ok=True)
         except Exception as _e:

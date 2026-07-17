@@ -22,15 +22,12 @@ done
 DOWN="$HERE/downloads"
 mkdir -p "$DOWN"
 MAC_PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260414/cpython-3.14.4%2B20260414-aarch64-apple-darwin-install_only_stripped.tar.gz"
-WIN_PY_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260414/cpython-3.14.4%2B20260414-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
+# NOTE: the Windows bundle targets Python 3.13 (spaCy has no cp314 wheels) —
+# build_win.sh downloads its own interpreter + assets (Qdrant, Chromium, …).
 
 if [[ ! -f "$DOWN/python-mac-arm64.tar.gz" ]]; then
   echo "==> Downloading macOS arm64 Python..."
   curl -# -L -o "$DOWN/python-mac-arm64.tar.gz" "$MAC_PY_URL"
-fi
-if [[ ! -f "$DOWN/python-win-x64.tar.gz" ]]; then
-  echo "==> Downloading Windows x64 Python..."
-  curl -# -L -o "$DOWN/python-win-x64.tar.gz" "$WIN_PY_URL"
 fi
 
 # 2. Run per-platform builds

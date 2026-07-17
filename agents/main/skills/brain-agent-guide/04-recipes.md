@@ -462,6 +462,34 @@ Hintergrund: `POST /v1/tools/email/test {account}` ist der Test-Endpoint;
 die Konten liegen in `tools_config.json → email.accounts[]` (Passwörter
 werden in GET-Antworten maskiert, Backups redigieren sie).
 
+## "Windows-Client aufsetzen" (Bank-Testausrollung, v9.366.0)
+
+Brain-Agent läuft komplett auf einem Windows-11-x64-Rechner (Mehrbenutzer-
+Server, 16 GB RAM); die Sprachmodelle bleiben auf dem Mac mini M4 (oMLX auf
+Port 8000, Provider „Lokal" mit `is_local: true` und LAN-IP).
+
+1. **Bauen** (auf dem Mac): `packaging/win/build_win.sh` — erzeugt Zip +
+   `BrainAgent-<version>-setup.exe` (NSIS, `brew install makensis`). Alle
+   Assets sind vorgepackt (Python 3.13, Wheels inkl. spaCy-NER, Qdrant-
+   Binary, ONNX-Embedding-Modell, SearXNG/crawl4ai-Pakete, Chromium) —
+   die Installation braucht KEIN Internet.
+2. **Installieren** (auf dem Windows-Client): `setup.exe` ausführen (keine
+   Admin-Rechte nötig) — fragt die IP des Mac mini und die Modell-ID ab.
+   Alternativ Zip entpacken und `install.ps1` ausführen.
+3. **Starten/Stoppen**: `BrainAgent.bat` (startet Qdrant + Server) /
+   `stop.bat`; Web-UI auf `http://<client>:8420` (initial admin/admin).
+   Für LAN-Zugriff anderer Nutzer einmalig als Admin:
+   `netsh advfirewall firewall add rule name="BrainAgent" dir=in action=allow protocol=TCP localport=8420`.
+4. **Daten** liegen unter `%LOCALAPPDATA%\BrainAgent` (Override:
+   `BRAIN_DATA_DIR`); Qdrant-Vektoren in `qdrant-storage\` daneben.
+
+Grenzen unter Windows: kein MLX-OCR (`ocr.engine` auf `local_vision` — Vision-
+Modell auf dem Mac mini — oder `mistral_ocr` stellen), kein lokales Whisper
+(STT/TTS über erreichbaren Audio-Endpoint), kein interaktives Projekt-
+Terminal, Mermaid nur mit Node.js; MSSQL (`db_query`) braucht das separat zu
+installierende „ODBC Driver 17 for SQL Server"-MSI. Der Reranker und die
+Projekt-KG sind im Windows-Seed deaktiviert.
+
 ## "Mach aus diesem Chat einen Workflow" (KI-Workflow-Generator, v9.290.0)
 
 A good chat (e.g. a forensic passport check the Experten-Gremium planned and

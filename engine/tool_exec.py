@@ -324,13 +324,55 @@ def kill_tool_process(turn_id: str, tool_use_id: str) -> bool:
             return bool(proc.cancel_escalate())
         except Exception:
             return False
-    import signal as _sig
+    return kill_process_tree(proc.pid, proc)
+
+
+def brain_tmp_root() -> str:
+    """Root for Brain's shared scratch dirs (brain-attachments, …).
+
+    POSIX stays literally '/tmp' — existing sessions, the download-path
+    allowlist and the macOS /tmp→/private/tmp realpath handling all assume it.
+    Windows has no /tmp, so only there we fall back to the system temp dir."""
+    if os.name == "nt":
+        import tempfile
+        return tempfile.gettempdir()
+    return "/tmp"
+
+
+def brain_attachments_dir(session_id: str | None = None) -> str:
+    """<tmp root>/brain-attachments[/<session_id>] — single source for the
+    chat-attachment staging dir (writers AND the download allowlist)."""
+    base = os.path.join(brain_tmp_root(), "brain-attachments")
+    return os.path.join(base, session_id) if session_id else base
+
+
+def kill_process_tree(pid: int, proc=None) -> bool:
+    """Hard-kill a spawned process and all its children, cross-platform.
+
+    POSIX: SIGKILL the process group (spawn sites use start_new_session=True,
+    so pid == pgid). Windows: os.killpg/SIGKILL don't exist (AttributeError,
+    which the old per-site except-OSError fallbacks never caught) and
+    start_new_session is a no-op, so taskkill /T walks the child tree instead.
+    Falls back to killing just the one process handle."""
+    if not pid:
+        return False
     try:
-        os.killpg(proc.pid, _sig.SIGKILL)
+        if os.name == "nt":
+            import subprocess as _sp
+            r = _sp.run(["taskkill", "/T", "/F", "/PID", str(pid)],
+                        capture_output=True, timeout=10)
+            if r.returncode != 0:
+                raise OSError(f"taskkill rc={r.returncode}")
+            return True
+        import signal as _sig
+        os.killpg(pid, _sig.SIGKILL)
         return True
-    except (OSError, ProcessLookupError):
+    except Exception:
         try:
-            proc.kill()
+            if proc is not None:
+                proc.kill()
+            else:
+                os.kill(pid, 9)
             return True
         except Exception:
             return False

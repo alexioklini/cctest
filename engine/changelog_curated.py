@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.366.0",
+        "date": "2026-07-17",
+        "title": "Brain-Agent läuft jetzt auf Windows",
+        "body": "Für die Testausrollung gibt es ein fertiges Windows-Paket "
+                "(setup.exe): Ein Windows-11-Rechner übernimmt den kompletten "
+                "Server inklusive Websuche, Gedächtnis und Datenschutz-Scanner "
+                "und versorgt mehrere Nutzer gleichzeitig über den Browser; "
+                "die Sprachmodelle laufen weiterhin auf dem Mac mini im "
+                "lokalen Netz. Die Installation kommt ohne Internetzugang aus "
+                "— alle Komponenten sind vorgepackt — und fragt nur einmalig "
+                "die Adresse des Mac mini ab.",
+        "audience": "admin",
+        "versions": ["9.366.0"],
+    },
+    {
         "version": "9.365.0",
         "date": "2026-07-17",
         "title": "E-Mail funktioniert jetzt mit jedem Anbieter",

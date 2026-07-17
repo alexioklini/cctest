@@ -1462,10 +1462,11 @@ class AdminArtifactsHandlers:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         agents_dir = os.path.join(base, "agents")
         cwd = os.getcwd()
-        # /tmp/brain-attachments/<session_id>/ — disk-saved chat attachments
-        # (see chat.py: attach_dir). macOS resolves /tmp → /private/tmp, so
+        # brain-attachments root — disk-saved chat attachments (same helper
+        # as the writers in chat.py). macOS resolves /tmp → /private/tmp, so
         # realpath both ends to make the prefix-match work.
-        attach_root = os.path.realpath("/tmp/brain-attachments")
+        from engine.tool_exec import brain_attachments_dir
+        attach_root = os.path.realpath(brain_attachments_dir())
         allowed = [base, agents_dir, cwd, attach_root]
         if any(resolved.startswith(d) for d in allowed):
             return resolved

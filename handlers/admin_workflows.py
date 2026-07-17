@@ -571,8 +571,9 @@ class AdminWorkflowHandlers:
         if not filename or file_data is None:
             self._send_json({"error": "No file uploaded"}, 400)
             return
-        # Persist to /tmp/brain-workflow-uploads/<exec_id>/<filename>
-        upload_root = os.path.join("/tmp", "brain-workflow-uploads", exec_id)
+        # Persist to <tmp>/brain-workflow-uploads/<exec_id>/<filename>
+        from engine.tool_exec import brain_tmp_root
+        upload_root = os.path.join(brain_tmp_root(), "brain-workflow-uploads", exec_id)
         os.makedirs(upload_root, exist_ok=True)
         # Sanitize filename (keep extension)
         safe_filename = re.sub(r"[^A-Za-z0-9_\-\. ]+", "_", filename) or "upload"

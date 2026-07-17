@@ -18,14 +18,22 @@ sessions surface in both the project-detail view and the code-mode chat.
 from __future__ import annotations
 
 import os
-import pty
-import select
 import signal
 import struct
-import termios
-import fcntl
 import threading
 import time
+
+try:  # POSIX-only — pty/termios/fcntl don't exist on Windows. The module must
+    # still import there so the lazy handler imports get a clean error from
+    # create() instead of a 500 ModuleNotFoundError.
+    import pty
+    import select
+    import termios
+    import fcntl
+    PTY_SUPPORTED = True
+except ImportError:
+    pty = select = termios = fcntl = None
+    PTY_SUPPORTED = False
 
 # Per-session output ring buffer cap (bytes). xterm re-renders from the live
 # stream; this only bounds memory + the replay a reconnecting tab receives.
@@ -255,6 +263,10 @@ class TerminalManager:
                     and not s._closed]
 
     def create(self, agent_id, project, cwd) -> PtySession:
+        if not PTY_SUPPORTED:
+            raise RuntimeError(
+                "Interaktives Terminal wird auf diesem Betriebssystem nicht "
+                "unterstützt (kein PTY unter Windows)")
         with self._lock:
             live = [s for s in self._sessions.values()
                     if (s.agent_id, s.project) == self._key(agent_id, project)

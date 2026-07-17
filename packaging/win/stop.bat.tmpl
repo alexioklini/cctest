@@ -1,0 +1,7 @@
+@echo off
+rem Stoppt Brain-Agent-Server (python server.py), die Sidecars und Qdrant.
+echo Beende Brain-Agent...
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*server.py*' -and $_.Name -like 'python*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*searx.webapp*' -or $_.CommandLine -like '*render_service.py*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+taskkill /IM qdrant.exe /F >nul 2>&1
+echo Fertig.

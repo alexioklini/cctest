@@ -481,7 +481,8 @@ def _enumerate_attachments(sid, msgs):
                 out.append((p, f.get("filename") or f.get("name") or os.path.basename(p)))
     # Also sweep the on-disk attachment dir (covers files whose metadata path
     # drifted but the bytes are still present).
-    adir = os.path.join("/tmp", "brain-attachments", sid)
+    from engine.tool_exec import brain_attachments_dir
+    adir = brain_attachments_dir(sid)
     if os.path.isdir(adir):
         for name in os.listdir(adir):
             p = os.path.join(adir, name)
