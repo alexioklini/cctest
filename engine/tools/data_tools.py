@@ -681,6 +681,200 @@ def tool_db_query(args: dict) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Quellen-Steckbrief (DATA_SOURCES_V2 Phase 7, E11/E12)
+# ---------------------------------------------------------------------------
+# Per-source usage knowledge (`guide: {md, skill?, auto_generated_at?}` on the
+# data_sources entry): table/field semantics, join paths, proven queries, and
+# for rw sources the binding persistence patterns. Delivered wire-only on the
+# last user message when the source is in the turn scope (the Websuche seam —
+# history/DB stay clean, system prompt stays byte-stable). Above the token cap
+# the preamble degrades to a per-source one-liner pointing at use_skill
+# (guide.skill) — never a bulk injection ([[feedback_prompt_bloat_regression]]).
+
+DATA_GUIDE_MAX_TOKENS_DEFAULT = 4000
+# md-only sources that exceed the cap get a truncated slice instead of a
+# use_skill pointer (there is nothing to lazily load) — visible, not silent.
+_GUIDE_TRUNC_CHARS = 2000
+
+
+def _source_guide(src: dict) -> dict:
+    g = src.get("guide") or {}
+    if not isinstance(g, dict):
+        g = {}
+    return {"md": str(g.get("md") or "").strip(),
+            "skill": str(g.get("skill") or "").strip()}
+
+
+def _guide_source_head(src: dict) -> str:
+    mode = "read/write" if _source_access_mode(src) == "rw" else "read-only"
+    stype = (src.get("type") or "postgres").strip().lower()
+    return f"## Quelle „{src.get('name')}\" ({stype}, {mode})"
+
+
+def build_data_source_guide_preamble(scope) -> str:
+    """Wire-only preamble carrying the guides of the sources in `scope`
+    ({name: [...]} — the per-turn data_source_scope). Returns '' when no
+    scoped source has a guide. Sizing (E11): if the combined guides fit
+    under data_sources_guide_max_tokens (config, default 4000; ~4 chars per
+    token) they are injected in full; above the cap each source contributes
+    only a short line — use_skill('<guide.skill>') when a skill is set, else
+    a truncated md slice with an explicit cut marker."""
+    import brain as _brain
+    if not scope:
+        return ""
+    entries = []  # (src, md, skill)
+    for name in sorted(scope):
+        src = next((s for s in _data_sources()
+                    if (s.get("name") or "").strip() == name), None)
+        if not src:
+            continue
+        g = _source_guide(src)
+        if g["md"] or g["skill"]:
+            entries.append((src, g["md"], g["skill"]))
+    if not entries:
+        return ""
+    try:
+        max_tokens = int(_brain._server_config().get(
+            "data_sources_guide_max_tokens")
+            or DATA_GUIDE_MAX_TOKENS_DEFAULT)
+    except (TypeError, ValueError):
+        max_tokens = DATA_GUIDE_MAX_TOKENS_DEFAULT
+    total_est = sum(len(md) // 4 for _s, md, _sk in entries)
+    lines = ["[DATENQUELLEN-STECKBRIEFE — Nutzungswissen zu den in diesem "
+             "Kontext freigegebenen Datenquellen. Nutze es, statt Schema/"
+             "Semantik per Abfrage neu zu ermitteln; bei read/write-Quellen "
+             "sind die dokumentierten Persistier-Muster verbindlich.]"]
+    small = total_est <= max_tokens
+    for src, md, skill in entries:
+        lines.append(_guide_source_head(src))
+        if small and md:
+            lines.append(md)
+            if skill:
+                lines.append(f"Zusätzliche Doku: use_skill('{skill}').")
+        elif skill:
+            # Large path (E11): knowledge comes lazily via the skill infra.
+            lines.append(f"Umfangreiche Doku vorhanden — lade "
+                         f"use_skill('{skill}') VOR der ersten Abfrage "
+                         f"dieser Quelle.")
+        elif len(md) <= _GUIDE_TRUNC_CHARS:
+            lines.append(md)  # tiny md — the cap was tripped by the others
+        else:
+            lines.append(md[:_GUIDE_TRUNC_CHARS]
+                         + "\n[… Steckbrief gekürzt (über dem "
+                           "Injektions-Limit) — Admin: umfangreiche Doku "
+                           "als Quellen-Skill (guide.skill) hinterlegen.]")
+    return "\n\n".join(lines)
+
+
+def generate_source_guide_md(src: dict) -> str:
+    """Bootstrap a guide skeleton from the live schema (admin GUI button
+    „Steckbrief generieren"): tables + columns/types + row estimates + FK
+    paths as Markdown with description placeholders. DETERMINISTIC — no LLM;
+    the admin curates afterwards (hand-maintained with an auto kick-start,
+    like brain-agent-guide). REST sources get a path skeleton from
+    allowed_paths (no discovery call — REST has no information_schema, O7)."""
+    import datetime
+    name = src.get("name") or "?"
+    stype = (src.get("type") or "postgres").strip().lower()
+    today = datetime.date.today().isoformat()
+    head = (f"# Steckbrief: {name} ({stype})\n\n"
+            f"_Automatisch generiert am {today} — Beschreibungen bitte "
+            f"kuratieren; Platzhalter ersetzen._\n")
+    if stype == "rest":
+        lines = [head, "## Endpoints\n"]
+        paths = [str(p) for p in (src.get("allowed_paths") or [])]
+        if not paths:
+            lines.append("_(keine allowed_paths konfiguriert — Endpoints "
+                         "hier dokumentieren: Pfad, Parameter, "
+                         "Response-Shape, Fehlersemantik)_")
+        for p in paths:
+            lines.append(f"### `GET {p}`\n- Zweck: _(beschreiben)_\n"
+                         f"- Parameter: _(beschreiben)_\n"
+                         f"- Response: _(beschreiben)_")
+        return "\n".join(lines)
+    if stype == "mssql":
+        sql_tables = (
+            "SELECT t.TABLE_NAME, ISNULL(p.rows, 0) FROM "
+            "INFORMATION_SCHEMA.TABLES t LEFT JOIN (SELECT o.name AS tn,"
+            " SUM(p.rows) AS rows FROM sys.objects o JOIN sys.partitions"
+            " p ON p.object_id = o.object_id AND p.index_id IN (0, 1)"
+            " GROUP BY o.name) p ON p.tn = t.TABLE_NAME"
+            " WHERE t.TABLE_TYPE = 'BASE TABLE' ORDER BY t.TABLE_NAME")
+        sql_cols = (
+            "SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM"
+            " INFORMATION_SCHEMA.COLUMNS ORDER BY TABLE_NAME,"
+            " ORDINAL_POSITION")
+        sql_fks = (
+            "SELECT OBJECT_NAME(fk.parent_object_id),"
+            " COL_NAME(fkc.parent_object_id, fkc.parent_column_id),"
+            " OBJECT_NAME(fk.referenced_object_id),"
+            " COL_NAME(fkc.referenced_object_id, fkc.referenced_column_id)"
+            " FROM sys.foreign_keys fk JOIN sys.foreign_key_columns fkc"
+            " ON fkc.constraint_object_id = fk.object_id")
+    else:
+        sql_tables = (
+            "SELECT c.relname, GREATEST(c.reltuples, 0)::bigint"
+            " FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+            " WHERE c.relkind = 'r' AND n.nspname NOT IN"
+            " ('pg_catalog', 'information_schema') ORDER BY c.relname")
+        sql_cols = (
+            "SELECT table_name, column_name, data_type FROM"
+            " information_schema.columns WHERE table_schema NOT IN"
+            " ('pg_catalog', 'information_schema')"
+            " ORDER BY table_name, ordinal_position")
+        sql_fks = (
+            "SELECT kcu.table_name, kcu.column_name, ccu.table_name,"
+            " ccu.column_name FROM information_schema.table_constraints tc"
+            " JOIN information_schema.key_column_usage kcu"
+            " ON kcu.constraint_name = tc.constraint_name"
+            " JOIN information_schema.constraint_column_usage ccu"
+            " ON ccu.constraint_name = tc.constraint_name"
+            " WHERE tc.constraint_type = 'FOREIGN KEY'")
+    probe = dict(src)
+    probe["options"] = dict(src.get("options") or {})
+    probe["options"].setdefault("connect_timeout", 5)
+    # NB: the ro postgres exec cursor from _connect_readonly is NAMED (single
+    # use) — metadata queries run on fresh plain cursors off the same
+    # (session-read-only) connection instead.
+    conn, _exec_cur = _connect_readonly(probe)
+    try:
+        cur = conn.cursor()
+        cur.execute(sql_tables)
+        tables = [(r[0], int(r[1] or 0)) for r in cur.fetchall()]
+        cols: dict = {}
+        cur = conn.cursor()
+        cur.execute(sql_cols)
+        for tn, cn, dt in cur.fetchall():
+            cols.setdefault(tn, []).append((cn, dt))
+        fks = []
+        try:
+            cur = conn.cursor()
+            cur.execute(sql_fks)
+            fks = [tuple(r) for r in cur.fetchall()]
+        except Exception:
+            fks = []  # FK metadata is nice-to-have, never fails the bootstrap
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    lines = [head]
+    for tn, nrows in tables:
+        lines.append(f"## Tabelle `{tn}` (~{nrows:,} Zeilen)".replace(",", "."))
+        lines.append("| Spalte | Typ | Beschreibung |\n|---|---|---|")
+        for cn, dt in cols.get(tn, []):
+            lines.append(f"| {cn} | {dt} | _(beschreiben)_ |")
+        tfks = [f for f in fks if f[0] == tn]
+        if tfks:
+            lines.append("\nJoins: " + "; ".join(
+                f"`{t}.{c}` → `{rt}.{rc}`" for t, c, rt, rc in tfks))
+        lines.append("")
+    if not tables:
+        lines.append("_(keine Tabellen gefunden)_")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # rest_query — REST connector (DATA_SOURCES_V2 Phase 6, E10)
 # ---------------------------------------------------------------------------
 # A REST source is an admin-configured BASE URL — rest_query can ONLY reach

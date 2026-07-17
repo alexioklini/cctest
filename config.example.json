@@ -9354,10 +9354,15 @@
     {
       "name": "braintest",
       "type": "postgres",
+      "access_mode": "ro",
       "dsn": "postgresql://readonly_user:YOUR_PASSWORD@host:5432/dbname",
       "options": {
         "statement_timeout_ms": 60000,
         "connect_timeout": 10
+      },
+      "guide": {
+        "md": "# Steckbrief: braintest (postgres)\n\n_Automatisch generiert am 2026-07-17 — Beschreibungen bitte kuratieren; Platzhalter ersetzen._\n\n## Tabelle `positionen` (~50.000 Zeilen)\n| Spalte | Typ | Beschreibung |\n|---|---|---|\n| id | integer | _(beschreiben)_ |\n| filiale_id | integer | _(beschreiben)_ |\n| isin | text | _(beschreiben)_ |\n| stueck | integer | _(beschreiben)_ |\n| kurs | numeric | _(beschreiben)_ |\n",
+        "auto_generated_at": "2026-07-17T17:16:53"
       }
     },
     {

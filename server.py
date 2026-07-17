@@ -3796,6 +3796,11 @@ def main():
     # db_query access policy {enabled, roles, teams, users} — missing block
     # means admins only (engine/tools/data_tools.data_access_allowed).
     server_config["data_sources_access"] = file_config.get("data_sources_access", {}) or {}
+    # Steckbrief injection cap (Phase 7, E11): combined guide size (tokens)
+    # above which the wire preamble degrades to use_skill pointers.
+    if file_config.get("data_sources_guide_max_tokens"):
+        server_config["data_sources_guide_max_tokens"] = \
+            file_config["data_sources_guide_max_tokens"]
     server_config["codebase_memory"] = file_config.get("codebase_memory", {}) or {}
     # warmup block was never loaded from config.json — every wcfg.get(...) in the
     # keeper + WarmSessionPool fell back to code defaults, so config.json →

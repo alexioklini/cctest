@@ -3592,6 +3592,7 @@ async function _genTab_data_sources(C) {
         <span style="font-size:13px;font-weight:500;color:var(--text-100)">${esc(s.name)}</span>
         ${BADGE(s.type)}
         ${s.access_mode === 'rw' ? BADGE('read/write', 'var(--error)') : BADGE('read-only')}
+        ${(s.guide && (s.guide.md || s.guide.skill)) ? `<span title="Steckbrief vorhanden" style="display:inline-flex;color:var(--text-400)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg></span>` : ''}
         <span style="${MONO};flex:1">${s.type === 'rest' ? esc(s.base_url || '—') : (s.dsn_set ? esc(s.dsn_masked) : (s.env_key ? 'env: ' + esc(s.env_key) : '—'))}</span>
         <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="_dsEdit('${esc(s.name)}')">Bearbeiten</button>
         <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="deleteDataSource('${esc(s.name)}')">Löschen</button>
@@ -3647,6 +3648,15 @@ async function _genTab_data_sources(C) {
       <div style="width:200px"><label class="form-label">Antwort-Kappe (KB)</label><input class="form-input" id="ds-rest-max-kb" type="number" placeholder="256"></div>
     </div>
     </div>
+    <div style="border-top:1px solid var(--border-200);padding-top:8px;${G('8px')}">
+      <div><label class="form-label">Steckbrief (Markdown — Nutzungswissen der Quelle: Tabellen-/Feld-Semantik, Join-Pfade, bewährte Abfragen; bei read/write die verbindlichen Persistier-Muster; bei REST Endpoints + Response-Shapes). Wird dem Modell automatisch mitgegeben, wenn die Quelle im Chat/Projekt freigegeben ist.</label>
+        <textarea class="form-input" id="ds-guide-md" rows="6" placeholder="## Tabelle positionen&#10;| Spalte | Typ | Beschreibung |&#10;…" style="font-family:monospace;font-size:12px"></textarea></div>
+      <div style="display:flex;gap:8px;align-items:flex-end">
+        <div style="flex:1"><label class="form-label">Quellen-Skill (optional — Name eines Agent-Skills mit umfangreicher Doku; wird per use_skill nachgeladen, wenn der Steckbrief das Injektions-Limit sprengt)</label>
+          <input class="form-input" id="ds-guide-skill" placeholder="z. B. corebanking-queries"></div>
+        <button class="btn-secondary" onclick="generateDataSourceGuide()" title="Liest das Live-Schema (Tabellen, Spalten, Typen, Joins, Zeilenzahlen) und erzeugt ein kuratierbares Steckbrief-Gerüst">Steckbrief generieren</button>
+      </div>
+    </div>
     <div style="display:flex;gap:8px">
       <button class="btn-primary" onclick="saveDataSource()">Quelle speichern</button>
       <button class="btn-secondary" onclick="_dsEdit('')">Formular leeren</button>
@@ -3675,6 +3685,8 @@ function _dsEdit(name) {
   document.getElementById('ds-rest-allowed-paths').value = s ? (s.allowed_paths || []).join('\n') : '';
   document.getElementById('ds-rest-timeout').value = s ? (s.options?.timeout_s ?? '') : '';
   document.getElementById('ds-rest-max-kb').value = s ? (s.options?.max_response_kb ?? '') : '';
+  document.getElementById('ds-guide-md').value = s ? (s.guide?.md || '') : '';
+  document.getElementById('ds-guide-skill').value = s ? (s.guide?.skill || '') : '';
   _dsTypeChanged();
   if (s) document.getElementById('ds-name').focus();
 }
@@ -3698,6 +3710,10 @@ async function saveDataSource() {
   const source = {
     name, type,
     access_mode: document.getElementById('ds-access-mode').value,
+    guide: {
+      md: document.getElementById('ds-guide-md').value.trim(),
+      skill: document.getElementById('ds-guide-skill').value.trim(),
+    },
   };
   if (type === 'rest') {
     source.base_url = document.getElementById('ds-rest-base-url').value.trim();
@@ -3735,6 +3751,26 @@ async function saveDataSource() {
     showToast(`Quelle „${name}" gespeichert`);
     await _genTab_data_sources(document.getElementById('general-tab-content'));
   } catch (e) { showToast('Speichern fehlgeschlagen: ' + (e.message || e), true); }
+}
+
+// Steckbrief-Bootstrap (Phase 7): reads the live schema of a SAVED source
+// server-side into a Markdown skeleton, persists it as guide.md and fills the
+// textarea for curation.
+async function generateDataSourceGuide() {
+  const name = document.getElementById('ds-original-name').value.trim()
+    || document.getElementById('ds-name').value.trim();
+  if (!name) { showToast('Zuerst eine Quelle wählen/speichern', true); return; }
+  showToast('Steckbrief wird generiert …');
+  try {
+    const r = await API.post('/v1/data-sources', { action: 'generate_guide', name });
+    if (r?.error) { showToast(r.error, true); return; }
+    document.getElementById('ds-guide-md').value = r.md || '';
+    if (state._dataSourcesCache) {
+      const s = (state._dataSourcesCache.sources || []).find(x => x.name === name);
+      if (s) s.guide = { ...(s.guide || {}), md: r.md || '' };
+    }
+    showToast('Steckbrief generiert — bitte kuratieren und speichern');
+  } catch (e) { showToast('Generierung fehlgeschlagen: ' + (e.message || e), true); }
 }
 
 async function deleteDataSource(name) {

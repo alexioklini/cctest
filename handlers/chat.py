@@ -4515,6 +4515,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 _goal_web_cache = None   # curated-web fetch: once, reused per iteration
                 _pinned_cache = None     # pinned project sources: read once per send
                 _moa_cache = None        # MoA reference fan-out: once, reused per iteration
+                _ds_guide_cache = None   # data-source guides: built once per send
                 _moa_delegate_state = None  # delegate mode: (plan_text,) once per turn
                 _moa_verify_rounds = 0   # delegate post-verify re-rounds spent (v9.286.0)
 
@@ -4640,6 +4641,30 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 _pin_pre, "pinned_sources")
                             _wire_messages = _inject_web_preamble_into_wire(
                                 _wire_messages, _pin_pre)
+                    # Datenquellen-Steckbriefe (DATA_SOURCES_V2 Phase 7, E11):
+                    # per-source usage knowledge for the sources in this turn's
+                    # scope, wire-only on the last user message — the model
+                    # knows schema + persistence patterns BEFORE the first
+                    # db_query/rest_query call (no exploration rounds). Same
+                    # ephemeral seam as the Websuche preamble: nothing enters
+                    # session.messages/DB, every send re-reads the current
+                    # guide, the system prompt stays byte-stable (KV prefix).
+                    # Admin-authored config text — NOT GDPR-seamed (like the
+                    # design-system preamble).
+                    _ds_scope_now = engine.get_request_context().data_source_scope
+                    if _ds_scope_now:
+                        if _ds_guide_cache is None:
+                            try:
+                                from engine.tools.data_tools import (
+                                    build_data_source_guide_preamble)
+                                _ds_guide_cache = \
+                                    build_data_source_guide_preamble(
+                                        _ds_scope_now)
+                            except Exception:
+                                _ds_guide_cache = ""
+                        if _ds_guide_cache:
+                            _wire_messages = _inject_web_preamble_into_wire(
+                                _wire_messages, _ds_guide_cache)
                     # Detached background tasks: any that FINISHED since the last
                     # turn have their full output folded into THIS turn wire-only
                     # (same ephemeral seam as web sources — never persisted, so it

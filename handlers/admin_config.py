@@ -532,6 +532,13 @@ class AdminConfigHandlers:
                 "options": s.get("options") or {},
                 "dsn_set": bool((s.get("dsn") or "").strip()),
                 "dsn_masked": self._mask_dsn((s.get("dsn") or "").strip()),
+                # Steckbrief (Phase 7) — admin-only endpoint, md is fine here.
+                "guide": {
+                    "md": ((s.get("guide") or {}).get("md") or ""),
+                    "skill": ((s.get("guide") or {}).get("skill") or ""),
+                    "auto_generated_at": ((s.get("guide") or {})
+                                          .get("auto_generated_at") or ""),
+                },
             }
             if (row["type"] or "").strip().lower() == "rest":
                 a = s.get("auth") or {}
@@ -583,11 +590,16 @@ class AdminConfigHandlers:
         sources = []
         if allowed:
             for s in (server_config.get("data_sources") or []):
+                g = s.get("guide") or {}
                 sources.append({
                     "name": s.get("name") or "",
                     "type": s.get("type") or "postgres",
                     "access_mode": ("rw" if (s.get("access_mode") or "")
                                     .strip().lower() == "rw" else "ro"),
+                    # Steckbrief indicator only — the md itself never leaves
+                    # the admin endpoint (pickers show a 📄-style icon).
+                    "guide_set": bool(str(g.get("md") or "").strip()
+                                      or str(g.get("skill") or "").strip()),
                 })
         self._send_json({"sources": sources, "allowed": allowed})
 
@@ -743,6 +755,23 @@ class AdminConfigHandlers:
                 if not dsn and not env_key:
                     self._send_json({"error": "Entweder DSN oder Env-Variable angeben"}, 400)
                     return
+            # Steckbrief (Phase 7): guide.md + guide.skill come from the form;
+            # auto_generated_at survives a round-trip as long as the md is
+            # unchanged (the form doesn't know that field).
+            g_in = s.get("guide") or {}
+            g_md = str(g_in.get("md") or "").strip()
+            g_skill = str(g_in.get("skill") or "").strip()
+            if g_md or g_skill:
+                guide = {}
+                if g_md:
+                    guide["md"] = g_md
+                if g_skill:
+                    guide["skill"] = g_skill
+                prev_g = (prev or {}).get("guide") or {}
+                if g_md and g_md == str(prev_g.get("md") or "").strip() \
+                        and prev_g.get("auto_generated_at"):
+                    guide["auto_generated_at"] = prev_g["auto_generated_at"]
+                entry["guide"] = guide
             if opts:
                 entry["options"] = opts
             new_srcs = others + [entry]
@@ -755,6 +784,39 @@ class AdminConfigHandlers:
                 self._send_json({"error": f"Quelle '{name}' nicht gefunden"}, 404)
                 return
             result_key, result_val = "data_sources", new_srcs
+        elif action == "generate_guide":
+            # Steckbrief-Bootstrap (Phase 7): read the live schema of a SAVED
+            # source into a Markdown skeleton, store it as guide.md (with
+            # auto_generated_at) and echo it for the editor textarea. The
+            # admin curates afterwards — hand-maintained with an auto
+            # kick-start (deterministic, no LLM pass; O7 leaves an OpenAPI
+            # bootstrap for REST as a later step).
+            import datetime as _dt
+            from engine.tools import data_tools
+            name = (body.get("name") or "").strip()
+            src_i = next((i for i, x in enumerate(srcs)
+                          if (x.get("name") or "") == name), None)
+            if src_i is None:
+                self._send_json({"error": f"Quelle '{name}' nicht gefunden — "
+                                          f"zuerst speichern"}, 404)
+                return
+            try:
+                md = data_tools.generate_source_guide_md(srcs[src_i])
+            except Exception as e:
+                self._send_json({"error": f"Steckbrief-Generierung "
+                                          f"fehlgeschlagen: "
+                                          f"{type(e).__name__}: {e}"})
+                return
+            entry = dict(srcs[src_i])
+            guide = dict(entry.get("guide") or {})
+            guide["md"] = md
+            guide["auto_generated_at"] = _dt.datetime.now().isoformat(
+                timespec="seconds")
+            entry["guide"] = guide
+            new_srcs = list(srcs)
+            new_srcs[src_i] = entry
+            result_key, result_val = "data_sources", new_srcs
+            # Fall through to the shared persist; echo the md afterwards.
         elif action == "save_access":
             a = body.get("access") or {}
             access = {
@@ -780,8 +842,11 @@ class AdminConfigHandlers:
             self._send_json({"error": str(e)}, 500)
             return
         server_config[result_key] = result_val
-        self._send_json({"ok": True, result_key: result_val
-                         if result_key != "data_sources" else len(result_val)})
+        resp = {"ok": True, result_key: result_val
+                if result_key != "data_sources" else len(result_val)}
+        if action == "generate_guide":
+            resp["md"] = md
+        self._send_json(resp)
 
     def _handle_server_config(self):
         """POST /v1/services/server — update server defaults (default_model, attachment_image_model)."""

@@ -1115,5 +1115,117 @@ class TestRestQuery(unittest.TestCase):
         self.assertIn("db_query", out["error"])
 
 
+# ---------------------------------------------------------------------------
+# Quellen-Steckbrief (DATA_SOURCES_V2_PLAN.md Phase 7, E11/E12)
+# ---------------------------------------------------------------------------
+
+_LONG_MD = "## Tabelle kunden\n" + ("x" * 30000)  # ~7.5k tokens > 4000 cap
+
+_GUIDE_SOURCES = [
+    {"name": "guided", "type": "postgres", "dsn": "postgresql://x@h/db",
+     "guide": {"md": "## Tabelle positionen\naktive Sätze: status = '1'"}},
+    {"name": "guided_rw", "type": "postgres", "dsn": "postgresql://x@h/db",
+     "access_mode": "rw",
+     "guide": {"md": "INSERTs NUR in staging_x", "skill": "corebanking"}},
+    {"name": "big", "type": "postgres", "dsn": "postgresql://x@h/db",
+     "guide": {"md": _LONG_MD, "skill": "big-skill"}},
+    {"name": "big_no_skill", "type": "postgres", "dsn": "postgresql://x@h/db",
+     "guide": {"md": _LONG_MD}},
+    {"name": "bare", "type": "postgres", "dsn": "postgresql://x@h/db"},
+]
+
+
+class TestGuidePreamble(unittest.TestCase):
+    """E11 sizing rules: scoped guided sources inject their md in full under
+    the token cap; above it each source degrades to a use_skill pointer (or a
+    visibly truncated slice when no skill exists). Unscoped sources and
+    sources without a guide contribute nothing. Wire-cleanliness (nothing in
+    session.messages/DB) is structural — the preamble rides the shared
+    _inject_web_preamble_into_wire seam, which shallow-copies the one wire
+    message (the v9.17.0 regression class)."""
+
+    def setUp(self):
+        self.enterContext(mock.patch.object(
+            data_tools, "_data_sources", return_value=_GUIDE_SOURCES))
+        self.enterContext(mock.patch.object(
+            brain, "_server_config", return_value={}))
+
+    def test_scoped_guide_injected_in_full(self):
+        pre = data_tools.build_data_source_guide_preamble({"guided": []})
+        self.assertIn("aktive Sätze: status = '1'", pre)
+        self.assertIn("guided", pre)
+        self.assertIn("read-only", pre)
+
+    def test_unscoped_source_not_injected(self):
+        pre = data_tools.build_data_source_guide_preamble({"guided": []})
+        self.assertNotIn("staging_x", pre)
+
+    def test_no_guides_in_scope_is_empty(self):
+        self.assertEqual(
+            data_tools.build_data_source_guide_preamble({"bare": []}), "")
+        self.assertEqual(data_tools.build_data_source_guide_preamble(None), "")
+        self.assertEqual(data_tools.build_data_source_guide_preamble({}), "")
+
+    def test_rw_head_and_skill_hint_in_small_path(self):
+        pre = data_tools.build_data_source_guide_preamble({"guided_rw": []})
+        self.assertIn("read/write", pre)
+        self.assertIn("staging_x", pre)
+        self.assertIn("use_skill('corebanking')", pre)
+
+    def test_over_cap_degrades_to_skill_hint(self):
+        pre = data_tools.build_data_source_guide_preamble(
+            {"big": [], "guided": []})
+        self.assertIn("use_skill('big-skill')", pre)
+        self.assertNotIn("x" * 5000, pre)  # the big md is NOT injected
+        # The small md-only source still delivers its (tiny) md in the large
+        # path — the cap was tripped by the big one, not by it.
+        self.assertIn("aktive Sätze: status = '1'", pre)
+
+    def test_over_cap_without_skill_truncates_visibly(self):
+        pre = data_tools.build_data_source_guide_preamble({"big_no_skill": []})
+        self.assertIn("gekürzt", pre)
+        self.assertNotIn("x" * 5000, pre)
+        self.assertIn("## Tabelle kunden", pre)
+
+    def test_cap_is_configurable(self):
+        with mock.patch.object(
+                brain, "_server_config",
+                return_value={"data_sources_guide_max_tokens": 100000}):
+            pre = data_tools.build_data_source_guide_preamble({"big": []})
+        self.assertIn("x" * 5000, pre)  # generous cap → full injection
+
+
+class TestGenerateGuideRest(unittest.TestCase):
+    """REST bootstrap needs no connection: allowed_paths become the endpoint
+    skeleton (no discovery call — REST has no information_schema, O7)."""
+
+    def test_paths_become_endpoint_skeleton(self):
+        md = data_tools.generate_source_guide_md(
+            {"name": "api", "type": "rest", "base_url": "http://h",
+             "allowed_paths": ["/api/v1/items", "/api/v1/reports"]})
+        self.assertIn("Steckbrief: api", md)
+        self.assertIn("GET /api/v1/items", md)
+        self.assertIn("GET /api/v1/reports", md)
+
+    def test_no_paths_yields_placeholder(self):
+        md = data_tools.generate_source_guide_md(
+            {"name": "api", "type": "rest", "base_url": "http://h"})
+        self.assertIn("keine allowed_paths", md)
+
+
+@unittest.skipUnless(_HAVE_PG, "local test postgres (braintest) not available")
+class TestGenerateGuidePostgres(unittest.TestCase):
+    """generate_guide against braintest yields tables + columns markdown
+    (the Phase 7 test criterion)."""
+
+    def test_braintest_schema_markdown(self):
+        md = data_tools.generate_source_guide_md(
+            {"name": "braintest", "type": "postgres", "dsn": _PG_DSN})
+        self.assertIn("Steckbrief: braintest", md)
+        self.assertIn("Tabelle `positionen`", md)
+        self.assertIn("| stueck |", md)
+        self.assertIn("_(beschreiben)_", md)
+
+
 if __name__ == "__main__":
     unittest.main()
