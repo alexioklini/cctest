@@ -1846,9 +1846,10 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         Design
       </button>
       <!-- Export menu (Design-Modus Phase C): HTML / PDF (Chromium-Render) /
-           PPTX (Bild-Folien aus <section data-slide>). Only on HTML artifacts;
+           DOCX (bearbeitbares Word) / PPTX (Bild-Folien aus <section
+           data-slide>). On HTML artifacts + PDF artifacts (dort nur DOCX);
            menu logic lives in DesignCanvas (no extra global). -->
-      <button class="artifact-action-btn hidden" id="artifact-export-btn" onclick="DesignCanvas.exportMenu(event)" title="Exportieren — HTML, PDF (druckgenau) oder PPTX (Foliendeck)">
+      <button class="artifact-action-btn hidden" id="artifact-export-btn" onclick="DesignCanvas.exportMenu(event)" title="Exportieren — PDF (druckgenau), DOCX (bearbeitbar) oder PPTX (Foliendeck)">
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
         Export ▾
       </button>

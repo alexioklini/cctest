@@ -716,10 +716,13 @@ Nutzer darf generieren (nicht admin-gated).
   (screenshots via `POST /screenshot` + python-pptx; pixel-accurate,
   deliberately NOT editable in PowerPoint); `docx` = editable Word document
   (htmldocx, in-process, no render service): headings/tables/lists/raster
-  images survive as real Word structure, CSS layout does not. Non-HTML → 400;
-  no `data-slide` sections on pptx → 422 with guidance; render service
-  down/unconfigured on pdf/pptx → 503 (no fallback); htmldocx missing on
-  docx → 503
+  images survive as real Word structure, CSS layout does not. **PDF
+  artifacts** additionally export to `docx` (v9.361.0, pdf2docx —
+  layout-faithful, same engine as the translate feature); any other format
+  on a PDF → 400. Other non-HTML → 400; no `data-slide` sections on pptx →
+  422 with guidance; render service down/unconfigured on pdf/pptx → 503 (no
+  fallback); htmldocx/pdf2docx missing on docx → 503; pdf2docx conversion
+  failure (image-only scans) → 422
 
 ## Workflows / Workers / Nodes
 

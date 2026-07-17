@@ -298,6 +298,15 @@ const DesignCanvas = (() => {
     if (document.querySelector('.design-export-menu')) { _closeExportMenu(); return; }
     const menu = document.createElement('div');
     menu.className = 'design-export-menu';
+    // PDF-Artefakte: einziger Export-Weg ist DOCX (pdf2docx, layout-treu).
+    const rawName = document.getElementById('artifact-content')?._rawName || '';
+    if (rawName.toLowerCase().endsWith('.pdf')) {
+      menu.innerHTML = `
+      <div class="design-export-item" data-fmt="docx">
+        <strong>Als DOCX exportieren</strong>
+        <small>Layout-treu konvertiert — in Word bearbeitbar</small>
+      </div>`;
+    } else {
     menu.innerHTML = `
       <div class="design-export-item" data-fmt="html">
         <strong>HTML herunterladen</strong>
@@ -315,6 +324,7 @@ const DesignCanvas = (() => {
         <strong>Als PPTX exportieren</strong>
         <small>Eine &lt;section data-slide&gt; = eine Folie (Bild-Folien, nicht editierbar)</small>
       </div>`;
+    }
     const r = ev?.target?.closest('button')?.getBoundingClientRect();
     menu.style.left = Math.max(8, (r ? r.right : 300) - 300) + 'px';
     menu.style.top = ((r ? r.top : 100) - 8) + 'px';

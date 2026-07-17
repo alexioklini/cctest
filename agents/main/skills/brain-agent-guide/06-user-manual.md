@@ -1754,6 +1754,11 @@ Wissenswertes:
 - PDF/PPTX brauchen den Render-Dienst (crawl4ai). Ist er auf diesem Server
   nicht eingerichtet, kommt eine klare Fehlermeldung — der HTML-Download
   funktioniert immer. DOCX braucht keinen Render-Dienst.
+- **Auch PDF-Artefakte** haben den Export-Knopf (seit v9.361.0): dort gibt
+  es genau einen Weg — **Als DOCX exportieren**, layout-treu konvertiert
+  (Textboxen, Tabellen, Bilder, Spalten werden echte Word-Elemente). Bei
+  gescannten (Bild-)PDFs schlägt die Konvertierung mit einem klaren Hinweis
+  fehl — solche PDFs vorher per OCR durchsuchbar machen.
 
 ---
 

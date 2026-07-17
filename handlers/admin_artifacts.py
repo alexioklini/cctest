@@ -69,6 +69,38 @@ def _html_to_docx_bytes(html: str) -> bytes:
     return buf.getvalue()
 
 
+def _pdf_to_docx_bytes(pdf_bytes: bytes) -> bytes:
+    """PDF → editable DOCX via pdf2docx — the same engine the translate
+    feature uses (server_lib/translate/document.py): layout-faithful, text
+    boxes/tables/images/columns become real DOCX equivalents. pdf2docx has a
+    file-based API, so stage through a tempdir. It also prints '[INFO] (N/M)
+    Page N' progress directly to stdout/stderr (not via logging) — redirect
+    both or it eats the server log. Failures propagate to the caller, which
+    surfaces an honest 422 (image-only scans, exotic font encodings)."""
+    import contextlib
+    import io
+    import tempfile
+    from pdf2docx import Converter
+
+    if isinstance(pdf_bytes, str):
+        pdf_bytes = pdf_bytes.encode("utf-8", errors="replace")
+    with tempfile.TemporaryDirectory(prefix="brain-pdf-export-") as tmp:
+        src = os.path.join(tmp, "src.pdf")
+        dst = os.path.join(tmp, "out.docx")
+        with open(src, "wb") as f:
+            f.write(pdf_bytes)
+        devnull = io.StringIO()
+        with contextlib.redirect_stdout(devnull), \
+             contextlib.redirect_stderr(devnull):
+            cv = Converter(src)
+            try:
+                cv.convert(dst)
+            finally:
+                cv.close()
+        with open(dst, "rb") as f:
+            return f.read()
+
+
 class AdminArtifactsHandlers:
     """Artifacts, files, channels, nodes, sidecar, services, backup, worker, refine/soul, and notification handlers."""
 
@@ -2418,9 +2450,11 @@ class AdminArtifactsHandlers:
         V1 per the plan; the UI menu says so honestly). `docx`: editable Word
         document via htmldocx — content + structure (headings, tables, lists,
         raster images), NOT the visual layout (DOCX is a flowing format;
-        pixel-accurate is the PDF path). Needs no render service. Graceful
-        degrade: render service down/unconfigured → 503 with a clear German
-        message, no fallback."""
+        pixel-accurate is the PDF path). Needs no render service. PDF
+        artifacts additionally export to `docx` via pdf2docx (layout-faithful
+        — same engine as the translate feature); every other format on a PDF
+        → 400. Graceful degrade: render service down/unconfigured → 503 with
+        a clear German message, no fallback."""
         from urllib.parse import urlparse, parse_qs
         import base64
         parts = path.split("/")
@@ -2436,21 +2470,30 @@ class AdminArtifactsHandlers:
         if not artifact:
             self._send_json({"error": "Artifact not found"}, 404)
             return
-        if not str(artifact.get("name", "")).lower().endswith((".html", ".htm")):
-            self._send_json({"error": "Export gibt es nur für HTML-Artefakte"}, 400)
+        name_l = str(artifact.get("name", "")).lower()
+        is_pdf_artifact = name_l.endswith(".pdf")
+        if is_pdf_artifact and fmt != "docx":
+            self._send_json({"error": "PDF-Artefakte lassen sich nur nach "
+                                      "DOCX exportieren"}, 400)
+            return
+        if not is_pdf_artifact and not name_l.endswith((".html", ".htm")):
+            self._send_json({"error": "Export gibt es nur für HTML-Artefakte "
+                                      "(und PDF nach DOCX)"}, 400)
             return
         ver_data = ChatDB.get_artifact_content(artifact_id, version)
-        html = (ver_data or {}).get("content")
-        if html is None:
+        content = (ver_data or {}).get("content")
+        if content is None:
             # Disk fallback (>5MB versions store no content) — same as /content.
             try:
                 with open(artifact["path"], "rb") as f:
-                    html = f.read()
+                    content = f.read()
             except Exception:
                 self._send_json({"error": "Version content not available"}, 404)
                 return
-        if isinstance(html, bytes):
-            html = html.decode("utf-8", errors="replace")
+        # HTML paths work on text; the PDF→DOCX path needs the raw bytes.
+        if isinstance(content, bytes) and not is_pdf_artifact:
+            content = content.decode("utf-8", errors="replace")
+        html = content
 
         base_name = artifact["name"].rsplit(".", 1)[0]
         if fmt == "pdf":
@@ -2465,14 +2508,28 @@ class AdminArtifactsHandlers:
             filename = f"{base_name}.pdf"
             ct = "application/pdf"
         elif fmt == "docx":
+            lib = "pdf2docx" if is_pdf_artifact else "htmldocx"
             try:
-                data = _html_to_docx_bytes(html)
+                if is_pdf_artifact:
+                    data = _pdf_to_docx_bytes(content)
+                else:
+                    data = _html_to_docx_bytes(content)
             except ImportError:
                 self._send_json({"error": "DOCX-Export nicht möglich — das "
-                                          "Python-Paket 'htmldocx' ist auf "
+                                          f"Python-Paket '{lib}' ist auf "
                                           "diesem Server nicht installiert."},
                                 503)
                 return
+            except Exception as e:
+                if is_pdf_artifact:
+                    # pdf2docx chokes on some PDFs (heavily form-based, weird
+                    # font encodings, image-only scans) — honest 422, no guess.
+                    self._send_json({"error": "PDF→DOCX-Konvertierung fehl"
+                                              f"geschlagen: {e} — bei gescannten "
+                                              "(Bild-)PDFs vorher OCR laufen "
+                                              "lassen."}, 422)
+                    return
+                raise
             filename = f"{base_name}.docx"
             ct = ("application/vnd.openxmlformats-officedocument"
                   ".wordprocessingml.document")

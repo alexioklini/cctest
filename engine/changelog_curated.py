@@ -29,7 +29,7 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
-        "version": "9.360.0",
+        "version": "9.361.0",
         "date": "2026-07-17",
         "title": "Berichte als Word-Dokument exportieren",
         "body": "HTML-Artefakte lassen sich jetzt zusätzlich als DOCX "
@@ -37,10 +37,13 @@ CURATED_CHANGELOG: list[dict] = [
                 "Überschriften, Tabellen, Listen und Bilder bleiben als "
                 "richtige Word-Elemente erhalten. Das visuelle Layout wird "
                 "dabei bewusst vereinfacht; wer die pixelgenaue Ansicht "
-                "braucht, nutzt weiterhin den PDF-Export. Sie finden den "
-                "neuen Eintrag im „Export ▾“-Menü jedes HTML-Artefakts.",
+                "braucht, nutzt weiterhin den PDF-Export. Auch PDF-Artefakte "
+                "haben nun einen Export-Knopf: sie werden layout-treu in ein "
+                "bearbeitbares Word-Dokument umgewandelt (Textboxen, "
+                "Tabellen, Bilder und Spalten bleiben erhalten). Sie finden "
+                "den Eintrag im „Export ▾“-Menü des jeweiligen Artefakts.",
         "audience": "user",
-        "versions": ["9.360.0"],
+        "versions": ["9.360.0", "9.361.0"],
     },
     {
         "version": "9.359.0",

@@ -859,9 +859,11 @@ function renderArtifactContent(content, type, name, encoding) {
   // Ausführungsplan aussehen (Schritt/Step/Phase-Überschriften).
   _artifactUpdateWorkflowBtn(ext, content, name);
 
-  // Design-Modus + Export: nur auf html-Artefakten anbieten (design_canvas.js).
+  // Design-Modus: nur auf html-Artefakten anbieten (design_canvas.js).
+  // Export: html (PDF/DOCX/PPTX) + pdf (nur DOCX) — pdf hat type 'document',
+  // darum über die Extension gaten.
   document.getElementById('artifact-design-btn')?.classList.toggle('hidden', type !== 'html');
-  document.getElementById('artifact-export-btn')?.classList.toggle('hidden', type !== 'html');
+  document.getElementById('artifact-export-btn')?.classList.toggle('hidden', type !== 'html' && ext !== 'pdf');
 
   if (state.artifactSourceMode && type !== 'image') {
     // Source view — always raw text
