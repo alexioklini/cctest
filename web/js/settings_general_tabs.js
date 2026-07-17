@@ -3615,6 +3615,11 @@ async function _genTab_data_sources(C) {
         <option value="ro">read-only</option>
         <option value="rw">read/write</option>
       </select></div>
+      <div style="width:200px"><label class="form-label" title="Wieviel eines Abfrage-Ergebnisses darf in den LLM-Kontext? none = nur Schema + Zeilenzahl (Massendaten erreichen das Modell NIE — Analyse läuft lokal über Export + data_query); head = erste 50 Zeilen (Standard); full = bis 1000 Zeilen">Kontext-Preview</label><select class="form-select" id="ds-context-preview" style="width:100%">
+        <option value="head">head (50 Zeilen)</option>
+        <option value="none">none (nur Schema)</option>
+        <option value="full">full (bis 1000)</option>
+      </select></div>
     </div>
     <div style="font-size:11px;color:var(--warning)">read/write: Schreibzugriff (SQL: INSERT/UPDATE/DELETE/MERGE · REST: POST/PUT/PATCH/DELETE) durch den Agenten — die Grants/Rechte des hinterlegten Zugangs sind die letzte Instanz. DDL bleibt gesperrt.</div>
     <div id="ds-sql-fields" style="${G('8px')}">
@@ -3673,6 +3678,7 @@ function _dsEdit(name) {
   document.getElementById('ds-name').value = s ? s.name : '';
   document.getElementById('ds-type').value = s ? s.type : 'postgres';
   document.getElementById('ds-access-mode').value = s ? (s.access_mode || 'ro') : 'ro';
+  document.getElementById('ds-context-preview').value = s ? (s.context_preview || 'head') : 'head';
   document.getElementById('ds-dsn').value = '';
   document.getElementById('ds-env-key').value = s ? (s.env_key || '') : '';
   document.getElementById('ds-timeout').value = s ? (s.options?.statement_timeout_ms ?? '') : '';
@@ -3710,6 +3716,7 @@ async function saveDataSource() {
   const source = {
     name, type,
     access_mode: document.getElementById('ds-access-mode').value,
+    context_preview: document.getElementById('ds-context-preview').value,
     guide: {
       md: document.getElementById('ds-guide-md').value.trim(),
       skill: document.getElementById('ds-guide-skill').value.trim(),

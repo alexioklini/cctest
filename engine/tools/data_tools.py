@@ -255,6 +255,52 @@ _DB_RW_NOTE = ("rw source — DML allowed, DDL blocked; the configured DB "
 
 MSSQL_DEFAULT_ODBC_DRIVER = "ODBC Driver 17 for SQL Server"
 
+# context_preview (DATA_SOURCES_V2 Phase 8, E13 — data minimisation by
+# design): how much of a result may enter the LLM context. Per-source knob
+# (`context_preview: none|head|full`, default head = today's 50 rows);
+# `none` = schema + row_count only, not a single raw row (for sensitive
+# sources this HARD-enforces the export-once-aggregate-locally chain:
+# db_query(out='x.parquet') → data_query → small aggregates). The tool
+# parameter `preview` may only TIGHTEN the source default, never loosen it.
+_PREVIEW_RANK = {"none": 0, "head": 1, "full": 2}
+DB_FULL_DISPLAY_ROWS = 1000  # 'full' preview cap (still bounded)
+_PREVIEW_NONE_NOTE = (
+    "context_preview=none — no data rows enter the conversation; pass "
+    "out='name.parquet' and analyze locally with data_query (aggregates/"
+    "joins), or out='name.csv' for xlsx tooling")
+
+
+def _effective_preview(src: dict, args: dict) -> str:
+    s = (src.get("context_preview") or "head").strip().lower()
+    if s not in _PREVIEW_RANK:
+        s = "head"
+    p = (args.get("preview") or "").strip().lower()
+    if p in _PREVIEW_RANK and _PREVIEW_RANK[p] < _PREVIEW_RANK[s]:
+        return p
+    return s
+
+
+def _write_parquet(out_path: str, headers: list, rows: list) -> None:
+    """Columnar export for the local-analysis chain (E13): the extract is
+    pulled ONCE and lands as a Parquet artifact; every follow-up runs
+    server-side via data_query. Type inference per column with a per-column
+    string fallback (Decimal/date/datetime map natively via pyarrow)."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    cols = list(zip(*rows)) if rows else [tuple()] * len(headers)
+    arrays = []
+    for i in range(len(headers)):
+        vals = list(cols[i]) if i < len(cols) else []
+        try:
+            arrays.append(pa.array(vals))
+        except (pa.ArrowInvalid, pa.ArrowTypeError,
+                pa.ArrowNotImplementedError):
+            arrays.append(pa.array(
+                [None if v is None else str(v) for v in vals]))
+    pq.write_table(
+        pa.Table.from_arrays(arrays, names=[str(h) for h in headers]),
+        out_path)
+
 # access_mode (E5): "ro" (default) keeps today's SELECT/WITH-only contract;
 # "rw" additionally admits DML. DDL stays blocked even on rw (O3) — schema
 # changes by the agent are a different risk level; the DB grants of the
@@ -636,30 +682,44 @@ def tool_db_query(args: dict) -> str:
             conn.commit()
         headers = [d[0] for d in cur.description or []]
         row_count = len(rows)
-        md = _markdown_table(headers, rows[:QUERY_DISPLAY_ROWS])
-        if row_count > QUERY_DISPLAY_ROWS:
-            md += (f"\n\n_({row_count:,} rows total, showing first "
-                   f"{QUERY_DISPLAY_ROWS} — pass out='name.csv' to save the "
-                   f"full result)_")
+        preview = _effective_preview(src, args)
         out_info = None
         out_name = (args.get("out") or "").strip()
         if out_name:
             from engine.tools.file_tools import _enforce_artifact_path
-            if not out_name.lower().endswith(".csv"):
+            low = out_name.lower()
+            if not (low.endswith(".csv") or low.endswith(".parquet")):
                 out_name += ".csv"
+                low = out_name.lower()
             out_path, perr = _enforce_artifact_path(out_name, "db_query")
             if perr:
                 return perr
-            with open(out_path, "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f, delimiter=";")
-                w.writerow(headers)
-                w.writerows(rows)
+            if low.endswith(".parquet"):
+                _write_parquet(out_path, headers, rows)
+            else:
+                with open(out_path, "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f, delimiter=";")
+                    w.writerow(headers)
+                    w.writerows(rows)
             agent = get_request_context().current_agent
             _brain._after_file_write(
                 out_path, "created", agent.agent_id if agent else "main")
             out_info = {"path": out_path, "rows": row_count}
-        md = _brain._gdpr_anon_tool_text(md, f"db_query:{source}")
-        res = {"source": source, "row_count": row_count, "result": md}
+        if preview == "none":
+            # E13: schema + counts only — nothing to anonymise, nothing to
+            # leak. The chain (export → data_query aggregates) is the way.
+            res = {"source": source, "row_count": row_count,
+                   "columns": headers, "result": _PREVIEW_NONE_NOTE}
+        else:
+            show = (DB_FULL_DISPLAY_ROWS if preview == "full"
+                    else QUERY_DISPLAY_ROWS)
+            md = _markdown_table(headers, rows[:show])
+            if row_count > show:
+                md += (f"\n\n_({row_count:,} rows total, showing first "
+                       f"{show} — pass out='name.parquet' (or .csv) to save "
+                       f"the full result)_")
+            md = _brain._gdpr_anon_tool_text(md, f"db_query:{source}")
+            res = {"source": source, "row_count": row_count, "result": md}
         if mode == "rw":
             res["mode"] = "rw"
             res["note"] = _DB_RW_NOTE
@@ -1086,12 +1146,24 @@ def tool_rest_query(args: dict) -> str:
         _brain._after_file_write(
             out_path, "created", agent.agent_id if agent else "main")
         out_info = {"path": out_path}
-    shown = _brain._gdpr_anon_tool_text(shown, f"rest_query:{source}")
-    res = {"source": source, "status": resp.status_code, "method": method,
-           "path": path, "result": shown}
-    if truncated:
-        res["truncated"] = (f"response capped at {max_kb} KB — pass "
-                            f"out='name.json' to save the full payload")
+    preview = _effective_preview(src, args)
+    if preview == "none" and resp.status_code < 400:
+        # E13: no payload content enters the context (error bodies still
+        # surface — they are diagnostics, not data).
+        res = {"source": source, "status": resp.status_code, "method": method,
+               "path": path, "bytes": len(raw), "content_type": ctype,
+               "result": ("context_preview=none — no response content "
+                          "enters the conversation; pass out='name.json' "
+                          "(or .csv for arrays) and analyze locally "
+                          "(xlsx_query reads JSON, data_query reads "
+                          "csv/parquet)")}
+    else:
+        shown = _brain._gdpr_anon_tool_text(shown, f"rest_query:{source}")
+        res = {"source": source, "status": resp.status_code, "method": method,
+               "path": path, "result": shown}
+        if truncated:
+            res["truncated"] = (f"response capped at {max_kb} KB — pass "
+                                f"out='name.json' to save the full payload")
     if mode == "rw":
         res["mode"] = "rw"
     if resp.status_code >= 400:

@@ -532,6 +532,8 @@ class AdminConfigHandlers:
                 "options": s.get("options") or {},
                 "dsn_set": bool((s.get("dsn") or "").strip()),
                 "dsn_masked": self._mask_dsn((s.get("dsn") or "").strip()),
+                "context_preview": ((s.get("context_preview") or "head")
+                                    .strip().lower()),
                 # Steckbrief (Phase 7) — admin-only endpoint, md is fine here.
                 "guide": {
                     "md": ((s.get("guide") or {}).get("md") or ""),
@@ -690,6 +692,14 @@ class AdminConfigHandlers:
                 return
             stype = (s.get("type") or "postgres").strip().lower()
             entry = {"name": name, "type": stype, "access_mode": access_mode}
+            # context_preview (Phase 8, E13): head is the default and stays
+            # implicit; none/full are stored explicitly.
+            cp = (s.get("context_preview") or "head").strip().lower()
+            if cp not in ("none", "head", "full"):
+                self._send_json({"error": "context_preview muss none|head|full sein"}, 400)
+                return
+            if cp != "head":
+                entry["context_preview"] = cp
             _opt_keys = (("timeout_s", "max_response_kb") if stype == "rest"
                          else ("statement_timeout_ms", "connect_timeout"))
             for k in _opt_keys:

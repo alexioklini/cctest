@@ -995,6 +995,9 @@ class TestRestQuery(unittest.TestCase):
             {"name": "api_slow", "type": "rest", "base_url": base,
              "access_mode": "ro", "auth": {"kind": "none"},
              "options": {"timeout_s": 1}},
+            {"name": "api_strict", "type": "rest", "base_url": base,
+             "access_mode": "ro", "auth": {"kind": "none"},
+             "context_preview": "none"},
         ]
 
     @classmethod
@@ -1113,6 +1116,155 @@ class TestRestQuery(unittest.TestCase):
     def test_rest_query_on_sql_source_redirects(self):
         out = self._q(source="dead_db", path="/x")
         self.assertIn("db_query", out["error"])
+
+    def test_context_preview_none_hides_content(self):
+        # E13: no response content inline — status + size only; the payload
+        # value ('alpha') must not appear anywhere in the tool result.
+        out = self._q(source="api_strict", path="/api/v1/items")
+        self.assertEqual(out["status"], 200)
+        self.assertNotIn("alpha", json.dumps(out))
+        self.assertIn("bytes", out)
+        self.assertIn("context_preview=none", out["result"])
+
+    def test_context_preview_none_cannot_be_loosened(self):
+        out = self._q(source="api_strict", path="/api/v1/items",
+                      preview="head")
+        self.assertNotIn("alpha", json.dumps(out))
+
+    def test_preview_param_tightens_default_source(self):
+        out = self._q(source="apitest", path="/api/v1/items", preview="none")
+        self.assertNotIn("alpha", json.dumps(out))
+
+    def test_context_preview_none_still_shows_http_errors(self):
+        out = self._q(source="api_strict", path="/api/nope")
+        self.assertEqual(out["status"], 404)
+        self.assertIn("not found", out["result"])
+
+
+# ---------------------------------------------------------------------------
+# Datensparsame Kette (DATA_SOURCES_V2_PLAN.md Phase 8, E13)
+# ---------------------------------------------------------------------------
+
+class TestEffectivePreview(unittest.TestCase):
+    """The tool `preview` parameter may only TIGHTEN the source default
+    (none < head < full), never loosen it; unknown values fall back safely."""
+
+    def _e(self, src_cp, arg_p):
+        src = {"context_preview": src_cp} if src_cp else {}
+        args = {"preview": arg_p} if arg_p else {}
+        return data_tools._effective_preview(src, args)
+
+    def test_defaults_to_head(self):
+        self.assertEqual(self._e(None, None), "head")
+        self.assertEqual(self._e("bogus", None), "head")
+
+    def test_param_tightens(self):
+        self.assertEqual(self._e("head", "none"), "none")
+        self.assertEqual(self._e("full", "head"), "head")
+        self.assertEqual(self._e("full", "none"), "none")
+
+    def test_param_cannot_loosen(self):
+        self.assertEqual(self._e("none", "full"), "none")
+        self.assertEqual(self._e("none", "head"), "none")
+        self.assertEqual(self._e("head", "full"), "head")
+
+    def test_bogus_param_ignored(self):
+        self.assertEqual(self._e("none", "everything"), "none")
+
+
+@unittest.skipUnless(_HAVE_PG, "local test postgres (braintest) not available")
+class TestDbQueryPreviewAndParquet(unittest.TestCase):
+    """E13 against braintest: context_preview none → the tool result
+    provably contains NO data row (characterization over the result JSON);
+    parquet export round-trips through data_query row-identical to csv."""
+
+    _STRICT = [{"name": "braintest_strict", "type": "postgres",
+                "dsn": _PG_DSN, "context_preview": "none",
+                "options": {"connect_timeout": 5}},
+               {"name": "braintest_full", "type": "postgres",
+                "dsn": _PG_DSN, "context_preview": "full",
+                "options": {"connect_timeout": 5}}]
+
+    def setUp(self):
+        self._sid = "datatools-test-" + uuid.uuid4().hex[:8]
+        self.enterContext(request_context(
+            current_session_id=self._sid, current_agent=_FakeAgent(),
+            current_user_id="__system__"))
+        self.enterContext(mock.patch.object(
+            data_tools, "_data_sources",
+            return_value=self._STRICT + _TEST_SOURCES))
+
+    def tearDown(self):
+        try:
+            import shutil
+            from engine.tools.file_tools import _resolve_artifact_dir
+            with request_context(current_session_id=self._sid,
+                                 current_agent=_FakeAgent()):
+                art_dir, _ = _resolve_artifact_dir()
+            if art_dir and self._sid in art_dir and os.path.isdir(art_dir):
+                shutil.rmtree(art_dir)
+        except Exception:
+            pass
+
+    def _q(self, **args):
+        return json.loads(data_tools.tool_db_query(args))
+
+    _SQL5 = "SELECT id, isin, stueck FROM positionen ORDER BY id LIMIT 5"
+
+    def test_none_returns_schema_not_rows(self):
+        out = self._q(source="braintest_strict", sql=self._SQL5)
+        self.assertEqual(out["row_count"], 5)
+        self.assertEqual(out["columns"], ["id", "isin", "stueck"])
+        blob = json.dumps(out)
+        # No ISIN value, no markdown data row — schema words only.
+        self.assertNotIn("DE00", blob)
+        self.assertNotIn("|", out["result"])
+        self.assertIn("context_preview=none", out["result"])
+
+    def test_none_cannot_be_loosened_by_param(self):
+        out = self._q(source="braintest_strict", sql=self._SQL5,
+                      preview="full")
+        self.assertNotIn("DE00", json.dumps(out))
+
+    def test_param_none_tightens_default_source(self):
+        out = self._q(source="braintest", sql=self._SQL5, preview="none")
+        self.assertNotIn("DE00", json.dumps(out))
+        self.assertEqual(out["columns"], ["id", "isin", "stueck"])
+
+    def test_none_with_parquet_export_keeps_chain_alive(self):
+        out = self._q(source="braintest_strict", sql=self._SQL5,
+                      out="strict.parquet")
+        self.assertIn("saved", out)
+        self.assertTrue(out["saved"]["path"].endswith(".parquet"))
+        self.assertNotIn("DE00", json.dumps(out))
+        # The chain works: aggregate over the artifact via data_query.
+        agg = json.loads(data_tools.tool_data_query(
+            {"path": out["saved"]["path"],
+             "sql": "SELECT COUNT(*) AS n, SUM(stueck) AS s FROM strict"}))
+        self.assertEqual(agg["row_count"], 1)
+
+    def test_parquet_roundtrip_row_identical_to_csv(self):
+        sql = ("SELECT id, filiale_id, isin, stueck, kurs FROM positionen "
+               "ORDER BY id LIMIT 500")
+        p = self._q(source="braintest", sql=sql, out="rt.parquet")
+        c = self._q(source="braintest", sql=sql, out="rt.csv")
+        agg_sql = ("SELECT COUNT(*) AS n, SUM(stueck) AS s, "
+                   "SUM(CAST(kurs AS DOUBLE)) AS k FROM {v}")
+        a1 = json.loads(data_tools.tool_data_query(
+            {"path": p["saved"]["path"], "sql": agg_sql.format(v="rt")}))
+        a2 = json.loads(data_tools.tool_data_query(
+            {"path": c["saved"]["path"], "sql": agg_sql.format(v="rt")}))
+        self.assertEqual(a1["result"], a2["result"])
+
+    def test_full_preview_shows_more_than_head(self):
+        # 'full' can only come from the SOURCE config (the param may only
+        # tighten) — a param 'full' on a head source stays at 50 rows.
+        sql = "SELECT id FROM positionen ORDER BY id LIMIT 200"
+        head = self._q(source="braintest", sql=sql, preview="full")
+        full = self._q(source="braintest_full", sql=sql)
+        self.assertIn("showing first 50", head["result"])
+        self.assertNotIn("showing first", full["result"])
+        self.assertGreater(len(full["result"]), len(head["result"]))
 
 
 # ---------------------------------------------------------------------------

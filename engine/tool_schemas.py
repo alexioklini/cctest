@@ -1346,7 +1346,10 @@ TOOL_DEFINITIONS = [
             "and access to any other file are blocked at the engine level. "
             "Returns up to 50 rows as a table plus the total row count; pass "
             "out='name.csv' to save the FULL result (up to 200k rows) as an "
-            "artifact. For .xlsx/.json/.xml files use xlsx_inspect → "
+            "artifact. This is the LOCAL-ANALYSIS stage of the data chain: "
+            "after db_query(out='x.parquet'), run aggregates/joins/pivots "
+            "here — bulk data stays server-side, only small results reach "
+            "the chat. For .xlsx/.json/.xml files use xlsx_inspect → "
             "xlsx_query instead. Example: sql=\"SELECT branch, SUM(betrag) "
             "FROM trades GROUP BY branch\"."
         ),
@@ -1380,16 +1383,22 @@ TOOL_DEFINITIONS = [
             "FROM information_schema.tables WHERE table_schema='public'\" — "
             "never guess table names. A server-side statement timeout caps "
             "runaway queries. SELECTs return up to 50 rows plus the total "
-            "row count; pass out='name.csv' to save the FULL result (up to "
-            "200k rows) as an artifact. For FILES (.parquet/.csv/.duckdb) "
-            "use data_query, for .xlsx use xlsx_query."
+            "row count; pass out='name.parquet' (or .csv) to save the FULL "
+            "result (up to 200k rows) as an artifact. LARGE RESULTS: export "
+            "ONCE to parquet and aggregate/join locally via data_query — do "
+            "NOT page raw rows through the conversation. Sources with "
+            "context_preview 'none' return only schema + row count (no data "
+            "rows) — that chain is mandatory there. For FILES "
+            "(.parquet/.csv/.duckdb) use data_query, for .xlsx use "
+            "xlsx_query."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "source": {"type": "string", "description": "Configured data-source name (config.json → data_sources; wrong name → error lists the available ones)"},
                 "sql": {"type": "string", "description": "One SQL statement (dialect of the source: PostgreSQL or T-SQL). Writes only pass on rw sources."},
-                "out": {"type": "string", "description": "Optional relative .csv filename — writes the full result to your artifact folder"},
+                "out": {"type": "string", "description": "Optional relative filename — .parquet (preferred for follow-up analysis via data_query) or .csv; writes the full result to your artifact folder"},
+                "preview": {"type": "string", "description": "'none'|'head'|'full' — how many result rows to show inline (none = schema+count only). Can only TIGHTEN the source's configured default, never loosen it."},
             },
             "required": ["source", "sql"],
         },
@@ -1412,7 +1421,11 @@ TOOL_DEFINITIONS = [
             "JSON array. HTTP error statuses are returned as results with "
             "the body excerpt — read them instead of retrying blindly. "
             "Pagination is NOT automatic: follow next-links yourself within "
-            "the allowed paths."
+            "the allowed paths. LARGE PAYLOADS: save once via out= and "
+            "analyze locally (xlsx_query reads JSON) instead of paging "
+            "content through the conversation; sources with context_preview "
+            "'none' return only status + size (no content) — the out= chain "
+            "is mandatory there."
         ),
         "input_schema": {
             "type": "object",
@@ -1423,6 +1436,7 @@ TOOL_DEFINITIONS = [
                 "params": {"type": "object", "description": "Optional query parameters as a flat object"},
                 "body": {"description": "Optional JSON body for POST/PUT/PATCH/DELETE"},
                 "out": {"type": "string", "description": "Optional relative .json/.csv filename — saves the full response to your artifact folder"},
+                "preview": {"type": "string", "description": "'none'|'head' — 'none' returns only status + size, no content inline. Can only TIGHTEN the source's configured default."},
             },
             "required": ["source", "path"],
         },
