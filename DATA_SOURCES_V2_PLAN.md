@@ -26,6 +26,12 @@ WAS existiert), die **Nutzung im Kontext** legen Projekt-Config bzw. Chat-Auswah
    gleiche Policy-, Scoping- und Auswahl-Mechanik für beide Klassen.
 7. **Konkreter Anwendungsfall: Hyland OnBase** (Nachtrag gleicher Tag) — siehe
    Anhang A; treibt MSSQL (Phase 1) + Tabellen-Whitelist (Phase 3) + REST (Phase 6).
+8. **Quellen-Steckbrief** (Nachtrag gleicher Tag): pro Datenquelle hinterlegbares
+   Nutzungswissen (Tabellen-/Feld-Semantik, Join-Pfade, REST-Endpoint-Verwendung,
+   korrekte Persistier-Muster) — „ähnlich wie ein Skill oder MCP-Server, den man
+   zusätzlich bei der Konfig angibt" — damit das Modell NICHT bei jeder Nutzung
+   das Schema neu ermitteln muss, sondern beim Ansprechen der Quelle schon weiß,
+   wie es zu den Daten kommt bzw. korrekt schreibt.
 
 ---
 
@@ -258,12 +264,57 @@ Quelle ist ein DATENPUNKT wie eine DB, kein Browser.
    POST auf ro-Quelle verweigert mit Modus-Fehlertext.
 5. NICHT in `_WORKFLOW_STEP_TOOLS`, IN `GDPR_ARGS_DEANON_TOOLS` (wie db_query).
 
-### Phase 7 — Docs + Release
-- Skill: 01-api (3 neue Endpoints + Felder), 02-tools (Modus + Scope im
-  db_query-Block, rest_query-Block), 04-recipes (Datenanbindung: MSSQL-Rezept inkl.
-  db_datareader, rw-Warnung, Projekt-/Chat-Scoping-Anleitung, REST-Quelle,
+### Phase 7 — Quellen-Steckbrief (User-Entscheidung 8)
+
+**E11 — Steckbrief = per-Quelle-Wissen, injiziert wie die Websuche-Preamble,
+skaliert wie ein Skill.** Kein neuer Mechanismus-Typ, sondern die zwei bewährten
+Auslieferungswege, nach Größe gewählt:
+
+- **Quellen-Shape**: `guide: {md: str, skill?: str, auto_generated_at?: iso}` pro
+  Datenquelle. `md` = admin-editierbares Markdown (Tabellen + Feld-Semantik,
+  Join-Pfade, bewährte Beispiel-Queries, bei rw die korrekten Persistier-Muster
+  wie „neue Sätze NUR in staging_x mit Spalten …"; bei REST: Endpoints, Parameter,
+  Response-Shapes, Fehlersemantik). `skill` = alternativ/zusätzlich der Name eines
+  bestehenden Agent-Skills (use_skill-Infra) für umfangreiche Dokumentation.
+- **Auslieferung klein (≤ ~4k Tokens über alle gescopten Quellen)**: WIRE-ONLY
+  Preamble auf der letzten User-Message, wenn die Quelle im Turn-Scope ist —
+  exakt der Websuche-Seam (`handlers/chat.py:388
+  _inject_web_preamble_into_wire`; Design-Context-Preamble als zweiter
+  Präzedenzfall). History/DB bleiben sauber, nichts veraltet (jeder Turn liest
+  den aktuellen Steckbrief), System-Prompt bleibt byte-stabil (KV-Prefix).
+  Das Modell kennt Schema + Verwendung VOR dem ersten Tool-Call — null
+  Erkundungs-Runden.
+- **Auslieferung groß**: NICHT injizieren ([[feedback_prompt_bloat_regression]]) —
+  die Preamble enthält dann nur eine Kurzzeile pro Quelle („Quelle X: lade
+  use_skill('…') vor der ersten Abfrage"), das Wissen kommt lazy via use_skill.
+  Grenze konfigurierbar (`data_sources_guide_max_tokens`, Default 4000).
+- **Bootstrap statt Handarbeit**: Admin-GUI-Button „Steckbrief generieren" →
+  `POST /v1/data-sources {action: generate_guide, name}`: liest
+  information_schema (Tabellen, Spalten, Typen, FKs, row counts; MSSQL analog),
+  optional ein LLM-Pass (`background_call`, cost_purpose getaggt) verdichtet zu
+  Markdown mit Feld-Beschreibungs-Platzhaltern; Ergebnis landet editierbar in
+  `guide.md` (+ `auto_generated_at`). Für REST optional: OpenAPI-URL angeben →
+  fetch + verdichten (O7). Der Admin kuratiert danach — der Steckbrief ist
+  HANDGEPFLEGT mit Auto-Anschub, wie brain-agent-guide.
+- **GUI**: Steckbrief-Textarea im Quellen-Formular (Admin-Tab) + Generieren-Button;
+  Projekt-Sektion/Right-Panel zeigen nur ein 📄-Indikator („Steckbrief vorhanden").
+- **Tests**: Preamble nur bei gescopter Quelle; Kappe → Skill-Hinweis statt
+  Voll-Injektion; `session.messages`/DB tragen NIE Steckbrief-Text (wire-only,
+  der v9.17.0-Regressionstest-Gedanke); generate_guide gegen braintest erzeugt
+  Tabellen+Spalten-Markdown. **Erfolgskriterium (live, messbar):** dieselbe
+  Join-Frage an braintest MIT Steckbrief = korrektes Ergebnis im ERSTEN
+  db_query-Call (keine information_schema-Runde); OHNE Steckbrief braucht das
+  Modell nachweislich Erkundungs-Runden. Bei rw: Persistier-Muster aus dem
+  Steckbrief wird befolgt (INSERT landet in der dokumentierten Tabelle/Spalten).
+
+### Phase 8 — Docs + Release
+- Skill: 01-api (neue Endpoints + Felder inkl. generate_guide), 02-tools (Modus +
+  Scope im db_query-Block, rest_query-Block, Steckbrief-Injektion), 04-recipes
+  (Datenanbindung: MSSQL-Rezept inkl. db_datareader, rw-Warnung,
+  Projekt-/Chat-Scoping-Anleitung, REST-Quelle, Steckbrief-Pflege,
   OnBase-Rezept aus Anhang A), 06-user-manual (DE: Admin-Tab-Update,
-  Projekt-Sektion, Right-Panel-Tab), 05-internals (Scope-Mechanik), SKILL.md-Bump.
+  Projekt-Sektion, Right-Panel-Tab), 05-internals (Scope- + Preamble-Mechanik),
+  SKILL.md-Bump.
 - Kuratierte Einträge: einer `admin` (MSSQL + rw + Scoping-Verwaltung), einer
   `user` (Datenquellen im Chat/Projekt in 2 Klicks nutzen).
 - VERSION + CHANGELOG je Phase-Commit ([[feedback_version_two_places]]);
@@ -291,8 +342,16 @@ Quelle ist ein DATENPUNKT wie eine DB, kein Browser.
   NICHT mit ungetestetem Treiber-Code abschließen ([[feedback_phase_a_then_validate]]).
 - **O5 — REST-Pagination/Discovery:** rest_query paginiert NICHT automatisch
   (das Modell folgt selbst next-Links innerhalb der erlaubten Pfade); kein
-  OpenAPI-Auto-Discovery in v1 — `allowed_paths` + Quellen-Beschreibung tragen
+  OpenAPI-Auto-Discovery in v1 — `allowed_paths` + Quellen-Steckbrief tragen
   die Semantik. Erst bei Bedarf erweitern.
+- **O6 — MCP-Server-Referenz pro Quelle:** bewusst NICHT in v1. Der Steckbrief
+  (Phase 7) deckt „Modell weiß, wie es zu den Daten kommt" ohne neuen
+  Prozess/Config-Typ; ein per-Quelle-MCP-Server (`mcp_server`-Feld, Tools via
+  MCPManager) wäre die Eskalationsstufe, wenn eine Quelle ECHTE Spezial-Tools
+  braucht statt Wissen — erst bei konkretem Fall.
+- **O7 — OpenAPI-Bootstrap für REST-Steckbriefe:** optionaler zweiter Schritt
+  von generate_guide (URL fetchen, verdichten); v1 kann mit handgepflegtem
+  REST-Steckbrief starten.
 
 ---
 
