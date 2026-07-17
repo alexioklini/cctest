@@ -426,6 +426,9 @@ async function loadProjectDetail(agentId, projectName) {
       const el = document.getElementById(id);
       if (el) el.style.display = isCode ? 'none' : '';
     });
+    // Datenquellen-Sektion rendert in normalen UND Code-Projekten (E9) —
+    // deshalb NICHT in der Hide-Liste oben. Async, fire-and-forget.
+    renderProjectDataSources(project);
     // Code project → show its working-directory file tree (refreshed here on
     // open; also after each turn via the post-turn hook) and start polling for
     // init progress + auto-refresh on file changes. Non-code projects stop any
@@ -2073,6 +2076,128 @@ function _designDocPicked(inputEl) {
 // mined into the project's MemPalace wing + KG, just like input folders.
 // Reached via memory/KG retrieval — NOT injected per turn (that's the
 // separate per-chat Websuche basket).
+/* ── Projekt-Datenquellen (DATA_SOURCES_V2 Phase 4, E2/E9) ──
+   project.json → data_sources = [{name, tables:[]}]; tables leer = alle.
+   Checkbox-Quelle ist /v1/data-sources/available (policy-gefiltert; leer →
+   Sektion bleibt versteckt). Jede Änderung speichert sofort via
+   API.updateProject — 1–2 Klicks: Quelle anhaken (+ optional Tabellen). */
+async function renderProjectDataSources(project) {
+  const sec = document.getElementById('project-datasources-section');
+  const body = document.getElementById('project-datasources-body');
+  if (!sec || !body) return;
+  let avail = state._dsAvailCache;
+  if (!avail) {
+    try {
+      avail = state._dsAvailCache = await API.get('/v1/data-sources/available');
+    } catch (e) { sec.style.display = 'none'; return; }
+  }
+  const sources = avail?.sources || [];
+  if (!sources.length) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  const chosen = {};
+  ((project || state._projectDetail || {}).data_sources || []).forEach(e => {
+    if (e && e.name) chosen[e.name] = e.tables || [];
+  });
+  const tblCache = state._dsTablesCache || {};
+  body.innerHTML = sources.map(s => {
+    const on = Object.prototype.hasOwnProperty.call(chosen, s.name);
+    const tabs = chosen[s.name] || [];
+    const modeBadge = s.access_mode === 'rw'
+      ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-200);color:var(--error)">read/write</span>'
+      : '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-200);color:var(--text-400)">read-only</span>';
+    let detail = '';
+    if (on) {
+      const expanded = state._pdsExpanded === s.name;
+      const known = tblCache[s.name];
+      let picker = '';
+      if (expanded && Array.isArray(known)) {
+        picker = `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">` +
+          known.map(t => {
+            const sel = tabs.includes(t);
+            return `<label style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;border:1px solid var(--border-100);background:${sel ? 'var(--accent)' : 'var(--bg-200)'};color:${sel ? '#fff' : 'var(--text-200)'}">` +
+              `<input type="checkbox" style="display:none" ${sel ? 'checked' : ''} onchange="pdsToggleTable('${esc(s.name)}','${esc(t)}')">${esc(t)}</label>`;
+          }).join('') +
+          `</div><div style="margin-top:4px"><button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="pdsClearTables('${esc(s.name)}')">Einschränkung aufheben (alle Tabellen)</button></div>`;
+      } else if (expanded) {
+        picker = `<div style="margin-top:6px;color:var(--text-400)">Lade Tabellen…</div>`;
+      }
+      detail = `<div style="margin:6px 0 2px 26px;font-size:12px;color:var(--text-300)">
+        ${tabs.length ? `Beschränkt auf: <b>${tabs.map(esc).join(', ')}</b>` : 'alle Tabellen'}
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:8px" onclick="pdsPickTables('${esc(s.name)}')">${expanded ? 'Zuklappen' : 'Tabellen wählen…'}</button>
+        ${picker}</div>`;
+    }
+    return `<div style="padding:6px 0;border-bottom:1px solid var(--border-100)">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+        <input type="checkbox" ${on ? 'checked' : ''} onchange="pdsToggleSource('${esc(s.name)}', this.checked)">
+        <strong>${esc(s.name)}</strong>
+        <span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-200);color:var(--text-400)">${esc(s.type)}</span>
+        ${modeBadge}
+      </label>${detail}</div>`;
+  }).join('');
+}
+
+function pdsToggleSource(name, on) {
+  const pd = state._projectDetail;
+  if (!pd) return;
+  const list = (pd.data_sources || []).filter(e => e && e.name !== name);
+  if (on) list.push({ name, tables: [] });
+  pd.data_sources = list;
+  if (!on && state._pdsExpanded === name) state._pdsExpanded = null;
+  _pdsSave();
+}
+
+async function pdsPickTables(name) {
+  if (state._pdsExpanded === name) {
+    state._pdsExpanded = null;
+    renderProjectDataSources(state._projectDetail);
+    return;
+  }
+  state._pdsExpanded = name;
+  renderProjectDataSources(state._projectDetail);
+  state._dsTablesCache = state._dsTablesCache || {};
+  if (!Array.isArray(state._dsTablesCache[name])) {
+    try {
+      const r = await API.get('/v1/data-sources/' + encodeURIComponent(name) + '/tables');
+      if (r?.error) { showToast(r.error, true); state._pdsExpanded = null; }
+      else state._dsTablesCache[name] = r?.tables || [];
+    } catch (e) {
+      showToast('Tabellenliste nicht verfügbar', true);
+      state._pdsExpanded = null;
+    }
+    renderProjectDataSources(state._projectDetail);
+  }
+}
+
+function pdsToggleTable(name, table) {
+  const entry = (state._projectDetail?.data_sources || []).find(e => e && e.name === name);
+  if (!entry) return;
+  const tabs = entry.tables || [];
+  entry.tables = tabs.includes(table) ? tabs.filter(t => t !== table) : tabs.concat([table]);
+  _pdsSave();
+}
+
+function pdsClearTables(name) {
+  const entry = (state._projectDetail?.data_sources || []).find(e => e && e.name === name);
+  if (!entry) return;
+  entry.tables = [];
+  _pdsSave();
+}
+
+async function _pdsSave() {
+  const agentId = state._projectDetailAgent;
+  const projectName = state._projectDetailName;
+  if (!agentId || !projectName) return;
+  try {
+    const r = await API.updateProject(agentId, projectName, {
+      data_sources: state._projectDetail?.data_sources || [],
+    });
+    if (r?.error) showToast(r.error, true);
+  } catch (e) {
+    showToast('Datenquellen konnten nicht gespeichert werden', true);
+  }
+  renderProjectDataSources(state._projectDetail);
+}
+
 // Stored in project.json → web_urls as [{url,title}].
 // Shim: web URLs now render inside the unified source tree. Keep
 // state._projectDetail.web_urls authoritative, then re-render the tree (the

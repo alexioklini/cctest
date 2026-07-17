@@ -1828,6 +1828,11 @@ class BrainAgentHandler(
             self._handle_doc_styles_get()
         elif path == "/v1/data-sources":
             self._handle_data_sources_get()
+        elif path == "/v1/data-sources/available":
+            self._handle_data_sources_available()
+        elif path.startswith("/v1/data-sources/") and path.endswith("/tables"):
+            from urllib.parse import unquote as _unq
+            self._handle_data_sources_tables(_unq(path.split("/")[3]))
         elif path == "/v1/mcp/connections":
             self._handle_mcp_list()
         elif path == "/v1/mcp/registry":

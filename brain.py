@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.370.0"
+VERSION = "9.371.0"
 VERSION_DATE = "2026-07-17"
 CHANGELOG = [
+    ("9.371.0", "2026-07-17", "feat(Datenquellen v2 Phase 4 — Projekt-Config: project.json → data_sources bestimmt die im Projekt nutzbaren Quellen/Tabellen; DATA_SOURCES_V2_PLAN.md E2/E7/E8/E9). update_project: data_sources [{name, tables:[str]}] mit Validierung gegen die KONFIGURIERTEN Quellen (unbekannter Name → fail-loud-Fehler mit Liste; Kappen 50 Quellen/500 Tabellen/200 Zeichen; bewusst NICHT im generischen Whitelist-Loop). apply_domain_context (der Single-Fix-Point für Projekt-Kontext): setzt ctx.data_source_scope aus der Projekt-Config ({name:[tables]}; fehlend/leer = None = deny — kein stilles Global-Fallback), gilt für normale UND Code-Mode-Projekte; ohne Projekt bleibt das Feld unangetastet (Phase 5 setzt dort die Session-Auswahl). build_tool_context snapshottet das Feld, sidecar_proxy._apply_bg_context rehydriert es → Scheduler-/Hintergrund-Turns IN einem Projekt erben dessen Scope automatisch; sched-Sessions OHNE Projekt bleiben None = deny (O1). NEUE Endpoints (E7, policy- statt admin-gated — Handler prüfen selbst _require_auth + data_access_allowed; bewusst NICHT in _ADMIN_GET_EXACT, die Gates matchen exakt): GET /v1/data-sources/available (nur {name,type,access_mode}, NIE DSN/env_key; leer wenn User keine Policy-Freigabe hat) + GET /v1/data-sources/<name>/tables (information_schema.tables BASE TABLE, mssql-Variante nach Anhang B, connect_timeout 5s, Quelle offline → sauberer Fehlertext statt 500). GUI: neue Projekt-Panel-Sektion 'Datenquellen' (index.html zwischen Quellen und Speicher&Abgleich; rendert in normalen UND Code-Projekten — NICHT in der Code-Mode-Hide-Liste), panels_projects.js: renderProjectDataSources + pdsToggleSource/pdsPickTables/pdsToggleTable/pdsClearTables/_pdsSave — Checkbox je verfügbarer Quelle (Typ+ro/rw-Badge), pro angehakter Quelle lazy Tabellen-Chips vom tables-Endpoint, leere Auswahl = alle Tabellen, jede Änderung speichert sofort (1-2 Klicks, Anforderung 4); Sektion versteckt sich, wenn available leer. js_gate: net-globals 2021→2027 (+6, Baseline im selben Commit), smoke PASS. Tests: TestProjectScopeWiring (4 — Config→Scope-Konvertierung, leer=None, ohne Projekt unangetastet, tool_context→_apply_bg_context-Roundtrip inkl. None-Fall); 84/84 grün. LIVE verifiziert (Erfolgskriterium, API + Playwright): Projekt A (braintest, tables:[positionen]) → Chat beantwortet Aggregat (50000/12525000); Query auf fremde Tabelle → Whitelist-Fehler, Agent erklärt ohne Umwege; Projekt B ohne Quellen → sauberer Deny mit Konfig-Hinweis; Code-Mode-Projekt C mit Quelle → funktioniert; available/tables-Endpoints + update-Validierung live geprüft; Browser-Check: Sektion rendert mit korrektem Zustand ('Beschränkt auf: positionen', rw-Badge), Picker lädt live. Test-Sessions + -Projekte gelöscht. HINWEIS Zwischenzustand: projektlose Chats verweigern db_query weiterhin (Scope-Setzung aus der Session-Auswahl kommt in Phase 5)."),
     ("9.370.0", "2026-07-17", "feat(Datenquellen v2 Phase 3 — Scoping-Kern: RequestContext.data_source_scope + Scope-/Tabellen-Gate im Tool; DATA_SOURCES_V2_PLAN.md E6/E8). engine/context.py: neues Feld data_source_scope (Default None) — Shape {source_name: [tables]}, [] = alle Tabellen der Quelle; None = kein Scope gesetzt. tool_db_query-Guard in E1-Reihenfolge: Policy (WER) → SCOPE (WAS: Quelle im per-Turn-Scope? None = deny mit Konfig-Hinweis Projekt-Einstellungen/Right-Panel + 'do NOT retry'; nicht gescopte Quelle nennt NUR die im Kontext freigegebenen Namen, leakt keine anderen config-Quellen) → Modus (ro/rw) → TABELLEN (nur bei nicht-leerer Whitelist). __system__ behält Vollzugriff (Hintergrund-/Test-Pfade; bestehende Suiten unverändert). KEIN stilles Global-Fallback — bewusst deny-by-default (E2); bis Phase 4/5 die Scope-Setzung im Chat-Worker verdrahten, verweigert db_query für normale User in JEDEM Kontext (geplanter Zwischenzustand). Tabellen-Whitelist HART via sqlglot 30.12.0 (_check_tables_allowed): parse_one dialect postgres|tsql, alle exp.Table-Refs; Whitelist case-insensitiv, schema.table UND nacktes table matchen BEIDE Richtungen; CTE-Namen zählen NICHT als Tabellen-Refs (auch wenn eine CTE wie eine nicht-gelistete Tabelle heißt); information_schema.* (und mssql sys.*) IMMER lesbar — Schema-Exploration ist der dokumentierte Arbeitsweg, Metadaten-Sichtbarkeit nicht-gelisteter Tabellen ist dokumentierte Grenze (O2); UNPARSEBARES SQL fail-CLOSED (Fehler nennt die erlaubten Tabellen); mssql-Bracket-Identifier ([dbo].[ITEMDATA]) normalisiert sqlglot selbst — der OnBase-Fall aus Anhang A funktioniert mit Whitelist itemdata. Tests: TestCheckTablesAllowed (10, reine Unit, alle Plan-Fälle) + TestDataSourceScopeGate (10, Policy gemockt, dead-host-Quellen — 'connection failed' BEWEIST passierte Gates; inkl. Scope-vor-Modus-Reihenfolge, [] = alle, fail-closed unter Whitelist, __system__-Bypass); 80/80 grün, test_request_context_isolation unverändert grün. Kein UI in dieser Phase (Erfolgskriterium: Kombinationen unit-grün VOR jedem UI)."),
     ("9.369.0", "2026-07-17", "feat(Datenquellen v2 Phase 2 — access_mode ro/rw pro Quelle; DATA_SOURCES_V2_PLAN.md E5). data_tools: _check_statement_allowed(sql, mode) NEBEN dem unveränderten _check_select_only (dessen ro-Semantik bleibt für xlsx_query/data_query nicht konfigurierbar) — ro = heutige Prüfung, aber Write-Versuch (INSERT/UPDATE/DELETE/MERGE/DDL) nennt jetzt den MODUS ('source is read-only — writes need an rw source', final, Modell soll nicht umformulieren); rw = +INSERT/UPDATE/DELETE/MERGE, DDL (CREATE/ALTER/DROP/TRUNCATE/GRANT/REVOKE) bleibt GEBLOCKT (O3), Ein-Statement-Zwang in beiden Modi. Guard-Reihenfolge E1: Policy (WER) → Modus → Execute; Quelle wird VOR dem Statement-Check aufgelöst (Modus hängt an der Quelle). _connect_readonly(src, mode): rw-Postgres OHNE set_session(readonly=True) + PLAIN Cursor (psycopg2-named-Cursors sind SELECT-only), statement_timeout bleibt; rw-Ergebnis: DML ohne Result-Set → {mode:'rw', rowcount, 'OK — N row(s) affected'} + expliziter conn.commit(); SELECT auf rw committet ebenfalls (INSERT..RETURNING). GOTCHA gefixt: der DML-Kurzschluss (cur.description is None) MUSS mode-gegated sein — der ro-named-Cursor hat description=None VOR dem ersten Fetch, sonst läuft jeder ro-SELECT in den Write-Zweig (Test test_ro_result_has_no_rw_mode fing das). Admin: GET liefert access_mode (default ro), save_source validiert ro|rw; BUGFIX daneben: options wird beim GUI-Edit mit den prev-options GEMERGT statt neu gebaut — config.json-only-Knöpfe (odbc_driver, windows_auth) überleben jetzt einen GUI-Edit. GUI (settings_general_tabs.js, keine neuen Globals): Zugriffsmodus-Select im Formular + Warntext, read/write-Badge (rot) in der Quellen-Liste, Intro-Text erklärt ro/rw + MSSQL-Sonderfall. db_query-Schema: Modus kommt aus der QUELLE, 'access denied ist final', rw meldet mode+rowcount, DDL nie. Tests: TestCheckStatementAllowed (9, reine Unit) + TestDbQueryRw (5, live gegen braintest: INSERT+SELECT-Roundtrip über FRISCHE Connection = Commit-Beweis, UPDATE-rowcount, DDL/Multi-Statement geblockt, ro-Write-Fehlertext, ro-Ergebnis ohne mode-Feld); 60/60 grün, js_gate PASS. LIVE verifiziert (Erfolgskriterium): Chat-Agent schrieb via db_query auf braintest_rw eine Zeile und las sie zurück; dieselbe Anweisung auf braintest (ro) sauber verweigert mit Modus-Fehlertext, kein Umweg-Versuch, DB blieb unverändert; Test-Sessions gelöscht."),
     ("9.368.0", "2026-07-17", "feat(Datenquellen v2 Phase 1 — MSSQL-Anbindung via pyodbc + 'ODBC Driver 17 for SQL Server', der EINZIGE im Ziel-Banknetz verifizierte Stack; DATA_SOURCES_V2_PLAN.md E3/Anhang B). data_tools: _mssql_odbc_conn_str (DSN-URL mssql://user:pass@host:port/db → ODBC-String EXAKT nach Bank-Specimen — SERVER=host,port mit KOMMA, bewusst OHNE Encrypt=/TrustServerCertificate= (Driver-17-Default Encrypt=no trägt im Banknetz; NICHT auf Driver 18 upgraden — dessen Encrypt=yes-Default scheitert an Self-Signed-Zerts); options.odbc_driver konfigurierbar, options.windows_auth → Trusted_Connection=yes statt UID/PWD; UID/PWD brace-escaped) + _connect_mssql (pyodbc.connect(timeout=) = LOGIN-Timeout, conn.timeout = QUERY-Timeout SEPARAT — Specimen 30/60; IM002 → RuntimeError mit installierten Treibern + Install-Hinweis; plain Cursor, pyodbc streamt via fetchmany). E4 EHRLICH: MSSQL hat KEIN Session-Read-only → _DB_READONLY_NOTE_MSSQL (Schicht 1 Statement-Gate + Schicht 3 db_datareader-only-Login) statt der Postgres-Note, per Quelle gewählt. wired_types = postgres+mssql (Admin-Typ-Dropdown zeigt mssql automatisch). Tests: TestMssqlConnStr (8, reine Unit — Specimen-Shape inkl. nie-Encrypt) + TestDbQueryMssql (8, skippen sichtbar ohne braintest_ms; Schicht-3-Beweis = direkter INSERT auf der ro-Login-Connection stirbt am DB-Grant); 46/46 grün. scripts/setup_mssql_testdb.py seedet braintest_ms 1:1 aus Postgres-braintest (50k positionen, identische Asserts; brain_ro_ms nur db_datareader). Treiber-Stack: pyodbc 5.3.0 + unixodbc 2.3.14 + msodbcsql17 17.11.1.1 — msodbcsql17 MANUELL installiert (Homebrew-Formula scheitert am Xcode-27-Gate; Tarball SHA256-identisch zur Formula nach /opt/homebrew/opt/msodbcsql17, Symlink in /opt/homebrew/lib, odbcinst-registriert; brew list kennt es NICHT). OFFEN (User-Call 'commit, dann Phase 2'): Live-Validierung gegen echten MSSQL steht aus — Suite skippt lokal, bis Docker/DSN da ist (O4)."),
@@ -7515,6 +7516,32 @@ class ProjectManager:
                        "design_system"):
                 if k in updates:
                     cfg[k] = updates[k]
+            # Per-project data-source scope (DATA_SOURCES_V2 Phase 4, E2):
+            # [{name, tables:[str]}] — the project config DECIDES what is
+            # usable in project chats (missing/empty = nothing; no silent
+            # global fallback). Names validated against the CONFIGURED
+            # sources — an unknown name fails loud instead of silently
+            # scoping to nothing.
+            if "data_sources" in updates:
+                _ds_in = updates.get("data_sources")
+                _known = {(s.get("name") or "").strip()
+                          for s in (_server_config().get("data_sources") or [])}
+                _ds_out = []
+                for _e in (_ds_in if isinstance(_ds_in, list) else [])[:50]:
+                    if not isinstance(_e, dict):
+                        continue
+                    _n = str(_e.get("name") or "").strip()
+                    if not _n:
+                        continue
+                    if _n not in _known:
+                        return {"error": f"Unbekannte Datenquelle '{_n}' — "
+                                         f"konfiguriert sind: "
+                                         f"{', '.join(sorted(_known)) or '(keine)'}"}
+                    _tabs = [str(t).strip()[:200]
+                             for t in (_e.get("tables") or [])[:500]
+                             if str(t).strip()]
+                    _ds_out.append({"name": _n, "tables": _tabs})
+                cfg["data_sources"] = _ds_out
             # NOTE: `code_mode` is intentionally NOT in the update whitelist — it
             # is fixed at creation (create_project) and never toggles afterward
             # (a code project and a memory project are structurally different).
@@ -9184,6 +9211,18 @@ def apply_domain_context(*, agent_id: str, project: str = "",
             _pcfg = ProjectManager.get_project(agent_id, proj_name)
         except Exception:
             _pcfg = None
+        # Per-turn data-source scope (E8): in a project the PROJECT CONFIG
+        # decides which sources/tables db_query may touch (E2 — missing/empty
+        # = none usable, deliberately no global fallback). Applies to normal
+        # AND code-mode projects. Plain chats: the worker sets the scope from
+        # the session selection AFTER this call (Phase 5) — here we only
+        # own the project case.
+        _scope = {}
+        for _e in ((_pcfg or {}).get("data_sources") or []):
+            if isinstance(_e, dict) and str(_e.get("name") or "").strip():
+                _scope[str(_e["name"]).strip()] = [
+                    str(t) for t in (_e.get("tables") or [])]
+        ctx.data_source_scope = _scope or None
         if _pcfg and _pcfg.get("disable_web_search"):
             _excl |= set(WEB_SEARCH_TOOLS)
         # Code Mode: point file tools at the project's working directory and
@@ -9252,6 +9291,7 @@ def build_tool_context(*, session_id: str, agent_id: str, user_id: str = "",
         "note_context": ctx.note_context,
         "workflow_run_id": ctx.workflow_run_id or "",
         "plan_mode": bool(ctx.plan_mode),
+        "data_source_scope": ctx.data_source_scope,
         "research_mode_override": ctx.research_mode_override,
         "execution_overrides": ctx.execution_overrides or {},
         "attachment_image_model": ctx.attachment_image_model or "",

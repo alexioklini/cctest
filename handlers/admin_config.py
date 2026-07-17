@@ -557,6 +557,74 @@ class AdminConfigHandlers:
                          "roles": list(ROLES),
                          "wired_types": ["postgres", "mssql"]})
 
+    def _handle_data_sources_available(self):
+        """GET /v1/data-sources/available — NOT admin-only (E7): any
+        authenticated user, filtered on the db_query access policy. Only
+        {name, type, access_mode} — NEVER dsn/env_key/options. Feeds the
+        project-settings section and the right-panel picker; an empty list
+        renders as a hint there."""
+        from engine.tools.data_tools import data_access_allowed
+        user = self._require_auth()
+        if not user:
+            return
+        allowed, _why = data_access_allowed(str(user.get("id") or ""))
+        sources = []
+        if allowed:
+            for s in (server_config.get("data_sources") or []):
+                sources.append({
+                    "name": s.get("name") or "",
+                    "type": s.get("type") or "postgres",
+                    "access_mode": ("rw" if (s.get("access_mode") or "")
+                                    .strip().lower() == "rw" else "ro"),
+                })
+        self._send_json({"sources": sources, "allowed": allowed})
+
+    def _handle_data_sources_tables(self, name: str):
+        """GET /v1/data-sources/<name>/tables — table list for the picker
+        (E7). Policy-gated like `available`; short connect timeout; an
+        offline source answers with a clean error text, never a 500."""
+        from engine.tools import data_tools
+        user = self._require_auth()
+        if not user:
+            return
+        allowed, why = data_tools.data_access_allowed(
+            str(user.get("id") or ""))
+        if not allowed:
+            self._send_json({"error": f"Kein Zugriff: {why}"}, 403)
+            return
+        try:
+            src = data_tools._resolve_db_source(name)
+        except ValueError as e:
+            self._send_json({"error": str(e)}, 404)
+            return
+        stype = (src.get("type") or "postgres").strip().lower()
+        probe = dict(src)
+        probe["options"] = dict(src.get("options") or {})
+        probe["options"]["connect_timeout"] = 5
+        conn = None
+        try:
+            conn, cur = data_tools._connect_readonly(probe)
+            if stype == "mssql":
+                # Bank-erprobt (Plan Anhang B).
+                cur.execute("SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES"
+                            " WHERE TABLE_TYPE = 'BASE TABLE'"
+                            " ORDER BY TABLE_NAME")
+            else:
+                cur.execute("SELECT table_name FROM information_schema.tables"
+                            " WHERE table_type = 'BASE TABLE' AND"
+                            " table_schema NOT IN"
+                            " ('pg_catalog', 'information_schema')"
+                            " ORDER BY table_name")
+            self._send_json({"tables": [r[0] for r in cur.fetchall()]})
+        except Exception as e:
+            self._send_json({"error": f"Quelle nicht erreichbar: "
+                                      f"{type(e).__name__}: {e}"})
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
     def _handle_data_sources_post(self):
         """POST /v1/data-sources — admin-only (gate in _ADMIN_POST_EXACT).
         Actions: save_source (add/edit; empty dsn on edit keeps the stored

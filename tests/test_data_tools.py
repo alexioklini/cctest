@@ -682,6 +682,69 @@ class TestDataSourceScopeGate(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Projekt-Scope-Verdrahtung (Phase 4, E8)
+# ---------------------------------------------------------------------------
+
+class TestProjectScopeWiring(unittest.TestCase):
+    """E8: apply_domain_context derives data_source_scope from project.json →
+    data_sources ([{name, tables}] → {name: [tables]}; missing/empty = None,
+    no silent global fallback); build_tool_context snapshots the field and
+    _apply_bg_context rehydrates it — project scheduler runs inherit the
+    project scope, sched sessions without a project stay None (O1)."""
+
+    def _apply(self, pcfg):
+        from engine.context import get_request_context
+        with request_context():
+            with mock.patch.object(brain.ProjectManager, "get_project",
+                                   return_value=pcfg), \
+                 mock.patch("server_lib.auth.AuthDB.get_user_teams",
+                            return_value=[]):
+                brain.apply_domain_context(agent_id="main", project="p1",
+                                           user_id="u1")
+            return get_request_context().data_source_scope
+
+    def test_project_config_becomes_scope(self):
+        scope = self._apply({"data_sources": [
+            {"name": "braintest", "tables": ["positionen"]},
+            {"name": "braintest_rw", "tables": []}]})
+        self.assertEqual(scope, {"braintest": ["positionen"],
+                                 "braintest_rw": []})
+
+    def test_project_without_sources_is_none(self):
+        self.assertIsNone(self._apply({}))
+        self.assertIsNone(self._apply({"data_sources": []}))
+
+    def test_no_project_leaves_scope_untouched(self):
+        from engine.context import get_request_context
+        with request_context(data_source_scope={"x": []}):
+            with mock.patch("server_lib.auth.AuthDB.get_user_teams",
+                            return_value=[]):
+                brain.apply_domain_context(agent_id="main", project="",
+                                           user_id="u1")
+            self.assertEqual(get_request_context().data_source_scope,
+                             {"x": []})
+
+    def test_tool_context_roundtrip_to_bg(self):
+        from engine.context import get_request_context
+        from handlers import sidecar_proxy
+        with request_context(data_source_scope={"braintest": ["positionen"]}):
+            tc = brain.build_tool_context(session_id="s1", agent_id="main",
+                                          user_id="u1")
+        self.assertEqual(tc["data_source_scope"],
+                         {"braintest": ["positionen"]})
+        with request_context():
+            sidecar_proxy._apply_bg_context(tc)
+            self.assertEqual(get_request_context().data_source_scope,
+                             {"braintest": ["positionen"]})
+        # No scope in the ctx dict (sched session without project) → None.
+        tc2 = dict(tc)
+        tc2.pop("data_source_scope")
+        with request_context():
+            sidecar_proxy._apply_bg_context(tc2)
+            self.assertIsNone(get_request_context().data_source_scope)
+
+
+# ---------------------------------------------------------------------------
 # db_query — mssql (DATA_SOURCES_V2_PLAN.md Phase 1)
 # ---------------------------------------------------------------------------
 

@@ -169,6 +169,10 @@ def _apply_bg_context(ctx: dict) -> None:
     tl.workflow_run_id = ctx.get("workflow_run_id") or ""
     tl.plan_mode = bool(ctx.get("plan_mode", False))
     tl.helpdesk_mode = bool(ctx.get("helpdesk_mode", False))
+    # Data-source scope (E8): background turns inside a project inherit its
+    # scope; detached/sched sessions WITHOUT a project carry None → db_query
+    # denies for normal users (O1, default deny).
+    tl.data_source_scope = ctx.get("data_source_scope") or None
     tl.research_mode_override = ctx.get("research_mode_override", None)
     # M1 (G1): the transparent-anonymisation mapping. Until v9.343 this field was
     # the ONE context key background turns didn't rebuild — so the result seam,

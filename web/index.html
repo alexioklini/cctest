@@ -709,6 +709,17 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </div>
         <div id="project-source-tree" class="project-source-tree"></div>
       </div>
+      <div class="project-panel-section" id="project-datasources-section" style="display:none">
+        <div class="project-panel-section-header">
+          <span class="project-panel-section-title">Datenquellen</span>
+        </div>
+        <div class="project-panel-help">
+          Externe Datenbanken, die Chats in diesem Projekt abfragen dürfen.
+          Nur hier angehakte Quellen sind im Projekt nutzbar; optional auf
+          einzelne Tabellen einschränken (nichts gewählt = alle Tabellen).
+        </div>
+        <div id="project-datasources-body"></div>
+      </div>
       <div class="project-panel-section" id="project-sync-section">
         <div class="project-panel-section-header">
           <span class="project-panel-section-title">Speicher &amp; Abgleich</span>
