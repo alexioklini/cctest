@@ -25,7 +25,7 @@ brain imports them for the re-export); they reach brain runtime via lazy
 | `mempalace_glue.py` | `tool_mempalace_query` + `_wing_visible` (project-wing isolation) + memory/KG tools |
 | `scheduler.py` / `quotas.py` / `workflow.py` / `code_graph.py` | scheduler+task-runner · CostTracker/QuotaManager/RateLimiter · workflow lexer/parser/interpreter · tree-sitter code graph |
 | `ingest.py` | DocumentParser/Chunker/IngestManager/IngestWatcher (`_ingest_watcher` singleton stays in brain) |
-| `tools/*` | every `tool_*` implementation: `file_tools` (file/shell/python/doc), `git_tools`, `gmail_tools`, `image_gen`, `context_tools`, `translate_tools`, `delegation_tools`, `misc_tools` (web_fetch/exa_search/searxng_search/use_skill/mcp/nodes), `ask_tools` |
+| `tools/*` | every `tool_*` implementation: `file_tools` (file/shell/python/doc), `git_tools`, `email_tools` (account resolution + GDPR seams over `engine/email_connectors.py` — the brain-free IMAP/POP3/EWS protocol layer), `image_gen`, `context_tools`, `translate_tools`, `delegation_tools`, `misc_tools` (web_fetch/exa_search/searxng_search/use_skill/mcp/nodes), `ask_tools` |
 | `pii_ner.py` / `classification.py` / `doc_convert.py` / `kg_extract.py` / `sync_log.py` | GDPR regex+NER · ARL classification · doc-extraction pipeline · KG triple extraction · sync log |
 
 What STAYS in `brain.py`: tool registry **wiring** (`TOOL_GROUPS`, `TOOL_DISPATCH`),

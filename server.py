@@ -1346,6 +1346,7 @@ class BrainAgentHandler(
         "/v1/mcp/disconnect",
         "/v1/tools/config",
         "/v1/tools/settings",
+        "/v1/tools/email/test",
         "/v1/research-mode/disciplines",
         "/v1/context/config",
         "/v1/cache/clear",
@@ -2399,6 +2400,8 @@ class BrainAgentHandler(
             self._handle_node_execute()
         elif path == "/v1/tools/config":
             self._handle_tools_config_save()
+        elif path == "/v1/tools/email/test":
+            self._handle_email_test()
         elif path.startswith("/v1/agents/") and path.endswith("/hooks"):
             self._handle_hooks_save(path)
         elif path == "/v1/admin/classify":
@@ -3868,6 +3871,17 @@ def main():
         if not (_rf.get("description") or "").startswith("**Plain-text files only**"):
             _rf["description"] = _RF_HINT + (
                 ("\n\n" + _rf["description"]) if _rf.get("description") else "")
+
+    # Email-Tools v2 (E4): one-time cutover gmail → email. (a) tools_config.json:
+    # legacy gmail record (+ gmail.json fallback) → multi-account email record;
+    # (b) tool_settings keys gmail_* → email_* so the renamed tools keep their
+    # purpose matrix + prose. Both idempotent; run BEFORE the seeds below so
+    # the migrated records are what gets seeded/backfilled.
+    if engine.migrate_gmail_to_email_config():
+        print("Tools config: migrated legacy gmail record to multi-account email record")
+    _em = engine.migrate_email_tool_settings(server_config["tool_settings"])
+    if _em:
+        print(f"Tool settings: renamed {_em} gmail_* record(s) to email_*")
 
     # Seed `purposes` on every TOOL_DISPATCH entry from current behavior
     # (interactive / research_minimal / memory_summary). Idempotent — only

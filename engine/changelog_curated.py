@@ -29,6 +29,26 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.365.0",
+        "date": "2026-07-17",
+        "title": "E-Mail funktioniert jetzt mit jedem Anbieter",
+        "body": "Die E-Mail-Anbindung ist nicht mehr auf Gmail beschränkt: "
+                "Unter Einstellungen → Tools → E-Mail richten Sie beliebig "
+                "viele Konten ein — Gmail, GMX, iCloud, Outlook.com und "
+                "generische Mailserver (IMAP oder POP3) sowie firmeninterne "
+                "Exchange-Server. Der Assistent kann mehrere Postfächer "
+                "parallel abrufen, durchsuchen und daraus senden; ohne "
+                "Angabe nutzt er das Standard-Konto. Je Konto gibt es einen "
+                "„Verbindung testen“-Knopf, und ein bestehendes Gmail-Konto "
+                "wird automatisch übernommen — es ist nichts neu "
+                "einzurichten. Der Datenschutz bleibt unverändert streng: "
+                "Gelesene Mails durchlaufen denselben Schutz wie bisher, "
+                "und in anonymisierten Sitzungen wird kein Versand an "
+                "geschützte Adressen zugelassen.",
+        "audience": "user",
+        "versions": ["9.365.0"],
+    },
+    {
         "version": "9.364.0",
         "date": "2026-07-17",
         "title": "Design-Modus: Bilder direkt einfügen lassen",

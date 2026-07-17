@@ -675,17 +675,31 @@ auto-feed-from-chat behavior live in the wiki, not a key/value store.
   The Web-Search settings panel (Settings → Server → Websuche) shows each of
   these tools with an on/off toggle and the health of the engines backing it,
   re-probed every 4 hours.
-- `gmail_inbox` / `gmail_read(id)` / `gmail_search(q)` / `gmail_send` /
-  `gmail_reply` — requires `gmail.json` configured
-- **In anonymisierenden Sitzungen (v9.343.0)**: `gmail_send`/`gmail_reply` sind
+- `email_accounts` / `email_inbox` / `email_read(id)` / `email_search(q)` /
+  `email_send` / `email_reply` — provider-agnostische E-Mail-Tools (v9.365.0,
+  vormals `gmail_*`) über konfigurierbare Konnektor-Konten
+  (`tools_config.json → email.accounts[]`, Typen `imap` / `pop3` /
+  `exchange_ews`). Mehrere Konten parallel; jedes Tool nimmt optional
+  `account` (leer = Standard-Konto), `email_accounts` listet Namen, Typ,
+  Adresse und Capabilities (Ordner, Server-Suche, Reply) je Konto — ein
+  unbekannter Kontoname nennt die verfügbaren Namen im Fehler. Gmail ist ein
+  Preset des IMAP-Konnektors (App-Passwort; Suche nutzt dort weiterhin die
+  volle Gmail-Syntax via X-GM-RAW). Sonst gilt die einfache Such-Syntax
+  `from:` / `subject:` / `to:` + Freitext; POP3 hat keine Server-Suche und
+  filtert clientseitig über die letzten Nachrichten (steht im Ergebnis als
+  `search_scope`). Exchange = On-Prem EWS via `exchangelib`
+  (Benutzername/Passwort, kein OAuth/Graph). `email_send` prüft jede
+  Empfängeradresse deterministisch auf RFC-Form (Pseudonym-Tokens scheitern
+  damit IMMER, nicht nur zufällig).
+- **In anonymisierenden Sitzungen (v9.343.0)**: `email_send`/`email_reply` sind
   **Egress-Tools** und laufen durch dasselbe Gate wie die Web-Tools — enthält ein
   Argument einen geschützten Wert oder ein Pseudonym, wird der Versand
   **verweigert** (`web_query_blocked_pii`). Grund: ein Fake-Empfänger sieht wie
   eine echte Adresse aus, die Mail ginge an einen fremden Dritten. **Anhänge sind
   bei aktivem Mapping komplett gesperrt** (die Artefakt-Datei auf der Platte ist
   bereits rückübersetzt → Fake-Text + Klartext-Anhang). Die Lese-Tools
-  (`gmail_inbox`/`read`/`search`) pseudonymisieren ihr Ergebnis (fremde
-  Mail-Inhalte sind fremde personenbezogene Daten).
+  (`email_inbox`/`read`/`search`, auch `email_accounts`) pseudonymisieren ihr
+  Ergebnis (fremde Mail-Inhalte sind fremde personenbezogene Daten).
 - **Firmen-Recherche trotz Anonymisierung (v9.344.0, Auto-Release)**: Suchst du
   in einer anonymisierenden Sitzung mit einem **Firmen**-Pseudonym, wird der
   Call NICHT mehr verweigert — das Gate setzt für die ausgehende Anfrage
@@ -1119,7 +1133,7 @@ wiki          wiki_write wiki_read wiki_delete wiki_structure
 context       context_search context_detail context_recall
 web           web_fetch exa_search searxng_search
               science_search dev_search image_search news_search
-email         gmail_inbox gmail_read gmail_search gmail_send gmail_reply
+email         email_accounts email_inbox email_read email_search email_send email_reply
 delegation    delegate_task task_status task_cancel
 background     run_background_task retry_background_task
 code_graph    code_search code_trace code_query code_snippet ast_grep_search ast_grep_replace

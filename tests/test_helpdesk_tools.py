@@ -55,7 +55,7 @@ class TestHelpdeskToolSet(unittest.TestCase):
 
     def test_no_write_or_exec_tools(self):
         forbidden = {"write_file", "edit_file", "execute_command", "python_exec",
-                     "git_command", "github_command", "gmail_send", "gmail_reply",
+                     "git_command", "github_command", "email_send", "email_reply",
                      "write_document", "edit_document", "delegate_task",
                      "generate_image", "schedule_modify"}
         leaked = forbidden & self.names

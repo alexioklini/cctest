@@ -1455,7 +1455,7 @@ mit der synthetischen Sitzung `sched-<run_id>` und im Lauf-Detail.
 Seitenleiste → **Workflows**. Mehrstufige Automatisierungen: jeder Schritt
 ist ein Prompt oder ein `ask_user`-Gate. Nutze diese, wenn eine
 wiederkehrende Aufgabe an bestimmten Punkten menschliche Freigabe braucht
-(z. B. „E-Mail entwerfen" → Mensch gibt frei → „via gmail_send senden").
+(z. B. „E-Mail entwerfen" → Mensch gibt frei → „via email_send senden").
 
 Im Editor anlegen: Name, Beschreibung, geordnete Schritte mit optionalen
 Datei-Uploads und `ask_user_for_file` / `ask_llm`-Blöcken. Aus der
@@ -2256,6 +2256,22 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   Max-Triples/Konfidenz/Zeichen + Closet-Konfiguration
 - **Tools** — Pro-Tool aktivieren/deferren/Purpose + Prosatexte; enthält
   auch den **Brainy**-Tab (siehe unten)
+  - **E-Mail-Konten (v9.365.0)**: Unter **Einstellungen → Tools → email**
+    verwaltet der Admin die E-Mail-Konten des Agenten — mehrere Konten
+    parallel, je Konto eine Karte mit Name (der Bezeichner, den der Agent im
+    `account`-Parameter verwendet), Typ (**IMAP+SMTP**, **POP3+SMTP** oder
+    **Exchange (EWS, On-Prem)**), E-Mail-Adresse, Benutzername (leer =
+    Adresse ist der Login) und Passwort (maskiert). Bei IMAP füllt ein
+    **Preset** (Gmail, Outlook.com, GMX, iCloud, web.de) Host/Port/
+    Verschlüsselung vor — das Gmail-Preset braucht ein App-Passwort (2FA)
+    und schaltet die volle Gmail-Suchsyntax frei. Exchange verbindet per
+    EWS-Host + Benutzername/Passwort (On-Prem; Microsoft 365/Graph ist
+    nicht abgedeckt); das Abschalten der Zertifikatsprüfung (Self-Signed)
+    wirkt prozessweit und ist entsprechend markiert. **„Verbindung
+    testen"** je Konto prüft Login bzw. EWS-Bind, ohne etwas zu senden.
+    Ein Konto wird per Radio-Knopf zum **Standard-Konto** (gilt, wenn der
+    Agent keins nennt). Das alte Gmail-Feld wandert beim ersten Start
+    automatisch als Konto „gmail" in dieses Modell.
 - **Doctor** — Konfig-Diagnose: erkennt Modell-/Konfig-Verweise auf nicht
   existierende Provider oder deaktivierte Modelle, Provider-Lücken,
   MemPalace-Zustand (Backend, Embedding-Gerät, Drawer-Zahl), fehlschlagende
@@ -2791,18 +2807,18 @@ Tool-Profil `interactive`.
 2. Ausfüllen:
    - **Name**: `tägliche_inbox_zusammenfassung`
    - **Aufgabe**:
-     > Nutze `gmail_search`, um ungelesene Nachrichten der letzten 24 h zu
+     > Nutze `email_search`, um ungelesene Nachrichten der letzten 24 h zu
      > finden. Für jeden Thread, der eine Antwort zu brauchen scheint,
      > liste Absender, Betreff und einen Ein-Satz-Grund. Überspringe
      > Newsletter und Benachrichtigungen. Gib eine Markdown-Liste aus.
    - **Zeitplan**: `0 8 * * *`
    - **Modell**: ein fähiges Modell (lokal ist gut)
-   - **Tool-Profil**: `interactive` (braucht die Gmail-Tools)
+   - **Tool-Profil**: `interactive` (braucht die E-Mail-Tools)
 3. Speichern. **Jetzt ausführen** klicken zum Testen. Lauf-Detail prüfen.
 4. Passt die Ausgabe, stehen lassen — feuert täglich um 08:00.
 
 **Tipp**: Das Ergebnis an etwas Umsetzbares schicken — die Aufgabe so
-ändern, dass sie eine Zusammenfassung per `gmail_send` an dich selbst
+ändern, dass sie eine Zusammenfassung per `email_send` an dich selbst
 schickt.
 
 ---

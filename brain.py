@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.364.1"
+VERSION = "9.365.0"
 VERSION_DATE = "2026-07-17"
 CHANGELOG = [
+    ("9.365.0", "2026-07-17", "feat(E-Mail-Tools v2 — Provider-Konnektoren IMAP/POP3/Exchange + generische email_*-Tools; Plan EMAIL_TOOLS_V2_PLAN.md, User-Entscheide 2026-07-17: Konnektor-Modell + Exchange via exchangelib/EWS On-Prem nach dem gelieferten email_service.py-Specimen, Anhang A). Die fünf gmail_*-Tools (hardcoded imap.gmail.com/smtp.gmail.com) werden provider-agnostisch: NEU engine/email_connectors.py (E1, REINER Protokoll-Code ohne brain-Import, testbar ohne Server-Runtime) mit EmailConnector-Basis (list/read/search/send/reply/test + capabilities-Flags folders/server_search/native_query_syntax/reply) und drei Konnektoren: ImapSmtpConnector (Host/Port/Security aus dem Konto statt Konstanten; X-GM-RAW NUR bei native_query_syntax = Gmail-Preset; sonst E6-Übersetzung der einfachen Syntax from:/subject:/to:+Freitext in Standard-IMAP-SEARCH; Nicht-ASCII-Query → clientseitiger Header-Filter mit ausgewiesenem search_scope statt imaplib-ASCII-Crash), Pop3Connector (E7 bewusst reduziert: TOP-Header statt Ordner — folder wird ignoriert UND im Result gesagt; Suche clientseitig über die letzten 200 Header mit search_scope; Reply via RETR→Message-ID/Reply-To, Threading funktioniert), ExchangeEwsConnector (E8 EXAKT nach Specimen: Credentials(username,password)+Configuration(server=…)→Account(access_type=DELEGATE, autodiscover=False); lazy import + fail-loud 'exchangelib nicht installiert' statt Boot-Bruch; verify_ssl:false → NoVerifyHTTPAdapter mit PROZESS-GLOBAL-Kommentar im Code + Warnhinweis im GUI; Suche via QuerySet-Q-Filter, Senden Message+Mailbox+FileAttachment, Reply nativ item.reply()). TOOL-SCHICHT engine/tools/email_tools.py (E2 — gmail_tools.py GELÖSCHT, kein Drift-Zwilling): Konto auflösen → Konnektor → Operation → GDPR-Seam an EINEM Punkt für alle Konnektor-Typen; Anhang-fail-closed bei aktivem Mapping + _norm-Adressnormalisierung 1:1 übernommen; NEU deterministische RFC-Form-Prüfung JEDER Empfängeradresse VOR dem Konnektor (Anhang-A-Notiz 5: der 30051b1f4439-Token scheiterte nur ZUFÄLLIG am Adressformat — jetzt strukturell). KONTEN-MODELL (E3) tools_config.json → email {enabled, default_account, accounts:[{name,type,preset?,email,username?,password,…hosts/ports/security}]}; username leer = email ist Login. SECHSTES Tool email_accounts (E5, read-only: Name/Typ/Adresse/Capabilities, KEINE Secrets) statt Kontennamen in Schema-Descriptions (KV-Prefix-Invariante — Schemas bleiben STATISCH); unbekannter account-Name nennt die verfügbaren Namen (self-healing, live verifiziert). RENAME OHNE ALIASE (E4, Dispatch-Identity + Prompt-Bloat): Boot-Migrationen idempotent in server.py main() VOR den Seeds — migrate_gmail_to_email_config (gmail-Record + agents/main/gmail.json-Fallback → EIN imap-Konto preset:gmail; live gegriffen) + migrate_email_tool_settings (tool_settings-Keys gmail_*→email_*, Purpose-Matrix/Prosa bleiben erhalten; live verifiziert: email_send interactive=active aus Altbestand). WIRING (E9): TOOL_GROUPS.email (6), TOOL_DISPATCH direkte Fn-Refs, READONLY_TOOLS (3 Read + email_accounts), _EGRESS_EXTRA_TOOLS email_send/email_reply (Egress-Gate namensbasiert, keine Logik-Änderung), Icons/Verbs, _TOOLS_CONFIG_DEFAULTS email-Block, get_tool_status zählt konfigurierte Konten + STRIPPT Secrets aus dem Status; execution.py-Timeout-Profile + server_lib/trace_audit (alte gmail_*-Namen BLEIBEN für historische Traces, email_* ergänzt). HANDLER: admin_config Tools-Config GET maskiert nested account-Passwörter, SAVE restauriert maskierte Werte per Konto-Name (der gmail-Fallback-Merge entfällt — Migration hat eingesammelt); NEU POST /v1/tools/email/test {account} (admin-gated, IMAP-/POP3-Login bzw. EWS-Bind + total_count, KEIN Send — Anhang-A-Notiz 7); admin_artifacts-Backup redigiert email.accounts[].password. GUI (Phase 4, settings_tools.js): Konten-Editor mit Karten je Konto (Typ-Dropdown imap/pop3/exchange_ews, Preset-Dropdown gmail/outlook/gmx/icloud/web.de mit Host/Port-Autofill — zur Laufzeit zählen NUR gespeicherte Felder, Passwort maskiert, Self-Signed-Warnung am verify_ssl-Feld, POP3-Einschränkungs-Hinweis), Konto hinzufügen/entfernen, Standard-Konto-Radio, 'Verbindung testen' je Konto (speichert erst, testet dann den PERSISTIERTEN Stand); Draft-State _emailDraft mit DOM-Sync vor jedem Re-Render; chat_tools.js-Labels DE + WRITE_EXEC-Set (settings_general_tabs.js) umbenannt. TESTS: tests/test_email_tools_v2.py NEU (38 — Konnektoren gegen gemocktes imaplib/poplib/smtplib inkl. X-GM-RAW-nur-bei-Preset, POP3-folder-ignore+search_scope, Reply-Threading beider Wege, Query-Übersetzung, exchangelib-fehlt→ConnectorError, Konto-Auflösung default/benannt/unbekannt-listet-Namen, RFC-Check refust Pseudonym-Token, beide Migrationen inkl. Idempotenz + gmail.json-Einsammeln, 4-Site-Wiring + Egress/READONLY-Sets + statische Schemas); test_gdpr_egress_gate + test_helpdesk_tools auf neue Namen (die Kalibrier-Matrix kennt email_send — sonst grün-blind); test_dispatch_symmetry grün. LIVE-VALIDIERT am echten Gmail-Konto nach Migration + Neustart (Phase-1-Schritt-8): email_accounts (Capabilities inkl. native_query_syntax), inbox (3), read (Body 5201c), search X-GM-RAW ('is:unread OR from:google'), send an eigene Adresse ZUGESTELLT, reply mit Re:-Subject + Threading, Pseudonym-Token-to refused, /v1/tools/email/test ok:true (64 Mails) + unknown-account-Fehler mit Namensliste; GUI-Panel per Playwright verifiziert (Karte rendert, Passwort maskiert ankommend, Add/Typwechsel-EWS/Remove-Roundtrip, buildToolIntegrationRec erhält Konto). POP3 + Exchange sind EHRLICH nur unit-getestet (O1: kein erreichbarer POP3-/EWS-Testzugang in dieser Session — Exchange-Live-Validierung gegen den lokalen Server steht aus, Zugang beim User erfragen). NICHT im Scope (dokumentiert): M365/Graph, OAuth2/XOAUTH2, HTML-Send, Anhang-Download beim Lesen (O3, neue GDPR-Fläche), IDLE/Ordner-Verwaltung, Mail-Polling-Daemon. js_gate GRÜN (eslint clean, net-globals 2012→2021 bewusst: 9 neue Editor-Globals, Baseline mitgezogen; Smoke passed). py_compile OK (brain, server, email_connectors, email_tools, tool_schemas, admin_config, admin_artifacts, trace_audit, execution). Schema-Änderung (Rename + account-Param + email_accounts) → Warm-Pool-Prefix re-primt einmalig. Server-Restart nötig. Skill 02-tools/04-recipes (Konto-einrichten-Rezept)/05-internals/06-user-manual (DE) + SKILL.md 1.234.0, README, CLAUDE.md/engine/CLAUDE.md/INVARIANTS.md + kuratierter Eintrag (user+admin) im selben Commit."),
     ("9.364.1", "2026-07-17", "fix(DOCX-Export — Bilder rissen die Seite: native Pixelgröße statt Seitenbreite; User-Fund am Export von Chat ea024875, Szenarioanalyse_WAG2018_Report): _html_to_docx_bytes rief doc.add_picture OHNE width — python-docx übernimmt dann die NATIVE Bildgröße, die 7 Chart-/Diagramm-PNGs des Reports landeten mit 22-57 Zoll Breite auf einer 8,5-Zoll-Seite (per wp:extent im document.xml verifiziert). FIX am Choke-Point in handlers/admin_artifacts.py: NACH add_html_to_document werden ALLE doc.inline_shapes auf die nutzbare Fläche geklammert (Sektion: page_width/height minus Ränder; Seitenverhältnis erhalten) — bewusst als Post-Pass statt im handle_img-Override, damit BEIDE Einfüge-Zweige (data-URI-Override UND htmldocx' eigener Datei-/URL-Pfad) denselben Deckel bekommen; zweite Klammer auf die SEITENHÖHE für hochformatige Diagramme (das 17×37-Zoll-Hierarchie-Diagramm wäre bei reiner Breiten-Klammer mit 6×12,98 Zoll weiter von Word abgeschnitten worden → 4,16×9,00). VERIFIZIERT live am Original-Artefakt 581493b2-1d3: Re-Export → alle 7 Bilder ≤6,00×9,00 Zoll, python-docx-Roundtrip grün (176 Absätze, 7 Bilder); korrigierte Datei an den User geliefert. Betrifft auch v9.364.0-Design-Anhänge (deren data-URIs laufen durch denselben Export). py_compile OK. Server-Restart nötig. Kuratiertes 9.360er-Export-Bundle um die Version erweitert; kein Skill-Touch (Bugfix stellt dokumentiertes Verhalten her)."),
     ("9.364.0", "2026-07-17", "feat(Design-Modus — Bilder an Kommentaren: 'füge diesen Screenshot an diese Stelle ein'; User-Auftrag). KOMMENTAR-BLASE (web/js/design_canvas.js, alles im DesignCanvas-IIFE — NULL neue Globals, net-globals 2012 unverändert): Knopf 'Bild anhängen' (inline-SVG-Büroklammer, feedback_svg_not_emoji_buttons) + hidden file-input accept=image/*; Bild als Mini-Vorschau in Blase UND Chip; Kommentar auch OHNE Text erlaubt, wenn ein Bild dran hängt (Default-Wunsch 'Füge das angehängte Bild an dieser Stelle ein'); leere/unlesbare Dateien abgewiesen (files.js-Muster). APPLY: Kommentar-Bilder werden in state._pendingFiles eingereiht und reiten als NORMALE Chat-Attachments über die bestehende Send-Pipeline (GDPR-Scan at send, Disk-Ablage /tmp/brain-attachments/<sid>/ — Bilder landen dort seit je AUCH bei Vision-Modellen, die sie zusätzlich multimodal sehen); Sende-Dateinamen werden pro Apply-Batch eindeutig gemacht (Kollision → '<i>-'-Präfix), die Prompt-Zeile nennt das Bild je Kommentar. EINBETTUNGS-MECHANIK (der Kern — Bildbytes fließen NIE durchs Modell, ein 200KB-Screenshot wäre ~70k Tokens, und das srcdoc-iframe kann keine Disk-Dateien laden): das Modell schreibt NUR eine kurze Referenz <img src=\"attachment://<dateiname-auf-platte>\">; brain._inline_attachment_refs (NEU, gerufen ganz oben in _after_file_write — der EINE Write-Choke-Point, deckt write_file/edit_file UND Shell-/Python-Writes via Ordner-Diff; feedback_single_fix_point) ersetzt sie DETERMINISTISCH durch die data-URI der Datei aus dem Session-Attachment-Ordner → das gespeicherte Artefakt ist selbst-enthalten (srcdoc-Viewer, PDF-/PPTX-Render-Service, DOCX-Konverter mit seinem base64-Raster-Handling — alle Wege funktionieren; das war die bei Phase B bewusst vertagte 'Upload+Data-URI-Inlining'-Validierung). Läuft VOR dem GDPR-Callback + der Versions-Registrierung (De-Anonymise-Pass und artifact_versions sehen die finalen Bytes). GUARDS: nur .html/.htm; nur Bild-Extensions (png/jpg/jpeg/gif/webp/svg, MIME aus Extension); 3MB pro Bild; Budget hält das Ergebnis unter der 5MB-Versions-Snapshot-Grenze (content=None wäre ein leeres Panel); Name wird URL-unquoted auf den BASENAME reduziert (attachment://../../etc/passwd.png kann den Session-Ordner nie verlassen); Nicht-UTF-8-HTML → Warnung statt Korruption. FAIL-LOUD: unauflösbare Referenzen bleiben stehen + queuen eine MODELL-SICHTBARE Warnung (RequestContext._design_file_warnings NEU, engine/context.py; Drain in llm_loop.dispatch_tool direkt neben dem _gdpr_file_warnings-Drain, Präfix '⚠️ Design:') — das Modell korrigiert den Dateinamen in derselben Runde. STEERING doppelt: der Apply-Prompt erklärt die Konvention (nur bei Bildern), und _DESIGN_DECK_CONVENTION (handlers/chat.py, wire-only auf jedem design_context-Turn) trägt einen Satz dazu — damit funktioniert auch die ERST-Erstellung mit Bild ('erstelle einen One-Pager mit diesem Logo'); NIE System-Prompt, KV-Prefix unberührt. CSS: .design-bubble-attach/.design-attach-btn/.design-attach-preview/.design-chip-img (main.css, theme-aware über bestehende Variablen). Tests: tests/test_design_attachment_inline.py NEU (10 — Happy-Path png+svg+URL-encoded Name, Missing/Non-Image/Oversize je Warnung+Referenz bleibt, Traversal→Basename, non-html untouched, ohne Session untouched, HTML ohne Referenz wird nicht neu geschrieben (mtime-Pin), dispatch_tool-Drain append+clear); test_report_fidelity + test_request_context_isolation + test_file_tools_characterization grün. js_gate GRÜN (eslint clean, net-globals 2012 unverändert, Smoke 5/5). py_compile OK (brain, context, llm_loop, chat). Kein Schema-Touch; _DESIGN_DECK_CONVENTION ist wire-only → Warm-Pool-Prefix unberührt. Server-Restart nötig. Skill 05-internals + 06-user-manual (DE) + SKILL.md 1.233.0 + kuratierter Eintrag (user) im selben Commit."),
     ("9.363.0", "2026-07-17", "feat(Datenquellen-Admin-GUI + Zugriffs-Policy für db_query — User-Auftrag: 'admin gui + einen generellen ein/ausschalter pro user / team / global / usertypes'). POLICY (engine/tools/data_tools.data_access_allowed, NEU): config.json → data_sources_access {enabled, roles, teams, users} — `enabled` ist der MASTER-Schalter (aus = für ALLE gesperrt, auch Admins); Freigaben ADDITIV nach Rolle (usertypes admin/poweruser/user — admin passiert die Grant-Achsen IMMER, das Muster von has_capability/can_access_model), nach User-Team (user_team_members via AuthDB.get_user_teams) und nach einzelnem User; `__system__` passiert; leere user_id → deny (fail-loud); FEHLENDER Block = NUR ADMINS (Warehouse-Credentials default-closed — bewusste Verhaltensänderung ggü. 9.356.0, wo jeder Chat-Nutzer db_query hatte; das file-basierte data_query bleibt ungegated). DURCHSETZUNG IM TOOL (Guard ganz oben in tool_db_query, vor Source-Resolution): bewusst KEINE per-User-Tool-Listen-Mutation (exclude_tools) — die Tool-Liste bleibt byte-identisch über alle User, Warm-Pool-KV-Prefix unberührt (feedback_kv_cache_stability); erreicht so JEDEN Dispatch-Pfad (Chat, Scheduler, Workflows, Delegation); abgelehnter Aufruf = sauberer Tool-Fehler 'access denied — <Grund>', Schemabeschreibung sagt dem Modell explizit 'final for this user, do NOT retry' (+ verweist auf Einstellungen → Datenquellen statt config.json). ENDPOINTS (handlers/admin_config.py, beide admin-gated in _ADMIN_GET_EXACT/_ADMIN_POST_EXACT): GET /v1/data-sources → Quellen mit MASKIERTER DSN (_mask_dsn redigiert das Passwort-Segment; dsn_set/dsn_masked, das Secret verlässt den Server NIE) + Access-Policy (fehlender Block als admins-only gemeldet) + Team-/User-/Rollen-Listen für die Grant-Picker + wired_types; POST /v1/data-sources {action: save_source|delete_source|save_access} — save_source mit original_name (Rename) und LEERE DSN beim Edit = gespeichertes Secret bleibt (das Provider-API-Key-Muster), Validierung (Name-Pflicht/-Unique, Options-Ints, DSN-oder-env_key-Pflicht bei Neuanlage); persistiert config.json UND live server_config → KEIN Restart nötig (db_query liest live). server.py main(): Boot-Copy für data_sources_access ergänzt (das 9.294.3-Loch vermieden). GUI (settings_general_tabs.js _genTab_data_sources + _dsEdit/saveDataSource/deleteDataSource/saveDataSourcesAccess; Tab 'Datenquellen' in der Server-Gruppe, settings_general.js RENDERERS): Zugriffs-Sektion (globaler Schalter, Rollen-Checkboxen — Admin fest angehakt/disabled, Team-/User-Multiselects nur Nicht-Admins) + Quellen-Liste (Typ-Badge, maskierte DSN bzw. env:-Anzeige, Bearbeiten/Löschen) + Add/Edit-Formular (DSN als type=password, Placeholder erklärt 'leer lassen = unverändert'). Tests: tests/test_data_tools 30/30 grün — TestDbQueryAccessPolicy NEU (8: fehlender Block = admins-only, Master-Schalter blockt Admins, Rollen-/User-/Team-Grant je positiv+negativ, __system__/leere-uid, Guard-vor-Source-Resolution via gemockter AuthDB), bestehende TestDbQuery-Suite läuft jetzt als __system__ (Policy-Bypass — sie testet Query-Mechanik, nicht Policy). js_gate GRÜN (net-globals 2007→2012, +5 bewusst: Renderer + 4 Handler; Smoke 4/5 + bekannter Flake). MSSQL/Snowflake/Oracle bleiben unverdrahtet (User-Frage beantwortet: Postgres-DSN kann kein MSSQL; Nachrüsten = ein Branch in _connect_readonly sobald testbarer DSN existiert — Hinweis jetzt im 04-recipes-Rezept). Schema-Touch (db_query-Beschreibung) → Warm-Pool-Prefix re-primt einmalig. Server-Restart nötig. Skill 01-api/02-tools/04-recipes/06-user-manual + SKILL.md 1.232.0 + kuratierter Eintrag (admin) im selben Commit."),
@@ -971,7 +972,8 @@ READONLY_TOOLS = frozenset({
     "read_file", "list_directory", "search_files", "web_fetch", "exa_search",
     "wiki_read", "task_status", "list_nodes",
     "context_search", "context_detail", "context_recall", "schedule_list",
-    "schedule_history", "use_skill", "gmail_inbox", "gmail_read", "gmail_search",
+    "schedule_history", "use_skill", "email_inbox", "email_read", "email_search",
+    "email_accounts",
     "read_document",
     "code_search", "code_trace", "code_query", "code_snippet",
     "ast_grep_search",   # search only — ast_grep_replace writes files
@@ -1453,7 +1455,8 @@ TOOL_GROUPS = {
     "context": {"context_search", "context_detail", "context_recall"},
     "web": {"web_fetch", "exa_search", "searxng_search",
             "science_search", "dev_search", "image_search", "news_search"},
-    "email": {"gmail_inbox", "gmail_read", "gmail_search", "gmail_send", "gmail_reply"},
+    "email": {"email_inbox", "email_read", "email_search", "email_send",
+              "email_reply", "email_accounts"},
     "documents": {"read_document", "write_document", "edit_document", "render_diagram",
                   "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff",
                   "text_diff", "data_query", "db_query"},
@@ -1500,11 +1503,12 @@ WEB_SEARCH_TOOLS = ["web_fetch", "exa_search", "searxng_search",
 # the only ones the L4 gate looked at. Everything below hands data to a third
 # party just as irreversibly, and ran completely ungated:
 #
-#   gmail_send/gmail_reply → smtp.gmail.com. Live specimen (session 30051b1f4439):
-#       the model called gmail_send(to="<EMAIL_1_a812>", body="…IBAN DE38…") and
-#       the send REALLY WENT OUT — it failed only because that opaque token
-#       happens not to be a valid address. A shape-preserving fake address (this
-#       pipeline mints exactly those) would have been DELIVERED to a stranger.
+#   email_send/email_reply → the account's SMTP/EWS server. Live specimen
+#       (session 30051b1f4439, then gmail_send): the model called
+#       gmail_send(to="<EMAIL_1_a812>", body="…IBAN DE38…") and the send REALLY
+#       WENT OUT — it failed only because that opaque token happens not to be a
+#       valid address. A shape-preserving fake address (this pipeline mints
+#       exactly those) would have been DELIVERED to a stranger.
 #   generate_image → api.mistral.ai, ALWAYS, regardless of the session model
 #       (image_gen.py:35) — so even a LOCAL session, where anonymisation never
 #       runs, ships its prompt to the cloud.
@@ -1515,7 +1519,7 @@ WEB_SEARCH_TOOLS = ["web_fetch", "exa_search", "searxng_search",
 # that leaves the machine". Same gate semantics for all of them: fakes always
 # refuse; known originals follow the policy; a fresh scan catches third-party PII.
 _EGRESS_EXTRA_TOOLS = frozenset({
-    "gmail_send", "gmail_reply", "generate_image",
+    "email_send", "email_reply", "generate_image",
 })
 
 # Egress tools known by name. MCP tools are matched dynamically (see
@@ -1971,7 +1975,7 @@ def tool_purpose_matrix(agent_id: str | None = None) -> dict:
 
     idx = _TOOL_DEF_INDEX or {}
     # EVERY tool counts. The matrix spans all dispatchable tools PLUS the
-    # integration-only pseudo-tools (gmail/refinement/translation/text_to_speech/
+    # integration-only pseudo-tools (email/refinement/translation/text_to_speech/
     # code_graph — service configs, not agent-callable). Integration-only tools
     # are never part of any agent channel's surface, so they resolve to inactive
     # for every purpose — but they're still counted, so the invariant
@@ -2271,7 +2275,7 @@ _MEMORY_SUMMARY_TOOLS = {"mempalace_query", "save_chat_to_memory",
 _HELPDESK_TOOLS = {
     # Brainy is a READ-ONLY assistant: it may read + look things up freely, but
     # never write/run/modify. Write/exec tools (write_file, edit_file,
-    # execute_command, python_exec, git_command, gmail_send, schedule mutate, …)
+    # execute_command, python_exec, git_command, email_send, schedule mutate, …)
     # are deliberately EXCLUDED and the dispatcher enforces the set.
     "use_skill",
     "helpdesk_session_info", "helpdesk_user_context", "helpdesk_user_activity",
@@ -3701,7 +3705,7 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
 
     Name kept for its L4 lineage, but the scope is no longer just the web
     (M2/G7): it guards every tool in `EGRESS_TOOLS` — the web tools PLUS
-    gmail_send/gmail_reply (smtp.gmail.com), generate_image (api.mistral.ai,
+    email_send/email_reply (the account's SMTP/EWS server), generate_image (api.mistral.ai,
     always, even from a local session) and every MCP tool (arbitrary, possibly
     remote server). See `_is_egress_tool`.
 
@@ -3732,7 +3736,7 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         is never useful — it poisons evidence with strangers' data).
     """
     try:
-        # M2 (G7): every EGRESS tool, not just the web ones — gmail_send/reply,
+        # M2 (G7): every EGRESS tool, not just the web ones — email_send/reply,
         # generate_image and any MCP tool leave the machine just as irreversibly.
         if not _is_egress_tool(tool_name):
             return None, args
@@ -4842,18 +4846,20 @@ def _describe_image_with_vision(image_data_b64: str, media_type: str, filename: 
 # (refactor E1); re-exported near TOOL_DISPATCH.
 
 
-# --- Gmail Tools ---
-# Extracted to engine/tools/gmail_tools.py (A4). Functions + gmail-specific
-# helpers (_gmail_config / _decode_mime_header / _get_email_body) live there;
-# re-exported here so the 4 tool registration sites + the integration-status
-# helper resolve unchanged.
-from engine.tools.gmail_tools import (  # noqa: E402
-    tool_gmail_inbox,
-    tool_gmail_read,
-    tool_gmail_search,
-    tool_gmail_send,
-    tool_gmail_reply,
-    _gmail_config,
+# --- E-Mail Tools ---
+# Provider-agnostic tools (Email-Tools v2) in engine/tools/email_tools.py over
+# the connectors in engine/email_connectors.py (imap / pop3 / exchange_ews);
+# re-exported here so the tool registration sites + the integration-status
+# helper + the /v1/tools/email/test handler resolve unchanged.
+from engine.tools.email_tools import (  # noqa: E402
+    tool_email_accounts,
+    tool_email_inbox,
+    tool_email_read,
+    tool_email_search,
+    tool_email_send,
+    tool_email_reply,
+    _email_config,
+    test_email_account,
 )
 
 
@@ -5432,10 +5438,14 @@ _TOOLS_CONFIG_DEFAULTS = {
         # setting (configure the instance under Settings -> Server instead).
         "default_num_results": 5,
     },
-    "gmail": {
+    "email": {
+        # Multi-account connector model (Email-Tools v2, E3). Each account:
+        # {name, type: imap|pop3|exchange_ews, preset?, email, username?,
+        #  password, <type-specific hosts/ports/security>}. `username` empty =
+        # `email` is the login. The gmail preset unlocks X-GM-RAW search.
         "enabled": True,
-        "email": "",
-        "app_password": "",
+        "default_account": "",
+        "accounts": [],
     },
     "execute_command": {
         "timeout": 120,
@@ -5685,6 +5695,96 @@ def save_tool_config(cfg: dict) -> dict:
     return existing
 
 
+def migrate_gmail_to_email_config() -> bool:
+    """ONE-TIME boot migration (Email-Tools v2, E4): fold the legacy `gmail`
+    integration record (+ the agents/main/gmail.json fallback it shadowed)
+    into the new multi-account `email` record — one IMAP account with the
+    gmail preset. Idempotent: no-op as soon as an `email` record exists on
+    disk. The legacy `gmail` key is removed (get_tool_config would drop it
+    from the merged view anyway once the defaults key is gone)."""
+    raw = {}
+    if os.path.exists(_TOOLS_CONFIG_PATH):
+        try:
+            with open(_TOOLS_CONFIG_PATH) as f:
+                raw = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return False
+    if "email" in raw:
+        # Already migrated — still drop a stale legacy record if present.
+        if "gmail" in raw:
+            raw.pop("gmail", None)
+            try:
+                with open(_TOOLS_CONFIG_PATH, "w") as f:
+                    json.dump(raw, f, indent=2)
+            except OSError:
+                pass
+        return False
+    legacy = dict(raw.pop("gmail", None) or {})
+    if not (legacy.get("email") and legacy.get("app_password")):
+        # The old _gmail_config() fallback chain: agents/main/gmail.json.
+        fb_path = os.path.join(AGENTS_DIR, "main", "gmail.json")
+        if os.path.exists(fb_path):
+            try:
+                with open(fb_path) as f:
+                    fb = json.load(f) or {}
+                if not legacy.get("email"):
+                    legacy["email"] = fb.get("email", "")
+                if not legacy.get("app_password"):
+                    legacy["app_password"] = fb.get("app_password", "")
+            except (json.JSONDecodeError, OSError):
+                pass
+    accounts = []
+    if legacy.get("email"):
+        accounts.append({
+            "name": "gmail", "type": "imap", "preset": "gmail",
+            "email": legacy.get("email", ""), "username": "",
+            "password": legacy.get("app_password", ""),
+            "imap_host": "imap.gmail.com", "imap_port": 993,
+            "smtp_host": "smtp.gmail.com", "smtp_port": 465,
+            "smtp_security": "ssl",
+        })
+    raw["email"] = {
+        "enabled": legacy.get("enabled", True) if legacy else True,
+        "default_account": accounts[0]["name"] if accounts else "",
+        "accounts": accounts,
+    }
+    try:
+        with open(_TOOLS_CONFIG_PATH, "w") as f:
+            json.dump(raw, f, indent=2)
+    except OSError:
+        return False
+    return True
+
+
+# Tool-name rename map of the Email-Tools-v2 cutover (E4) — used by the
+# tool_settings key migration below; kept module-level for tests.
+_EMAIL_TOOL_RENAMES = {
+    "gmail_inbox": "email_inbox",
+    "gmail_read": "email_read",
+    "gmail_search": "email_search",
+    "gmail_send": "email_send",
+    "gmail_reply": "email_reply",
+}
+
+
+def migrate_email_tool_settings(settings: dict) -> int:
+    """Rename config.json → tool_settings keys gmail_* → email_* (E4) so the
+    renamed tools keep their enabled/deferred/purpose matrix + prose instead of
+    being re-seeded as fresh defaults. Idempotent: a record only moves when the
+    new key is absent; a stale old key next to an existing new one is dropped.
+    Mutates `settings` in place; returns the number of records touched."""
+    changed = 0
+    for old, new in _EMAIL_TOOL_RENAMES.items():
+        if old not in settings:
+            continue
+        if new not in settings:
+            settings[new] = settings.pop(old)
+        else:
+            settings.pop(old)
+        changed += 1
+    return changed
+
+
 def get_tool_status() -> dict:
     """Return status of each configurable tool, checking all fallback sources."""
     cfg = get_tool_config()
@@ -5712,15 +5812,17 @@ def get_tool_status() -> dict:
             if _resolved and not tool_cfg.get("url"):
                 tool_cfg["_source"] = "bundled instance (searxng.url)"
             s = "configured" if _resolved else "not configured"
-        elif tool_name == "gmail":
-            has_gmail = bool(tool_cfg.get("email") and tool_cfg.get("app_password"))
-            if not has_gmail:
-                gmail_fb = _gmail_config()
-                if gmail_fb and gmail_fb.get("email") and gmail_fb.get("app_password"):
-                    has_gmail = True
-                    tool_cfg["email"] = gmail_fb["email"]
-                    tool_cfg["_source"] = "gmail.json"
-            s = "configured" if has_gmail else "not configured"
+        elif tool_name == "email":
+            accounts = tool_cfg.get("accounts") or []
+            n_ok = sum(1 for a in accounts
+                       if a.get("email") and (a.get("password") or a.get("app_password")))
+            s = (f"configured ({n_ok}/{len(accounts)} Konten)" if n_ok
+                 else "not configured")
+            # Never ship account secrets through the status endpoint.
+            tool_cfg["accounts"] = [
+                {k: v for k, v in a.items() if k not in ("password", "app_password")}
+                for a in accounts
+            ]
         elif tool_name == "refinement":
             s = "configured" if tool_cfg.get("model") else "auto (Haiku > cheapest)"
         else:
@@ -15647,8 +15749,8 @@ TOOL_ICONS = {
     "delegate_task": ">", "use_skill": "*", "find_skills": "*",
     "helpdesk_session_info": "i", "helpdesk_user_context": "i", "helpdesk_user_activity": "i",
     "helpdesk_config": "i",
-    "gmail_inbox": "@", "gmail_read": "@", "gmail_search": "@",
-    "gmail_send": "@", "gmail_reply": "@",
+    "email_inbox": "@", "email_read": "@", "email_search": "@",
+    "email_send": "@", "email_reply": "@", "email_accounts": "@",
     "task_status": "?", "task_cancel": "x",
     "context_search": "c", "context_detail": "c", "context_recall": "c",
     "list_nodes": "n", "schedule_list": "t", "schedule_history": "h",
@@ -15675,8 +15777,9 @@ TOOL_VERBS = {
     "delegate_task": "Delegating", "use_skill": "Loading Skill", "find_skills": "Finding Skills",
     "helpdesk_session_info": "Session-Info", "helpdesk_user_context": "Nutzer-Kontext", "helpdesk_user_activity": "Nutzer-Aktivität",
     "helpdesk_config": "Einstellungen",
-    "gmail_inbox": "Inbox", "gmail_read": "Reading Email", "gmail_search": "Searching Email",
-    "gmail_send": "Sending Email", "gmail_reply": "Replying",
+    "email_inbox": "Inbox", "email_read": "Reading Email", "email_search": "Searching Email",
+    "email_send": "Sending Email", "email_reply": "Replying",
+    "email_accounts": "Email Accounts",
     "task_status": "Task Status", "task_cancel": "Cancelling",
     "context_search": "Searching Context", "context_detail": "Context Detail", "context_recall": "Recalling",
     "list_nodes": "Listing Nodes", "schedule_list": "Schedules", "schedule_history": "History",
@@ -16358,11 +16461,12 @@ TOOL_DISPATCH = {
     "wiki_read": tool_wiki_read,
     "wiki_delete": tool_wiki_delete,
     "wiki_structure": tool_wiki_structure,
-    "gmail_inbox": tool_gmail_inbox,
-    "gmail_read": tool_gmail_read,
-    "gmail_search": tool_gmail_search,
-    "gmail_send": tool_gmail_send,
-    "gmail_reply": tool_gmail_reply,
+    "email_accounts": tool_email_accounts,
+    "email_inbox": tool_email_inbox,
+    "email_read": tool_email_read,
+    "email_search": tool_email_search,
+    "email_send": tool_email_send,
+    "email_reply": tool_email_reply,
     "delegate_task": tool_delegate_task,
     "task_status": tool_task_status,
     "task_cancel": tool_task_cancel,

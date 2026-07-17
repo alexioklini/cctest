@@ -7112,106 +7112,6 @@
         "helpdesk": "inactive"
       }
     },
-    "gmail_inbox": {
-      "description": "",
-      "when_to_use": "",
-      "warnings": "",
-      "examples": "",
-      "applies_with": [],
-      "purposes": [
-        "interactive"
-      ],
-      "state": "active",
-      "states": {
-        "interactive": "active",
-        "transform": "inactive",
-        "memory_summary": "inactive",
-        "research_minimal": "inactive",
-        "helpdesk": "inactive",
-        "instruction_gen": "inactive",
-        "workflow_step": "inactive"
-      }
-    },
-    "gmail_read": {
-      "description": "",
-      "when_to_use": "",
-      "warnings": "",
-      "examples": "",
-      "applies_with": [],
-      "purposes": [
-        "interactive"
-      ],
-      "state": "active",
-      "states": {
-        "interactive": "active",
-        "transform": "inactive",
-        "memory_summary": "inactive",
-        "research_minimal": "inactive",
-        "helpdesk": "inactive",
-        "instruction_gen": "inactive",
-        "workflow_step": "inactive"
-      }
-    },
-    "gmail_search": {
-      "description": "",
-      "when_to_use": "",
-      "warnings": "",
-      "examples": "",
-      "applies_with": [],
-      "purposes": [
-        "interactive"
-      ],
-      "state": "active",
-      "states": {
-        "interactive": "active",
-        "transform": "inactive",
-        "memory_summary": "inactive",
-        "research_minimal": "inactive",
-        "helpdesk": "inactive",
-        "instruction_gen": "inactive",
-        "workflow_step": "inactive"
-      }
-    },
-    "gmail_send": {
-      "description": "",
-      "when_to_use": "",
-      "warnings": "",
-      "examples": "",
-      "applies_with": [],
-      "purposes": [
-        "interactive"
-      ],
-      "state": "active",
-      "states": {
-        "interactive": "active",
-        "transform": "inactive",
-        "memory_summary": "inactive",
-        "research_minimal": "inactive",
-        "helpdesk": "inactive",
-        "instruction_gen": "inactive",
-        "workflow_step": "inactive"
-      }
-    },
-    "gmail_reply": {
-      "description": "",
-      "when_to_use": "",
-      "warnings": "",
-      "examples": "",
-      "applies_with": [],
-      "purposes": [
-        "interactive"
-      ],
-      "state": "active",
-      "states": {
-        "interactive": "active",
-        "transform": "inactive",
-        "memory_summary": "inactive",
-        "research_minimal": "inactive",
-        "helpdesk": "inactive",
-        "instruction_gen": "inactive",
-        "workflow_step": "inactive"
-      }
-    },
     "delegate_task": {
       "description": "",
       "when_to_use": "",
@@ -8836,6 +8736,126 @@
       }
     },
     "kernel_restart": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "state": "active",
+      "purposes": [
+        "interactive"
+      ],
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "email_inbox": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active",
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "email_read": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active",
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "email_search": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active",
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "email_send": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active",
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "email_reply": {
+      "description": "",
+      "when_to_use": "",
+      "warnings": "",
+      "examples": "",
+      "applies_with": [],
+      "purposes": [
+        "interactive"
+      ],
+      "state": "active",
+      "states": {
+        "interactive": "active",
+        "transform": "inactive",
+        "memory_summary": "inactive",
+        "research_minimal": "inactive",
+        "helpdesk": "inactive",
+        "instruction_gen": "inactive",
+        "workflow_step": "inactive"
+      }
+    },
+    "email_accounts": {
       "description": "",
       "when_to_use": "",
       "warnings": "",

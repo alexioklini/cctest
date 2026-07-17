@@ -3,9 +3,9 @@ shell/script de-anonymiser is deny-by-default.
 
 Two properties, both leak-shaped:
 
-1. `_gdpr_guard_web_args` must fire for gmail_send/gmail_reply/generate_image and
+1. `_gdpr_guard_web_args` must fire for email_send/email_reply/generate_image and
    MCP tools, not just the web tools. Live specimen 30051b1f4439: the model called
-   gmail_send(to="<EMAIL_1_a812>", body="…IBAN DE38…") and the SMTP send really
+   gmail_send (now email_send)(to="<EMAIL_1_a812>", body="…IBAN DE38…") and the SMTP send really
    went out — it failed only because that opaque token isn't a valid address. A
    shape-preserving fake address (this pipeline mints exactly those) would have
    been delivered to a stranger.
@@ -37,9 +37,9 @@ class TestEgressToolSet(unittest.TestCase):
             self.assertTrue(brain._is_egress_tool(t), t)
 
     def test_mail_and_image_tools_are_egress(self):
-        # gmail → smtp.gmail.com; generate_image → api.mistral.ai ALWAYS,
+        # email → the account's SMTP/EWS server; generate_image → api.mistral.ai ALWAYS,
         # regardless of the session model (so even a local session egresses).
-        for t in ("gmail_send", "gmail_reply", "generate_image"):
+        for t in ("email_send", "email_reply", "generate_image"):
             self.assertTrue(brain._is_egress_tool(t), t)
 
     def test_local_tools_are_not_egress(self):
@@ -58,30 +58,30 @@ class TestGateFiresForMailTool(unittest.TestCase):
         m.categories["bonnie.stark@example.com"] = "contact"
         return m
 
-    def test_gmail_send_to_a_fake_is_refused(self):
+    def test_email_send_to_a_fake_is_refused(self):
         import pseudonymizer as ps
         m = self._mapping_with_email()
         try:
             with request_context():
                 get_request_context()._gdpr_mapping_id = m.mapping_id
                 err, _ = brain._gdpr_guard_web_args(
-                    "gmail_send",
+                    "email_send",
                     {"to": "sam.mitchell@example.org",
                      "subject": "IBAN", "body": "Here is the IBAN: DE38…"})
             self.assertIsNotNone(
-                err, "gmail_send to a FAKE address was not refused — it would "
+                err, "email_send to a FAKE address was not refused — it would "
                      "have been delivered to a stranger (G7 / 30051b1f4439)")
         finally:
             ps.close_mapping(m.mapping_id)
 
-    def test_gmail_send_with_real_protected_value_is_refused(self):
+    def test_email_send_with_real_protected_value_is_refused(self):
         import pseudonymizer as ps
         m = self._mapping_with_email()
         try:
             with request_context():
                 get_request_context()._gdpr_mapping_id = m.mapping_id
                 err, _ = brain._gdpr_guard_web_args(
-                    "gmail_send",
+                    "email_send",
                     {"to": "bonnie.stark@example.com", "body": "hi"})
             self.assertIsNotNone(err)
         finally:
@@ -91,7 +91,7 @@ class TestGateFiresForMailTool(unittest.TestCase):
         """Non-anonymising sessions must be completely untouched."""
         with request_context():
             err, _ = brain._gdpr_guard_web_args(
-                "gmail_send", {"to": "a@b.c", "body": "hi"})
+                "email_send", {"to": "a@b.c", "body": "hi"})
         self.assertIsNone(err)
 
 

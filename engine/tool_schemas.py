@@ -454,44 +454,56 @@ TOOL_DEFINITIONS = [
         "minimal_role": "to read full pages",
     },
     {
-        "name": "gmail_inbox",
-        "description": "List recent emails from Gmail inbox. Returns subject, from, date for each email.",
+        "name": "email_accounts",
+        "description": "List the configured e-mail accounts: name, type (imap/pop3/exchange_ews), address and capabilities (folders, server-side search, reply). Use an account's `name` as the `account` parameter of the other email tools. No credentials are returned.",
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "email_inbox",
+        "description": "List recent emails from the mailbox. Returns subject, from, date and id for each email.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "limit": {"type": "integer", "description": "Number of emails to return (default: 10)"},
-                "folder": {"type": "string", "description": "Mailbox folder (default: INBOX)"},
+                "folder": {"type": "string", "description": "Mailbox folder (default: INBOX). Accounts without folder support ignore this and say so in the result."},
+                "account": {"type": "string", "description": "Account name (see email_accounts). Empty = default account."},
             },
             "required": [],
         },
     },
     {
-        "name": "gmail_read",
+        "name": "email_read",
         "description": "Read a specific email by its ID. Returns full body, attachments list, headers.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "id": {"type": "string", "description": "Email ID from gmail_inbox or gmail_search"},
+                "id": {"type": "string", "description": "Email ID from email_inbox or email_search"},
                 "folder": {"type": "string", "description": "Mailbox folder (default: INBOX)"},
+                "account": {"type": "string", "description": "Account name (see email_accounts). Empty = default account."},
             },
             "required": ["id"],
         },
     },
     {
-        "name": "gmail_search",
-        "description": "Search emails using Gmail search syntax (from:, subject:, is:unread, after:, has:attachment, etc).",
+        "name": "email_search",
+        "description": "Search emails. Simple query syntax: `from:<sender>`, `subject:<text>`, `to:<recipient>` (values may be quoted) plus free text. Accounts with provider-native search accept the provider's full syntax; limited accounts filter recent messages client-side and note the scanned range in the result.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Gmail search query"},
+                "query": {"type": "string", "description": "Search query"},
                 "limit": {"type": "integer", "description": "Max results (default: 10)"},
+                "account": {"type": "string", "description": "Account name (see email_accounts). Empty = default account."},
             },
             "required": ["query"],
         },
     },
     {
-        "name": "gmail_send",
-        "description": "Send an email via Gmail. Supports optional file attachments — pass relative paths (resolved against the current session's artifact folder, matching write_file) or absolute paths.",
+        "name": "email_send",
+        "description": "Send an email from a configured account. Supports optional file attachments — pass relative paths (resolved against the current session's artifact folder, matching write_file) or absolute paths.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -504,18 +516,20 @@ TOOL_DEFINITIONS = [
                     "description": "Optional list of file paths to attach. Relative paths resolve against the current session's artifact folder.",
                     "items": {"type": "string"},
                 },
+                "account": {"type": "string", "description": "Account name (see email_accounts). Empty = default account."},
             },
             "required": ["to", "subject", "body"],
         },
     },
     {
-        "name": "gmail_reply",
+        "name": "email_reply",
         "description": "Reply to an existing email by its ID. Preserves threading.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "Email ID to reply to"},
                 "body": {"type": "string", "description": "Reply body (plain text)"},
+                "account": {"type": "string", "description": "Account name (see email_accounts). Empty = default account."},
             },
             "required": ["id", "body"],
         },

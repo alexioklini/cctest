@@ -104,7 +104,7 @@ function renderToolPanelBody(toolName) {
   }
 
   // Integration-only pseudo-tools (refinement, translation, text_to_speech,
-  // gmail, code_graph): no TOOL_DISPATCH entry → no prompt prose, no purposes,
+  // email, code_graph): no TOOL_DISPATCH entry → no prompt prose, no purposes,
   // no applies_with. Render the integration block alone.
   if (t.integration_only) {
     return `
@@ -278,11 +278,17 @@ function renderToolIntegrationFields(name, cfg) {
     case 'searxng_search':
       return `${lbl('Standard-Ergebnisse pro Anfrage' + helpIcon('Verwendet die mitgelieferte, selbst gehostete SearXNG-Instanz. Verwalten Sie sie (URL, Status, Neustart) unter Einstellungen → Server → Websuche.'))}
         <input id="tool-searxng-num" type="number" min="1" max="50" value="${cfg.default_num_results||5}" class="form-input" style="width:80px;font-family:var(--font-mono);font-size:11px">`;
-    case 'gmail':
-      return `${lbl('E-Mail')}
-        <input id="tool-gmail-email" type="email" value="${esc(cfg.email||'')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
-        ${lbl('App-Passwort')}${maskF('tool-gmail-pass', cfg.app_password)}
-        <div style="margin-top:6px"><a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--accent)">App-Passwort erstellen</a></div>`;
+    case 'email':
+      // Multi-account connector editor (Email-Tools v2). Renders from a
+      // draft copy (window._emailDraft) so add/remove/type switches can
+      // re-render without losing unsaved input; saved via the unified
+      // per-tool Save (buildToolIntegrationRec reads the synced draft).
+      window._emailDraft = JSON.parse(JSON.stringify({
+        enabled: cfg.enabled !== false,
+        default_account: cfg.default_account || '',
+        accounts: cfg.accounts || [],
+      }));
+      return `<div id="email-accounts-editor">${renderEmailAccountsEditor()}</div>`;
     case 'execute_command':
       return `${lbl('Standard-Timeout (Sekunden)')}
         <input id="tool-exec-timeout" type="number" min="1" max="600" value="${cfg.timeout||120}" class="form-input" style="width:100px;font-family:var(--font-mono);font-size:11px">
@@ -552,12 +558,11 @@ function buildToolIntegrationRec(toolName) {
         default_num_results: parseInt(document.getElementById('tool-searxng-num')?.value) || 5,
       };
       break;
-    case 'gmail':
-      rec = {
-        enabled: window._toolConfigCache?.gmail?.enabled !== false,
-        email: document.getElementById('tool-gmail-email')?.value || '',
-        app_password: document.getElementById('tool-gmail-pass')?.value || '',
-      };
+    case 'email':
+      syncEmailDraftFromDom();
+      rec = JSON.parse(JSON.stringify(window._emailDraft || {
+        enabled: true, default_account: '', accounts: [],
+      }));
       break;
     case 'execute_command':
       const banned = (document.getElementById('tool-exec-banned')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -614,6 +619,197 @@ function buildToolIntegrationRec(toolName) {
       return null;
   }
   return rec;
+}
+
+/* ── E-Mail-Konten-Editor (Email-Tools v2, EMAIL_TOOLS_V2_PLAN.md Phase 4) ── */
+
+// Presets fill host/port/security ONLY (E3) — at runtime only the stored
+// fields count; the gmail preset additionally unlocks X-GM-RAW server-side.
+const EMAIL_PRESETS = {
+  gmail:   {label: 'Gmail',        type: 'imap', imap_host: 'imap.gmail.com', imap_port: 993, smtp_host: 'smtp.gmail.com', smtp_port: 465, smtp_security: 'ssl'},
+  outlook: {label: 'Outlook.com',  type: 'imap', imap_host: 'outlook.office365.com', imap_port: 993, smtp_host: 'smtp-mail.outlook.com', smtp_port: 587, smtp_security: 'starttls'},
+  gmx:     {label: 'GMX',          type: 'imap', imap_host: 'imap.gmx.net', imap_port: 993, smtp_host: 'mail.gmx.net', smtp_port: 587, smtp_security: 'starttls'},
+  icloud:  {label: 'iCloud',       type: 'imap', imap_host: 'imap.mail.me.com', imap_port: 993, smtp_host: 'smtp.mail.me.com', smtp_port: 587, smtp_security: 'starttls'},
+  webde:   {label: 'web.de',       type: 'imap', imap_host: 'imap.web.de', imap_port: 993, smtp_host: 'smtp.web.de', smtp_port: 587, smtp_security: 'starttls'},
+};
+
+function renderEmailAccountsEditor() {
+  const d = window._emailDraft || {enabled: true, default_account: '', accounts: []};
+  const lbl = (t) => `<div style="font-size:10px;color:var(--text-400);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px">${t}</div>`;
+  const inp = (i, f, val, opts = {}) =>
+    `<input id="email-acct-${i}-${f}" type="${opts.type || 'text'}" value="${esc(String(val ?? ''))}" class="form-input" style="font-family:var(--font-mono);font-size:11px;${opts.style || ''}" ${opts.extra || ''}>`;
+  const sel = (i, f, val, options) =>
+    `<select id="email-acct-${i}-${f}" class="form-select" style="font-size:11px">${options.map(([v, t]) => `<option value="${v}" ${v === val ? 'selected' : ''}>${t}</option>`).join('')}</select>`;
+  const secOpts = [['ssl', 'SSL/TLS'], ['starttls', 'STARTTLS'], ['none', 'Unverschlüsselt']];
+
+  const cards = (d.accounts || []).map((a, i) => {
+    const type = a.type || 'imap';
+    let typeFields = '';
+    if (type === 'imap') {
+      const presetOpts = [['', 'Benutzerdefiniert'], ...Object.entries(EMAIL_PRESETS).map(([k, p]) => [k, p.label])];
+      typeFields = `
+        <div style="grid-column:1/-1">${lbl('Preset' + helpIcon('Füllt Host/Port/Verschlüsselung vor. Zur Laufzeit zählen ausschließlich die gespeicherten Felder. Gmail-Preset: Suche nutzt die volle Gmail-Syntax (X-GM-RAW); benötigt ein App-Passwort (2FA).'))}
+          <select id="email-acct-${i}-preset" class="form-select" style="font-size:11px" onchange="emailPresetChanged(${i})">${presetOpts.map(([v, t]) => `<option value="${v}" ${v === (a.preset || '') ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div>${lbl('IMAP-Host')}${inp(i, 'imap_host', a.imap_host)}</div>
+        <div>${lbl('IMAP-Port')}${inp(i, 'imap_port', a.imap_port ?? 993, {type: 'number', style: 'width:80px'})}</div>
+        <div>${lbl('SMTP-Host')}${inp(i, 'smtp_host', a.smtp_host)}</div>
+        <div>${lbl('SMTP-Port')}${inp(i, 'smtp_port', a.smtp_port ?? 465, {type: 'number', style: 'width:80px'})}</div>
+        <div>${lbl('SMTP-Sicherheit')}${sel(i, 'smtp_security', a.smtp_security || 'ssl', secOpts)}</div>`;
+    } else if (type === 'pop3') {
+      typeFields = `
+        <div>${lbl('POP3-Host')}${inp(i, 'pop3_host', a.pop3_host)}</div>
+        <div>${lbl('POP3-Port')}${inp(i, 'pop3_port', a.pop3_port ?? 995, {type: 'number', style: 'width:80px'})}</div>
+        <div>${lbl('POP3-Sicherheit')}${sel(i, 'pop3_security', a.pop3_security || 'ssl', secOpts)}</div>
+        <div></div>
+        <div>${lbl('SMTP-Host')}${inp(i, 'smtp_host', a.smtp_host)}</div>
+        <div>${lbl('SMTP-Port')}${inp(i, 'smtp_port', a.smtp_port ?? 587, {type: 'number', style: 'width:80px'})}</div>
+        <div>${lbl('SMTP-Sicherheit')}${sel(i, 'smtp_security', a.smtp_security || 'starttls', secOpts)}</div>
+        <div style="grid-column:1/-1;font-size:10px;color:var(--text-400)">POP3: keine Ordner, Suche nur über die letzten Nachrichten (clientseitig) — die Tools weisen im Ergebnis darauf hin.</div>`;
+    } else if (type === 'exchange_ews') {
+      typeFields = `
+        <div>${lbl('EWS-Server' + helpIcon('Hostname des On-Prem-Exchange (EWS), z. B. mail.firma.tld — ohne https://.'))}${inp(i, 'server', a.server)}</div>
+        <div style="display:flex;gap:14px;align-items:end;padding-bottom:4px">
+          <label style="display:flex;gap:5px;align-items:center;font-size:11px;color:var(--text-200)"><input id="email-acct-${i}-autodiscover" type="checkbox" ${a.autodiscover ? 'checked' : ''}>Autodiscover</label>
+          <label style="display:flex;gap:5px;align-items:center;font-size:11px;color:var(--text-200)"><input id="email-acct-${i}-verify_ssl" type="checkbox" ${a.verify_ssl === false ? '' : 'checked'}>TLS-Zertifikat prüfen</label>
+        </div>
+        <div style="grid-column:1/-1;font-size:10px;color:var(--warning,#c90)">⚠ „TLS-Zertifikat prüfen" abschalten (Self-Signed-Cert) wirkt prozessweit auf ALLE Exchange-Verbindungen dieses Servers — nur für den lokalen On-Prem-Exchange gedacht.</div>`;
+    }
+    return `
+      <div class="email-acct-card" data-idx="${i}" style="border:1px solid var(--border-200);border-radius:6px;padding:10px;margin-bottom:8px;background:var(--bg-000)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <label style="display:flex;gap:6px;align-items:center;font-size:11px;color:var(--text-200)">
+            <input type="radio" name="email-default-acct" id="email-acct-${i}-default" ${((d.default_account || (d.accounts[0] || {}).name) === a.name) ? 'checked' : ''}>Standard-Konto
+          </label>
+          <div style="display:flex;gap:6px">
+            <button class="btn-secondary" style="font-size:10px;padding:3px 8px" onclick="emailTestAccount(${i})">Verbindung testen</button>
+            <button class="btn-secondary" style="font-size:10px;padding:3px 8px;color:var(--error)" onclick="emailRemoveAccount(${i})">Entfernen</button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>${lbl('Name' + helpIcon('Kurzer Bezeichner, den der Agent im account-Parameter verwendet (z. B. gmail, buero, firma).'))}${inp(i, 'name', a.name)}</div>
+          <div>${lbl('Typ')}<select id="email-acct-${i}-type" class="form-select" style="font-size:11px" onchange="emailTypeChanged(${i})">
+            <option value="imap" ${type === 'imap' ? 'selected' : ''}>IMAP + SMTP</option>
+            <option value="pop3" ${type === 'pop3' ? 'selected' : ''}>POP3 + SMTP</option>
+            <option value="exchange_ews" ${type === 'exchange_ews' ? 'selected' : ''}>Exchange (EWS, On-Prem)</option>
+          </select></div>
+          <div>${lbl('E-Mail-Adresse')}${inp(i, 'email', a.email, {type: 'email'})}</div>
+          <div>${lbl('Benutzername' + helpIcon('Leer lassen = E-Mail-Adresse wird als Login verwendet. Exchange: DOMAIN\\\\benutzer.'))}${inp(i, 'username', a.username)}</div>
+          <div style="grid-column:1/-1">${lbl(type === 'imap' && (a.preset || '') === 'gmail' ? 'App-Passwort' : 'Passwort')}
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="email-acct-${i}-password" type="password" value="${esc(a.password || '')}" class="form-input" style="flex:1;font-family:var(--font-mono);font-size:11px" autocomplete="off">
+              <button class="btn-secondary" style="font-size:10px;padding:4px 8px" onclick="const x=document.getElementById('email-acct-${i}-password');x.type=x.type==='password'?'text':'password';this.textContent=x.type==='password'?'Anzeigen':'Verbergen'">Anzeigen</button>
+            </div>
+            ${(type === 'imap' && (a.preset || '') === 'gmail') ? '<div style="margin-top:4px"><a href="https://myaccount.google.com/apppasswords" target="_blank" style="font-size:11px;color:var(--accent)">App-Passwort erstellen</a></div>' : ''}
+          </div>
+          ${typeFields}
+        </div>
+        <div id="email-acct-${i}-test-result" style="font-size:11px;margin-top:6px"></div>
+      </div>`;
+  }).join('');
+
+  return `
+    ${cards || '<div style="font-size:11px;color:var(--text-400);margin-bottom:8px">Noch kein Konto konfiguriert.</div>'}
+    <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="emailAddAccount()">+ Konto hinzufügen</button>
+    <div style="font-size:10px;color:var(--text-400);margin-top:6px">Der Agent sieht die Konten über das Tool <code>email_accounts</code> und wählt per <code>account</code>-Parameter; ohne Angabe gilt das Standard-Konto. Nach Änderungen Speichern klicken.</div>`;
+}
+
+// DOM → draft. Must run before any re-render (add/remove/type/preset switch)
+// and before Save, or unsaved field input would be lost.
+function syncEmailDraftFromDom() {
+  const d = window._emailDraft;
+  if (!d) return;
+  const fields = ['name', 'email', 'username', 'password', 'preset',
+                  'imap_host', 'imap_port', 'smtp_host', 'smtp_port', 'smtp_security',
+                  'pop3_host', 'pop3_port', 'pop3_security', 'server'];
+  (d.accounts || []).forEach((a, i) => {
+    for (const f of fields) {
+      const el = document.getElementById(`email-acct-${i}-${f}`);
+      if (!el) continue;
+      let v = el.value;
+      if (f.endsWith('_port')) v = parseInt(v) || undefined;
+      if (v === undefined || v === '') { delete a[f]; } else { a[f] = v; }
+    }
+    const typeEl = document.getElementById(`email-acct-${i}-type`);
+    if (typeEl) a.type = typeEl.value;
+    const auto = document.getElementById(`email-acct-${i}-autodiscover`);
+    if (auto) a.autodiscover = auto.checked;
+    const vssl = document.getElementById(`email-acct-${i}-verify_ssl`);
+    if (vssl) a.verify_ssl = vssl.checked;
+    const dflt = document.getElementById(`email-acct-${i}-default`);
+    if (dflt && dflt.checked) d.default_account = a.name || '';
+  });
+}
+
+function _emailRerender() {
+  const host = document.getElementById('email-accounts-editor');
+  if (host) host.innerHTML = renderEmailAccountsEditor();
+}
+
+function emailAddAccount() {
+  syncEmailDraftFromDom();
+  const d = window._emailDraft || (window._emailDraft = {enabled: true, default_account: '', accounts: []});
+  d.accounts = d.accounts || [];
+  d.accounts.push({name: 'konto' + (d.accounts.length + 1), type: 'imap', preset: '',
+                   email: '', username: '', password: '',
+                   imap_port: 993, smtp_port: 465, smtp_security: 'ssl'});
+  if (d.accounts.length === 1) d.default_account = d.accounts[0].name;
+  _emailRerender();
+}
+
+function emailRemoveAccount(i) {
+  syncEmailDraftFromDom();
+  const d = window._emailDraft;
+  if (!d || !d.accounts || !d.accounts[i]) return;
+  const removed = d.accounts.splice(i, 1)[0];
+  if (d.default_account === (removed.name || '')) {
+    d.default_account = (d.accounts[0] || {}).name || '';
+  }
+  _emailRerender();
+}
+
+function emailTypeChanged(i) {
+  syncEmailDraftFromDom();
+  _emailRerender();
+}
+
+function emailPresetChanged(i) {
+  syncEmailDraftFromDom();
+  const d = window._emailDraft;
+  const a = d && d.accounts && d.accounts[i];
+  if (!a) return;
+  const p = EMAIL_PRESETS[document.getElementById(`email-acct-${i}-preset`)?.value || ''];
+  a.preset = document.getElementById(`email-acct-${i}-preset`)?.value || '';
+  if (p) {
+    a.type = p.type;
+    a.imap_host = p.imap_host; a.imap_port = p.imap_port;
+    a.smtp_host = p.smtp_host; a.smtp_port = p.smtp_port;
+    a.smtp_security = p.smtp_security;
+  }
+  _emailRerender();
+}
+
+// Connectivity test (login/bind, NO send). Tests the SAVED state — unsaved
+// edits are pushed via the unified Save first if the admin confirms.
+async function emailTestAccount(i) {
+  syncEmailDraftFromDom();
+  const d = window._emailDraft;
+  const a = d && d.accounts && d.accounts[i];
+  if (!a) return;
+  const out = document.getElementById(`email-acct-${i}-test-result`);
+  if (out) { out.style.color = 'var(--text-400)'; out.textContent = 'Teste Verbindung… (Konfiguration wird zuerst gespeichert)'; }
+  try {
+    // The test runs server-side against the persisted record — save first so
+    // it exercises exactly what the tools will use.
+    await API.post('/v1/tools/config', {email: JSON.parse(JSON.stringify(d))});
+    if (window._toolConfigCache) window._toolConfigCache.email = JSON.parse(JSON.stringify(d));
+    const resp = await API.post('/v1/tools/email/test', {account: a.name || ''});
+    if (out) {
+      out.style.color = resp.ok ? 'var(--success,#2a2)' : 'var(--error)';
+      out.textContent = resp.ok ? ('✓ ' + (resp.detail || 'Verbindung OK')) : ('✗ ' + (resp.error || 'Verbindung fehlgeschlagen'));
+    }
+  } catch (e) {
+    if (out) { out.style.color = 'var(--error)'; out.textContent = '✗ ' + (e.message || e); }
+  }
 }
 
 async function saveMpClassifier() {

@@ -245,11 +245,19 @@ _AUDIT_ACTION_MAP = {
     "write_file": "file_write",
     "edit_file": "file_write",
     "execute_command": "command_execute",
+    # gmail_* rows survive in historical traces — keep their mapping alongside
+    # the live email_* names (Email-Tools v2 rename).
     "gmail_send": "email_send",
     "gmail_reply": "email_reply",
     "gmail_inbox": "email_read",
     "gmail_read": "email_read",
     "gmail_search": "email_read",
+    "email_send": "email_send",
+    "email_reply": "email_reply",
+    "email_inbox": "email_read",
+    "email_read": "email_read",
+    "email_search": "email_read",
+    "email_accounts": "email_read",
     "web_fetch": "web_fetch",
     "exa_search": "web_search",
     "memory_store": "memory_store",
@@ -271,7 +279,7 @@ def _audit_summarize_args(tool_name: str, args: dict) -> str:
     """Generate human-readable summary of tool arguments, max 200 chars."""
     if tool_name == "execute_command":
         return args.get("command", "")[:200]
-    elif tool_name in ("gmail_send", "gmail_reply"):
+    elif tool_name in ("gmail_send", "gmail_reply", "email_send", "email_reply"):
         return f"To: {args.get('to', '?')}, Subject: {args.get('subject', '?')}"[:200]
     elif tool_name in ("write_file", "edit_file"):
         content = args.get("content", "")

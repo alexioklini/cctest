@@ -99,7 +99,7 @@ class AdminConfigHandlers:
             })
         # Surface integration-only pseudo-tools (entries in tool_config that
         # have no matching TOOL_DISPATCH function — e.g. refinement, translation,
-        # text_to_speech, gmail, code_graph). They need the same per-row UI for
+        # text_to_speech, email, code_graph). They need the same per-row UI for
         # integration knobs (model, API key, …) but have no prompt prose,
         # purposes, or applies_with. Flagged with integration_only=True so the
         # client can hide the prose section.
@@ -1303,15 +1303,6 @@ class AdminConfigHandlers:
                 exa_cfg["_source"] = "environment variable"
             # No hardcoded built-in default anymore — an unset key stays unset
             # (the Exa backend then returns a 401 the model sees).
-        gmail_cfg = cfg.get("gmail", {})
-        if not gmail_cfg.get("email") or not gmail_cfg.get("app_password"):
-            fb = engine._gmail_config()
-            if fb:
-                if not gmail_cfg.get("email") and fb.get("email"):
-                    gmail_cfg["email"] = fb["email"]
-                if not gmail_cfg.get("app_password") and fb.get("app_password"):
-                    gmail_cfg["app_password"] = fb["app_password"]
-                gmail_cfg["_source"] = "gmail.json"
         # Mask sensitive values
         masked = {}
         for tool_name, tool_cfg in cfg.items():
@@ -1320,6 +1311,17 @@ class AdminConfigHandlers:
                 val = masked[tool_name].get(key, "")
                 if val and len(val) > 4:
                     masked[tool_name][key] = "*" * (len(val) - 4) + val[-4:]
+        # email: passwords are nested per account (email.accounts[].password).
+        email_cfg = masked.get("email")
+        if isinstance(email_cfg, dict) and isinstance(email_cfg.get("accounts"), list):
+            email_cfg["accounts"] = [dict(a) for a in email_cfg["accounts"]]
+            for acct in email_cfg["accounts"]:
+                for key in ("password", "app_password"):
+                    val = acct.get(key, "")
+                    if val and len(val) > 4:
+                        acct[key] = "*" * (len(val) - 4) + val[-4:]
+                    elif val:
+                        acct[key] = "*" * len(val)
         self._send_json(masked)
 
     def _handle_tools_status(self):
@@ -1357,11 +1359,39 @@ class AdminConfigHandlers:
                 if val and val.startswith("*"):
                     # Masked value — keep existing
                     tool_cfg[key] = existing.get(tool_name, {}).get(key, "")
+        # email: nested per-account passwords — restore masked values from the
+        # existing account with the same name.
+        email_body = body.get("email")
+        if isinstance(email_body, dict) and isinstance(email_body.get("accounts"), list):
+            existing_accounts = {
+                a.get("name"): a
+                for a in (existing.get("email", {}).get("accounts") or [])
+            }
+            for acct in email_body["accounts"]:
+                for key in ("password", "app_password"):
+                    val = acct.get(key, "")
+                    if val and val.startswith("*"):
+                        prev = existing_accounts.get(acct.get("name"), {})
+                        acct[key] = prev.get(key, "")
         result = engine.save_tool_config(body)
         if "error" in result:
             self._send_json(result, 500)
         else:
             self._send_json({"status": "saved", "config": result})
+
+    def _handle_email_test(self):
+        """POST /v1/tools/email/test {account} — side-effect-free connectivity
+        check for one configured e-mail account (IMAP/POP3 login or EWS bind +
+        one read, NO send). Admin-gated like the other /v1/tools/* mutations."""
+        body = self._read_json() or {}
+        account = (body.get("account") or "").strip()
+        try:
+            result = engine.test_email_account(account)
+        except Exception as e:
+            result = {"ok": False, "error": str(e)}
+        # Always 200 — `ok` carries the verdict (the client shows the detail
+        # either way; a 4xx would surface as a generic fetch error instead).
+        self._send_json(result)
 
     # --- Hooks handlers ---
 

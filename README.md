@@ -22,14 +22,14 @@ A multi-agent AI platform with CLI, Web UI, and Telegram frontends. Client-serve
                 │  └──────────┘ │
                 └───────┬───────┘
                         │──▶ MemPalace (in-process, auto-mined)
-                        └──▶ other MCP servers, Gmail, Exa, tools
+                        └──▶ other MCP servers, E-Mail (IMAP/POP3/EWS), Exa, tools
 ```
 
 ## Features
 
 ### Core
 - **Multi-agent system** — agents with personalities (`soul.md`), avatars, teams, model preferences
-- **30+ built-in tools** — file ops, shell, search, web, Gmail, delegation, scheduling, memory, MCP
+- **30+ built-in tools** — file ops, shell, search, web, e-mail (IMAP/POP3/Exchange), delegation, scheduling, memory, MCP
 - **MemPalace memory (direct)** — `mempalace_query` tool searches long-term memory in-process (no MCP subprocess). Background daemons auto-mine source code, artifacts, chat history, web references, and attachment metadata into MemPalace drawers with closet index rebuilds
 - **Projects** — per-agent scoped workspaces with documents, **input folders auto-mined into project memory every 30 min**, and chat scoping. Each project has its own private MemPalace wing (`project__<id>`) — chats inside the project only see drawers from that project's attachments + input folders + prior project chats. Per-attachment + per-folder sync status pills in the project view
 - **Agent workflows** — YAML-defined multi-step pipelines with approval gates and variable substitution
@@ -139,7 +139,7 @@ brain-agent/
       agent.json        # Config: description, model, avatar, rate_limits
       commands.json     # Custom slash commands
       mcp.json          # MCP server connections (includes MemPalace memory server)
-      gmail.json        # Gmail credentials (not in git)
+      gmail.json        # Legacy Gmail credentials (auto-migrated to tools_config.json)
       skills/           # Installed skills
       workflows/        # YAML workflow definitions
       projects/         # Per-project scoped workspaces
@@ -174,11 +174,12 @@ brain-agent/
 | `github_command` | GitHub via gh CLI (PRs, issues, repo, releases, workflows, API) |
 | `web_fetch` | Fetch URL content |
 | `exa_search` | Web search via Exa AI |
-| `gmail_inbox` | List recent emails from Gmail |
-| `gmail_read` | Read email by ID (body, attachments) |
-| `gmail_search` | Search with Gmail syntax |
-| `gmail_send` | Send email |
-| `gmail_reply` | Reply preserving threading |
+| `email_accounts` | List configured e-mail accounts + capabilities |
+| `email_inbox` | List recent emails (any configured account) |
+| `email_read` | Read email by ID (body, attachments) |
+| `email_search` | Search emails (simple syntax; full Gmail syntax on the Gmail preset) |
+| `email_send` | Send email |
+| `email_reply` | Reply preserving threading |
 | `delegate_task` | Delegate to another agent (sync/async) |
 | `task_status` | Check background task status |
 | `task_cancel` | Cancel running background task |
@@ -225,16 +226,15 @@ Claude `SKILL.md` format. Upload a `.zip` containing `SKILL.md` (and any sibling
 
 Skills are loaded on-demand via `use_skill("slug")` to keep the system prompt lean.
 
-## Gmail Integration
+## E-Mail Integration (IMAP / POP3 / Exchange EWS)
 
-```bash
-# 1. Enable 2FA on Google account
-# 2. Create App Password: https://myaccount.google.com/apppasswords
-# 3. Create config:
-cat > agents/main/gmail.json << 'EOF'
-{"email": "you@gmail.com", "app_password": "xxxx xxxx xxxx xxxx"}
-EOF
-```
+Configure accounts under **Settings -> Tools -> email** (multiple accounts in
+parallel; per-account connection test). Connector types: IMAP+SMTP (presets
+for Gmail/Outlook.com/GMX/iCloud/web.de -- Gmail needs 2FA + an App Password),
+POP3+SMTP (reduced: no folders, client-side search), Exchange EWS for
+on-prem servers via `exchangelib` (username/password, no OAuth/Graph).
+Accounts live in `tools_config.json -> email.accounts[]`; a legacy
+`gmail.json` / `gmail` record is migrated automatically on boot.
 
 Then: "Show my last 5 emails", "Search for emails from john@example.com", "Send email to jane about the meeting"
 

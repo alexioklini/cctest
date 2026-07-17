@@ -27,9 +27,9 @@ from typing import Any, Callable
 DEFAULT_PROFILES: dict[str, dict] = {
     "exa_search":             {"heavy": "auto", "timeout_seconds": 60},
     "web_fetch":              {"heavy": "auto", "timeout_seconds": 60},
-    "gmail_search":           {"heavy": True,  "timeout_seconds": 60},
-    "gmail_inbox":            {"heavy": True,  "timeout_seconds": 60},
-    "gmail_read":             {"heavy": True,  "timeout_seconds": 30},
+    "email_search":           {"heavy": True,  "timeout_seconds": 60},
+    "email_inbox":            {"heavy": True,  "timeout_seconds": 60},
+    "email_read":             {"heavy": True,  "timeout_seconds": 30},
     "search_files":           {"heavy": True,  "timeout_seconds": 30},
     "python_exec":            {"heavy": True,  "timeout_seconds": 300},
     "execute_command":        {"heavy": True,  "timeout_seconds": 300},

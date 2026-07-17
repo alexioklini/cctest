@@ -2299,7 +2299,7 @@ async function _genTab_tools(C) {
       // Group → tools (sorted by name within group). '(ungrouped)' bucket
       // surfaces tools missing from TOOL_GROUPS — server returns group=''
       // for those. EVERY tool is in the matrix, including integration-only
-      // pseudo-tools (gmail/refinement/…): they count toward the Σ totals
+      // pseudo-tools (email/refinement/…): they count toward the Σ totals
       // (total == active+inactive+deferred for every column) and show their
       // status per purpose like any tool. The ⚙ opens their integration config.
       const matrixTools = allTools;
@@ -2326,7 +2326,7 @@ async function _genTab_tools(C) {
         return `<span style="font-size:10px;color:${c};font-weight:500">${i} ${esc(s)}</span>`;
       };
 
-      const WRITE_EXEC = new Set(['write_file','edit_file','execute_command','python_exec','git_command','github_command','gmail_send','gmail_reply','write_document','edit_document','delegate_task','run_background_task']);
+      const WRITE_EXEC = new Set(['write_file','edit_file','execute_command','python_exec','git_command','github_command','email_send','email_reply','write_document','edit_document','delegate_task','run_background_task']);
       const NCOL = 1 + MX_PURPOSES.length + 1;  // name + purposes + tokens
 
       // One <tr> per tool in the single flat matrix table. The matrix table is

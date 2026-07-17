@@ -955,10 +955,17 @@ class AdminArtifactsHandlers:
                         for pname, pcfg in config.get("providers", {}).items():
                             if "api_key" in pcfg:
                                 pcfg["api_key"] = "REDACTED"
-                        if "gmail" in config:
-                            for k in list(config["gmail"].keys()):
-                                if "password" in k.lower() or "secret" in k.lower():
-                                    config["gmail"][k] = "REDACTED"
+                        for legacy_key in ("gmail", "email"):
+                            if legacy_key in config:
+                                for k in list(config[legacy_key].keys()):
+                                    if "password" in k.lower() or "secret" in k.lower():
+                                        config[legacy_key][k] = "REDACTED"
+                                # email v2: passwords nested per account
+                                for acct in (config[legacy_key].get("accounts") or []):
+                                    if isinstance(acct, dict):
+                                        for k in list(acct.keys()):
+                                            if "password" in k.lower() or "secret" in k.lower():
+                                                acct[k] = "REDACTED"
                     redacted_json = json.dumps(config, indent=2).encode("utf-8")
                     import io
                     info = _tarfile.TarInfo(name=f"{prefix}/config.json")

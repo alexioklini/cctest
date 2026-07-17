@@ -1445,7 +1445,7 @@ GitHub raw file is the authoritative, current source.
   CHANGELOG, runtime classes, the tool resolver, warmup.
 - `server.py` — HTTP routes (grep the `self.path` dispatch for endpoints).
 - `engine/tool_schemas.py` — `TOOL_DEFINITIONS` (every tool's exact schema).
-- `engine/tools/<group>.py` — each tool's implementation (file/git/gmail/
+- `engine/tools/<group>.py` — each tool's implementation (file/git/email/
   web/translate/delegation/context/misc/ask, and `helpdesk_tools.py`).
 - `engine/` — extracted domains: `loop`, `provider`, `model_select`,
   `mempalace_glue`, `classification`, `pii_ner`, `doc_convert`, `kg_extract`,
@@ -1890,7 +1890,7 @@ protection existing only there.
   fake world, no "fake²"); the scheduler mints its own and keeps the ID;
   `gdpr_persist_mapping` writes back what a leaf discovered. The gate is never
   skipped (it also enforces ARL classification + the quota swap).
-- **Egress ≠ web** (M2). `EGRESS_TOOLS` = web ∪ `gmail_send`/`gmail_reply`/
+- **Egress ≠ web** (M2). `EGRESS_TOOLS` = web ∪ `email_send`/`email_reply`/
   `generate_image` ∪ MCP. `generate_image` always posts to Mistral **even from a
   local session** — "local model ⇒ nothing leaves the machine" is false; the egress
   happens at the TOOL. Shell/script args are **deny-by-default** now (the old
@@ -1903,7 +1903,7 @@ protection existing only there.
   consumer decides: model → fakes, human → real). `wiki_write` gets args-deanon so
   **real values, not fakes, land on disk** (fakes persisted per-session were read by
   later sessions as facts = permanent memory poisoning). Seams added on
-  `wiki_read`, `gmail_read/inbox/search`, `context_search/detail`, `use_skill`,
+  `wiki_read`, `email_read/inbox/search`, `context_search/detail`, `use_skill`,
   `transcribe_audio`; gates added on `wiki_from_chat` + `audio_overview`.
 - **Neutral attachment names** (M11). Uploads are saved as `att_01.pdf` (not
   `CF_-_STARK_Bonnie_…pdf`) whenever the scanner is enabled; the ORIGINAL name is

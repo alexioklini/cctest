@@ -390,7 +390,7 @@ Daily what-changed report between two exports:
    > Änderungen in 3 Sätzen zusammen.
 3. The highlighted diff workbook (changed cells yellow + old value as
    comment, added green, removed red) is the run artifact; the summary is the
-   run result (optional per E-Mail via gmail_send im selben Prompt).
+   run result (optional per E-Mail via email_send im selben Prompt).
 
 ## "Datenanbindung" — Warehouse/Datenbank für db_query einrichten (v9.356.0, GUI v9.363.0)
 
@@ -432,6 +432,35 @@ Hinweis MS SQL Server / Snowflake / Oracle: bewusst noch NICHT verdrahtet
 (fail-loud „not wired yet") — ein Postgres-DSN kann keinen MSSQL-Server
 ansprechen. Nachrüsten ist ein isolierter Branch in `_connect_readonly`,
 sobald ein echter, testbarer DSN existiert.
+
+## "E-Mail-Konto einrichten" (IMAP / POP3 / Exchange, v9.365.0)
+
+Admin-Rezept: ein Postfach so anbinden, dass der Agent es mit den
+`email_*`-Tools nutzen kann (mehrere Konten parallel möglich).
+
+1. **Einstellungen → Tools → email** öffnen → **+ Konto hinzufügen**.
+2. **Name** vergeben (kurz, z. B. `gmail`, `buero`, `firma`) — genau diesen
+   Namen nutzt der Agent im `account`-Parameter.
+3. **Typ** wählen und Felder füllen:
+   - **IMAP+SMTP** (Gmail, GMX, iCloud, Outlook.com, generische Server):
+     Preset wählen (füllt Host/Port/Verschlüsselung vor) oder manuell.
+     Gmail braucht ein **App-Passwort** (2FA vorausgesetzt; Link im Panel).
+   - **POP3+SMTP**: reduzierter Umfang — keine Ordner, Suche nur über die
+     letzten Nachrichten (die Tools weisen im Ergebnis darauf hin).
+   - **Exchange (EWS, On-Prem)**: EWS-Host (z. B. `mail.firma.tld`),
+     Benutzername `DOMAIN\benutzer`, Passwort. Self-Signed-Zertifikat →
+     „TLS-Zertifikat prüfen" abwählen (Warnung beachten: wirkt prozessweit).
+     Benötigt `exchangelib` im Server-Python (`pip install exchangelib`) —
+     fehlt es, sagt der Konnektor das klar, statt den Start zu brechen.
+4. **Verbindung testen** klicken (Login/Bind + ein Lese-Zugriff, kein
+   Versand), dann **Speichern**. Standard-Konto per Radio-Knopf festlegen.
+5. Prüfen im Chat: „Welche E-Mail-Konten hast du?" → `email_accounts` listet
+   Name/Typ/Capabilities; „Zeig mir die letzten 5 Mails aus <name>" →
+   `email_inbox(account=<name>)`.
+
+Hintergrund: `POST /v1/tools/email/test {account}` ist der Test-Endpoint;
+die Konten liegen in `tools_config.json → email.accounts[]` (Passwörter
+werden in GET-Antworten maskiert, Backups redigieren sie).
 
 ## "Mach aus diesem Chat einen Workflow" (KI-Workflow-Generator, v9.290.0)
 
