@@ -1395,6 +1395,39 @@ TOOL_DEFINITIONS = [
         },
     },
     {
+        "name": "rest_query",
+        "description": (
+            "Query a CONFIGURED external REST API source (admin: "
+            "Einstellungen → Datenquellen, type rest). The request can ONLY "
+            "reach paths under the source's fixed base_url — pass `path` "
+            "(starting with '/'), never a full URL; absolute URLs and '..' "
+            "are rejected. Access is grant-gated per user AND the source "
+            "must be enabled in the current context (project settings / "
+            "right panel) — those errors are final, do NOT retry. The "
+            "source's access_mode decides the methods: read-only sources "
+            "allow GET/HEAD only; rw sources also POST/PUT/PATCH/DELETE "
+            "(body = JSON). JSON responses come back pretty-printed and "
+            "capped (default 256 KB) — pass out='name.json' to save the "
+            "full payload as an artifact, or out='name.csv' to flatten a "
+            "JSON array. HTTP error statuses are returned as results with "
+            "the body excerpt — read them instead of retrying blindly. "
+            "Pagination is NOT automatic: follow next-links yourself within "
+            "the allowed paths."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source": {"type": "string", "description": "Configured data-source name of type rest (wrong name → error lists the available ones)"},
+                "path": {"type": "string", "description": "Path under the source's base_url, starting with '/' (e.g. /api/v1/items). Never a full URL."},
+                "method": {"type": "string", "description": "HTTP method (default GET). Writes only pass on rw sources."},
+                "params": {"type": "object", "description": "Optional query parameters as a flat object"},
+                "body": {"description": "Optional JSON body for POST/PUT/PATCH/DELETE"},
+                "out": {"type": "string", "description": "Optional relative .json/.csv filename — saves the full response to your artifact folder"},
+            },
+            "required": ["source", "path"],
+        },
+    },
+    {
         "name": "text_diff",
         "description": (
             "Compare two TEXT files (source code, configs, SQL, markdown, "

@@ -198,6 +198,7 @@
     "_dsLogoBlobUrl": "writable",
     "_dsRevokeLogoBlob": "writable",
     "_dsSelArr": "writable",
+    "_dsTypeChanged": "writable",
     "_dsUpdateTab": "writable",
     "_ED_RENDERABLE": "writable",
     "_editProjectImageClear": "writable",

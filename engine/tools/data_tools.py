@@ -29,6 +29,7 @@ TOOL_DISPATCH). Reaches brain runtime via lazy `import brain as _brain`.
 from __future__ import annotations
 
 import csv
+import json
 import os
 import re
 
@@ -510,6 +511,9 @@ def _connect_readonly(src: dict, mode: str = "ro"):
     opts = src.get("options") or {}
     if stype == "mssql":
         return _connect_mssql(src)
+    if stype == "rest":
+        raise ValueError(
+            f"source '{src.get('name')}' is a REST source — use rest_query")
     if stype != "postgres":
         # Deliberate: only wire what we can validate. Adding snowflake/oracle
         # is one isolated branch here once a real DSN exists to test against.
@@ -674,3 +678,230 @@ def tool_db_query(args: dict) -> str:
             conn.close()
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------------
+# rest_query — REST connector (DATA_SOURCES_V2 Phase 6, E10)
+# ---------------------------------------------------------------------------
+# A REST source is an admin-configured BASE URL — rest_query can ONLY reach
+# paths under it (no absolute URLs, no scheme switch, no '..' — SSRF is
+# structurally excluded; redirects are NOT followed for the same reason).
+# Same WHO axis (data_access_allowed), same WHAT axis (data_source_scope) as
+# db_query — for REST sources the scope resources are PATH PREFIXES instead
+# of tables. access_mode: ro = GET/HEAD only; rw adds POST/PUT/PATCH/DELETE.
+
+REST_DEFAULT_TIMEOUT_S = 30
+REST_DEFAULT_MAX_RESPONSE_KB = 256
+REST_HARD_DOWNLOAD_CAP = 20 * 1024 * 1024  # sanity bound on the raw body
+_REST_WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+_REST_READ_METHODS = ("GET", "HEAD")
+
+
+def _rest_validate_path(path: str) -> str | None:
+    """Confine the request to the configured base_url. Checked on the RAW and
+    the percent-decoded form (an encoded '..' must not slip past an
+    allowed_paths prefix check)."""
+    from urllib.parse import unquote
+    p = (path or "").strip()
+    if not p.startswith("/"):
+        return "path must start with '/' (a path under the configured base_url)"
+    if p.startswith("//"):
+        return "'//…' is not allowed — only paths on the configured base_url"
+    for probe in (p, unquote(p)):
+        if "://" in probe:
+            return ("absolute URLs are not allowed — rest_query only reaches "
+                    "the configured base_url")
+        if ".." in probe:
+            return "'..' is not allowed in the path"
+    return None
+
+
+def _rest_auth_headers(src: dict) -> dict:
+    """Build auth headers per source config: {kind: none|bearer|header|basic,
+    secret|env_key, header_name?}. Secret resolution mirrors _source_dsn."""
+    auth = src.get("auth") or {}
+    kind = (auth.get("kind") or "none").strip().lower()
+    if kind == "none":
+        return {}
+    secret = (auth.get("secret") or "").strip()
+    if not secret and auth.get("env_key"):
+        secret = (os.environ.get(auth["env_key"]) or "").strip()
+    if not secret:
+        raise ValueError(
+            f"source '{src.get('name')}': auth kind '{kind}' but neither "
+            f"auth.secret nor auth.env_key is set")
+    if kind == "bearer":
+        return {"Authorization": f"Bearer {secret}"}
+    if kind == "header":
+        return {(auth.get("header_name") or "X-API-Key").strip(): secret}
+    if kind == "basic":
+        import base64
+        return {"Authorization": "Basic "
+                + base64.b64encode(secret.encode()).decode()}
+    raise ValueError(f"source '{src.get('name')}': unknown auth kind '{kind}'"
+                     f" — supported: none, bearer, header, basic")
+
+
+def _rest_flatten_csv(data) -> tuple[list, list]:
+    """JSON array → (headers, rows), best effort: dict rows contribute their
+    keys (first-seen order), nested values are JSON-encoded, scalars land in
+    a single 'value' column."""
+    headers, rows = [], []
+    for item in data:
+        if isinstance(item, dict):
+            for k in item:
+                if k not in headers:
+                    headers.append(k)
+        else:
+            if "value" not in headers:
+                headers.append("value")
+    for item in data:
+        if isinstance(item, dict):
+            rows.append([
+                (json.dumps(item.get(h), ensure_ascii=False)
+                 if isinstance(item.get(h), (dict, list))
+                 else item.get(h)) for h in headers])
+        else:
+            rows.append([item] + [None] * (len(headers) - 1))
+    return headers, rows
+
+
+def tool_rest_query(args: dict) -> str:
+    import brain as _brain
+    ctx = get_request_context()
+    user_id = ctx.current_user_id or ""
+    allowed, why = data_access_allowed(user_id)
+    if not allowed:
+        return _err(f"rest_query: access denied — {why}")
+    source = (args.get("source") or "").strip()
+    if not source:
+        return _err("rest_query: 'source' is required (a configured "
+                    "data_sources name of type rest)")
+    # Same guard order as db_query (E1): policy → scope → mode → resource.
+    scope_paths = None
+    if user_id != "__system__":
+        scope = ctx.data_source_scope
+        if scope is None:
+            return _err(
+                "rest_query: no data sources are enabled for this context — "
+                "in a project, enable them under Projekt-Einstellungen → "
+                "Datenquellen; in a plain chat, pick them in the right "
+                "panel (Datenquellen). This is a configuration matter — "
+                "do NOT retry.")
+        if source not in scope:
+            avail = ", ".join(sorted(scope)) or "(none)"
+            return _err(
+                f"rest_query: source '{source}' is not enabled in this "
+                f"context — enabled here: {avail}.")
+        scope_paths = [str(p) for p in (scope.get(source) or [])]
+    try:
+        src = _resolve_db_source(source)
+    except ValueError as e:
+        return _err(f"rest_query: {e}")
+    if (src.get("type") or "").strip().lower() != "rest":
+        return _err(f"rest_query: source '{source}' is type "
+                    f"'{src.get('type')}' — use db_query for SQL sources")
+    mode = _source_access_mode(src)
+    method = (args.get("method") or "GET").strip().upper()
+    if method not in _REST_READ_METHODS + _REST_WRITE_METHODS:
+        return _err(f"rest_query: unsupported method '{method}'")
+    if mode != "rw" and method in _REST_WRITE_METHODS:
+        return _err("rest_query: source is read-only — writes (POST/PUT/"
+                    "PATCH/DELETE) need an rw source (admin: Einstellungen "
+                    "→ Datenquellen, access_mode)")
+    path = (args.get("path") or "/").strip()
+    perr = _rest_validate_path(path)
+    if perr:
+        return _err(f"rest_query: {perr}")
+    src_allowed = [str(p) for p in (src.get("allowed_paths") or [])]
+    if src_allowed and not any(path.startswith(p) for p in src_allowed):
+        return _err(f"rest_query: path '{path}' is outside the source's "
+                    f"allowed paths: {', '.join(src_allowed)}")
+    if scope_paths and not any(path.startswith(p) for p in scope_paths):
+        return _err(f"rest_query: path '{path}' is outside this context's "
+                    f"allowed paths: {', '.join(scope_paths)}")
+    base = (src.get("base_url") or "").strip().rstrip("/")
+    if not base.lower().startswith(("http://", "https://")):
+        return _err(f"rest_query: source '{source}' has no valid base_url "
+                    f"(admin: Einstellungen → Datenquellen)")
+    try:
+        headers = _rest_auth_headers(src)
+    except ValueError as e:
+        return _err(f"rest_query: {e}")
+    opts = src.get("options") or {}
+    timeout_s = float(opts.get("timeout_s") or REST_DEFAULT_TIMEOUT_S)
+    max_kb = int(opts.get("max_response_kb") or REST_DEFAULT_MAX_RESPONSE_KB)
+    params = args.get("params") if isinstance(args.get("params"), dict) else None
+    body = args.get("body")
+    import httpx
+    try:
+        # follow_redirects=False on purpose: a redirect to another host would
+        # escape the base_url confinement. The 3xx lands in the result.
+        resp = httpx.request(
+            method, base + path, params=params,
+            json=body if (body is not None
+                          and method in _REST_WRITE_METHODS) else None,
+            headers=headers, timeout=timeout_s, follow_redirects=False)
+    except httpx.TimeoutException:
+        return _err(f"rest_query: timeout after {timeout_s:.0f}s "
+                    f"({method} {path})")
+    except Exception as e:
+        return _err(f"rest_query: request failed: {type(e).__name__}: {e}")
+    raw = resp.content[:REST_HARD_DOWNLOAD_CAP]
+    ctype = (resp.headers.get("content-type") or "").split(";")[0].strip()
+    parsed = None
+    if "json" in ctype or (raw[:1] in (b"{", b"[")):
+        try:
+            parsed = json.loads(raw.decode("utf-8", "replace"))
+        except Exception:
+            parsed = None
+    text = (json.dumps(parsed, ensure_ascii=False, indent=2)
+            if parsed is not None else raw.decode("utf-8", "replace"))
+    cap = max_kb * 1024
+    truncated = len(text) > cap
+    shown = text[:cap]
+    out_info = None
+    out_name = (args.get("out") or "").strip()
+    if out_name:
+        from engine.tools.file_tools import _enforce_artifact_path
+        low = out_name.lower()
+        if not (low.endswith(".json") or low.endswith(".csv")):
+            out_name += ".json"
+            low = out_name.lower()
+        out_path, aerr = _enforce_artifact_path(out_name, "rest_query")
+        if aerr:
+            return aerr
+        if low.endswith(".csv"):
+            data = parsed if isinstance(parsed, list) else None
+            if data is None and isinstance(parsed, dict):
+                # common wrapper shapes: take the first list value
+                data = next((v for v in parsed.values()
+                             if isinstance(v, list)), None)
+            if data is None:
+                return _err("rest_query: out=.csv needs a JSON array "
+                            "response — use out=.json for this payload")
+            hdrs, rows = _rest_flatten_csv(data)
+            with open(out_path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f, delimiter=";")
+                w.writerow(hdrs)
+                w.writerows(rows)
+        else:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(text)
+        agent = ctx.current_agent
+        _brain._after_file_write(
+            out_path, "created", agent.agent_id if agent else "main")
+        out_info = {"path": out_path}
+    shown = _brain._gdpr_anon_tool_text(shown, f"rest_query:{source}")
+    res = {"source": source, "status": resp.status_code, "method": method,
+           "path": path, "result": shown}
+    if truncated:
+        res["truncated"] = (f"response capped at {max_kb} KB — pass "
+                            f"out='name.json' to save the full payload")
+    if mode == "rw":
+        res["mode"] = "rw"
+    if resp.status_code >= 400:
+        res["note"] = "HTTP error status — the body excerpt above is the server's error response"
+    if out_info:
+        res["saved"] = out_info
+    return _ok(res)

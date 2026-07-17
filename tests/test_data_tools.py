@@ -916,5 +916,204 @@ class TestDbQueryMssql(unittest.TestCase):
         self.assertEqual(len(lines), 2001)
 
 
+# ---------------------------------------------------------------------------
+# rest_query (DATA_SOURCES_V2_PLAN.md Phase 6, E10)
+# ---------------------------------------------------------------------------
+
+import http.server  # noqa: E402
+import threading  # noqa: E402
+import time as _time  # noqa: E402
+
+
+class _RestStub(http.server.BaseHTTPRequestHandler):
+    """Local stub API: /api/v1/items (GET list, POST 201), /api/echo-auth
+    (echoes request headers), /api/big (oversized JSON), /api/slow (2s)."""
+
+    def log_message(self, *a):  # silent
+        pass
+
+    def _json(self, code, obj):
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        p = self.path.split("?")[0]
+        if p == "/api/v1/items":
+            self._json(200, [{"id": 1, "name": "alpha"},
+                             {"id": 2, "name": "beta"}])
+        elif p == "/api/echo-auth":
+            self._json(200, {k: v for k, v in self.headers.items()})
+        elif p == "/api/big":
+            self._json(200, {"blob": "x" * 5000})
+        elif p == "/api/slow":
+            _time.sleep(2)
+            self._json(200, {"ok": True})
+        else:
+            self._json(404, {"error": "not found"})
+
+    def do_POST(self):
+        if self.path == "/api/v1/items":
+            self._json(201, {"created": True})
+        else:
+            self._json(404, {"error": "not found"})
+
+
+class TestRestQuery(unittest.TestCase):
+    """E10 contract against a local stub API: base_url confinement (absolute
+    URLs / '..' / '//' / encoded '..' rejected), allowed_paths (config) and
+    scope paths (context) as prefix whitelists, ro = GET/HEAD only, auth
+    header injection, response cap, clean timeout, HTTP errors as results."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._httpd = http.server.ThreadingHTTPServer(
+            ("127.0.0.1", 0), _RestStub)
+        cls._port = cls._httpd.server_address[1]
+        cls._thread = threading.Thread(
+            target=cls._httpd.serve_forever, daemon=True)
+        cls._thread.start()
+        base = f"http://127.0.0.1:{cls._port}"
+        cls._sources = [
+            {"name": "apitest", "type": "rest", "base_url": base,
+             "access_mode": "ro",
+             "auth": {"kind": "bearer", "secret": "tok123"},
+             "options": {"timeout_s": 5, "max_response_kb": 256}},
+            {"name": "api_rw", "type": "rest", "base_url": base,
+             "access_mode": "rw",
+             "auth": {"kind": "header", "secret": "k-9",
+                      "header_name": "X-Api-Key"}},
+            {"name": "api_wl", "type": "rest", "base_url": base,
+             "access_mode": "ro", "auth": {"kind": "none"},
+             "allowed_paths": ["/api/v1/"]},
+            {"name": "api_tiny", "type": "rest", "base_url": base,
+             "access_mode": "ro", "auth": {"kind": "none"},
+             "options": {"max_response_kb": 1}},
+            {"name": "api_slow", "type": "rest", "base_url": base,
+             "access_mode": "ro", "auth": {"kind": "none"},
+             "options": {"timeout_s": 1}},
+        ]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._httpd.shutdown()
+        cls._httpd.server_close()
+
+    def setUp(self):
+        self._sid = "datatools-resttest-" + uuid.uuid4().hex[:8]
+        self.enterContext(request_context(
+            current_session_id=self._sid, current_agent=_FakeAgent(),
+            current_user_id="__system__"))
+        self.enterContext(mock.patch.object(
+            data_tools, "_data_sources",
+            return_value=self._sources + _TEST_SOURCES))
+
+    def tearDown(self):
+        try:
+            import shutil
+            from engine.tools.file_tools import _resolve_artifact_dir
+            with request_context(current_session_id=self._sid,
+                                 current_agent=_FakeAgent()):
+                art_dir, _ = _resolve_artifact_dir()
+            if art_dir and self._sid in art_dir and os.path.isdir(art_dir):
+                shutil.rmtree(art_dir)
+        except Exception:
+            pass
+
+    def _q(self, **args):
+        return json.loads(data_tools.tool_rest_query(args))
+
+    def test_get_json_and_auth_header(self):
+        out = self._q(source="apitest", path="/api/echo-auth")
+        self.assertEqual(out["status"], 200)
+        self.assertIn("Bearer tok123", out["result"])
+
+    def test_header_auth_kind(self):
+        out = self._q(source="api_rw", path="/api/echo-auth")
+        self.assertIn("k-9", out["result"])
+        self.assertIn("X-Api-Key", out["result"])
+
+    def test_ro_blocks_post_with_mode_text(self):
+        out = self._q(source="apitest", path="/api/v1/items", method="POST",
+                      body={"name": "x"})
+        self.assertIn("read-only", out["error"])
+        self.assertIn("rw source", out["error"])
+
+    def test_rw_allows_post(self):
+        out = self._q(source="api_rw", path="/api/v1/items", method="POST",
+                      body={"name": "x"})
+        self.assertEqual(out["status"], 201)
+        self.assertEqual(out.get("mode"), "rw")
+        self.assertIn("created", out["result"])
+
+    def test_path_escapes_blocked(self):
+        for bad in ("../etc", "/api/../secret", "//evil.example/x",
+                    "https://evil.example/x", "/api/%2e%2e/secret"):
+            out = self._q(source="apitest", path=bad)
+            self.assertIn("error", out, bad)
+            self.assertNotIn("status", out, bad)
+
+    def test_source_allowed_paths_prefix(self):
+        ok = self._q(source="api_wl", path="/api/v1/items")
+        self.assertEqual(ok["status"], 200)
+        bad = self._q(source="api_wl", path="/api/echo-auth")
+        self.assertIn("allowed paths", bad["error"])
+
+    def test_scope_paths_prefix(self):
+        with mock.patch.object(data_tools, "data_access_allowed",
+                               return_value=(True, "")):
+            with request_context(
+                    current_session_id=self._sid,
+                    current_agent=_FakeAgent(), current_user_id="u1",
+                    data_source_scope={"apitest": ["/api/v1/"]}):
+                ok = self._q(source="apitest", path="/api/v1/items")
+                bad = self._q(source="apitest", path="/api/echo-auth")
+                other = self._q(source="api_rw", path="/api/v1/items")
+        self.assertEqual(ok["status"], 200)
+        self.assertIn("allowed paths", bad["error"])
+        self.assertIn("not enabled in this context", other["error"])
+
+    def test_response_cap_truncates(self):
+        out = self._q(source="api_tiny", path="/api/big")
+        self.assertEqual(out["status"], 200)
+        self.assertIn("truncated", out)
+        self.assertLessEqual(len(out["result"]), 1100)
+
+    def test_timeout_clean_error(self):
+        out = self._q(source="api_slow", path="/api/slow")
+        self.assertIn("timeout", out["error"])
+
+    def test_http_error_status_is_a_result(self):
+        out = self._q(source="apitest", path="/api/nope")
+        self.assertEqual(out["status"], 404)
+        self.assertIn("not found", out["result"])
+        self.assertIn("note", out)
+
+    def test_out_json_and_csv(self):
+        out = self._q(source="apitest", path="/api/v1/items",
+                      out="items.json")
+        self.assertTrue(out["saved"]["path"].endswith("items.json"))
+        with open(out["saved"]["path"], encoding="utf-8") as f:
+            self.assertEqual(len(json.load(f)), 2)
+        out2 = self._q(source="apitest", path="/api/v1/items",
+                       out="items.csv")
+        with open(out2["saved"]["path"], encoding="utf-8") as f:
+            lines = f.read().strip().splitlines()
+        self.assertEqual(len(lines), 3)  # header + 2 rows
+        self.assertIn("id", lines[0])
+
+    def test_db_query_on_rest_source_redirects(self):
+        out = json.loads(data_tools.tool_db_query(
+            {"source": "apitest", "sql": "SELECT 1"}))
+        self.assertIn("rest_query", out["error"])
+
+    def test_rest_query_on_sql_source_redirects(self):
+        out = self._q(source="dead_db", path="/x")
+        self.assertIn("db_query", out["error"])
+
+
 if __name__ == "__main__":
     unittest.main()

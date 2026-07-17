@@ -3592,7 +3592,7 @@ async function _genTab_data_sources(C) {
         <span style="font-size:13px;font-weight:500;color:var(--text-100)">${esc(s.name)}</span>
         ${BADGE(s.type)}
         ${s.access_mode === 'rw' ? BADGE('read/write', 'var(--error)') : BADGE('read-only')}
-        <span style="${MONO};flex:1">${s.dsn_set ? esc(s.dsn_masked) : (s.env_key ? 'env: ' + esc(s.env_key) : '—')}</span>
+        <span style="${MONO};flex:1">${s.type === 'rest' ? esc(s.base_url || '—') : (s.dsn_set ? esc(s.dsn_masked) : (s.env_key ? 'env: ' + esc(s.env_key) : '—'))}</span>
         <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="_dsEdit('${esc(s.name)}')">Bearbeiten</button>
         <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="deleteDataSource('${esc(s.name)}')">Löschen</button>
       </div>`;
@@ -3607,7 +3607,7 @@ async function _genTab_data_sources(C) {
     <input type="hidden" id="ds-original-name" value="">
     <div style="display:flex;gap:8px">
       <div style="flex:1"><label class="form-label">Name</label><input class="form-input" id="ds-name" placeholder="z. B. warehouse"></div>
-      <div style="width:160px"><label class="form-label">Typ</label><select class="form-select" id="ds-type" style="width:100%">
+      <div style="width:160px"><label class="form-label">Typ</label><select class="form-select" id="ds-type" style="width:100%" onchange="_dsTypeChanged()">
         ${(data.wired_types || ['postgres']).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
       </select></div>
       <div style="width:160px"><label class="form-label">Zugriffsmodus</label><select class="form-select" id="ds-access-mode" style="width:100%">
@@ -3615,13 +3615,37 @@ async function _genTab_data_sources(C) {
         <option value="rw">read/write</option>
       </select></div>
     </div>
-    <div style="font-size:11px;color:var(--warning)">read/write: Schreibzugriff (INSERT/UPDATE/DELETE/MERGE) durch den Agenten — die DB-Grants des hinterlegten Benutzers sind die letzte Instanz. DDL bleibt gesperrt.</div>
+    <div style="font-size:11px;color:var(--warning)">read/write: Schreibzugriff (SQL: INSERT/UPDATE/DELETE/MERGE · REST: POST/PUT/PATCH/DELETE) durch den Agenten — die Grants/Rechte des hinterlegten Zugangs sind die letzte Instanz. DDL bleibt gesperrt.</div>
+    <div id="ds-sql-fields" style="${G('8px')}">
     <div><label class="form-label">DSN (Verbindungs-URL, inkl. Read-only-Benutzer)</label>
-      <input class="form-input" id="ds-dsn" type="password" autocomplete="off" placeholder="postgresql://user:pass@host:5432/db — beim Bearbeiten leer lassen = unverändert"></div>
+      <input class="form-input" id="ds-dsn" type="password" autocomplete="off" placeholder="postgresql://user:pass@host:5432/db bzw. mssql://user:pass@host:1433/db — beim Bearbeiten leer lassen = unverändert"></div>
     <div style="display:flex;gap:8px">
       <div style="flex:1"><label class="form-label">…oder Env-Variable mit der DSN</label><input class="form-input" id="ds-env-key" placeholder="z. B. WAREHOUSE_DSN"></div>
       <div style="width:170px"><label class="form-label">Statement-Timeout (ms)</label><input class="form-input" id="ds-timeout" type="number" placeholder="60000"></div>
       <div style="width:170px"><label class="form-label">Connect-Timeout (s)</label><input class="form-input" id="ds-connect-timeout" type="number" placeholder="10"></div>
+    </div>
+    </div>
+    <div id="ds-rest-fields" style="display:none">
+    <div><label class="form-label">Base-URL (das Tool erreicht AUSSCHLIESSLICH Pfade darunter)</label>
+      <input class="form-input" id="ds-rest-base-url" placeholder="https://api.example.com"></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <div style="width:140px"><label class="form-label">Auth</label><select class="form-select" id="ds-rest-auth-kind" style="width:100%">
+        <option value="none">keine</option>
+        <option value="bearer">Bearer-Token</option>
+        <option value="header">Header</option>
+        <option value="basic">Basic (user:pass)</option>
+      </select></div>
+      <div style="flex:1"><label class="form-label">Secret</label>
+        <input class="form-input" id="ds-rest-secret" type="password" autocomplete="off" placeholder="beim Bearbeiten leer lassen = unverändert"></div>
+      <div style="width:150px"><label class="form-label">Header-Name</label><input class="form-input" id="ds-rest-header-name" placeholder="X-API-Key"></div>
+      <div style="width:170px"><label class="form-label">…oder Env-Variable</label><input class="form-input" id="ds-rest-auth-env" placeholder="z. B. ONBASE_TOKEN"></div>
+    </div>
+    <div style="margin-top:8px"><label class="form-label">Erlaubte Pfade (einer je Zeile, leer = alle Pfade unter der Base-URL)</label>
+      <textarea class="form-input" id="ds-rest-allowed-paths" rows="3" placeholder="/api/v1/items&#10;/api/v1/reports" style="font-family:monospace;font-size:12px"></textarea></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <div style="width:170px"><label class="form-label">Timeout (s)</label><input class="form-input" id="ds-rest-timeout" type="number" placeholder="30"></div>
+      <div style="width:200px"><label class="form-label">Antwort-Kappe (KB)</label><input class="form-input" id="ds-rest-max-kb" type="number" placeholder="256"></div>
+    </div>
     </div>
     <div style="display:flex;gap:8px">
       <button class="btn-primary" onclick="saveDataSource()">Quelle speichern</button>
@@ -3643,7 +3667,25 @@ function _dsEdit(name) {
   document.getElementById('ds-env-key').value = s ? (s.env_key || '') : '';
   document.getElementById('ds-timeout').value = s ? (s.options?.statement_timeout_ms ?? '') : '';
   document.getElementById('ds-connect-timeout').value = s ? (s.options?.connect_timeout ?? '') : '';
+  document.getElementById('ds-rest-base-url').value = s ? (s.base_url || '') : '';
+  document.getElementById('ds-rest-auth-kind').value = s ? (s.auth?.kind || 'none') : 'none';
+  document.getElementById('ds-rest-secret').value = '';
+  document.getElementById('ds-rest-header-name').value = s ? (s.auth?.header_name || '') : '';
+  document.getElementById('ds-rest-auth-env').value = s ? (s.auth?.env_key || '') : '';
+  document.getElementById('ds-rest-allowed-paths').value = s ? (s.allowed_paths || []).join('\n') : '';
+  document.getElementById('ds-rest-timeout').value = s ? (s.options?.timeout_s ?? '') : '';
+  document.getElementById('ds-rest-max-kb').value = s ? (s.options?.max_response_kb ?? '') : '';
+  _dsTypeChanged();
   if (s) document.getElementById('ds-name').focus();
+}
+
+// Show the SQL or REST field group per the selected type.
+function _dsTypeChanged() {
+  const isRest = document.getElementById('ds-type')?.value === 'rest';
+  const sqlF = document.getElementById('ds-sql-fields');
+  const restF = document.getElementById('ds-rest-fields');
+  if (sqlF) sqlF.style.display = isRest ? 'none' : '';
+  if (restF) restF.style.display = isRest ? '' : 'none';
 }
 
 async function saveDataSource() {
@@ -3651,23 +3693,43 @@ async function saveDataSource() {
   const name = document.getElementById('ds-name').value.trim();
   const dsn = document.getElementById('ds-dsn').value.trim();
   const envKey = document.getElementById('ds-env-key').value.trim();
+  const type = document.getElementById('ds-type').value;
   if (!name) { showToast('Name ist erforderlich', true); return; }
-  // On a NEW source (no original) either DSN or env var must be given; on
-  // edit an empty DSN means "keep the stored one" (server-side).
-  if (!original && !dsn && !envKey) { showToast('DSN oder Env-Variable angeben', true); return; }
+  const source = {
+    name, type,
+    access_mode: document.getElementById('ds-access-mode').value,
+  };
+  if (type === 'rest') {
+    source.base_url = document.getElementById('ds-rest-base-url').value.trim();
+    if (!source.base_url) { showToast('Base-URL ist erforderlich', true); return; }
+    source.auth = {
+      kind: document.getElementById('ds-rest-auth-kind').value,
+      secret: document.getElementById('ds-rest-secret').value.trim(),
+      header_name: document.getElementById('ds-rest-header-name').value.trim(),
+      env_key: document.getElementById('ds-rest-auth-env').value.trim(),
+    };
+    source.allowed_paths = document.getElementById('ds-rest-allowed-paths').value
+      .split('\n').map(p => p.trim()).filter(Boolean);
+    source.options = {
+      timeout_s: document.getElementById('ds-rest-timeout').value,
+      max_response_kb: document.getElementById('ds-rest-max-kb').value,
+    };
+  } else {
+    // On a NEW source (no original) either DSN or env var must be given; on
+    // edit an empty DSN means "keep the stored one" (server-side).
+    if (!original && !dsn && !envKey) { showToast('DSN oder Env-Variable angeben', true); return; }
+    source.dsn = dsn;
+    source.env_key = envKey;
+    source.options = {
+      statement_timeout_ms: document.getElementById('ds-timeout').value,
+      connect_timeout: document.getElementById('ds-connect-timeout').value,
+    };
+  }
   try {
     const r = await API.post('/v1/data-sources', {
       action: 'save_source',
       original_name: original,
-      source: {
-        name, dsn, env_key: envKey,
-        type: document.getElementById('ds-type').value,
-        access_mode: document.getElementById('ds-access-mode').value,
-        options: {
-          statement_timeout_ms: document.getElementById('ds-timeout').value,
-          connect_timeout: document.getElementById('ds-connect-timeout').value,
-        },
-      },
+      source,
     });
     if (r?.error) { showToast(r.error, true); return; }
     showToast(`Quelle „${name}" gespeichert`);

@@ -523,7 +523,7 @@ class AdminConfigHandlers:
         from engine.tools.data_tools import DATA_ACCESS_DEFAULT_ROLES
         sources = []
         for s in (server_config.get("data_sources") or []):
-            sources.append({
+            row = {
                 "name": s.get("name") or "",
                 "type": s.get("type") or "postgres",
                 "access_mode": ("rw" if (s.get("access_mode") or "")
@@ -532,7 +532,19 @@ class AdminConfigHandlers:
                 "options": s.get("options") or {},
                 "dsn_set": bool((s.get("dsn") or "").strip()),
                 "dsn_masked": self._mask_dsn((s.get("dsn") or "").strip()),
-            })
+            }
+            if (row["type"] or "").strip().lower() == "rest":
+                a = s.get("auth") or {}
+                row["base_url"] = s.get("base_url") or ""
+                row["allowed_paths"] = s.get("allowed_paths") or []
+                # The auth secret NEVER leaves the server — only its presence.
+                row["auth"] = {
+                    "kind": a.get("kind") or "none",
+                    "header_name": a.get("header_name") or "",
+                    "env_key": a.get("env_key") or "",
+                    "secret_set": bool((a.get("secret") or "").strip()),
+                }
+            sources.append(row)
         pol = server_config.get("data_sources_access") or {}
         access = {
             "enabled": bool(pol.get("enabled", True)),
@@ -555,7 +567,7 @@ class AdminConfigHandlers:
         self._send_json({"sources": sources, "access": access,
                          "teams": teams, "users": users,
                          "roles": list(ROLES),
-                         "wired_types": ["postgres", "mssql"]})
+                         "wired_types": ["postgres", "mssql", "rest"]})
 
     def _handle_data_sources_available(self):
         """GET /v1/data-sources/available — NOT admin-only (E7): any
@@ -598,6 +610,12 @@ class AdminConfigHandlers:
             self._send_json({"error": str(e)}, 404)
             return
         stype = (src.get("type") or "postgres").strip().lower()
+        if stype == "rest":
+            # REST has no information_schema — the configured allowed_paths
+            # serve as the picker's suggestion list (E10; no discovery call).
+            self._send_json({"tables": src.get("allowed_paths") or [],
+                             "kind": "paths"})
+            return
         probe = dict(src)
         probe["options"] = dict(src.get("options") or {})
         probe["options"]["connect_timeout"] = 5
@@ -652,9 +670,17 @@ class AdminConfigHandlers:
             prev = next((x for x in srcs
                          if (x.get("name") or "") == (original or name)), None)
             # Preserve config.json-only options (odbc_driver, windows_auth …)
-            # across GUI edits — the form only knows the two timeout knobs.
+            # across GUI edits — the form only knows a subset of the knobs.
             opts = dict((prev or {}).get("options") or {})
-            for k in ("statement_timeout_ms", "connect_timeout"):
+            access_mode = (s.get("access_mode") or "ro").strip().lower()
+            if access_mode not in ("ro", "rw"):
+                self._send_json({"error": "access_mode muss 'ro' oder 'rw' sein"}, 400)
+                return
+            stype = (s.get("type") or "postgres").strip().lower()
+            entry = {"name": name, "type": stype, "access_mode": access_mode}
+            _opt_keys = (("timeout_s", "max_response_kb") if stype == "rest"
+                         else ("statement_timeout_ms", "connect_timeout"))
+            for k in _opt_keys:
                 v = (s.get("options") or {}).get(k)
                 if v in (None, ""):
                     opts.pop(k, None)
@@ -664,24 +690,59 @@ class AdminConfigHandlers:
                 except (TypeError, ValueError):
                     self._send_json({"error": f"options.{k} muss eine Zahl sein"}, 400)
                     return
-            access_mode = (s.get("access_mode") or "ro").strip().lower()
-            if access_mode not in ("ro", "rw"):
-                self._send_json({"error": "access_mode muss 'ro' oder 'rw' sein"}, 400)
-                return
-            entry = {"name": name,
-                     "type": (s.get("type") or "postgres").strip().lower(),
-                     "access_mode": access_mode}
-            dsn = (s.get("dsn") or "").strip()
-            if not dsn and prev:
-                dsn = (prev.get("dsn") or "").strip()  # keep stored secret
-            if dsn:
-                entry["dsn"] = dsn
-            env_key = (s.get("env_key") or "").strip()
-            if env_key:
-                entry["env_key"] = env_key
-            if not dsn and not env_key:
-                self._send_json({"error": "Entweder DSN oder Env-Variable angeben"}, 400)
-                return
+            if stype == "rest":
+                # REST source (Phase 6, E10): fixed base_url + auth + optional
+                # path whitelist. The auth secret behaves like the DSN: empty
+                # on edit = keep the stored one; it NEVER leaves the server.
+                base_url = (s.get("base_url") or "").strip()
+                if not base_url.lower().startswith(("http://", "https://")):
+                    self._send_json({"error": "base_url (http/https) ist für REST-Quellen erforderlich"}, 400)
+                    return
+                entry["base_url"] = base_url.rstrip("/")
+                a = s.get("auth") or {}
+                kind = (a.get("kind") or "none").strip().lower()
+                if kind not in ("none", "bearer", "header", "basic"):
+                    self._send_json({"error": "auth.kind muss none|bearer|header|basic sein"}, 400)
+                    return
+                auth = {"kind": kind}
+                if kind != "none":
+                    secret = (a.get("secret") or "").strip()
+                    if not secret and prev:
+                        secret = ((prev.get("auth") or {}).get("secret") or "").strip()
+                    a_env = (a.get("env_key") or "").strip()
+                    if secret:
+                        auth["secret"] = secret
+                    if a_env:
+                        auth["env_key"] = a_env
+                    if not secret and not a_env:
+                        self._send_json({"error": "Auth: Secret oder Env-Variable angeben"}, 400)
+                        return
+                    if kind == "header":
+                        auth["header_name"] = (a.get("header_name") or "X-API-Key").strip()
+                entry["auth"] = auth
+                paths = []
+                for pth in (s.get("allowed_paths") or [])[:100]:
+                    pth = str(pth).strip()
+                    if not pth:
+                        continue
+                    if not pth.startswith("/"):
+                        self._send_json({"error": f"allowed_paths müssen mit '/' beginnen: '{pth}'"}, 400)
+                        return
+                    paths.append(pth)
+                if paths:
+                    entry["allowed_paths"] = paths
+            else:
+                dsn = (s.get("dsn") or "").strip()
+                if not dsn and prev:
+                    dsn = (prev.get("dsn") or "").strip()  # keep stored secret
+                if dsn:
+                    entry["dsn"] = dsn
+                env_key = (s.get("env_key") or "").strip()
+                if env_key:
+                    entry["env_key"] = env_key
+                if not dsn and not env_key:
+                    self._send_json({"error": "Entweder DSN oder Env-Variable angeben"}, 400)
+                    return
             if opts:
                 entry["options"] = opts
             new_srcs = others + [entry]

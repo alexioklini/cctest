@@ -2107,23 +2107,25 @@ async function renderProjectDataSources(project) {
       : '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:var(--bg-200);color:var(--text-400)">read-only</span>';
     let detail = '';
     if (on) {
+      // REST sources restrict PATHS instead of tables (same scope shape).
+      const resLabel = s.type === 'rest' ? 'Pfade' : 'Tabellen';
       const expanded = state._pdsExpanded === s.name;
       const known = tblCache[s.name];
       let picker = '';
       if (expanded && Array.isArray(known)) {
-        picker = `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">` +
+        picker = (known.length ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px">` +
           known.map(t => {
             const sel = tabs.includes(t);
             return `<label style="font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;border:1px solid var(--border-100);background:${sel ? 'var(--accent)' : 'var(--bg-200)'};color:${sel ? '#fff' : 'var(--text-200)'}">` +
               `<input type="checkbox" style="display:none" ${sel ? 'checked' : ''} onchange="pdsToggleTable('${esc(s.name)}','${esc(t)}')">${esc(t)}</label>`;
-          }).join('') +
-          `</div><div style="margin-top:4px"><button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="pdsClearTables('${esc(s.name)}')">Einschränkung aufheben (alle Tabellen)</button></div>`;
+          }).join('') + `</div>` : `<div style="margin-top:6px;color:var(--text-400)">Keine Vorschläge hinterlegt.</div>`) +
+          `<div style="margin-top:4px"><button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="pdsClearTables('${esc(s.name)}')">Einschränkung aufheben (alle ${resLabel})</button></div>`;
       } else if (expanded) {
-        picker = `<div style="margin-top:6px;color:var(--text-400)">Lade Tabellen…</div>`;
+        picker = `<div style="margin-top:6px;color:var(--text-400)">Lade ${resLabel}…</div>`;
       }
       detail = `<div style="margin:6px 0 2px 26px;font-size:12px;color:var(--text-300)">
-        ${tabs.length ? `Beschränkt auf: <b>${tabs.map(esc).join(', ')}</b>` : 'alle Tabellen'}
-        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:8px" onclick="pdsPickTables('${esc(s.name)}')">${expanded ? 'Zuklappen' : 'Tabellen wählen…'}</button>
+        ${tabs.length ? `Beschränkt auf: <b>${tabs.map(esc).join(', ')}</b>` : `alle ${resLabel}`}
+        <button class="btn-secondary" style="padding:2px 8px;font-size:11px;margin-left:8px" onclick="pdsPickTables('${esc(s.name)}')">${expanded ? 'Zuklappen' : `${resLabel} wählen…`}</button>
         ${picker}</div>`;
     }
     return `<div style="padding:6px 0;border-bottom:1px solid var(--border-100)">
