@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.362.0",
+        "date": "2026-07-17",
+        "title": "Modell-Benchmark deutlich schneller",
+        "body": "Der Benchmark-Lauf im Modelle-Tab ist spürbar schneller: "
+                "für Modelle, deren Fähigkeits-Prozente aus den offiziellen "
+                "Leaderboards stammen, misst Brain die Geschwindigkeit jetzt "
+                "mit einem einzigen repräsentativen Aufruf pro Modell statt "
+                "mit dem kompletten Prompt-Satz — der Durchsatz hängt am "
+                "Modell, nicht am Aufgabentyp. Ergebnis und Ranking der "
+                "✨-Auto-Modellwahl bleiben unverändert.",
+        "audience": "admin",
+        "versions": ["9.362.0"],
+    },
+    {
         "version": "9.361.0",
         "date": "2026-07-17",
         "title": "Berichte als Word-Dokument exportieren",

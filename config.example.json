@@ -8947,7 +8947,7 @@
     "caveman_mode": 0
   },
   "chat_cleanup": {
-    "enabled": false,
+    "enabled": true,
     "archive_after_days": 30,
     "delete_after_days": 90,
     "run_interval_seconds": 3600
@@ -8987,7 +8987,8 @@
         "mistral-small-latest",
         "deepseek-v4-pro",
         "openai/gpt-5.6-luna",
-        "openrouter/openai/gpt-5.6-luna"
+        "openrouter/openai/gpt-5.6-luna",
+        "k3"
       ],
       "analysis": [
         "glm-5.2",
@@ -8997,7 +8998,8 @@
         "mistral-small-latest",
         "deepseek-v4-pro",
         "openai/gpt-5.6-luna",
-        "openrouter/openai/gpt-5.6-luna"
+        "openrouter/openai/gpt-5.6-luna",
+        "k3"
       ],
       "reporting": [
         "glm-5.2",
@@ -9007,14 +9009,16 @@
         "mistral-small-latest",
         "deepseek-v4-pro",
         "openai/gpt-5.6-luna",
-        "openrouter/openai/gpt-5.6-luna"
+        "openrouter/openai/gpt-5.6-luna",
+        "k3"
       ],
       "creative": [
         "glm-5.2",
         "mistral-medium-3.5",
         "deepseek-v4-pro",
         "openai/gpt-5.6-luna",
-        "openrouter/openai/gpt-5.6-luna"
+        "openrouter/openai/gpt-5.6-luna",
+        "k3"
       ],
       "orchestration": [
         "glm-5.2",
@@ -9022,7 +9026,8 @@
         "kimi-k2.6",
         "deepseek-v4-pro",
         "openai/gpt-5.6-luna",
-        "openrouter/openai/gpt-5.6-luna"
+        "openrouter/openai/gpt-5.6-luna",
+        "k3"
       ]
     },
     "task_modes": {

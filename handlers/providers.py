@@ -25,10 +25,11 @@ def _run_benchmark_bg(targets, judge_model, task_types, config_path):
     config.json as they complete. Override blocks are preserved per cell.
 
     Capability comes from OFFICIAL leaderboard data where available
-    (engine/bench_official.py); the prompt run then only measures speed
-    (seed test). Uncovered cells fall back to the internal prompt+judge
-    benchmark. A source-fetch failure is recorded as a progress error and the
-    whole run degrades to the internal path — never blocks."""
+    (engine/bench_official.py); speed then comes from ONE representative call
+    per model (model_bench.measure_speed), shared across its official cells.
+    Uncovered cells fall back to the internal prompt+judge benchmark. A
+    source-fetch failure is recorded as a progress error and the whole run
+    degrades to the internal path — never blocks."""
     import handlers.sidecar_proxy as sidecar_proxy
     n_tasks = len(model_bench.effective_task_types(task_types))
     with _BENCH_LOCK:

@@ -594,10 +594,13 @@ Since v9.275.0 the two halves of a benchmark cell come from DIFFERENT places:
   lmarena}` override (the "Zuordnung" inputs in the GUI) wins when the
   auto-match is wrong. Fetched payloads cache in `agents/main/bench_official_cache.json`
   (24h TTL per source; fetch failure → stale cache → internal fallback).
-- **Speed = INTERNAL seed test** (`engine/model_bench.py`,
-  `measure_only=True`): the tiered prompt set (`BENCH_TASKS`) still runs on
-  YOUR hardware/providers to measure real mean throughput (`tps`,
-  tokens/sec), but no scoring happens for officially-covered cells.
+- **Speed = ONE representative internal call** (`engine/model_bench.py`,
+  `measure_speed`, since 9.362.0): throughput (`tps`, tokens/sec) is a
+  model/provider property, not a task property, so per model a single
+  long-form prompt runs once on YOUR hardware/providers and the measured tps
+  is shared across all officially-covered cells (`n: 1`). No scoring, no
+  judge call. (Before 9.362.0 the full `BENCH_TASKS` prompt set ran
+  measure-only per task type.)
 
 **Internal fallback**: models/tasks absent from every official source (local
 fine-tunes, oMLX models, brand-new releases) run the full legacy cell —

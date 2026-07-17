@@ -2182,8 +2182,11 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   — Artificial Analysis (Indizes; braucht den kostenlosen API-Key im Feld
   oben im Tab) und LMArena (Kategorie-Elo, ohne Key) — als Perzentil der
   gesamten Leaderboard-Verteilung; die **Geschwindigkeit (tok/s)** wird beim
-  Benchmark-Lauf weiterhin real auf der eigenen Umgebung gemessen
-  (Seed-Test). Jede Zelle zeigt ein Quellen-Badge (**AA** / **Arena** /
+  Benchmark-Lauf weiterhin real auf der eigenen Umgebung gemessen — seit
+  9.362.0 mit **einem einzigen repräsentativen Aufruf pro Modell** (Durchsatz
+  hängt am Modell/Provider, nicht am Aufgabentyp), dessen Wert für alle
+  Leaderboard-Zellen übernommen wird; der Lauf ist dadurch deutlich
+  schneller. Jede Zelle zeigt ein Quellen-Badge (**AA** / **Arena** /
   **intern**); der Tooltip nennt das zugeordnete offizielle Modell und den
   Rohwert. Modelle ohne Leaderboard-Eintrag (z. B. lokale Modelle) werden wie
   früher intern per Prompt+Judge getestet. Trifft die automatische Zuordnung
