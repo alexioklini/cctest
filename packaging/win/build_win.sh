@@ -278,7 +278,13 @@ cat > "$OUT_DIR/app/config.json" <<'JSON'
     "embedding_remote_model": "embeddinggemma-300m-bf16",
     "_embedding_comment": "remote = oMLX /v1/embeddings auf dem Mac mini (vektoridentisch zu MLX, cos=1.0); bei Ausfall latcht der Prozess auf lokales CPU-ONNX (Modell liegt im Bundle-hf-cache). Fuer rein lokales Embedding: embedding_device auf 'cpu' setzen.",
     "kg": {"enabled": false},
-    "reranker": {"enabled": false},
+    "reranker": {
+      "enabled": true,
+      "device": "remote",
+      "url": "http://MACMINI_IP:8002",
+      "model": "BAAI/bge-reranker-v2-m3",
+      "_comment": "Infinity auf dem Mac mini (MACMINI_SETUP.md Abschnitt 4, Reranker; pip-Pins beachten). Laeuft der Dienst nicht, latcht der Prozess den Remote-Reranker nach 2 Fehlversuchen ab — Suche behaelt die Vektor-Reihenfolge, kein Ausfall."
+    },
     "mine": {"interval_seconds": 1800},
     "chat_sync": {"interval_seconds": 60}
   }

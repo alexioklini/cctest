@@ -14,7 +14,7 @@ und Zahl der lokal zu betreibenden Dienste, nicht N×Installationen.
 | MemPalace-Embedding | `mempalace.embedding_device: "remote"` → oMLX `/v1/embeddings` | seit v9.367.0 (CPU-ONNX nur Notfall-Fallback) |
 | OCR / Bildbeschreibung | `ocr.engine: "local_vision"` → Vision-Modell auf oMLX | optional, dokumentiert |
 | STT / TTS | oMLX-Audio-Endpoints bzw. Zusatz-Inferencer (MACMINI_SETUP.md §4) | optional |
-| Reranker | Infinity auf dem Mini — **brain-seitiger Remote-Seam fehlt noch** | Follow-up (Seed: OFF) |
+| Reranker | Infinity auf dem Mini (`/rerank`, Port 8002) — Seam `reranker.device: "remote"` | seit v9.376.0 (Seed: AN/remote; ohne Dienst latcht der Client auf Vektor-Reihenfolge) |
 
 ## 2. Bundle-Zerlegung (entpackt)
 
@@ -59,7 +59,7 @@ Gegenrechnung — warum das Voll-Profil trotzdem Default bleibt:
 | Kandidat | Ersparnis | Aufwand / Risiko | Empfehlung |
 |---|---|---|---|
 | **site-packages-Trim**: chromadb-rust 61 + kubernetes 41 + grpc 12 (+ Kleinteile) werden nur vom `mempalace==3.4.0`-Anker gezogen; Backend ist Qdrant, chromadb ist toter Code | ~120–150 MB | Anker per `--no-deps` + Handliste ersetzen; Import-Smoke auf Win nötig | lohnt, kleiner Folge-PR |
-| **Reranker remote** (Infinity `/v1/rerank`) | 0 MB (ist eh OFF), +0.075 Retrieval-Score | kleiner Seam nach dem Muster des Remote-Embeddings | bekanntes Follow-up |
+| **Reranker remote** (Infinity `/rerank`) | 0 MB, +0.075 Retrieval-Score | ~~kleiner Seam~~ **ERLEDIGT v9.376.0** (`reranker.device: "remote"`, Latch bei totem Endpoint; Parität verifiziert) | umgesetzt — Mini braucht Infinity, MACMINI_SETUP.md §4 |
 | **GDPR/PII-NER remote** (spacy 83 + de_md 60 + en_md 54 + thinc/blis ~32) | ~230 MB | HTTP-Wrapper + Client-Seam in `engine/pii_ner.py`; ABER: Scan liegt auf JEDEM Send im Pfad, und die Fail-Semantik ist giftig — Bank-Kernfeature ⇒ fail-closed ⇒ Mini-Ausfall würde jeden Chat blocken | **lokal lassen** |
 | en_core_web_md (54 MB) weglassen | 54 MB | EN-PERSON-Pass (v9.349) verschwindet — Bank hat EN-Dokumente | drin lassen |
 
@@ -85,8 +85,8 @@ bewerten, falls die Bank-Policy das Hosting auf dem Mini ausdrücklich erlaubt.
    Resilienz, die 2,15 GB sind einmalig.
 2. **Minimal-Profil als Option im setup.exe** (diese Welle): für Disk-/RAM-
    knappe Win-Boxen bzw. wenn der Mini ohnehin gemanagt wird — −60 % Paket.
-3. Follow-ups in Reihenfolge des Nutzens: site-packages-Trim (−150 MB, risikoarm)
-   → Reranker-Remote-Seam (Qualität) → NER bleibt lokal.
+3. Follow-ups in Reihenfolge des Nutzens: site-packages-Trim (−150 MB, risikoarm);
+   der Reranker-Remote-Seam ist seit v9.376.0 umgesetzt; NER bleibt lokal.
 4. Nicht größenrelevanter Restaufwand auf Win11 (unverändert, nicht
    auslagerbar): Firewall-Freigabe 8420 (einmalig, admin), optional ODBC-MSI
    für MSSQL, optional Node.js für Mermaid.

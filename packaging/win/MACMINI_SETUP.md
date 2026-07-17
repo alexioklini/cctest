@@ -1,9 +1,24 @@
 # Mac mini M4 — Konfiguration für das Windows-11-Deployment
 
-Stand v9.367.0. Der Windows-11-Client betreibt den kompletten Brain-Agent-Server;
+Stand v9.376.0. Der Windows-11-Client betreibt den kompletten Brain-Agent-Server;
 der Mac mini M4 ist die **Inferenz-Box** im LAN. Diese Anleitung beschreibt, was
 auf dem Mac mini laufen und konfiguriert sein muss, damit der Windows-Server
 alles aufrufen kann.
+
+## Installationsvarianten auf der Windows-Seite — was der Mini jeweils leisten muss
+
+Das Windows-Setup (`BrainAgent-setup.exe`; Quelle wahlweise Offline-Payload-Zip
+airgapped oder Online-Download vom GitHub-Release/Mirror — **für den Mac mini
+macht der Installationsweg keinen Unterschied**, nur das gewählte Profil zählt)
+kennt zwei Profile:
+
+| Windows-Profil | Pflicht auf dem Mini | Optional auf dem Mini |
+|---|---|---|
+| **Voll-Installation** (Standard, ~2,1 GB auf dem Client) | oMLX: Chat-Modell + Embedding (§1–§3) | Vision/OCR (§2c), STT/TTS (§2d/§4), Reranker via Infinity (§4) |
+| **Minimal-Installation** (~0,9 GB auf dem Client) | zusätzlich SearXNG + crawl4ai + Qdrant (§6) | dito |
+
+Windows-seitige Updates (setup.exe erneut ausführen bzw. app-only-Payload)
+ändern am Mini nichts — die Dienste hier sind versionsunabhängig.
 
 ## Was der Windows-Server vom Mac mini braucht
 
@@ -15,11 +30,12 @@ alles aufrufen kann.
 | Bild-Beschreibung bei Text-Modellen (`attachments.image_model`) | dito Vision-Modell | Optional |
 | Sprach-Transkription (STT) | oMLX `/v1/audio/transcriptions` mit Whisper-Modell — sonst Zusatz-Inferencer, s. Abschnitt 4 | Optional |
 | Podcast/Vorlesen (TTS) | oMLX `/v1/audio/speech` mit TTS-Modell — sonst Zusatz-Inferencer/Cloud, s. Abschnitt 4 | Optional |
-| Retrieval-Reranker | Zusatz-Inferencer (Infinity), s. Abschnitt 4 — im Windows-Seed deaktiviert | Nein (Follow-up) |
+| Retrieval-Reranker (bessere Gedächtnis-Treffer, +0.075 Score) | Infinity `/rerank` auf Port 8002, s. Abschnitt 4 — Windows-Seed: **aktiv/remote**; läuft der Dienst nicht, latcht der Client nach 2 Fehlversuchen automatisch auf die Vektor-Reihenfolge (kein Ausfall) | Optional (empfohlen) |
 
-Alles andere (GDPR/PII-NER, Dokument-Extraktion, Qdrant, Websuche, DuckDB,
-Code-Graph) läuft CPU-seitig auf dem Windows-Client und braucht den Mac mini
-nicht.
+Alles andere (GDPR/PII-NER, Dokument-Extraktion, DuckDB, Code-Graph — und in der
+**Voll-Installation** auch Qdrant + Websuche) läuft CPU-seitig auf dem
+Windows-Client und braucht den Mac mini nicht. In der **Minimal-Installation**
+liegen SearXNG, crawl4ai und Qdrant zusätzlich auf dem Mini → Abschnitt 6.
 
 ## 1. oMLX installieren und als Dienst einrichten
 
@@ -134,14 +150,33 @@ HTTP-Endpoints; ein weiterer Dienst ist also nur ein weiterer Provider-Eintrag
   Lokale Alternative: TTS-MLX-Modell (z. B. Kokoro-MLX) hinter einem
   `/v1/audio/speech`-Wrapper analog zu STT. Wenn beides nicht gewünscht:
   Podcast/Vorlesen bleibt deaktiviert — kein sonstiger Funktionsverlust.
-- **Reranker (`BAAI/bge-reranker-v2-m3`):** oMLX hat zwar `/v1/rerank`, aber
-  kein MLX-Format dieses Modells; geeigneter Inferencer ist **Infinity**
-  (`michaelfeil/infinity`, serviert Embeddings + Rerank, läuft auf Apple-MPS):
-  `pip install infinity-emb[all]` + launchd-Dienst auf z. B. Port 8002.
-  Brain-seitig fehlt dafür noch ein Remote-Rerank-Anschluss (heute lädt der
-  Reranker in-process via sentence_transformers; im Windows-Seed deaktiviert)
-  — das ist ein kleines Follow-up nach dem Muster des Remote-Embeddings.
-  Kostenpunkt der Lücke: ~+0.075 Retrieval-Score, kein Funktionsausfall.
+- **Reranker (`BAAI/bge-reranker-v2-m3`) — seit v9.376.0 remote angebunden:**
+  oMLX hat zwar `/v1/rerank`, aber kein MLX-Format dieses Modells; der passende
+  Inferencer ist **Infinity** (`michaelfeil/infinity`, läuft auf Apple-MPS).
+  Einrichtung auf dem Mini:
+
+  ```bash
+  python3 -m venv ~/.venv_infinity
+  ~/.venv_infinity/bin/pip install "infinity-emb[all]" "optimum<1.24" "click<8.2"
+  #  ^ BEIDE Pins sind Pflicht (Stand 07/2026): optimum>=1.24 hat
+  #    bettertransformer entfernt (Import-Crash beim Start), click>=8.2
+  #    bricht die typer-CLI ("Secondary flag is not valid...").
+  ~/.venv_infinity/bin/infinity_emb v2 --model-id BAAI/bge-reranker-v2-m3 \
+      --port 8002 --host 0.0.0.0    # als launchd-Dienst mit KeepAlive einrichten
+  # Funktionstest:
+  curl -s -X POST http://localhost:8002/rerank -H 'Content-Type: application/json' \
+    -d '{"model":"BAAI/bge-reranker-v2-m3","query":"test","documents":["a","b"]}'
+  ```
+
+  Windows-Seite: im Seed bereits gesetzt — `mempalace.reranker = {enabled: true,
+  device: "remote", url: "http://<MACMINI_IP>:8002", model:
+  "BAAI/bge-reranker-v2-m3"}` (install.ps1 trägt die IP ein). Score-Parität zum
+  bisherigen in-process-Pfad ist live verifiziert (identische Ordnung, max
+  |diff| = 0.000000 — beide Seiten sigmoid-normiert). Läuft der Dienst nicht,
+  latcht der Windows-Client den Remote-Reranker nach 2 Fehlversuchen prozessweit
+  ab: Gedächtnis-Suche behält die Vektor-Reihenfolge, kein Ausfall, nur ~−0.075
+  Retrieval-Score. Speicher auf dem Mini: Prozess-RSS ~0,2 GB + Modellgewichte
+  im Unified Memory (grob 1–2 GB) — neben dem Chat-Modell einplanen.
 - **Bereits vorhanden:** Auf dem M4 läuft heute schon `vllm-metal`
   (Port 8012, Provider `Lokal-M4`) als zweiter Inferencer für
   Hintergrund-Tasks — das Muster „mehrere Inferencer, ein Provider-Eintrag

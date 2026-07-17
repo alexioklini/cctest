@@ -710,6 +710,7 @@ def tool_mempalace_query(args: dict) -> str:
                 _rr_model = _get_reranker_model(
                     _rr_cfg.get("model", "BAAI/bge-reranker-v2-m3"),
                     _rr_cfg.get("device", "auto"),
+                    _rr_cfg,
                 )
                 if _rr_model is not None:
                     _rr_in = max(8, min(80, int(_rr_cfg.get("top_k_in", 40))))
@@ -1182,14 +1183,102 @@ _save_chat_to_memory_callback = None
 _reranker_lock = threading.Lock()
 _reranker_cache: dict[tuple[str, str], object] = {}
 
+# Remote-Reranker (reranker.device: "remote" — Windows-Deployment: Infinity auf
+# dem Mac mini serviert POST /rerank, das Windows-Bundle traegt kein torch).
+# Prozessweiter Latch nach dem Muster des Remote-Embedding-Fallbacks: nach
+# _REMOTE_RERANK_MAX_FAILS aufeinanderfolgenden Fehlern wird remote fuer die
+# Prozess-Lebensdauer abgeschaltet — Queries behalten die Vektor-Reihenfolge,
+# ein toter Endpoint kostet also nicht jede Suche einen Timeout.
+_REMOTE_RERANK_MAX_FAILS = 2
+_remote_rerank_fails = 0
+_remote_rerank_latched_off = False
 
-def _get_reranker_model(model_id: str, device_pref: str = "auto"):
+
+class _RemoteReranker:
+    """CrossEncoder.predict-kompatibler Client fuer einen Infinity-/Cohere-
+    artigen ``POST /rerank``-Endpoint (Response: results[{index,
+    relevance_score}]). Score-Skala ist mit dem lokalen Pfad IDENTISCH:
+    sentence_transformers' CrossEncoder.predict liefert fuer bge-reranker
+    ebenfalls sigmoid-normierte Werte — live gegen Infinity verifiziert
+    (bge-reranker-v2-m3, max |diff| = 0.000000, gleiche Ordnung)."""
+
+    def __init__(self, base_url: str, model_id: str, timeout_s: float = 8.0,
+                 api_key: str = ""):
+        self.base_url = (base_url or "").rstrip("/")
+        self.model_id = model_id
+        self.timeout_s = timeout_s
+        self.api_key = api_key
+
+    def predict(self, pairs, batch_size: int = 16, show_progress_bar: bool = False):
+        global _remote_rerank_fails, _remote_rerank_latched_off
+        import httpx
+        query = pairs[0][0] if pairs else ""
+        docs = [p[1] for p in pairs]
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        try:
+            resp = httpx.post(
+                f"{self.base_url}/rerank",
+                json={"model": self.model_id, "query": query,
+                      "documents": docs, "return_documents": False},
+                headers=headers,
+                timeout=httpx.Timeout(self.timeout_s, connect=2.0),
+            )
+            resp.raise_for_status()
+            results = (resp.json() or {}).get("results") or []
+            scores = [0.0] * len(docs)
+            for r in results:
+                i = int(r.get("index", -1))
+                if 0 <= i < len(docs):
+                    scores[i] = float(r.get("relevance_score") or 0.0)
+            _remote_rerank_fails = 0
+            return scores
+        except Exception as e:
+            _remote_rerank_fails += 1
+            try:
+                if _remote_rerank_fails >= _REMOTE_RERANK_MAX_FAILS:
+                    _remote_rerank_latched_off = True
+                    logging.warning(
+                        f"[reranker] remote endpoint {self.base_url} failed "
+                        f"{_remote_rerank_fails}x ({e}) — LATCHING remote rerank OFF "
+                        "for this process (queries keep vector order)")
+                else:
+                    logging.warning(f"[reranker] remote rerank failed ({e}) — vector order kept for this query")
+            except Exception:
+                pass
+            raise
+
+
+def _get_reranker_model(model_id: str, device_pref: str = "auto",
+                        reranker_cfg: dict | None = None):
     """Return a CrossEncoder instance, loading lazily and caching by
     (model_id, resolved_device). Returns None if sentence-transformers
     isn't installed or device resolution fails — caller falls back to
-    unreranked order."""
+    unreranked order.
+
+    device_pref="remote": liefert stattdessen einen _RemoteReranker auf
+    reranker_cfg["url"] (Infinity ``/rerank``); nach wiederholten Fehlern
+    prozessweit gelatcht → None (Vektor-Reihenfolge bleibt)."""
     if not model_id:
         return None
+    if device_pref == "remote":
+        if _remote_rerank_latched_off:
+            return None
+        url = str((reranker_cfg or {}).get("url") or "").strip()
+        if not url:
+            return None
+        key = (model_id, "remote::" + url)
+        with _reranker_lock:
+            m = _reranker_cache.get(key)
+            if m is None:
+                m = _RemoteReranker(
+                    url, model_id,
+                    timeout_s=float((reranker_cfg or {}).get("remote_timeout_s", 8.0) or 8.0),
+                    api_key=str((reranker_cfg or {}).get("api_key") or ""),
+                )
+                _reranker_cache[key] = m
+        return m
     # Resolve device preference. "auto" → mps on Apple Silicon, cuda on
     # NVIDIA, cpu otherwise. Caller can pin via config.
     if device_pref == "auto":
