@@ -316,6 +316,7 @@ YML
 cp "$HERE/install.ps1" "$OUT_DIR/install.ps1"
 cp "$HERE/BrainAgent.bat.tmpl" "$OUT_DIR/BrainAgent.bat"
 cp "$HERE/stop.bat.tmpl" "$OUT_DIR/stop.bat"
+cp "$HERE/MACMINI_SETUP.md" "$OUT_DIR/MACMINI_SETUP.md"
 
 cat > "$OUT_DIR/README.txt" <<README
 Brain Agent v${VERSION} — Windows x64 (Bank-Testausrollung)
@@ -350,11 +351,14 @@ Qdrant-Vektordaten: %LOCALAPPDATA%\\BrainAgent\\qdrant-storage\\
 
 Voraussetzungen auf dem Mac mini (oMLX)
 ---------------------------------------
+Vollstaendige Anleitung: MACMINI_SETUP.md (in diesem Ordner). Kurzform:
 - oMLX lauscht auf 0.0.0.0:8000, gewuenschtes Chat-Modell geladen.
 - Embedding-Modell registriert: mlx-community/embeddinggemma-300m-bf16 in
   ~/.omlx/models/mlx-community/ ablegen, dann im oMLX-Admin "Reload" (oder
   POST /admin/api/reload). Test: POST /v1/embeddings mit model
   "embeddinggemma-300m-bf16" muss 768-dim-Vektoren liefern.
+- Was oMLX nicht kann (STT/TTS/Reranker), loest ein Zusatz-Inferencer auf
+  dem Mac mini — siehe MACMINI_SETUP.md Abschnitt 4.
 
 Grenzen unter Windows
 ---------------------
