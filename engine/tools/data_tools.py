@@ -241,6 +241,15 @@ DB_CONNECT_TIMEOUT_S = 10
 _DB_READONLY_NOTE = ("session read-only (layer 2); operational requirement: "
                      "the configured DB user must hold read-only grants only "
                      "(layer 3)")
+# MSSQL has NO session-level read-only (only db-wide or via grants), so layer
+# 2 does not exist there — the note must say so honestly (E4,
+# DATA_SOURCES_V2_PLAN.md).
+_DB_READONLY_NOTE_MSSQL = (
+    "statement gate only (layer 1) — MSSQL has no session read-only; "
+    "operational requirement: the configured login must hold db_datareader "
+    "only (layer 3)")
+
+MSSQL_DEFAULT_ODBC_DRIVER = "ODBC Driver 17 for SQL Server"
 
 
 def _data_sources() -> list[dict]:
@@ -321,19 +330,93 @@ def _source_dsn(src: dict) -> str:
     return dsn
 
 
+def _mssql_odbc_conn_str(src: dict) -> str:
+    """DSN URL (mssql://user:pass@host:port/db) → ODBC connection string,
+    EXACTLY per the bank-verified specimen (DATA_SOURCES_V2_PLAN.md Anhang B):
+    `SERVER=host,port` with a COMMA, and deliberately NO `Encrypt=` /
+    `TrustServerCertificate=` — Driver 17's `Encrypt=no` default is what
+    works against on-prem servers with self-signed certs. Do NOT "upgrade"
+    to Driver 18 (its `Encrypt=yes` default breaks exactly there)."""
+    from urllib.parse import unquote, urlsplit
+    opts = src.get("options") or {}
+    u = urlsplit(_source_dsn(src))
+    database = (u.path or "").lstrip("/")
+    if not u.hostname or not database:
+        raise ValueError(
+            f"source '{src.get('name')}': mssql DSN must look like "
+            f"mssql://user:pass@host[:port]/database")
+    driver = (opts.get("odbc_driver") or "").strip() or \
+        MSSQL_DEFAULT_ODBC_DRIVER
+    parts = [f"DRIVER={{{driver}}}",
+             f"SERVER={u.hostname},{u.port or 1433}",  # comma, not colon
+             f"DATABASE={database}"]
+    if opts.get("windows_auth"):
+        # Banknetz alternative — needs domain/Kerberos context on the
+        # Brain host; SQL auth is the default path.
+        parts.append("Trusted_Connection=yes")
+    else:
+        user = unquote(u.username or "")
+        if not user:
+            raise ValueError(
+                f"source '{src.get('name')}': mssql DSN has no username — "
+                f"supply credentials or set options.windows_auth")
+        # Brace-wrap so a ';' or '}' in the secret stays one ODBC value.
+        pwd = unquote(u.password or "")
+        parts.append("UID={%s}" % user.replace("}", "}}"))
+        parts.append("PWD={%s}" % pwd.replace("}", "}}"))
+    return ";".join(parts)
+
+
+def _connect_mssql(src: dict):
+    """mssql branch of _connect_readonly (pyodbc + msodbcsql17 — the only
+    stack verified inside the target bank network, plan decision 10)."""
+    opts = src.get("options") or {}
+    try:
+        import pyodbc  # lazy — only mssql sources pay the import
+    except ImportError:
+        raise RuntimeError(
+            "pyodbc is not installed in the server interpreter — "
+            "pip3 install pyodbc --break-system-packages (plus msodbcsql17 "
+            "via the microsoft/mssql-release brew tap)")
+    conn_str = _mssql_odbc_conn_str(src)
+    login_timeout = int(opts.get("connect_timeout") or DB_CONNECT_TIMEOUT_S)
+    try:
+        # pyodbc.connect(timeout=) is the LOGIN timeout only.
+        conn = pyodbc.connect(conn_str, timeout=login_timeout)
+    except pyodbc.Error as e:
+        if "IM002" in str(e):  # driver not found / wrong name
+            raise RuntimeError(
+                f"mssql: ODBC driver not found — configured "
+                f"'{(opts.get('odbc_driver') or MSSQL_DEFAULT_ODBC_DRIVER)}', "
+                f"installed: {pyodbc.drivers() or ['(none)']}. Install via "
+                f"brew tap microsoft/mssql-release + HOMEBREW_ACCEPT_EULA=Y "
+                f"brew install msodbcsql17, or set options.odbc_driver. "
+                f"({e})")
+        raise
+    # QUERY timeout is a separate knob, set after connect (specimen: 30/60).
+    timeout_ms = int(opts.get("statement_timeout_ms")
+                     or DB_QUERY_STATEMENT_TIMEOUT_MS)
+    conn.timeout = max(1, timeout_ms // 1000)
+    # NO session read-only here (E4): layer 1 (statement gate) + layer 3
+    # (db_datareader-only login) carry it. Plain cursor — pyodbc already
+    # streams via fetchmany, named cursors don't exist.
+    return conn, conn.cursor()
+
+
 def _connect_readonly(src: dict):
-    """Connect per source type with layer-2 read-only enforcement.
-    Returns (conn, exec_cursor) — exec_cursor streams (server-side cursor)
+    """Connect per source type with layer-2 read-only enforcement where the
+    driver supports it. Returns (conn, exec_cursor) — exec_cursor streams
     so a huge SELECT never materialises client-side."""
     stype = (src.get("type") or "postgres").strip().lower()
     opts = src.get("options") or {}
+    if stype == "mssql":
+        return _connect_mssql(src)
     if stype != "postgres":
-        # Deliberate: only wire what we can validate (D2 success criteria run
-        # against postgres). Adding snowflake/mssql/oracle is one isolated
-        # branch here once a real DSN exists to test against.
+        # Deliberate: only wire what we can validate. Adding snowflake/oracle
+        # is one isolated branch here once a real DSN exists to test against.
         raise ValueError(
-            f"source type '{stype}' is not wired yet — supported: postgres. "
-            f"(The read-only-grant requirement will apply there too.)")
+            f"source type '{stype}' is not wired yet — supported: postgres, "
+            f"mssql. (The read-only-grant requirement will apply there too.)")
     try:
         import psycopg2  # lazy — only db_query users pay the import
     except ImportError:
@@ -423,8 +506,11 @@ def tool_db_query(args: dict) -> str:
                 out_path, "created", agent.agent_id if agent else "main")
             out_info = {"path": out_path, "rows": row_count}
         md = _brain._gdpr_anon_tool_text(md, f"db_query:{source}")
+        ro_note = (_DB_READONLY_NOTE_MSSQL
+                   if (src.get("type") or "").strip().lower() == "mssql"
+                   else _DB_READONLY_NOTE)
         res = {"source": source, "row_count": row_count, "result": md,
-               "read_only": _DB_READONLY_NOTE}
+               "read_only": ro_note}
         if out_info:
             res["saved"] = out_info
         return _ok(res)

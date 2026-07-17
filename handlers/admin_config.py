@@ -552,7 +552,8 @@ class AdminConfigHandlers:
             users = []
         self._send_json({"sources": sources, "access": access,
                          "teams": teams, "users": users,
-                         "roles": list(ROLES), "wired_types": ["postgres"]})
+                         "roles": list(ROLES),
+                         "wired_types": ["postgres", "mssql"]})
 
     def _handle_data_sources_post(self):
         """POST /v1/data-sources — admin-only (gate in _ADMIN_POST_EXACT).

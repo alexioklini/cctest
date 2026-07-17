@@ -391,5 +391,177 @@ class TestDbQueryAccessPolicy(unittest.TestCase):
         self.assertIn("access denied", out["error"])
 
 
+# ---------------------------------------------------------------------------
+# db_query — mssql (DATA_SOURCES_V2_PLAN.md Phase 1)
+# ---------------------------------------------------------------------------
+
+_MS_DSN = "mssql://brain_ro_ms:BrainRo!Test1@localhost:1433/braintest_ms"
+
+
+class TestMssqlConnStr(unittest.TestCase):
+    """Pure unit (no server needed) — the ODBC string must match the
+    bank-verified specimen (plan Anhang B): `SERVER=host,port` with a COMMA
+    and NO Encrypt/TrustServerCertificate params; Driver 17's `Encrypt=no`
+    default is the only wire verified in the target network."""
+
+    def _cs(self, dsn, **options):
+        return data_tools._mssql_odbc_conn_str(
+            {"name": "t", "type": "mssql", "dsn": dsn, "options": options})
+
+    def test_specimen_shape(self):
+        cs = self._cs("mssql://u:pw@dbhost:1433/mydb")
+        self.assertEqual(
+            cs, "DRIVER={ODBC Driver 17 for SQL Server};"
+                "SERVER=dbhost,1433;DATABASE=mydb;UID={u};PWD={pw}")
+
+    def test_no_encrypt_params_ever(self):
+        cs = self._cs("mssql://u:pw@dbhost:1433/mydb")
+        self.assertNotIn("Encrypt", cs)
+        self.assertNotIn("TrustServerCertificate", cs)
+
+    def test_default_port_1433_with_comma(self):
+        self.assertIn("SERVER=dbhost,1433;",
+                      self._cs("mssql://u:p@dbhost/db"))
+
+    def test_driver_override(self):
+        cs = self._cs("mssql://u:p@h/d", odbc_driver="Custom Driver X")
+        self.assertIn("DRIVER={Custom Driver X}", cs)
+
+    def test_windows_auth_no_credentials(self):
+        cs = self._cs("mssql://h/d", windows_auth=True)
+        self.assertIn("Trusted_Connection=yes", cs)
+        self.assertNotIn("UID", cs)
+        self.assertNotIn("PWD", cs)
+
+    def test_url_encoded_password_decoded_and_braced(self):
+        # ';'/'@' in the secret must survive as ONE ODBC value.
+        cs = self._cs("mssql://u:p%40ss%3Bx@h:1433/d")
+        self.assertIn("PWD={p@ss;x}", cs)
+
+    def test_missing_database_or_host_fails(self):
+        with self.assertRaises(ValueError):
+            self._cs("mssql://u:p@h:1433")
+        with self.assertRaises(ValueError):
+            self._cs("mssql:///d")
+
+    def test_missing_user_without_windows_auth_fails(self):
+        with self.assertRaises(ValueError):
+            self._cs("mssql://h:1433/d")
+
+
+def _ms_available() -> bool:
+    try:
+        conn, _cur = data_tools._connect_mssql(
+            {"name": "probe", "type": "mssql", "dsn": _MS_DSN,
+             "options": {"connect_timeout": 2}})
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+_HAVE_MS = _ms_available()
+
+_MS_TEST_SOURCES = [
+    {"name": "braintest_ms", "type": "mssql", "dsn": _MS_DSN,
+     "options": {"statement_timeout_ms": 60000, "connect_timeout": 5}},
+    {"name": "dead_ms", "type": "mssql",
+     "dsn": "mssql://x:x@localhost:59999/nope",
+     "options": {"connect_timeout": 2}},
+]
+
+
+@unittest.skipUnless(_HAVE_MS, "local test MSSQL (braintest_ms) not available "
+                     "— scripts/setup_mssql_testdb.py")
+class TestDbQueryMssql(unittest.TestCase):
+    """Same contract as the postgres suite, adjusted for E4: MSSQL has NO
+    session read-only, so the layers are 1 (statement gate) + 3 (the
+    brain_ro_ms login holds db_datareader ONLY) — layer 3 is proven directly
+    against the DB grant, and the result's read_only note must say so
+    honestly instead of claiming a read-only session."""
+
+    def setUp(self):
+        self._sid = "datatools-mstest-" + uuid.uuid4().hex[:8]
+        self.enterContext(request_context(
+            current_session_id=self._sid, current_agent=_FakeAgent(),
+            current_user_id="__system__"))
+        self.enterContext(mock.patch.object(
+            data_tools, "_data_sources", return_value=_MS_TEST_SOURCES))
+
+    def tearDown(self):
+        try:
+            import shutil
+            from engine.tools.file_tools import _resolve_artifact_dir
+            with request_context(current_session_id=self._sid,
+                                 current_agent=_FakeAgent()):
+                art_dir, _ = _resolve_artifact_dir()
+            if art_dir and self._sid in art_dir and os.path.isdir(art_dir):
+                shutil.rmtree(art_dir)
+        except Exception:
+            pass
+
+    def _q(self, **args):
+        return json.loads(data_tools.tool_db_query(args))
+
+    def test_select_works(self):
+        out = self._q(source="braintest_ms",
+                      sql="SELECT COUNT(*) AS n, SUM(stueck) AS s "
+                          "FROM positionen")
+        self.assertEqual(out["row_count"], 1)
+        self.assertIn("| 50000 | 12525000 |", out["result"])
+
+    def test_readonly_note_is_honest(self):
+        out = self._q(source="braintest_ms", sql="SELECT 1 AS one")
+        self.assertIn("db_datareader", out["read_only"])
+        self.assertNotIn("session read-only (layer 2)", out["read_only"])
+
+    def test_rejects_insert_layer1(self):
+        out = self._q(source="braintest_ms",
+                      sql="INSERT INTO positionen (filiale_id, isin, stueck, "
+                          "kurs) VALUES (1,'X',1,1)")
+        self.assertIn("error", out)
+        self.assertIn("SELECT", out["error"])
+
+    def test_layer3_grant_blocks_direct_insert(self):
+        """Layer-3 proof, independent of layer 1: a direct INSERT on the
+        tool's OWN connection (db_datareader login) must die at the DB
+        grant — there is no session layer to catch it first."""
+        src = data_tools._resolve_db_source("braintest_ms")
+        conn, cur = data_tools._connect_mssql(src)
+        try:
+            with self.assertRaises(Exception) as ctx:
+                cur.execute("INSERT INTO positionen (filiale_id, isin, "
+                            "stueck, kurs) VALUES (1,'X',1,1)")
+            self.assertIn("permission", str(ctx.exception).lower())
+        finally:
+            conn.close()
+
+    def test_rejects_multi_statement(self):
+        out = self._q(source="braintest_ms",
+                      sql="SELECT 1; DELETE FROM positionen")
+        self.assertIn("error", out)
+        self.assertIn("ONE statement", out["error"])
+
+    def test_unknown_source_lists_available(self):
+        out = self._q(source="nope", sql="SELECT 1")
+        self.assertIn("error", out)
+        self.assertIn("braintest_ms", out["error"])
+
+    def test_dead_connection_clean_error(self):
+        out = self._q(source="dead_ms", sql="SELECT 1")
+        self.assertIn("error", out)
+        self.assertIn("connection failed", out["error"])
+
+    def test_out_writes_full_csv(self):
+        out = self._q(source="braintest_ms",
+                      sql="SELECT * FROM positionen WHERE filiale_id = 1 "
+                          "ORDER BY id",
+                      out="fil1_ms.csv")
+        self.assertEqual(out["saved"]["rows"], 2000)
+        with open(out["saved"]["path"], encoding="utf-8") as f:
+            lines = f.read().strip().splitlines()
+        self.assertEqual(len(lines), 2001)
+
+
 if __name__ == "__main__":
     unittest.main()
