@@ -45,6 +45,9 @@ cfg_path, data_dir, ip, model = sys.argv[1:5]
 cfg = json.load(open(cfg_path, encoding='utf-8'))
 prov = cfg['providers']['Lokal']
 prov['base_url'] = prov['base_url'].replace('MACMINI_IP', ip)
+mp_pre = cfg.get('mempalace', {})
+if 'MACMINI_IP' in mp_pre.get('embedding_url', ''):
+    mp_pre['embedding_url'] = mp_pre['embedding_url'].replace('MACMINI_IP', ip)
 if model:
     cfg['default_model'] = model
     prov['default_model'] = model

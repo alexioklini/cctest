@@ -3696,6 +3696,18 @@ def main():
         _mp_pp_boot = _mp_cfg_boot.get("palace_path", "")
         if _mp_pp_boot:
             os.environ.setdefault("MEMPALACE_PALACE_PATH", _mp_pp_boot)
+        # Embedding knobs from config.json → mempalace.* (Windows deployment:
+        # device=remote + the Mac-mini URL install.ps1 patched in). setdefault —
+        # explicit env (mac plist: device=mlx) always wins; the Mac config has
+        # none of these keys, so production seeding stays a no-op there.
+        for _mp_key, _mp_env in (
+                ("embedding_device", "MEMPALACE_EMBEDDING_DEVICE"),
+                ("embedding_url", "MEMPALACE_EMBEDDING_URL"),
+                ("embedding_remote_model", "MEMPALACE_EMBEDDING_REMOTE_MODEL"),
+                ("embedding_api_key", "MEMPALACE_EMBEDDING_API_KEY")):
+            _mp_val = str(_mp_cfg_boot.get(_mp_key, "") or "")
+            if _mp_val:
+                os.environ.setdefault(_mp_env, _mp_val)
     except Exception as _e_mp_boot:
         print(f"[boot] MemPalace palace-path seed skipped: {_e_mp_boot}")
     # Load config.json for defaults

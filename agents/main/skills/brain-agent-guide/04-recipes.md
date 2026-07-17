@@ -462,11 +462,17 @@ Hintergrund: `POST /v1/tools/email/test {account}` ist der Test-Endpoint;
 die Konten liegen in `tools_config.json → email.accounts[]` (Passwörter
 werden in GET-Antworten maskiert, Backups redigieren sie).
 
-## "Windows-Client aufsetzen" (Bank-Testausrollung, v9.366.0)
+## "Windows-Client aufsetzen" (Bank-Testausrollung, v9.366.0/v9.367.0)
 
 Brain-Agent läuft komplett auf einem Windows-11-x64-Rechner (Mehrbenutzer-
 Server, 16 GB RAM); die Sprachmodelle bleiben auf dem Mac mini M4 (oMLX auf
-Port 8000, Provider „Lokal" mit `is_local: true` und LAN-IP).
+Port 8000, Provider „Lokal" mit `is_local: true` und LAN-IP). Auch das
+MemPalace-Embedding rechnet der Mac mini (`mempalace.embedding_device:
+"remote"` in config.json → oMLX `/v1/embeddings`, vektoridentisch zu MLX);
+dafür muss dort `mlx-community/embeddinggemma-300m-bf16` unter
+`~/.omlx/models/mlx-community/` liegen (einmalig, danach oMLX-Admin
+„Reload"). Bei Ausfall latcht der Server automatisch auf lokales
+CPU-ONNX-Embedding (Modell liegt im Bundle).
 
 1. **Bauen** (auf dem Mac): `packaging/win/build_win.sh` — erzeugt Zip +
    `BrainAgent-<version>-setup.exe` (NSIS, `brew install makensis`). Alle

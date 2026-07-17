@@ -5479,6 +5479,30 @@
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false
+    },
+    "embeddinggemma-300m-bf16": {
+      "enabled": false,
+      "shortname": "embeddinggemma-300m-bf16",
+      "display_name": "embeddinggemma-300m-bf16",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "Lokal",
+      "profile": "speed",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

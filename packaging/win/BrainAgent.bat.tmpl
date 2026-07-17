@@ -19,12 +19,13 @@ if not "%CUR_VER%"=="%NEW_VER%" (
   copy /Y "%SCRIPT_DIR%app\.version" "%VFILE%" >nul
 )
 
-rem ---- MemPalace / embedding environment (Qdrant local, ONNX cpu embedding,
-rem ---- model preloaded into the bundle hf-cache -> fully offline)
+rem ---- MemPalace environment (Qdrant local; embedding device/url kommen aus
+rem ---- config.json -> mempalace.* und werden von server.py in die Env
+rem ---- geseedet: remote = oMLX auf dem Mac mini, Fallback CPU-ONNX aus dem
+rem ---- Bundle-hf-cache -> offline-faehig)
 set "MEMPALACE_BACKEND=qdrant"
 set "MEMPALACE_QDRANT_URL=http://127.0.0.1:6333"
 set "MEMPALACE_QDRANT_QUANTIZATION=int8"
-set "MEMPALACE_EMBEDDING_DEVICE=cpu"
 set "MEMPALACE_EMBEDDING_MODEL=embeddinggemma"
 set "HF_HOME=%SCRIPT_DIR%hf-cache"
 set "HF_HUB_OFFLINE=1"

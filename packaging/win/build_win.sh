@@ -263,6 +263,10 @@ cat > "$OUT_DIR/app/config.json" <<'JSON'
   "mempalace": {
     "enabled": true,
     "palace_path": "PALACE_PATH_PLACEHOLDER",
+    "embedding_device": "remote",
+    "embedding_url": "http://MACMINI_IP:8000",
+    "embedding_remote_model": "embeddinggemma-300m-bf16",
+    "_embedding_comment": "remote = oMLX /v1/embeddings auf dem Mac mini (vektoridentisch zu MLX, cos=1.0); bei Ausfall latcht der Prozess auf lokales CPU-ONNX (Modell liegt im Bundle-hf-cache). Fuer rein lokales Embedding: embedding_device auf 'cpu' setzen.",
     "kg": {"enabled": false},
     "reranker": {"enabled": false},
     "mine": {"interval_seconds": 1800},
@@ -318,8 +322,10 @@ Brain Agent v${VERSION} — Windows x64 (Bank-Testausrollung)
 ===========================================================
 
 Architektur: Dieser Windows-Client ist der SERVER (Mehrbenutzer, Web-UI auf
-Port 8420). Alle Sprachmodelle laufen auf dem Mac mini M4 im LAN (oMLX auf
-Port 8000) — der Client braucht dorthin Netzwerkzugriff.
+Port 8420). Alle Sprachmodelle UND das Gedaechtnis-Embedding laufen auf dem
+Mac mini M4 im LAN (oMLX auf Port 8000) — der Client braucht dorthin
+Netzwerkzugriff. Faellt der Mac mini aus, rechnet das Embedding automatisch
+lokal weiter (CPU, langsamer); Chat braucht den Mac mini zwingend.
 
 Schnellstart
 ------------
@@ -341,6 +347,14 @@ Datenablage
 -----------
 %LOCALAPPDATA%\\BrainAgent\\   (Override: Umgebungsvariable BRAIN_DATA_DIR)
 Qdrant-Vektordaten: %LOCALAPPDATA%\\BrainAgent\\qdrant-storage\\
+
+Voraussetzungen auf dem Mac mini (oMLX)
+---------------------------------------
+- oMLX lauscht auf 0.0.0.0:8000, gewuenschtes Chat-Modell geladen.
+- Embedding-Modell registriert: mlx-community/embeddinggemma-300m-bf16 in
+  ~/.omlx/models/mlx-community/ ablegen, dann im oMLX-Admin "Reload" (oder
+  POST /admin/api/reload). Test: POST /v1/embeddings mit model
+  "embeddinggemma-300m-bf16" muss 768-dim-Vektoren liefern.
 
 Grenzen unter Windows
 ---------------------
