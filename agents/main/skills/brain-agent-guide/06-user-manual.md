@@ -1728,14 +1728,19 @@ destilliert) oder „Aus CI-Dokument generieren…" (Styleguide/CI-PDF
 hochladen). Das Ergebnis füllt nur das Formular — geprüft und übernommen
 wird erst mit **Speichern**.
 
-### Export: PDF & PowerPoint (v9.353.0)
+### Export: PDF, Word & PowerPoint (v9.353.0, DOCX seit v9.360.0)
 
 Auf jedem **HTML-Artefakt** gibt es in der Aktionsleiste den Knopf
-**„Export ▾"** mit drei Wegen:
+**„Export ▾"** mit vier Wegen:
 
 - **HTML herunterladen** — die Datei selbst, selbständig lauffähig.
 - **Als PDF exportieren** — druckgenau im echten Browser gerendert
   (Chromium). Ideal für One-Pager und Reports.
+- **Als DOCX exportieren** — ein **echtes, bearbeitbares Word-Dokument**:
+  Überschriften werden Word-Formatvorlagen, Tabellen bleiben Tabellen,
+  Listen und Bilder kommen mit. Das visuelle Layout (Farben, Raster,
+  Hero-Flächen) wird dabei bewusst vereinfacht — Word ist ein
+  Fließtext-Format; wer es pixelgenau braucht, nimmt PDF.
 - **Als PPTX exportieren** — nur für **Foliendecks**: jede
   `<section data-slide>` im Entwurf wird eine Folie. Die Folien sind
   pixelgenaue **Bild-Folien** — sie sehen in PowerPoint/Keynote exakt aus
@@ -1748,7 +1753,7 @@ Wissenswertes:
   PPTX-Fehlermeldung, wie man den Agenten das Deck anlegen lässt.
 - PDF/PPTX brauchen den Render-Dienst (crawl4ai). Ist er auf diesem Server
   nicht eingerichtet, kommt eine klare Fehlermeldung — der HTML-Download
-  funktioniert immer.
+  funktioniert immer. DOCX braucht keinen Render-Dienst.
 
 ---
 

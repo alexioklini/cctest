@@ -3955,7 +3955,7 @@
         "creative": {
           "measured": {
             "capability": 95,
-            "tps": 21.0,
+            "tps": 21,
             "n": 3,
             "ts": "2026-07-15T17:13:00Z",
             "source": "internal"
@@ -3973,7 +3973,7 @@
         "agentic": {
           "measured": {
             "capability": 83,
-            "tps": 31.0,
+            "tps": 31,
             "n": 3,
             "ts": "2026-07-15T17:14:37Z",
             "source": "internal"
@@ -5248,7 +5248,9 @@
       "provider": "Kilo",
       "base_model_id": "x-ai/grok-4.5",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "Kilo/~x-ai/grok-latest": {
       "enabled": false,
@@ -5264,7 +5266,9 @@
       "provider": "Kilo",
       "base_model_id": "~x-ai/grok-latest",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "voxtral-mini-tts-mellon-greek-2606-solutions": {
       "enabled": false,
@@ -5278,15 +5282,16 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "mistral-direct",
       "profile": "balanced",
       "_audio_backfilled": true,
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "k3": {
-      "enabled": false,
+      "enabled": true,
       "shortname": "k3",
       "display_name": "k3",
       "icon": "🤖",
@@ -5298,7 +5303,92 @@
       "thinking_format": "none",
       "provider": "kimi-coding",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "capability": 100,
+            "tps": 40.5,
+            "n": 4,
+            "ts": "2026-07-17T04:22:08Z",
+            "source": "internal"
+          }
+        },
+        "math": {
+          "measured": {
+            "capability": 80,
+            "tps": 46.9,
+            "n": 5,
+            "ts": "2026-07-17T04:22:30Z",
+            "source": "internal"
+          }
+        },
+        "research": {
+          "measured": {
+            "capability": 97,
+            "tps": 86,
+            "n": 3,
+            "ts": "2026-07-17T04:23:15Z",
+            "source": "internal"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "capability": 97,
+            "tps": 71.1,
+            "n": 3,
+            "ts": "2026-07-17T04:23:55Z",
+            "source": "internal"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "capability": 98,
+            "tps": 18.4,
+            "n": 3,
+            "ts": "2026-07-17T04:24:16Z",
+            "source": "internal"
+          }
+        },
+        "creative": {
+          "measured": {
+            "capability": 98,
+            "tps": 17.5,
+            "n": 3,
+            "ts": "2026-07-17T04:24:37Z",
+            "source": "internal"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "capability": 97,
+            "tps": 63.3,
+            "n": 3,
+            "ts": "2026-07-17T04:25:09Z",
+            "source": "internal"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "capability": 77,
+            "tps": 54.3,
+            "n": 3,
+            "ts": "2026-07-17T04:25:30Z",
+            "source": "internal"
+          }
+        },
+        "fast": {
+          "measured": {
+            "capability": 100,
+            "tps": 1.7,
+            "n": 4,
+            "ts": "2026-07-17T04:25:35Z",
+            "source": "internal"
+          }
+        }
+      },
+      "is_local": false,
+      "warmup": false
     },
     "kwaipilot/kat-coder-pro-v2.5:free": {
       "enabled": false,
@@ -5313,7 +5403,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "voxtral-mini-realtime-mellon-greek-2606-solutions": {
       "enabled": false,
@@ -5327,12 +5419,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "mistral-direct",
       "profile": "balanced",
       "_audio_backfilled": true,
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "moonshotai/kimi-k3": {
       "enabled": false,
@@ -5347,7 +5440,9 @@
       "thinking_format": "none",
       "provider": "Kilo",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/moonshotai/kimi-k3": {
       "enabled": false,
@@ -5363,7 +5458,9 @@
       "provider": "openrouter",
       "base_model_id": "moonshotai/kimi-k3",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     },
     "openrouter/meta/muse-spark-1.1": {
       "enabled": false,
@@ -5379,7 +5476,9 @@
       "provider": "openrouter",
       "base_model_id": "meta/muse-spark-1.1",
       "profile": "balanced",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false
     }
   },
   "nodes": {},

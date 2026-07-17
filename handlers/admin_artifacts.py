@@ -25,6 +25,50 @@ import uuid
 from urllib.parse import unquote, urlencode
 
 
+def _html_to_docx_bytes(html: str) -> bytes:
+    """HTML → editable DOCX (artifact export). Content + structure only —
+    headings map to Word heading styles, tables/lists/raster images survive;
+    CSS layout does not (DOCX is a flowing format; pixel-accurate is PDF).
+    Pre-strips UI chrome (script/style/nav/button — the report toolbar and
+    TOC would otherwise leak in as text). Guards htmldocx 0.0.6's img
+    handler, which treats every src as a file path: base64 raster data URIs
+    are decoded via BytesIO, SVG data URIs skipped (DOCX can't embed SVG),
+    broken/unreachable images dropped rather than failing the export."""
+    import base64
+    import io
+    from bs4 import BeautifulSoup
+    from docx import Document
+    from htmldocx import HtmlToDocx
+
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup(["script", "style", "nav", "button"]):
+        tag.decompose()
+
+    class _SafeHtmlToDocx(HtmlToDocx):
+        def handle_img(self, current_attrs):
+            src = current_attrs.get("src", "")
+            if src.startswith("data:"):
+                m = re.match(r"data:image/(?:png|jpe?g|gif|bmp);base64,(.*)",
+                             src, re.S)
+                if m:
+                    try:
+                        self.doc.add_picture(
+                            io.BytesIO(base64.b64decode(m.group(1))))
+                    except Exception:
+                        pass
+                return
+            try:
+                super().handle_img(current_attrs)
+            except Exception:
+                pass
+
+    doc = Document()
+    _SafeHtmlToDocx().add_html_to_document(str(soup), doc)
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 class AdminArtifactsHandlers:
     """Artifacts, files, channels, nodes, sidecar, services, backup, worker, refine/soul, and notification handlers."""
 
@@ -2365,14 +2409,18 @@ class AdminArtifactsHandlers:
         self.wfile.write(data)
 
     def _handle_artifact_export(self, path):
-        """GET /v1/artifacts/<id>/export?format=pdf|pptx&version=N — export an
-        HTML artifact (Design-Modus Phase C). `pdf`: print-accurate Chromium
-        render via the crawl4ai render service (POST /pdf). `pptx`: image
-        slides — one <section data-slide> = one slide, each screenshotted via
-        POST /screenshot and placed full-bleed on a 16:9 slide with python-pptx
-        (pixel-accurate, deliberately NOT editable in PowerPoint — V1 per the
-        plan; the UI menu says so honestly). Graceful degrade: render service
-        down/unconfigured → 503 with a clear German message, no fallback."""
+        """GET /v1/artifacts/<id>/export?format=pdf|pptx|docx&version=N —
+        export an HTML artifact (Design-Modus Phase C). `pdf`: print-accurate
+        Chromium render via the crawl4ai render service (POST /pdf). `pptx`:
+        image slides — one <section data-slide> = one slide, each screenshotted
+        via POST /screenshot and placed full-bleed on a 16:9 slide with
+        python-pptx (pixel-accurate, deliberately NOT editable in PowerPoint —
+        V1 per the plan; the UI menu says so honestly). `docx`: editable Word
+        document via htmldocx — content + structure (headings, tables, lists,
+        raster images), NOT the visual layout (DOCX is a flowing format;
+        pixel-accurate is the PDF path). Needs no render service. Graceful
+        degrade: render service down/unconfigured → 503 with a clear German
+        message, no fallback."""
         from urllib.parse import urlparse, parse_qs
         import base64
         parts = path.split("/")
@@ -2380,8 +2428,8 @@ class AdminArtifactsHandlers:
         qs = parse_qs(urlparse(self.path).query)
         version = qs.get("version", [None])[0]
         fmt = (qs.get("format", [""])[0] or "").lower()
-        if fmt not in ("pdf", "pptx"):
-            self._send_json({"error": "format=pdf|pptx erforderlich"}, 400)
+        if fmt not in ("pdf", "pptx", "docx"):
+            self._send_json({"error": "format=pdf|pptx|docx erforderlich"}, 400)
             return
 
         artifact = ChatDB.get_artifact(artifact_id)
@@ -2416,6 +2464,18 @@ class AdminArtifactsHandlers:
             data = base64.b64decode(res["pdf_b64"])
             filename = f"{base_name}.pdf"
             ct = "application/pdf"
+        elif fmt == "docx":
+            try:
+                data = _html_to_docx_bytes(html)
+            except ImportError:
+                self._send_json({"error": "DOCX-Export nicht möglich — das "
+                                          "Python-Paket 'htmldocx' ist auf "
+                                          "diesem Server nicht installiert."},
+                                503)
+                return
+            filename = f"{base_name}.docx"
+            ct = ("application/vnd.openxmlformats-officedocument"
+                  ".wordprocessingml.document")
         else:
             # PPTX needs the deck convention — fail loud with the fix, don't
             # guess slide boundaries from arbitrary HTML.

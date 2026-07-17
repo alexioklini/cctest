@@ -254,9 +254,10 @@ const DesignCanvas = (() => {
   }
 
   // ── Export-Menü (Phase C) ────────────────────────────────────────────────
-  // HTML (bestehender Download) · PDF (Chromium-Render, druckgenau) · PPTX
-  // (Bild-Folien: eine <section data-slide> = eine Folie — pixelgenau, aber
-  // bewusst NICHT in PowerPoint editierbar; das Menü sagt das ehrlich).
+  // HTML (bestehender Download) · PDF (Chromium-Render, druckgenau) · DOCX
+  // (bearbeitbares Word-Dokument: Inhalt + Struktur, Layout vereinfacht) ·
+  // PPTX (Bild-Folien: eine <section data-slide> = eine Folie — pixelgenau,
+  // aber bewusst NICHT in PowerPoint editierbar; das Menü sagt das ehrlich).
   // Lebt im DesignCanvas-IIFE, damit kein weiteres Global entsteht.
   function _closeExportMenu() {
     document.querySelector('.design-export-menu')?.remove();
@@ -266,7 +267,7 @@ const DesignCanvas = (() => {
     const id = state.activeArtifactId;
     const ver = state.activeArtifactVersion;
     if (!id) return;
-    showToast(format === 'pdf' ? 'PDF wird erzeugt …' : 'PPTX wird erzeugt …');
+    showToast(format.toUpperCase() + ' wird erzeugt …');
     try {
       const url = `${BASE_URL}/v1/artifacts/${id}/export?format=${format}` +
                   (ver ? `&version=${encodeURIComponent(ver)}` : '');
@@ -305,6 +306,10 @@ const DesignCanvas = (() => {
       <div class="design-export-item" data-fmt="pdf">
         <strong>Als PDF exportieren</strong>
         <small>Chromium-Render — druckgenau</small>
+      </div>
+      <div class="design-export-item" data-fmt="docx">
+        <strong>Als DOCX exportieren</strong>
+        <small>Inhalt als bearbeitbares Word-Dokument — Layout vereinfacht</small>
       </div>
       <div class="design-export-item" data-fmt="pptx">
         <strong>Als PPTX exportieren</strong>

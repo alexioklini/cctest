@@ -709,13 +709,17 @@ Nutzer darf generieren (nicht admin-gated).
 - `GET /v1/artifacts/browse?path=` — directory browse
 - `GET /v1/artifacts/<id>/content` — body
 - `GET /v1/artifacts/<id>/download` — file download
-- `GET /v1/artifacts/<id>/export?format=pdf|pptx&version=N` — (v9.353.0,
-  Design-Modus Phase C) export an HTML artifact. `pdf` = print-accurate
-  Chromium render (crawl4ai render service `POST /pdf`); `pptx` = image
-  slides, one `<section data-slide>` = one 16:9 slide (screenshots via
-  `POST /screenshot` + python-pptx; pixel-accurate, deliberately NOT editable
-  in PowerPoint). Non-HTML → 400; no `data-slide` sections on pptx → 422 with
-  guidance; render service down/unconfigured → 503 (no fallback)
+- `GET /v1/artifacts/<id>/export?format=pdf|pptx|docx&version=N` — (v9.353.0,
+  Design-Modus Phase C; docx v9.360.0) export an HTML artifact. `pdf` =
+  print-accurate Chromium render (crawl4ai render service `POST /pdf`);
+  `pptx` = image slides, one `<section data-slide>` = one 16:9 slide
+  (screenshots via `POST /screenshot` + python-pptx; pixel-accurate,
+  deliberately NOT editable in PowerPoint); `docx` = editable Word document
+  (htmldocx, in-process, no render service): headings/tables/lists/raster
+  images survive as real Word structure, CSS layout does not. Non-HTML → 400;
+  no `data-slide` sections on pptx → 422 with guidance; render service
+  down/unconfigured on pdf/pptx → 503 (no fallback); htmldocx missing on
+  docx → 503
 
 ## Workflows / Workers / Nodes
 
