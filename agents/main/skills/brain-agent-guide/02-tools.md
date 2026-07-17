@@ -395,40 +395,76 @@ tables → styled sheets), so ALL xlsx output shares one renderer.
   (Companion-`.md`), PII-Scan und Klassifizierung (ein Dispatcher, vier
   Konsumenten).
 
-**db_query — Warehouse-Konnektor (v9.356.0, Quant-Workbench D2):**
-- **`db_query(source, sql, out?)`** (documents-Gruppe, `engine/tools/data_tools.py`):
-  EIN read-only SELECT gegen eine vom Admin **konfigurierte externe Datenbank**
-  (`config.json → data_sources`, gitignored/per-Maschine wie der crawl4ai-Block:
-  `[{name, type, dsn|env_key, options?}]`; seit v9.363.0 per Admin-GUI
-  editierbar — Einstellungen → Datenquellen; aktuell verdrahtet: **postgres** —
-  weitere Typen erst bei realem, testbarem Bedarf).
-  **Zugriffs-Policy (v9.363.0)**: `config.json → data_sources_access
-  {enabled, roles, teams, users}` — `enabled` ist der globale Ausschalter
-  (aus = für ALLE, auch Admins), Freigaben sind ADDITIV (Rolle ODER
-  User-Team ODER einzelner User), Admins passieren die Grant-Achsen immer;
-  fehlender Block = nur Admins. Durchgesetzt IM Tool
-  (`data_access_allowed`, `engine/tools/data_tools.py`) — bewusst KEINE
-  per-User-Tool-Listen-Mutation, damit der Warm-Pool-KV-Prefix byte-stabil
-  bleibt; ein abgelehnter Aufruf liefert `access denied` als Tool-Fehler
-  (die Schemabeschreibung sagt dem Modell: nicht wiederholen).
-  **Read-only dreischichtig**:
-  (1) derselbe SELECT/WITH-Prefix-Check + Multi-Statement-Reject wie
-  xlsx_query/data_query; (2) **Session-Read-only** — psycopg2
-  `set_session(readonly=True)`, ein INSERT stirbt am Server mit
-  `ReadOnlySqlTransaction`, selbst wenn der DB-User schreiben dürfte;
-  (3) **Betriebsvoraussetzung** (in jedem Tool-Ergebnis dokumentiert): der in
-  data_sources hinterlegte DB-User MUSS ein Read-only-Grant sein — Schichten
-  1+2 sind Gürtel+Hosenträger obendrauf, kein Ersatz. Serverseitiger
-  **Statement-Timeout** (Default 60 s, `options.statement_timeout_ms`);
-  server-side Cursor (benannt) — große Ergebnisse materialisieren nie
-  client-seitig; Ergebnis-Kappe 200k Zeilen; Anzeige 50 + row_count;
-  `out='name.csv'` als Artefakt; GDPR-Pass. **Kein db_list_sources** (bewusst):
-  die Tool-Beschreibung nennt die per-Maschine-Quellen nicht — ein falscher
-  `source`-Name liefert die verfügbaren Namen in der Fehlermeldung.
-  Schema-Erkundung per SELECT auf `information_schema` (der SQL-Fehler
-  verweist darauf). Abgerissene/nicht erreichbare Verbindung → sauberer
-  Tool-Fehler, kein Turn-Abbruch. Credentials: `dsn` wird vom
-  config-Scrubber redigiert (`scripts/scrub_config.py`, Marker `dsn`).
+**db_query — Warehouse-Konnektor (v9.356.0; Datenquellen v2 9.368–9.375):**
+- **`db_query(source, sql, out?, preview?)`** (documents-Gruppe,
+  `engine/tools/data_tools.py`): EIN SQL-Statement gegen eine vom Admin
+  **konfigurierte externe Datenbank** (`config.json → data_sources`,
+  gitignored/per-Maschine; per Admin-GUI editierbar — Einstellungen →
+  Datenquellen). Verdrahtete Typen: **postgres**, **mssql** (v9.368.0:
+  pyodbc + „ODBC Driver 17 for SQL Server" — der bank-verifizierte Stack;
+  DSN bleibt EIN URL-Feld `mssql://user:pass@host:1433/db`, Brain baut den
+  ODBC-String selbst: `SERVER=host,port` mit KOMMA, bewusst OHNE
+  Encrypt-Parameter — NICHT auf Driver 18 wechseln; `options.odbc_driver` +
+  `options.windows_auth` für Sonderfälle) und **rest** (→ rest_query).
+  **Vier Guard-Achsen, Reihenfolge Policy → Scope → Modus → Tabellen:**
+  1. **WER (v9.363.0, unverändert)**: `data_sources_access {enabled, roles,
+     teams, users}` — additiv, Admins passieren immer, fehlender Block =
+     nur Admins; durchgesetzt IM Tool (`data_access_allowed`), KEINE
+     Tool-Listen-Mutation (Warm-Pool-KV-Prefix bleibt byte-stabil).
+  2. **WAS/WO (v9.370–372, `RequestContext.data_source_scope`)**: pro Turn
+     `{quelle: [tabellen]}` aus der **Projekt-Config** (`project.json →
+     data_sources`; Projekt-Chats — die Session-Auswahl wird dort ignoriert)
+     bzw. der **Session-Auswahl** (Right-Panel-Tab „Datenquellen",
+     `sessions.data_sources`; projektlose Chats). **Kein Scope = deny**
+     (kein stilles Global-Fallback; `__system__` behält Vollzugriff).
+     Tabellen-Whitelist HART via sqlglot (CTE-Namen zählen nicht,
+     `information_schema`/mssql-`sys` immer lesbar, unparsebares SQL
+     fail-closed). Bei REST-Quellen sind die Scope-Ressourcen
+     **Pfad-Präfixe** statt Tabellen.
+  3. **Modus (v9.369.0, `access_mode: ro|rw` pro Quelle, Default ro)**:
+     ro = nur SELECT/WITH (`_check_statement_allowed`; Write-Versuch nennt
+     den Modus, final); rw = +INSERT/UPDATE/DELETE/MERGE mit `conn.commit()`
+     und `mode:'rw'`+rowcount im Ergebnis — **DDL bleibt IMMER geblockt**.
+     Read-only-Schichten bei ro: Statement-Gate + Session-Read-only
+     (postgres `set_session(readonly=True)`) + Read-only-Grant des DB-Users
+     (Betriebsvoraussetzung). **MSSQL ehrlich ZWEI-schichtig**: kein
+     Session-Read-only — dort tragen Statement-Gate + db_datareader-Login
+     (das Tool-Ergebnis sagt das explizit).
+  4. **Kontext-Preview (v9.375.0, `context_preview: none|head|full` pro
+     Quelle, Default head = 50 Zeilen)**: `none` liefert NUR
+     `{columns, row_count}` — keine einzige Rohzeile erreicht den Kontext
+     (Datensparsamkeit by design; auch information_schema-Ergebnisse);
+     `full` bis 1000 Zeilen. Tool-Parameter `preview` kann den
+     Quellen-Default nur VERSCHÄRFEN, nie lockern.
+  Serverseitiger **Statement-Timeout** (Default 60 s); Ergebnis-Kappe 200k
+  Zeilen; `out='name.parquet'` (bevorzugt — Folgeanalyse via data_query)
+  oder `.csv` als Artefakt; GDPR-Pass auf dem Preview (bei `none` gibt es
+  nichts zu anonymisieren). **Datensparsame Kette** (Tool-Prosa steert):
+  `db_query(out='x.parquet')` → `data_query`-Aggregate/Joins →
+  xlsx/Charts — Massendaten fließen nur server-seitig. **Kein
+  db_list_sources** (bewusst): falscher `source`-Name listet die Namen im
+  Fehler. Credentials: `dsn`/`secret` redigiert der config-Scrubber.
+  **Quellen-Steckbrief (v9.374.0, `guide {md, skill?, auto_generated_at?}`
+  pro Quelle)**: admin-kuratiertes Nutzungswissen (Tabellen-/Feld-Semantik,
+  Join-Pfade, Persistier-Muster; REST: Endpoints) wird **wire-only** in den
+  Turn injiziert, wenn die Quelle im Scope ist — Details 05-internals.
+
+**rest_query — REST-Konnektor (v9.373.0, E10):**
+- **`rest_query(source, path, method?, params?, body?, out?, preview?)`**
+  (documents-Gruppe): erreicht AUSSCHLIESSLICH Pfade unter der
+  admin-konfigurierten `base_url` — absolute URLs, `//`, `..` (auch
+  percent-encoded) werden abgelehnt, `follow_redirects=False` → SSRF
+  strukturell ausgeschlossen; die Quelle ist ein DATENPUNKT, kein Browser
+  (harte Abgrenzung zu web_fetch). Gleiche WER/WAS-Achsen wie db_query
+  (Scope-Ressourcen = Pfad-Präfixe; `allowed_paths` der Quelle wirken als
+  Config-Ebene zusätzlich). `access_mode`: ro = GET/HEAD, rw =
+  +POST/PUT/PATCH/DELETE (JSON-Body). Ergebnis: JSON pretty + gekappt
+  (`options.max_response_kb`, Default 256), `out='name.json|csv'`
+  (CSV-Flatten für Arrays), 4xx/5xx als ERGEBNIS mit Body-Auszug (lesen
+  statt blind retryen), `context_preview: none` → nur Status + Bytes +
+  Content-Type (Fehler-Bodies bleiben sichtbar). Auth: `auth {kind:
+  none|bearer|header|basic, secret|env_key, header_name?}` — das Secret
+  verlässt den Server nie. Pagination NICHT automatisch (O5).
 
 ## OCR — deterministic local scan toolset (group `ocr`, v9.293.1)
 

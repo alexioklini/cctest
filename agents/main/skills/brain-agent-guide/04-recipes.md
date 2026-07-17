@@ -392,10 +392,13 @@ Daily what-changed report between two exports:
    comment, added green, removed red) is the run artifact; the summary is the
    run result (optional per E-Mail via email_send im selben Prompt).
 
-## "Datenanbindung" — Warehouse/Datenbank für db_query einrichten (v9.356.0, GUI v9.363.0)
+## "Datenanbindung" — externe Datenquellen (SQL + REST) einrichten (v9.356.0; Datenquellen v2 9.368–9.375)
 
-Admin-Rezept: eine externe Datenbank (aktuell PostgreSQL) so anbinden, dass
-freigeschaltete Nutzer sie im Chat per `db_query` read-only abfragen können.
+Admin-Rezept: eine externe Datenbank (PostgreSQL oder MS SQL Server) oder
+REST-API so anbinden, dass freigeschaltete Nutzer sie im Chat per
+`db_query`/`rest_query` abfragen können — read-only (Standard) oder gezielt
+read/write, mit Projekt-/Chat-Scoping, Tabellen-Whitelist, Steckbrief und
+datensparsamer Verarbeitung.
 
 1. **Read-only-DB-User anlegen (Betriebsvoraussetzung, Schicht 3)** — der in
    Brain hinterlegte User darf NIE Schreibrechte haben:
@@ -420,17 +423,89 @@ freigeschaltete Nutzer sie im Chat per `db_query` read-only abfragen können.
    **User-Team** und nach **einzelnem Benutzer**. Ohne gespeicherte Policy:
    nur Admins. Ein nicht freigeschalteter Nutzer bekommt im Chat einen
    klaren Tool-Fehler („access denied"), kein Turn-Abbruch.
-4. Danach im Chat: „Frag die Quelle *warehouse*: …" — das Modell erkundet das
-   Schema selbst über `information_schema`. Ein falscher Quellname listet die
-   verfügbaren Namen auf; die Session ist zusätzlich read-only (Schicht 2),
-   INSERT & Co. sind doppelt unmöglich.
-5. Prüfen: `db_query` mit `SELECT 1` — bei „connection refused" läuft die DB
+4. **Quelle im Kontext freigeben (v9.371/9.372 — Pflicht, sonst deny!)**:
+   die Admin-Konfiguration ist nur die PRINZIPIELLE Freigabe. Nutzbar wird
+   eine Quelle erst, wenn sie im Kontext ausgewählt ist:
+   - **Projekt-Chat**: Projekt-Einstellungen → Sektion „Datenquellen" —
+     Quelle anhaken, optional auf Tabellen einschränken (leer = alle).
+     Gilt für normale UND Code-Mode-Projekte; die Session-Auswahl wird in
+     Projekten ignoriert (eine Quelle der Wahrheit).
+   - **Projektloser Chat**: Right Panel → Tab „Datenquellen" (Zylinder-Icon)
+     — gleiche 2 Klicks, Auswahl ist session-persistiert.
+   Ohne Auswahl verweigert `db_query` mit einem Hinweis auf genau diese
+   beiden Orte. Die Tabellen-Einschränkung ist HART (SQL-Parser-Whitelist;
+   `information_schema` bleibt zur Erkundung lesbar).
+5. Danach im Chat: „Frag die Quelle *warehouse*: …" — das Modell erkundet das
+   Schema selbst über `information_schema` (oder kennt es schon aus dem
+   Steckbrief, siehe unten). Ein falscher Quellname listet die verfügbaren
+   Namen auf; die Session ist zusätzlich read-only (Schicht 2), INSERT & Co.
+   sind doppelt unmöglich.
+6. Prüfen: `db_query` mit `SELECT 1` — bei „connection refused" läuft die DB
    nicht oder Host/Port im DSN stimmen nicht (der Fehler kommt als sauberes
    Tool-Ergebnis zurück, kein Turn-Abbruch).
 
-Hinweis MS SQL Server / Snowflake / Oracle: bewusst noch NICHT verdrahtet
-(fail-loud „not wired yet") — ein Postgres-DSN kann keinen MSSQL-Server
-ansprechen. Nachrüsten ist ein isolierter Branch in `_connect_readonly`,
+**MSSQL-Quelle (v9.368.0)** — gleicher Ablauf, Typ `mssql`, DSN
+`mssql://user:pass@host:1433/datenbank`. Read-only-Login (Schicht 3, bei
+MSSQL die tragende Schicht — es gibt KEIN Session-Read-only):
+```sql
+CREATE LOGIN brain_ro WITH PASSWORD = '…';
+CREATE USER brain_ro FOR LOGIN brain_ro;
+ALTER ROLE db_datareader ADD MEMBER brain_ro;
+```
+Voraussetzung auf dem Brain-Host: `pyodbc` + „ODBC Driver 17 for SQL Server"
+(macOS: `brew tap microsoft/mssql-release` + msodbcsql17; auf
+Windows-Zielsystemen meist vorhanden). NICHT Driver 18 (dessen
+`Encrypt=yes`-Default scheitert an Self-Signed-Zertifikaten on-prem);
+abweichender Treibername → `options.odbc_driver`; Windows-Auth →
+`options.windows_auth: true` (DSN dann ohne Credentials — braucht
+Domain-Kontext des Server-Prozesses, SQL-Auth ist der Default).
+
+**Read/Write-Quelle (v9.369.0, mit Bedacht!)**: `access_mode` im Formular auf
+„read/write" — der Agent darf dann INSERT/UPDATE/DELETE/MERGE absetzen
+(DDL nie). Die Grants des hinterlegten DB-Users sind die letzte Instanz:
+für rw einen eigenen User mit Schreibrecht NUR auf die Zieltabellen anlegen.
+Empfehlung: rw-Quellen zusätzlich per Tabellen-Einschränkung im
+Projekt/Panel auf die Schreib-Tabellen begrenzen und die korrekten
+Persistier-Muster im Steckbrief dokumentieren.
+
+**REST-Quelle (v9.373.0)**: Typ `rest`, Base-URL (das Tool erreicht
+AUSSCHLIESSLICH Pfade darunter — SSRF strukturell ausgeschlossen), Auth
+(Bearer/Header/Basic; Secret bleibt server-seitig), optional „Erlaubte
+Pfade" (wirken zusätzlich zur Kontext-Auswahl; im Picker erscheinen sie als
+Vorschlagsliste). ro = nur GET/HEAD; rw = auch POST/PUT/PATCH/DELETE.
+
+**Quellen-Steckbrief pflegen (v9.374.0)**: im Quellen-Formular den Knopf
+„Steckbrief generieren" drücken — Brain liest das Live-Schema (Tabellen,
+Spalten, Typen, Joins, Zeilenzahlen) in ein Markdown-Gerüst; danach die
+`_(beschreiben)_`-Platzhalter kuratieren: Feld-Semantik („aktive Kunden:
+status = '1'"), Join-Pfade, bewährte Abfragen, bei rw die verbindlichen
+Persistier-Muster. Der Steckbrief wird dem Modell automatisch mitgegeben,
+sobald die Quelle im Chat/Projekt freigegeben ist — es kennt Schema und
+Semantik dann VOR der ersten Abfrage (keine Erkundungs-Runden). Für
+umfangreiche Doku (komplexe Schemata, Rezept-Bibliotheken) einen
+Agent-Skill anlegen und seinen Namen im Feld „Quellen-Skill" eintragen —
+oberhalb des Injektions-Limits (~4k Tokens, `data_sources_guide_max_tokens`)
+verweist die Injektion automatisch auf `use_skill`.
+
+**Sensible Massendaten (v9.375.0, Datensparsamkeit)**: „Kontext-Preview" der
+Quelle auf **none** stellen — Abfrage-Ergebnisse erreichen das Sprachmodell
+dann NIE als Rohzeilen (nur Spaltenliste + Zeilenzahl); die Analyse läuft
+automatisch über die lokale Kette: Export als Parquet-Artefakt →
+`data_query`-Aggregate → Diagramm/xlsx. Damit entfällt für Massendaten das
+Anonymisierungsproblem strukturell (nichts im Kontext = nichts zu schützen).
+
+**Rezept Hyland OnBase (Anhang A des Plans)**: OnBase läuft auf SQL Server →
+MSSQL-Quelle, IMMER `access_mode: ro` (Hylands Database Use Policy erlaubt
+nur SELECT), Login nur `db_datareader`, bevorzugt gegen eine
+Reporting-Replica statt der Produktions-DB. Tabellen-Einschränkung im
+Projekt auf die Reporting-Sicht (`ITEMDATA`, `DOCTYPE`, `KEYITEM…`) — der
+Rest der ~1000 OnBase-Tabellen bleibt für den Agenten unsichtbar. Für
+Dokument-INHALTE ergänzend die OnBase Document REST API als `rest`-Quelle
+(Base-URL des Hyland API Servers, Bearer-Auth, `allowed_paths` auf die
+Query-Endpoints). Damit ist OnBase reine Konfiguration, kein Code.
+
+Hinweis Snowflake / Oracle: bewusst noch NICHT verdrahtet (fail-loud „not
+wired yet") — Nachrüsten ist ein isolierter Branch in `_connect_readonly`,
 sobald ein echter, testbarer DSN existiert.
 
 ## "E-Mail-Konto einrichten" (IMAP / POP3 / Exchange, v9.365.0)

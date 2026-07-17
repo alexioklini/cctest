@@ -2357,6 +2357,53 @@ TWO mutually-exclusive modes, chosen by the auto-route classifier mode
   validator counts all three — table rows (header row above `|---|` + label rows
   skipped) and ≥2-number prose lines feed `uncited_claims`/`claim_total`.
 
+## Datenquellen v2 — Scope, Steckbrief-Injektion, Datensparsamkeit (9.368–9.375)
+
+- **Zwei orthogonale Achsen, beide im Tool durchgesetzt** (nie
+  exclude_tools — KV-Prefix): WER = `data_sources_access`-Policy
+  (`data_access_allowed`); WAS/WO = `RequestContext.data_source_scope`
+  (`{quelle: [ressourcen]}`, [] = alle; Ressourcen = Tabellen bei SQL,
+  Pfad-Präfixe bei REST). Guard-Reihenfolge in `tool_db_query`/
+  `tool_rest_query`: Policy → Scope → Modus (ro/rw) → Tabellen/Pfade.
+- **Scope-Quelle je Kontext**: `apply_domain_context` setzt ihn aus
+  `project.json → data_sources` (Projekt-Chats, normale + Code-Mode;
+  Single-Fix-Point — Scheduler-Läufe im Projekt erben ihn via
+  `build_tool_context`/`_apply_bg_context`); ohne Projekt setzt der
+  Chat-Worker ihn aus `sessions.data_sources` (Right-Panel-Auswahl,
+  web_basket-Muster). Kein Scope = None = deny mit Konfig-Hinweis
+  (`__system__` bypasst). Sched-Sessions ohne Projekt: deny (O1).
+- **Tabellen-Whitelist** hart via sqlglot (`_check_tables_allowed`,
+  dialect postgres|tsql): schema.table ↔ nacktes table matchen beidseitig,
+  CTE-Namen zählen nicht, `information_schema`/mssql-`sys` immer frei
+  (dokumentierte Grenze O2), unparsebares SQL fail-closed.
+- **Steckbrief-Injektion (v9.374.0, E11)**: `build_data_source_guide_preamble`
+  (engine/tools/data_tools.py) baut aus den `guide`-Feldern der GESCOPTEN
+  Quellen eine wire-only Preamble auf der letzten User-Message — exakt der
+  Websuche-Seam (`_inject_web_preamble_into_wire`, einmal pro Send gecacht).
+  History/DB bleiben sauber, jeder Turn liest den aktuellen Steckbrief,
+  System-Prompt byte-stabil; NICHT GDPR-geseamt (admin-authored Config).
+  Kappe `data_sources_guide_max_tokens` (Default 4000) über die SUMME:
+  darunter Voll-Injektion, darüber pro Quelle nur eine Kurzzeile
+  (`use_skill('<guide.skill>')`; md-only groß → sichtbar trunkierter
+  2000-Zeichen-Slice; md-only klein → trotzdem voll). Interaktive Turns
+  only (der Websuche-Präzedenzfall).
+- **generate_guide** (Admin-POST-Action): deterministischer
+  Schema-Bootstrap (`generate_source_guide_md` — pg_class/reltuples bzw.
+  sys.partitions + information_schema + FKs; REST: Skelett aus
+  allowed_paths), persistiert als `guide.md` + `auto_generated_at`;
+  der Admin kuratiert danach (handgepflegt mit Auto-Anschub). GOTCHA: der
+  ro-Postgres-Exec-Cursor ist NAMED (single-use) — Metadaten-Queries laufen
+  auf frischen plain Cursors derselben Connection.
+- **Datensparsamkeit (v9.375.0, E13)**: `context_preview none|head|full`
+  pro Quelle (`_effective_preview`; Tool-Param `preview` kann nur
+  verschärfen). `none` → nur `{columns, row_count}` im Kontext, GDPR-Pass
+  entfällt (nichts zu anonymisieren), gilt AUCH für
+  information_schema-Ergebnisse (Metadaten-Zeilen sind Zeilen — das Modell
+  exportiert sie und liest via data_query). Parquet-Export
+  (`_write_parquet`, pyarrow, per-Spalte String-Fallback) macht
+  `db_query(out='x.parquet') → data_query → Aggregate` zur Standard-Kette —
+  Massendaten fließen nur server-seitig (Session-Artefakt-Ordner).
+
 ## Tool resolution (3-layer)
 
 A tool has ONE canonical status, `state ∈ {active, inactive, deferred}` —

@@ -29,6 +29,45 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.375.0",
+        "date": "2026-07-17",
+        "title": "Datenquellen im Chat und Projekt nutzen",
+        "body": "Vom Administrator freigegebene Datenbanken und "
+                "Firmen-APIs binden Sie jetzt in 1–2 Klicks ein: im Projekt "
+                "unter Projekt-Einstellungen → Datenquellen, im normalen "
+                "Chat über den neuen Tab „Datenquellen“ im rechten Panel — "
+                "auf Wunsch eingeschränkt auf einzelne Tabellen. Der "
+                "Assistent beantwortet Fragen dann direkt aus den "
+                "Live-Daten; hat der Administrator einen Steckbrief zur "
+                "Quelle hinterlegt, kennt er Tabellen und Bedeutungen schon "
+                "vorab und antwortet ohne Erkundungs-Umwege schneller und "
+                "treffsicherer. Ohne Ihre Freigabe wird keine Quelle "
+                "angefasst.",
+        "audience": "user",
+        "versions": ["9.370.0", "9.371.0", "9.372.0", "9.374.0"],
+    },
+    {
+        "version": "9.375.0",
+        "date": "2026-07-17",
+        "title": "Datenquellen: MSSQL, REST, Schreibzugriff, Datenschutz",
+        "body": "Die Datenquellen-Verwaltung (Einstellungen → Datenquellen) "
+                "kann jetzt neben PostgreSQL auch Microsoft SQL Server "
+                "(inkl. des im Banknetz erprobten Verbindungswegs) und "
+                "REST-APIs mit fester Basis-Adresse anbinden. Pro Quelle "
+                "legen Sie fest: read-only oder gezielter Schreibzugriff "
+                "(Schema-Änderungen bleiben immer gesperrt), welche "
+                "Projekte/Chats sie nutzen dürfen (inkl. harter "
+                "Tabellen-Einschränkung), ein generierbarer Steckbrief mit "
+                "Nutzungswissen für das Modell sowie die Datensparsamkeit-"
+                "Stufe „none“: Roh-Datenzeilen erreichen das Sprachmodell "
+                "dann gar nicht — Analysen laufen über einmaligen Export "
+                "und lokale Auswertung, ideal für große sensible "
+                "Datenbestände.",
+        "audience": "admin",
+        "versions": ["9.368.0", "9.369.0", "9.370.0", "9.371.0",
+                     "9.372.0", "9.373.0", "9.374.0", "9.375.0"],
+    },
+    {
         "version": "9.367.0",
         "date": "2026-07-17",
         "title": "Brain-Agent läuft jetzt auf Windows",

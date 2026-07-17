@@ -56,6 +56,9 @@ Panel wird beim Verlassen geschlossen. Tabs mit Inhalt:
 - **Dateien** — Artifacts, die das Modell in diesem Turn erzeugt hat
 - **Websuche** — kuratierte Web-Quellen für den nächsten Turn (siehe unten);
   jede markierte Quelle wird beim Senden frisch + vollständig geladen
+- **Datenquellen** (v9.372.0) — externe Datenbanken/APIs für diesen Chat
+  freischalten (siehe unten); erscheint nur, wenn Quellen konfiguriert und
+  für Sie freigegeben sind
 - **Aktivität** — alle Tool-Aufrufe dieses Chats (synchrone + Hintergrund­aufgaben)
   sowie Karten für **eingefügte Klarstellungen** und **Goal-Modus-Aktivität**
   (geplante/laufende Ziel-Prüfungen, zusätzliche Iterationen), chronologisch
@@ -1945,6 +1948,44 @@ mit dem ganzen Dokument. Das ist das Websuche-Korb-Prinzip für Projektdateien:
 
 ---
 
+## Datenquellen im Chat und Projekt (Datenquellen v2, 9.368–9.375)
+
+Vom Administrator konfigurierte **externe Datenquellen** (PostgreSQL-,
+MS-SQL-Server-Datenbanken und REST-APIs) kann der Assistent direkt abfragen —
+aber nur dort, wo Sie sie ausdrücklich freigeben. In **1–2 Klicks**:
+
+- **Im Projekt**: Projekt-Einstellungen → Sektion **„Datenquellen"** —
+  Quelle anhaken, optional per Klick auf „Tabellen wählen…" auf einzelne
+  Tabellen (bei REST-Quellen: Pfade) einschränken. Gilt für alle Chats des
+  Projekts, auch in Code-Projekten.
+- **Im projektlosen Chat**: rechtes Panel → Tab **„Datenquellen"**
+  (Zylinder-Symbol) — gleiche Auswahl, gespeichert pro Unterhaltung
+  (überlebt Neuladen und Gerätewechsel). In Projekt-Chats zeigt dieser Tab
+  nur an, was im Projekt konfiguriert ist.
+
+Ohne Freigabe verweigert der Assistent jede Abfrage mit einem Hinweis auf
+genau diese beiden Orte — es gibt kein stilles „alle Quellen erlaubt". Eine
+Tabellen-Einschränkung wird hart durchgesetzt (Abfragen auf andere Tabellen
+werden abgelehnt); die Schema-Übersicht (`information_schema`) bleibt zur
+Orientierung lesbar. Ob eine Quelle **read-only** oder **read/write** ist,
+bestimmt der Administrator pro Quelle — auf einer read-only-Quelle werden
+Schreibversuche immer abgelehnt.
+
+Zwei Komfort-/Schutz-Merkmale sehen Sie dabei im Alltag:
+- **Steckbrief** (📄-Symbol neben der Quelle, v9.374.0): hat der
+  Administrator Nutzungswissen zur Quelle hinterlegt (was die Tabellen und
+  Felder bedeuten, wie man korrekt abfragt), kennt der Assistent es
+  automatisch — er findet ohne Erkundungs-Abfragen direkt die richtige
+  Abfrage. Antworten kommen dadurch schneller und treffsicherer.
+- **Datensparsamkeit** (v9.375.0): bei entsprechend konfigurierten Quellen
+  erreichen Roh-Datenzeilen das Sprachmodell **gar nicht** — es sieht nur
+  Spaltennamen und Zeilenzahlen, exportiert die Daten einmal als Datei und
+  rechnet Auswertungen lokal auf dem Server. Ergebnis: auch Analysen über
+  große, sensible Datenbestände ohne dass Massendaten in den Chat-Kontext
+  fließen.
+
+---
+
 ## Aktivität (Tool-Aufrufe) & Hintergrundaufgaben
 
 Der **Aktivität**-Tab im rechten Panel zeigt **alle Tool-Aufrufe dieses Chats** an
@@ -2163,19 +2204,31 @@ die Dialoge aufgeräumt und in der gleichen Schrift/Größe wie der Chat.
   Matrix oder deaktiviert = der 🧬-Eintrag verschwindet aus dem Verfasser.
 - **Provider** — OpenAI-kompatible Provider hinzufügen/bearbeiten/testen
 - **Nodes** — verteilte Compute-Peers
-- **Datenquellen** (v9.363.0) — externe SQL-Datenbanken für das Analyse-Tool
-  `db_query` (aktuell PostgreSQL), komplett per GUI statt config.json:
-  Quellen anlegen/bearbeiten/löschen (Name, Typ, DSN **oder** Env-Variable,
-  Timeouts; das Passwort wird nur maskiert angezeigt — beim Bearbeiten leer
-  lassen heißt „unverändert"), wirksam **ohne Server-Neustart**. Dazu die
-  **Zugriffs-Steuerung**: ein globaler Ein/Ausschalter (aus = für alle
-  gesperrt, auch Administratoren) und additive Freigaben nach
-  **Benutzertyp** (Administratoren immer; Poweruser und Benutzer
-  zuschaltbar), nach **Team** und nach **einzelnem Benutzer** — es genügt
-  eine der drei Freigaben. Ohne gespeicherte Policy dürfen nur
-  Administratoren zugreifen. Wichtig: Der hinterlegte Datenbank-Benutzer
-  muss ein Read-only-Konto sein; die Verbindung wird zusätzlich
-  schreibgeschützt geöffnet, und nur einzelne SELECT-Abfragen passieren.
+- **Datenquellen** (v9.363.0; Datenquellen v2 9.368–9.375) — externe
+  Datenquellen für die Analyse-Tools `db_query`/`rest_query`: **PostgreSQL**,
+  **MS SQL Server** (bank-erprobter ODBC-Driver-17-Weg) und **REST-APIs**
+  (feste Base-URL — der Assistent erreicht ausschließlich Pfade darunter),
+  komplett per GUI statt config.json: Quellen anlegen/bearbeiten/löschen
+  (Name, Typ, DSN **oder** Env-Variable bzw. Base-URL + Auth, Timeouts; das
+  Passwort/Secret wird nur maskiert angezeigt — beim Bearbeiten leer lassen
+  heißt „unverändert"), wirksam **ohne Server-Neustart**. Pro Quelle:
+  **Zugriffsmodus** read-only (Standard; nur SELECT, Verbindung zusätzlich
+  schreibgeschützt) oder **read/write** (der Assistent darf gezielt
+  schreiben — INSERT/UPDATE/DELETE, nie Schema-Änderungen; die Rechte des
+  hinterlegten Datenbank-Kontos sind die letzte Instanz), **Kontext-Preview**
+  (none/head/full — „none" hält Roh-Datenzeilen komplett aus dem
+  Sprachmodell-Kontext, Analysen laufen dann über lokale Datei-Auswertung)
+  und ein **Steckbrief** (Markdown-Nutzungswissen zur Quelle; der Knopf
+  „Steckbrief generieren" liest das Live-Schema als kuratierbares Gerüst
+  ein; für umfangreiche Doku lässt sich zusätzlich ein Quellen-Skill
+  verknüpfen). Dazu die **Zugriffs-Steuerung**: ein globaler
+  Ein/Ausschalter (aus = für alle gesperrt, auch Administratoren) und
+  additive Freigaben nach **Benutzertyp** (Administratoren immer; Poweruser
+  und Benutzer zuschaltbar), nach **Team** und nach **einzelnem Benutzer**.
+  Ohne gespeicherte Policy dürfen nur Administratoren zugreifen. **Nutzbar**
+  wird eine Quelle erst durch die Freigabe im Kontext: Projekt-Einstellungen
+  → Datenquellen bzw. Right-Panel-Tab „Datenquellen" (siehe Abschnitt
+  „Datenquellen im Chat und Projekt").
 - **Modelle** — Pro-Modell-Konfiguration (warmup, thinking, profile, cost).
   Bei den Kosten gibt es neben „Kosten ein/aus ($/M)" das Feld **„Kosten
   cached ($/M)"** — der Preis für Tokens aus dem Prompt-Cache (leer = automatisch

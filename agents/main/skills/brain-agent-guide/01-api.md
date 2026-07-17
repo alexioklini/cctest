@@ -550,16 +550,34 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
   `{<purpose>: state}` per-use-case map — validated against `_VALID_PURPOSES` ×
   `TOOL_STATES`; an empty/absent map keeps the record scalar-only)
 - `GET /v1/tools/config` / `POST` — integration knobs (API keys, etc.)
-- `GET /v1/data-sources` (admin, v9.363.0) — db_query warehouse sources with
-  MASKED DSNs (`dsn_set`/`dsn_masked`, the password never leaves the server)
-  + the access policy (`access {enabled, roles, teams, users}`, missing
-  config block reported as admins-only) + team/user/role lists for the
-  grant pickers + `wired_types`
+- `GET /v1/data-sources` (admin, v9.363.0; erweitert 9.368–9.375) — db_query/
+  rest_query sources with MASKED DSNs (`dsn_set`/`dsn_masked`, the password
+  never leaves the server), `access_mode` (ro|rw), `context_preview`
+  (none|head|full), `guide {md, skill, auto_generated_at}` (Steckbrief —
+  full md only on this admin endpoint), REST fields (`base_url`,
+  `allowed_paths`, `auth` with `secret_set` only) + the access policy
+  (`access {enabled, roles, teams, users}`, missing config block reported
+  as admins-only) + team/user/role lists for the grant pickers +
+  `wired_types` (postgres, mssql, rest)
 - `POST /v1/data-sources` (admin) — `{action: save_source|delete_source|
-  save_access, ...}`; `save_source` takes `source {name, type, dsn, env_key,
-  options{statement_timeout_ms, connect_timeout}}` + `original_name` (rename;
-  empty `dsn` on edit keeps the stored secret); persists to config.json AND
-  the live server_config — no restart needed
+  save_access|generate_guide, ...}`; `save_source` takes `source {name,
+  type, access_mode, context_preview, guide{md, skill}, dsn|env_key,
+  options{…}}` (REST: `base_url`, `auth`, `allowed_paths`,
+  `options{timeout_s, max_response_kb}`) + `original_name` (rename; empty
+  `dsn`/auth-secret on edit keeps the stored secret; `guide.auto_generated_at`
+  survives while md is unchanged); `generate_guide {name}` (v9.374.0) reads
+  the live schema (tables/columns/types/FKs/row estimates; REST: skeleton
+  from allowed_paths) into a curatable Markdown Steckbrief, persists it as
+  `guide.md` + `auto_generated_at` and echoes `md`. Persists to config.json
+  AND the live server_config — no restart needed
+- `GET /v1/data-sources/available` (v9.371.0, NOT admin — any authenticated
+  user, filtered on the db_query access policy) — `{name, type, access_mode,
+  guide_set}` only, NEVER dsn/env_key/guide-md; feeds the project-settings
+  section + right-panel picker (empty list renders as a hint there)
+- `GET /v1/data-sources/<name>/tables` (v9.371.0, policy-gated like
+  `available`) — table list for the pickers (`information_schema`, 5 s
+  connect timeout, offline source → clean error text, never a 500); REST
+  sources answer with `allowed_paths` + `kind:'paths'` (no discovery call)
 - `GET /v1/tools/status` — per-tool diagnostic
 - `GET /v1/tools/breakdown?agent=` — token cost per tool
 - `GET /v1/tools/result?session_id=&tool_use_id=` — full, **uncapped**
