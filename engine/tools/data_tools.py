@@ -269,6 +269,54 @@ def _source_access_mode(src: dict) -> str:
         else "ro"
 
 
+def _check_tables_allowed(sql: str, stype: str, allowed: list) -> str | None:
+    """E6: hard per-context table whitelist via sqlglot. Whitelist entries
+    match case-insensitively, `schema.table` and bare `table` both ways.
+    `information_schema.*` (and mssql `sys.*`) stay ALWAYS readable — schema
+    exploration is the documented working path; that metadata of unlisted
+    tables stays visible is a deliberate, documented limit (O2). CTE names
+    are not table refs. Unparsable SQL → fail-CLOSED."""
+    import sqlglot
+    from sqlglot import exp
+    dialect = "tsql" if stype == "mssql" else "postgres"
+    allowed_norm = set()
+    for a in allowed:
+        a = (str(a) or "").strip().lower()
+        if a:
+            allowed_norm.add(a)
+            allowed_norm.add(a.split(".")[-1])
+    allowed_msg = ", ".join(sorted(a for a in allowed_norm if "." not in a))
+    try:
+        tree = sqlglot.parse_one(sql, dialect=dialect)
+    except Exception as e:
+        return (f"could not parse the SQL to enforce the table whitelist "
+                f"({type(e).__name__}) — rewrite it plainly; allowed tables: "
+                f"{allowed_msg}")
+    ctes = set()
+    for c in tree.find_all(exp.CTE):
+        ctes.add((c.alias_or_name or "").lower())
+    bad = []
+    for t in tree.find_all(exp.Table):
+        name = (t.name or "").lower()
+        schema = (t.db or "").lower()
+        if not name:
+            continue
+        if schema == "information_schema" or \
+                (stype == "mssql" and schema == "sys"):
+            continue
+        if not schema and name in ctes:
+            continue
+        full = f"{schema}.{name}" if schema else name
+        if full in allowed_norm or name in allowed_norm:
+            continue
+        bad.append(full)
+    if bad:
+        return (f"table(s) not allowed in this context: "
+                f"{', '.join(sorted(set(bad)))} — allowed: {allowed_msg} "
+                f"(information_schema stays readable for exploration)")
+    return None
+
+
 def _first_keyword(sql: str) -> str:
     m = re.match(r"(?is)^\s*([a-z]+)\b", sql or "")
     return m.group(1).lower() if m else ""
@@ -499,25 +547,52 @@ def tool_db_query(args: dict) -> str:
     # per-user tool-list mutation: the tool set stays byte-identical across
     # users, so the warm-pool KV prefix is untouched. Reaches every dispatch
     # path (chat, scheduler, workflows, delegation).
-    allowed, why = data_access_allowed(
-        get_request_context().current_user_id or "")
+    ctx = get_request_context()
+    user_id = ctx.current_user_id or ""
+    allowed, why = data_access_allowed(user_id)
     if not allowed:
         return _err(f"db_query: access denied — {why}")
     source = (args.get("source") or "").strip()
     if not source:
         return _err("db_query: 'source' is required (a configured "
                     "data_sources name)")
+    # Guard order (E1): policy (WHO, above) → scope (WHAT/WHERE) → mode
+    # (ro/rw) → tables. Scope = per-turn {name: [tables]} from the project
+    # config / session selection (E8); no scope set = nothing usable —
+    # deliberately no silent global fallback. __system__ keeps full access.
+    scope_tables = None
+    if user_id != "__system__":
+        scope = ctx.data_source_scope
+        if scope is None:
+            return _err(
+                "db_query: no data sources are enabled for this context — "
+                "in a project, enable them under Projekt-Einstellungen → "
+                "Datenquellen; in a plain chat, pick them in the right "
+                "panel (Datenquellen). This is a configuration matter — "
+                "do NOT retry.")
+        if source not in scope:
+            avail = ", ".join(sorted(scope)) or "(none)"
+            return _err(
+                f"db_query: source '{source}' is not enabled in this "
+                f"context — enabled here: {avail}. Other sources need to "
+                f"be added in the project settings / right panel first.")
+        scope_tables = [t for t in (scope.get(source) or [])]
     sql = args.get("sql") or ""
     try:
         src = _resolve_db_source(source)
     except ValueError as e:
         return _err(f"db_query: {e}")
-    # Guard order (E1): policy (WHO, above) → mode (ro/rw) → execute.
     mode = _source_access_mode(src)
     sel_err = _check_statement_allowed(sql, mode)
     if sel_err:
         return _err(f"db_query: {sel_err}")
     sql = sql.strip().rstrip(";")
+    if scope_tables:  # [] = all tables of the source; non-empty = whitelist
+        terr = _check_tables_allowed(
+            sql, (src.get("type") or "postgres").strip().lower(),
+            scope_tables)
+        if terr:
+            return _err(f"db_query: {terr}")
     conn = None
     try:
         conn, cur = _connect_readonly(src, mode)

@@ -536,6 +536,152 @@ class TestDbQueryRw(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Scoping-Kern: data_source_scope + Tabellen-Whitelist (Phase 3, E6/E8)
+# ---------------------------------------------------------------------------
+
+class TestCheckTablesAllowed(unittest.TestCase):
+    """E6 pure unit — sqlglot-backed hard table whitelist. schema.table and
+    bare table match BOTH ways, CTE names are not table refs,
+    information_schema (and mssql sys) stay always readable (O2), and
+    unparsable SQL fails CLOSED naming the allowed tables."""
+
+    def _c(self, sql, allowed, stype="postgres"):
+        return data_tools._check_tables_allowed(sql, stype, allowed)
+
+    def test_bare_and_schema_qualified_match_both_ways(self):
+        self.assertIsNone(self._c("SELECT * FROM positionen", ["positionen"]))
+        self.assertIsNone(self._c("SELECT * FROM public.positionen",
+                                  ["positionen"]))
+        self.assertIsNone(self._c("SELECT * FROM positionen",
+                                  ["public.positionen"]))
+
+    def test_unlisted_table_blocked_and_names_whitelist(self):
+        err = self._c("SELECT * FROM andere", ["positionen"])
+        self.assertIn("andere", err)
+        self.assertIn("positionen", err)
+
+    def test_join_with_unlisted_table_blocked(self):
+        err = self._c("SELECT a.* FROM positionen a JOIN andere b "
+                      "ON a.id=b.id", ["positionen"])
+        self.assertIn("andere", err)
+
+    def test_subquery_unlisted_blocked(self):
+        self.assertIsNotNone(self._c(
+            "SELECT * FROM (SELECT * FROM andere) s", ["positionen"]))
+
+    def test_insert_target_checked(self):
+        self.assertIsNotNone(self._c("INSERT INTO andere VALUES (1)",
+                                     ["positionen"]))
+        self.assertIsNone(self._c("INSERT INTO positionen VALUES (1)",
+                                  ["positionen"]))
+
+    def test_cte_name_is_not_a_table_ref(self):
+        self.assertIsNone(self._c(
+            "WITH x AS (SELECT * FROM positionen) SELECT * FROM x",
+            ["positionen"]))
+        # Even a CTE named like an UNLISTED table is fine — it's a CTE.
+        self.assertIsNone(self._c(
+            "WITH andere AS (SELECT * FROM positionen) "
+            "SELECT * FROM andere", ["positionen"]))
+
+    def test_information_schema_always_readable(self):
+        self.assertIsNone(self._c(
+            "SELECT table_name FROM information_schema.tables",
+            ["positionen"]))
+
+    def test_mssql_sys_allowed_only_for_mssql(self):
+        self.assertIsNone(self._c("SELECT name FROM sys.databases",
+                                  ["positionen"], stype="mssql"))
+        self.assertIsNotNone(self._c("SELECT name FROM sys.databases",
+                                     ["positionen"], stype="postgres"))
+
+    def test_mssql_bracket_identifiers(self):
+        self.assertIsNone(self._c("SELECT [x] FROM [dbo].[ITEMDATA]",
+                                  ["itemdata"], stype="mssql"))
+
+    def test_unparsable_fails_closed(self):
+        err = self._c("SELECT * FROM (((", ["positionen"])
+        self.assertIsNotNone(err)
+        self.assertIn("positionen", err)
+
+
+class TestDataSourceScopeGate(unittest.TestCase):
+    """E8 tool gate, pure unit (policy mocked open, no DB needed): scope
+    None = deny for normal users with a config hint; unscoped source names
+    only the ENABLED sources; a scoped source passes through to the
+    connection stage; [] means all tables; __system__ bypasses entirely.
+    Uses dead-host sources so 'connection failed' PROVES the gates passed."""
+
+    def setUp(self):
+        self.enterContext(mock.patch.object(
+            data_tools, "data_access_allowed", return_value=(True, "")))
+        self.enterContext(mock.patch.object(
+            data_tools, "_data_sources", return_value=_TEST_SOURCES))
+
+    def _q(self, scope, user="u1", **args):
+        with request_context(current_session_id="scope-test",
+                             current_agent=_FakeAgent(),
+                             current_user_id=user,
+                             data_source_scope=scope):
+            return json.loads(data_tools.tool_db_query(args))
+
+    def test_no_scope_denies_normal_user_with_hint(self):
+        out = self._q(None, source="dead_db", sql="SELECT 1")
+        self.assertIn("no data sources are enabled", out["error"])
+        self.assertIn("Projekt-Einstellungen", out["error"])
+        self.assertIn("right panel", out["error"])
+
+    def test_source_not_in_scope_lists_enabled(self):
+        out = self._q({"braintest": []}, source="dead_db", sql="SELECT 1")
+        self.assertIn("not enabled in this context", out["error"])
+        self.assertIn("braintest", out["error"])
+        self.assertNotIn("connection failed", out["error"])
+
+    def test_scoped_source_reaches_connection(self):
+        out = self._q({"dead_db": []}, source="dead_db", sql="SELECT 1")
+        self.assertIn("connection failed", out["error"])
+
+    def test_empty_tables_means_all(self):
+        out = self._q({"dead_db": []}, source="dead_db",
+                      sql="SELECT * FROM was_auch_immer")
+        self.assertIn("connection failed", out["error"])
+
+    def test_table_whitelist_blocks_before_connect(self):
+        out = self._q({"dead_db": ["positionen"]}, source="dead_db",
+                      sql="SELECT * FROM andere")
+        self.assertIn("not allowed in this context", out["error"])
+        self.assertNotIn("connection failed", out["error"])
+
+    def test_table_whitelist_pass_reaches_connection(self):
+        out = self._q({"dead_db": ["positionen"]}, source="dead_db",
+                      sql="SELECT * FROM positionen")
+        self.assertIn("connection failed", out["error"])
+
+    def test_information_schema_passes_whitelist(self):
+        out = self._q({"dead_db": ["positionen"]}, source="dead_db",
+                      sql="SELECT table_name FROM information_schema.tables")
+        self.assertIn("connection failed", out["error"])
+
+    def test_unparsable_sql_fails_closed_under_whitelist(self):
+        out = self._q({"dead_db": ["positionen"]}, source="dead_db",
+                      sql="SELECT * FROM (((")
+        self.assertIn("error", out)
+        self.assertNotIn("connection failed", out["error"])
+
+    def test_system_bypasses_scope(self):
+        out = self._q(None, user="__system__", source="dead_db",
+                      sql="SELECT 1")
+        self.assertIn("connection failed", out["error"])
+
+    def test_scope_check_runs_before_mode_check(self):
+        # Unscoped source + write SQL → the SCOPE error, not the mode error
+        # (E1 order: policy → scope → mode → tables).
+        out = self._q({"braintest": []}, source="dead_db",
+                      sql="INSERT INTO x VALUES (1)")
+        self.assertIn("not enabled in this context", out["error"])
+
+
+# ---------------------------------------------------------------------------
 # db_query — mssql (DATA_SOURCES_V2_PLAN.md Phase 1)
 # ---------------------------------------------------------------------------
 

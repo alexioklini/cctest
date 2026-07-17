@@ -133,6 +133,13 @@ class RequestContext:
     # resolver. Generic — used by the manual-web-search flow to hard-disable
     # web_search/web_fetch when the user supplies a curated source set.
     exclude_tools: object = None
+    # Per-turn data-source scope (DATA_SOURCES_V2 E8): {source_name: [tables]}
+    # with [] meaning "all tables of that source". None = no scope set for
+    # this context → db_query DENIES for normal users (only __system__ keeps
+    # full access). Set by the chat worker from project.json → data_sources
+    # (project sessions) or sessions.data_sources (plain chats); enforcement
+    # lives IN the tool (KV-prefix stays byte-stable — the 9.363.0 pattern).
+    data_source_scope: object = None
     # Per-turn classifier-driven tool DEFERRAL adjustment (non-warmup models
     # only — never set for local/warmup models so their KV prefix is stable).
     # `defer_extra_tools`: extra tool names to push OUT of the initial prompt
