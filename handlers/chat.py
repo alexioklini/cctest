@@ -327,7 +327,12 @@ _DESIGN_DECK_CONVENTION = (
     "als eigene <section data-slide> im 16:9-Raster an (1280×720 px Basis, "
     "in sich abgeschlossen gestylt) — nur so ist der Entwurf als PPTX "
     "exportierbar. Einseiter/Reports brauchen keine sections; sie werden als "
-    "PDF druckgenau exportiert (print-taugliches CSS hilft).]")
+    "PDF druckgenau exportiert (print-taugliches CSS hilft). Angehängte "
+    "BILD-Dateien (Pfade im Anhang-Hinweis) bettest du per "
+    '<img src="attachment://<dateiname-auf-platte>"> ein — der Server '
+    "ersetzt die Referenz beim Speichern automatisch durch die eingebettete "
+    "Bilddatei (data-URI). Schreibe NIEMALS Base64-Bilddaten selbst in die "
+    "Datei.]")
 
 
 def _build_design_context_preamble(agent_id, project_name):

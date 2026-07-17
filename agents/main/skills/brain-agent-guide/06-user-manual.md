@@ -1690,6 +1690,14 @@ schaltet die Vorschau in den Design-Modus:
    Zeile" → **Kommentar hinzufügen**. Der Wunsch erscheint als nummerierter
    Pin auf der Vorschau und als Chip in der Leiste unten. Beliebig viele
    Kommentare sammeln; einzelne per ✕ entfernen.
+   - **Bild anhängen (v9.364.0)**: In der Kommentar-Blase gibt es den Knopf
+     **„Bild anhängen"** — z. B. „Füge diesen Screenshot an dieser Stelle
+     ein" plus das Bild selbst. Auch ein Bild ohne Text ist erlaubt (dann
+     gilt „hier einfügen"). Das Bild erscheint als Mini-Vorschau in Blase
+     und Chip; beim Anwenden wird es direkt in die HTML-Datei eingebettet
+     (das Dokument bleibt selbständig — Ansicht und alle Exporte
+     funktionieren ohne externe Dateien). Angehängte Bilder durchlaufen
+     denselben Datenschutz-Scan wie normale Chat-Anhänge.
 3. **„N Kommentare anwenden"** — alle Wünsche gehen als *eine* normale
    Chat-Nachricht an den Agenten. Er bearbeitet die Datei, und die Vorschau
    aktualisiert sich automatisch mit der neuen Version.

@@ -155,6 +155,14 @@ const DesignCanvas = (() => {
     bubble.innerHTML = `
       <span class="design-bubble-sel" title="${esc(selector)}">${esc(selector)}</span>
       <textarea placeholder="Was soll hier geändert werden?"></textarea>
+      <div class="design-bubble-attach">
+        <input type="file" accept="image/*" style="display:none">
+        <button class="design-btn design-attach-btn" data-act="attach" title="Bild anhängen (z. B. Screenshot zum Einfügen)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+          Bild anhängen
+        </button>
+        <span class="design-attach-preview"></span>
+      </div>
       <div class="design-bubble-row">
         <button class="design-btn" data-act="cancel">Abbrechen</button>
         <button class="design-btn primary" data-act="add">Kommentar hinzufügen</button>
@@ -162,12 +170,41 @@ const DesignCanvas = (() => {
     const r = el.getBoundingClientRect();
     const box = _overlay.getBoundingClientRect();
     bubble.style.left = Math.max(8, Math.min(r.left, box.width - 280)) + 'px';
-    bubble.style.top = Math.max(8, Math.min(r.bottom + 6, box.height - 140)) + 'px';
+    bubble.style.top = Math.max(8, Math.min(r.bottom + 6, box.height - 180)) + 'px';
+    // Optionales Bild am Kommentar ("füge diesen Screenshot hier ein"). Die
+    // Bytes reiten beim Anwenden als normales Chat-Attachment über die
+    // Send-Pipeline (GDPR-Scan, Disk-Ablage) — nie durch den Prompt-Text.
+    let image = null;
+    const fileInput = bubble.querySelector('input[type="file"]');
+    const previewEl = bubble.querySelector('.design-attach-preview');
+    bubble.querySelector('[data-act="attach"]').onclick = () => fileInput.click();
+    fileInput.onchange = () => {
+      const file = fileInput.files && fileInput.files[0];
+      fileInput.value = '';
+      if (!file) return;
+      if (file.size === 0) { showToast(`${file.name} ist leer — nicht angehängt`, true); return; }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target.result || '';
+        const commaIdx = result.indexOf(',');
+        const b64 = commaIdx >= 0 ? result.slice(commaIdx + 1) : '';
+        if (!b64) { showToast(`${file.name} konnte nicht gelesen werden`, true); return; }
+        image = { name: file.name, type: file.type || 'image/png', data: b64, preview: result };
+        previewEl.innerHTML = `<img src="${result}" alt=""><span>${esc(file.name)}</span>
+          <button class="design-chip-x" title="Bild entfernen">&times;</button>`;
+        previewEl.querySelector('.design-chip-x').onclick = () => {
+          image = null;
+          previewEl.innerHTML = '';
+        };
+      };
+      reader.onerror = () => showToast(`${file.name} konnte nicht gelesen werden`, true);
+      reader.readAsDataURL(file);
+    };
     bubble.querySelector('[data-act="cancel"]').onclick = _closeBubble;
     bubble.querySelector('[data-act="add"]').onclick = () => {
       const text = bubble.querySelector('textarea').value.trim();
-      if (!text) return;
-      _comments.push({ selector, preview, text, el });
+      if (!text && !image) return;
+      _comments.push({ selector, preview, text, el, image });
       _closeBubble();
       _renderPins();
       _renderBar();
@@ -220,7 +257,7 @@ const DesignCanvas = (() => {
       return;
     }
     const chips = _comments.map((c, i) =>
-      `<span class="design-chip" title="${esc(c.selector)}"><span class="design-chip-num">${i + 1}</span>${esc(c.text.slice(0, 48))}<button class="design-chip-x" data-i="${i}" title="Entfernen">&times;</button></span>`
+      `<span class="design-chip" title="${esc(c.selector)}"><span class="design-chip-num">${i + 1}</span>${c.image ? `<img class="design-chip-img" src="${c.image.preview}" alt="" title="${esc(c.image.name)}">` : ''}${esc((c.text || c.image.name).slice(0, 48))}<button class="design-chip-x" data-i="${i}" title="Entfernen">&times;</button></span>`
     ).join('');
     _bar.innerHTML = `${chips}<span class="design-bar-spacer"></span>
       <button class="design-btn" data-act="clear">Verwerfen</button>
@@ -233,19 +270,58 @@ const DesignCanvas = (() => {
   }
 
   // Alle gesammelten Kommentare als EIN normaler Chat-Turn über die
-  // bestehende Send-Pipeline (Queue/GDPR/Streaming inklusive).
+  // bestehende Send-Pipeline (Queue/GDPR/Streaming inklusive). Kommentar-
+  // Bilder werden in state._pendingFiles eingereiht und reiten als normale
+  // Chat-Attachments mit (GDPR-Scan, Disk-Ablage unter /tmp/brain-attachments,
+  // bei Vision-Modellen zusätzlich multimodal sichtbar); eingebettet wird über
+  // eine attachment://-Referenz, die der Server beim Speichern deterministisch
+  // durch eine data-URI ersetzt — die Bildbytes fließen NIE durchs Modell.
   function apply() {
     if (!_comments.length) return;
     const name = document.getElementById('artifact-content')?._rawName || 'Artefakt';
-    const lines = _comments.map((c, i) =>
-      `${i + 1}. \`${c.selector}\`${c.preview ? ` („${c.preview}…“)` : ''}: ${c.text}`);
-    const prompt = `Überarbeite das Artefakt „${name}“ per edit_file (kein Neuschreiben). ` +
+    // Sende-Dateinamen eindeutig machen (zwei Kommentare könnten Bilder mit
+    // gleichem Namen tragen — auf der Platte würde das zweite das erste
+    // überschreiben), BEVOR die Prompt-Zeilen darauf verweisen.
+    const used = new Set((state._pendingFiles || []).map(f => f.name));
+    for (const [i, c] of _comments.entries()) {
+      if (!c.image) continue;
+      let n = c.image.name;
+      if (used.has(n)) n = `${i + 1}-${n}`;
+      used.add(n);
+      c.image.sendName = n;
+    }
+    const lines = _comments.map((c, i) => {
+      let line = `${i + 1}. \`${c.selector}\`${c.preview ? ` („${c.preview}…“)` : ''}: ` +
+        `${c.text || 'Füge das angehängte Bild an dieser Stelle ein.'}`;
+      if (c.image) line += ` [dazu angehängtes Bild: „${c.image.sendName}“]`;
+      return line;
+    });
+    const hasImages = _comments.some(c => c.image);
+    let prompt = `Überarbeite das Artefakt „${name}“ per edit_file (kein Neuschreiben). ` +
       `Änderungswünsche, je mit CSS-Selektor des gemeinten Elements:\n` +
       lines.join('\n') +
       `\nSetze die Änderungen im Layout-System der Seite um (bestehendes CSS/Grid/Flex anpassen; ` +
       `keine absoluten Positionen, keine Inline-Style-Overrides).`;
+    if (hasImages) {
+      prompt += `\nDie genannten Bilder liegen als Datei auf der Platte (Pfade siehe Anhang-Hinweis). ` +
+        `Zum Einbetten referenziere ein Bild als <img src="attachment://<dateiname-auf-platte>"> ` +
+        `mit passenden Größen-/Layout-Styles — der Server ersetzt die Referenz beim Speichern ` +
+        `automatisch durch die eingebettete Bilddatei. Schreibe NIEMALS Base64-Bilddaten selbst.`;
+    }
     const input = _composerInputEl();
     if (!input) { showToast('Kein Chat-Eingabefeld gefunden', true); return; }
+    for (const c of _comments) {
+      if (!c.image) continue;
+      state._pendingFiles.push({
+        name: c.image.sendName,
+        type: c.image.type,
+        data: c.image.data,
+        encoding: 'base64',
+        preview: c.image.preview,
+        scan: { state: 'deferred' },
+      });
+    }
+    if (hasImages) { renderFilePreviews(); updateSendButton(); }
     _comments = [];
     _renderPins();
     _renderBar();

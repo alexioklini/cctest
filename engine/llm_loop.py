@@ -754,6 +754,19 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
                 elif isinstance(raw, dict):
                     raw = dict(raw)
                     raw["gdpr_warning"] = " | ".join(_fw)
+            # Design-Modus attachment inlining: unresolvable attachment://
+            # references in a written HTML artifact (file missing, non-image,
+            # too large) — same drain pattern, so the model can correct the
+            # reference in the same round.
+            _dw = _ctx._design_file_warnings
+            if _dw:
+                _ctx._design_file_warnings = None
+                if isinstance(raw, str):
+                    raw = raw + "\n\n" + "\n".join(
+                        f"⚠️ Design: {w}" for w in _dw)
+                elif isinstance(raw, dict):
+                    raw = dict(raw)
+                    raw["design_warning"] = " | ".join(_dw)
             # L7b: tally deterministic doc_checks verdicts for the per-turn
             # degradation strip ("Dokument-Prüfung serverseitig") — only
             # meaningful in anonymising sessions (mapping active).

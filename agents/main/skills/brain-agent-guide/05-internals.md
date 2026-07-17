@@ -2219,6 +2219,23 @@ collect inputs (`ask_user_for_file`), execute the plan agentically
   convention (`_DESIGN_DECK_CONVENTION`) so the agent writes exportable
   decks. Restarting the render service is needed after updating it
   (`POST /v1/crawl4ai/restart`).
+- **Design-Modus comment attachments (v9.364.0)**: a design comment can carry
+  an image ("insert this screenshot here"). The image rides as a NORMAL chat
+  attachment (`state._pendingFiles` → GDPR scan → disk under
+  `/tmp/brain-attachments/<sid>/`, plus multimodal on vision models); the
+  bytes never flow through the model. The apply prompt (and
+  `_DESIGN_DECK_CONVENTION`) instruct the agent to write only a short
+  `<img src="attachment://<filename-on-disk>">` reference;
+  `brain._inline_attachment_refs` (called at the top of `_after_file_write`,
+  the single write choke point — so shell/python writes are covered too)
+  deterministically replaces it with a data-URI from the session's attachment
+  dir on save. Result: self-contained artifact (srcdoc viewer, PDF/PPTX
+  render, DOCX converter all work). Guards: .html/.htm only, image
+  extensions only, 3MB per image, total kept under the 5MB
+  artifact-version snapshot cap; unresolvable refs stay in place and queue a
+  model-visible warning (`RequestContext._design_file_warnings`, drained
+  into the tool result by `llm_loop.dispatch_tool` — the
+  `_gdpr_file_warnings` pattern).
 - **Shared domain logic (no parallel impl)**: a scheduled task runs the SAME
   domain logic as a chat in its domain. Two shared functions on `brain` do it:
   `apply_domain_context(agent_id, project|project_id, user_id,

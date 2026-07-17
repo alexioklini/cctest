@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.363.0"
+VERSION = "9.364.0"
 VERSION_DATE = "2026-07-17"
 CHANGELOG = [
+    ("9.364.0", "2026-07-17", "feat(Design-Modus — Bilder an Kommentaren: 'füge diesen Screenshot an diese Stelle ein'; User-Auftrag). KOMMENTAR-BLASE (web/js/design_canvas.js, alles im DesignCanvas-IIFE — NULL neue Globals, net-globals 2012 unverändert): Knopf 'Bild anhängen' (inline-SVG-Büroklammer, feedback_svg_not_emoji_buttons) + hidden file-input accept=image/*; Bild als Mini-Vorschau in Blase UND Chip; Kommentar auch OHNE Text erlaubt, wenn ein Bild dran hängt (Default-Wunsch 'Füge das angehängte Bild an dieser Stelle ein'); leere/unlesbare Dateien abgewiesen (files.js-Muster). APPLY: Kommentar-Bilder werden in state._pendingFiles eingereiht und reiten als NORMALE Chat-Attachments über die bestehende Send-Pipeline (GDPR-Scan at send, Disk-Ablage /tmp/brain-attachments/<sid>/ — Bilder landen dort seit je AUCH bei Vision-Modellen, die sie zusätzlich multimodal sehen); Sende-Dateinamen werden pro Apply-Batch eindeutig gemacht (Kollision → '<i>-'-Präfix), die Prompt-Zeile nennt das Bild je Kommentar. EINBETTUNGS-MECHANIK (der Kern — Bildbytes fließen NIE durchs Modell, ein 200KB-Screenshot wäre ~70k Tokens, und das srcdoc-iframe kann keine Disk-Dateien laden): das Modell schreibt NUR eine kurze Referenz <img src=\"attachment://<dateiname-auf-platte>\">; brain._inline_attachment_refs (NEU, gerufen ganz oben in _after_file_write — der EINE Write-Choke-Point, deckt write_file/edit_file UND Shell-/Python-Writes via Ordner-Diff; feedback_single_fix_point) ersetzt sie DETERMINISTISCH durch die data-URI der Datei aus dem Session-Attachment-Ordner → das gespeicherte Artefakt ist selbst-enthalten (srcdoc-Viewer, PDF-/PPTX-Render-Service, DOCX-Konverter mit seinem base64-Raster-Handling — alle Wege funktionieren; das war die bei Phase B bewusst vertagte 'Upload+Data-URI-Inlining'-Validierung). Läuft VOR dem GDPR-Callback + der Versions-Registrierung (De-Anonymise-Pass und artifact_versions sehen die finalen Bytes). GUARDS: nur .html/.htm; nur Bild-Extensions (png/jpg/jpeg/gif/webp/svg, MIME aus Extension); 3MB pro Bild; Budget hält das Ergebnis unter der 5MB-Versions-Snapshot-Grenze (content=None wäre ein leeres Panel); Name wird URL-unquoted auf den BASENAME reduziert (attachment://../../etc/passwd.png kann den Session-Ordner nie verlassen); Nicht-UTF-8-HTML → Warnung statt Korruption. FAIL-LOUD: unauflösbare Referenzen bleiben stehen + queuen eine MODELL-SICHTBARE Warnung (RequestContext._design_file_warnings NEU, engine/context.py; Drain in llm_loop.dispatch_tool direkt neben dem _gdpr_file_warnings-Drain, Präfix '⚠️ Design:') — das Modell korrigiert den Dateinamen in derselben Runde. STEERING doppelt: der Apply-Prompt erklärt die Konvention (nur bei Bildern), und _DESIGN_DECK_CONVENTION (handlers/chat.py, wire-only auf jedem design_context-Turn) trägt einen Satz dazu — damit funktioniert auch die ERST-Erstellung mit Bild ('erstelle einen One-Pager mit diesem Logo'); NIE System-Prompt, KV-Prefix unberührt. CSS: .design-bubble-attach/.design-attach-btn/.design-attach-preview/.design-chip-img (main.css, theme-aware über bestehende Variablen). Tests: tests/test_design_attachment_inline.py NEU (10 — Happy-Path png+svg+URL-encoded Name, Missing/Non-Image/Oversize je Warnung+Referenz bleibt, Traversal→Basename, non-html untouched, ohne Session untouched, HTML ohne Referenz wird nicht neu geschrieben (mtime-Pin), dispatch_tool-Drain append+clear); test_report_fidelity + test_request_context_isolation + test_file_tools_characterization grün. js_gate GRÜN (eslint clean, net-globals 2012 unverändert, Smoke 5/5). py_compile OK (brain, context, llm_loop, chat). Kein Schema-Touch; _DESIGN_DECK_CONVENTION ist wire-only → Warm-Pool-Prefix unberührt. Server-Restart nötig. Skill 05-internals + 06-user-manual (DE) + SKILL.md 1.233.0 + kuratierter Eintrag (user) im selben Commit."),
     ("9.363.0", "2026-07-17", "feat(Datenquellen-Admin-GUI + Zugriffs-Policy für db_query — User-Auftrag: 'admin gui + einen generellen ein/ausschalter pro user / team / global / usertypes'). POLICY (engine/tools/data_tools.data_access_allowed, NEU): config.json → data_sources_access {enabled, roles, teams, users} — `enabled` ist der MASTER-Schalter (aus = für ALLE gesperrt, auch Admins); Freigaben ADDITIV nach Rolle (usertypes admin/poweruser/user — admin passiert die Grant-Achsen IMMER, das Muster von has_capability/can_access_model), nach User-Team (user_team_members via AuthDB.get_user_teams) und nach einzelnem User; `__system__` passiert; leere user_id → deny (fail-loud); FEHLENDER Block = NUR ADMINS (Warehouse-Credentials default-closed — bewusste Verhaltensänderung ggü. 9.356.0, wo jeder Chat-Nutzer db_query hatte; das file-basierte data_query bleibt ungegated). DURCHSETZUNG IM TOOL (Guard ganz oben in tool_db_query, vor Source-Resolution): bewusst KEINE per-User-Tool-Listen-Mutation (exclude_tools) — die Tool-Liste bleibt byte-identisch über alle User, Warm-Pool-KV-Prefix unberührt (feedback_kv_cache_stability); erreicht so JEDEN Dispatch-Pfad (Chat, Scheduler, Workflows, Delegation); abgelehnter Aufruf = sauberer Tool-Fehler 'access denied — <Grund>', Schemabeschreibung sagt dem Modell explizit 'final for this user, do NOT retry' (+ verweist auf Einstellungen → Datenquellen statt config.json). ENDPOINTS (handlers/admin_config.py, beide admin-gated in _ADMIN_GET_EXACT/_ADMIN_POST_EXACT): GET /v1/data-sources → Quellen mit MASKIERTER DSN (_mask_dsn redigiert das Passwort-Segment; dsn_set/dsn_masked, das Secret verlässt den Server NIE) + Access-Policy (fehlender Block als admins-only gemeldet) + Team-/User-/Rollen-Listen für die Grant-Picker + wired_types; POST /v1/data-sources {action: save_source|delete_source|save_access} — save_source mit original_name (Rename) und LEERE DSN beim Edit = gespeichertes Secret bleibt (das Provider-API-Key-Muster), Validierung (Name-Pflicht/-Unique, Options-Ints, DSN-oder-env_key-Pflicht bei Neuanlage); persistiert config.json UND live server_config → KEIN Restart nötig (db_query liest live). server.py main(): Boot-Copy für data_sources_access ergänzt (das 9.294.3-Loch vermieden). GUI (settings_general_tabs.js _genTab_data_sources + _dsEdit/saveDataSource/deleteDataSource/saveDataSourcesAccess; Tab 'Datenquellen' in der Server-Gruppe, settings_general.js RENDERERS): Zugriffs-Sektion (globaler Schalter, Rollen-Checkboxen — Admin fest angehakt/disabled, Team-/User-Multiselects nur Nicht-Admins) + Quellen-Liste (Typ-Badge, maskierte DSN bzw. env:-Anzeige, Bearbeiten/Löschen) + Add/Edit-Formular (DSN als type=password, Placeholder erklärt 'leer lassen = unverändert'). Tests: tests/test_data_tools 30/30 grün — TestDbQueryAccessPolicy NEU (8: fehlender Block = admins-only, Master-Schalter blockt Admins, Rollen-/User-/Team-Grant je positiv+negativ, __system__/leere-uid, Guard-vor-Source-Resolution via gemockter AuthDB), bestehende TestDbQuery-Suite läuft jetzt als __system__ (Policy-Bypass — sie testet Query-Mechanik, nicht Policy). js_gate GRÜN (net-globals 2007→2012, +5 bewusst: Renderer + 4 Handler; Smoke 4/5 + bekannter Flake). MSSQL/Snowflake/Oracle bleiben unverdrahtet (User-Frage beantwortet: Postgres-DSN kann kein MSSQL; Nachrüsten = ein Branch in _connect_readonly sobald testbarer DSN existiert — Hinweis jetzt im 04-recipes-Rezept). Schema-Touch (db_query-Beschreibung) → Warm-Pool-Prefix re-primt einmalig. Server-Restart nötig. Skill 01-api/02-tools/04-recipes/06-user-manual + SKILL.md 1.232.0 + kuratierter Eintrag (admin) im selben Commit."),
     ("9.362.0", "2026-07-17", "change(Modell-Benchmark — Speed aus EINEM repräsentativen Aufruf pro Modell statt Seed-Test über alle Prompts; User-Auftrag: 'if we have external benchmark data use speed just from one representative call, thats enough for all purposes'). BEGRÜNDUNG: Durchsatz (tps) ist eine Eigenschaft von Modell/Provider/Hardware, NICHT des Aufgabentyps — der bisherige measure_only-Seed-Test beantwortete für JEDE offiziell abgedeckte Zelle ALLE Prompts des Aufgabentyps (bei voller Leaderboard-Abdeckung ~30 LLM-Calls pro Modell nur für Speed). NEU engine/model_bench.measure_speed(model): EIN langförmiger repräsentativer Prompt (_SPEED_SEED_PROMPT, der HTTP/1.1-vs-HTTP/2-Research-Prompt — genug Output-Tokens, damit Time-to-first-token die Schätzung nicht dominiert), max_tokens 1024, account_cost=False → {tps, n:1, ts, error?}. benchmark_model misst LAZY beim ERSTEN offiziell abgedeckten Task und teilt das Ergebnis (dict-Kopie je Zelle, keine geteilte Mutation) über alle Leaderboard-Zellen des Modells; capability/source/raw/official_name werden wie bisher gemischt. Seed-Fehler → tps 0 + error auf der Zelle, capability bleibt offiziell (Lauf blockiert nie). measure_only-Modus aus benchmark_cell ENTFERNT (nach dem Umbau toter Code — Signatur zurück auf den Stand vor 9.275.0); interner Prompt+Judge-Fallback (Modelle ohne Leaderboard-Eintrag, source='internal') byte-identisch unverändert, misst tps weiter über seine echten Prompt-Antworten. Zellform unverändert {capability, tps, n, ts, source, …} — Router (bench_cell_value/_bench_rank_key) + UI-Badges unberührt; n=1 auf offiziellen Zellen ist die ehrliche Stichprobengröße. Verifiziert: unittest tests/test_auto_route_ranking 19/19 grün; Fake-background_call-Probe: 3 offizielle Tasks = EXAKT 1 Speed-Call, Zellen tragen capability 70 + geteilte tps + n=1, Fehlerpfad (Provider down) → tps 0 + error + capability erhalten, interner Fallback weiter n=4 über alle fast-Prompts. py_compile OK (model_bench, providers, brain). Kein Schema-/Prompt-Touch → Warm-Pool unberührt. Server-Restart nötig (in-memory Code, wie beim Matcher). Skill 05-internals + 06-user-manual (DE) + SKILL.md-Bump 1.231.0 + kuratierter Eintrag (admin) im selben Commit."),
     ("9.361.0", "2026-07-17", "feat(Artefakt-Export PDF→DOCX — auch PDF-Artefakte bekommen den Export-Knopf): GET /v1/artifacts/<id>/export?format=docx akzeptiert jetzt PDF-Artefakte und liefert ein layout-treues, bearbeitbares Word-Dokument via pdf2docx 0.5.13 (DERSELBE Baustein wie translate_pdf in server_lib/translate/document.py — Textboxen/Tabellen/Bilder/Spalten werden echte DOCX-Elemente; bereits im Server-Python installiert, kein neues Dep). handlers/admin_artifacts.py: Modul-Helfer _pdf_to_docx_bytes (Tempdir-Staging, pdf2docx ist file-basiert; stdout/stderr-Redirect wie im Translate-Seam — pdf2docx printet '[INFO] (N/M) Page N' DIREKT, nicht via logging, und frisst sonst das Server-Log); Guard-Umbau: PDF-Artefakt + format!=docx → 400 'nur nach DOCX', Nicht-HTML/Nicht-PDF → 400 (Meldung erweitert); Content-Pfad: PDF-Bytes bleiben Bytes (der bestehende utf-8-Decode gilt nur noch für HTML-Artefakte — artifact_versions.content ist BLOB, Disk-Fallback rb); Fehlerpfade: pdf2docx fehlt → 503, Konvertierung scheitert (Bild-Scans, exotische Font-Encodings) → ehrliches 422 mit OCR-Hinweis statt geratenem Fallback. PPTX→DOCX bewusst NICHT gebaut (Folien ≠ Fließtext; eigene PPTX-Exporte sind Bild-Folien → DOCX wäre nur Screenshots, und das Quell-HTML exportiert direkt besser; fremde PPTX = lossy Text-Dump, kann der Agent im Chat on demand). UI: Export-Knopf-Gating über die EXTENSION statt type (panels_artifacts.js — pdf hat type 'document', nicht 'pdf'); DesignCanvas.exportMenu liest _rawName vom #artifact-content-Container und zeigt bei .pdf NUR den DOCX-Eintrag ('Layout-treu konvertiert — in Word bearbeitbar'); index.html Button-Title aktualisiert. VALIDIERT E2E via HTTP: echtes PDF-Artefakt → 200, korrekter Word-MIME, python-docx-Roundtrip grün; Fehlerpfade 400 (format=pdf auf PDF-Artefakt) geprüft. js_gate GRÜN (net-globals unverändert — alles in bestehenden Funktionen/IIFE). Kein Schema-/Prompt-Touch → Warm-Pool unberührt. Server-Restart nötig. Skill 01-api + 06-user-manual (DE) + SKILL.md-Bump + kuratierter Eintrag (9.360er-Bündel erweitert) im selben Commit."),
@@ -17320,6 +17321,109 @@ def _register_artifact_version(path: str, action: str, agent_id: str,
 
 # --- Centralized File-Write Pipeline ---
 
+# Design-Modus attachment embedding (v9.364.0): the design comment loop lets
+# users attach images to a comment ("füge diesen Screenshot hier ein"). The
+# image bytes must NEVER flow through the model (a 200KB screenshot is ~70k
+# tokens as base64) and the srcdoc artifact iframe cannot load disk files —
+# so the model writes only a short `attachment://<filename>` reference and
+# this hook (called from _after_file_write, the one choke point every write
+# path passes — write_file, edit_file, shell/python writes via the folder
+# diff) replaces it deterministically with the real file from
+# /tmp/brain-attachments/<session>/ as a data-URI. The saved artifact is
+# self-contained: viewer (srcdoc), PDF/PPTX render service and the DOCX
+# converter (handles base64 raster) all work on it. Unresolvable references
+# queue a model-visible warning (drained into the tool result by
+# llm_loop.dispatch_tool, the _gdpr_file_warnings pattern).
+_ATTACHMENT_REF_RE = re.compile(r'attachment://([^"\'\s()<>]+)')
+_ATTACH_INLINE_EXT_MIME = {
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml",
+}
+# Per-image cap (raw bytes; base64 is ~4/3) + result-file budget: the
+# artifact_versions snapshot is capped at 5MB — a file inlined past that
+# would silently lose its panel view (content=None, disk-only).
+_ATTACH_INLINE_MAX_IMG = 3 * 1024 * 1024
+_ATTACH_INLINE_MAX_FILE = 4_800_000
+
+
+def _queue_design_file_warning(msg: str):
+    ctx = get_request_context()
+    if ctx._design_file_warnings is None:
+        ctx._design_file_warnings = []
+    ctx._design_file_warnings.append(msg)
+
+
+def _inline_attachment_refs(path: str):
+    """Replace `attachment://<name>` references in a just-written .html/.htm
+    file with data-URIs of the matching files in this session's attachment
+    dir. Deterministic transform — no LLM involvement. Unresolvable refs are
+    left in place and reported via _queue_design_file_warning so the model
+    learns in the same round."""
+    if os.path.splitext(path)[1].lower() not in (".html", ".htm"):
+        return
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except Exception:
+        return
+    if b"attachment://" not in raw:
+        return
+    sid = get_request_context().session_id or \
+        get_request_context().current_session_id or ""
+    if not sid:
+        return
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        _queue_design_file_warning(
+            f"{os.path.basename(path)}: attachment://-Referenz gefunden, aber "
+            f"die Datei ist nicht UTF-8 — nichts eingebettet.")
+        return
+    attach_dir = os.path.join("/tmp", "brain-attachments", sid)
+    budget = _ATTACH_INLINE_MAX_FILE - len(raw)
+
+    def _repl(m):
+        nonlocal budget
+        from urllib.parse import unquote
+        name = os.path.basename(unquote(m.group(1)))
+        ref = m.group(0)
+        mime = _ATTACH_INLINE_EXT_MIME.get(os.path.splitext(name)[1].lower())
+        if not mime:
+            _queue_design_file_warning(
+                f"attachment://{name}: kein einbettbares Bildformat "
+                f"(unterstützt: {', '.join(sorted(_ATTACH_INLINE_EXT_MIME))}).")
+            return ref
+        fpath = os.path.join(attach_dir, name)
+        if not os.path.isfile(fpath):
+            _queue_design_file_warning(
+                f"attachment://{name}: Datei nicht unter den Anhängen dieser "
+                f"Session gefunden — Dateinamen aus dem Anhang-Hinweis "
+                f"verwenden (Datei auf der Platte, nicht Originalname).")
+            return ref
+        fsize = os.path.getsize(fpath)
+        if fsize > _ATTACH_INLINE_MAX_IMG:
+            _queue_design_file_warning(
+                f"attachment://{name}: Bild zu groß zum Einbetten "
+                f"({fsize // 1024} KB > {_ATTACH_INLINE_MAX_IMG // 1024} KB).")
+            return ref
+        b64_len = 4 * ((fsize + 2) // 3)
+        if b64_len > budget:
+            _queue_design_file_warning(
+                f"attachment://{name}: Einbetten würde das Artefakt über die "
+                f"5-MB-Versionsgrenze heben — Referenz belassen.")
+            return ref
+        import base64 as _b64mod
+        with open(fpath, "rb") as fp:
+            b64 = _b64mod.b64encode(fp.read()).decode("ascii")
+        budget -= len(b64)
+        return f"data:{mime};base64,{b64}"
+
+    new_text = _ATTACHMENT_REF_RE.sub(_repl, text)
+    if new_text != text:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_text)
+
+
 def _after_file_write(path: str, action: str = "created", agent_id: str = "",
                       produced_by: str | None = None,
                       env_snapshot: str | None = None):
@@ -17328,6 +17432,16 @@ def _after_file_write(path: str, action: str = "created", agent_id: str = "",
     produced_by/env_snapshot: Phase-B provenance, set only by python_exec/r_exec
     for files their script wrote (execute_command has no attributable script —
     honestly None)."""
+    # Design-Modus attachment inlining — BEFORE the GDPR callback and artifact
+    # registration, so the de-anonymise pass and the registered version both
+    # see the final, self-contained bytes. Best-effort: a bug here must never
+    # break the write path (expected failures queue model-visible warnings
+    # inside the helper instead).
+    try:
+        _inline_attachment_refs(path)
+    except Exception as e:
+        print(f"[design-inline] failed for {path}: {e}", flush=True)
+
     # Transparent anonymisation: if the chat worker installed a deanonymise
     # callback on this thread, invoke it BEFORE artifact registration so the
     # UI sees the de-anonymised bytes (and the version row's hash matches the

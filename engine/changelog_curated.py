@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.364.0",
+        "date": "2026-07-17",
+        "title": "Design-Modus: Bilder direkt einfügen lassen",
+        "body": "Im Design-Modus können Sie einem Kommentar jetzt ein Bild "
+                "mitgeben — etwa einen Screenshot mit dem Wunsch „bitte an "
+                "dieser Stelle einfügen“. Das Bild wird beim Anwenden fest in "
+                "das Dokument eingebettet, sodass Ansicht und alle Exporte "
+                "(PDF, Word, PowerPoint) ohne externe Dateien funktionieren. "
+                "Angehängte Bilder durchlaufen denselben Datenschutz-Scan "
+                "wie normale Chat-Anhänge.",
+        "audience": "user",
+        "versions": ["9.364.0"],
+    },
+    {
         "version": "9.363.0",
         "date": "2026-07-17",
         "title": "SQL-Datenquellen per GUI verwalten und freigeben",

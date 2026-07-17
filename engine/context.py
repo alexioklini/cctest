@@ -98,6 +98,12 @@ class RequestContext:
     # python_exec after its changed-files loop so the MODEL sees the warning
     # in the same round. List[str] or None.
     _gdpr_file_warnings: object = None
+    # Design-Modus attachment embedding: model-directed warnings when an
+    # `attachment://<name>` reference in a written HTML artifact could not be
+    # inlined (file missing, non-image, too large). Queued by
+    # brain._inline_attachment_refs, drained into the tool result by
+    # llm_loop.dispatch_tool — same pattern as _gdpr_file_warnings above.
+    _design_file_warnings: object = None
     # L7b: per-turn degradation tallies (dict or None) — counts of privacy-
     # driven behavior changes (web_blocked/web_denied/web_released/doc_checks/
     # pdf_refused), incremented at the gate/callback choke points, drained by
