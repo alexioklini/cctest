@@ -9299,9 +9299,7 @@
   ],
   "data_sources_access": {
     "enabled": true,
-    "roles": [
-      "admin"
-    ],
+    "roles": [],
     "teams": [],
     "users": []
   }
