@@ -3549,7 +3549,7 @@ async function _genTab_data_sources(C) {
   const teams = data.teams || [];
 
   let html = `<div style="${G('12px')}">`;
-  html += `<div style="font-size:12px;color:var(--text-400)">Externe SQL-Datenbanken für das Agent-Tool <code>db_query</code> (read-only). Der hinterlegte DB-Benutzer <b>muss</b> ein Read-only-Grant sein — die Session wird zusätzlich schreibgeschützt geöffnet.</div>`;
+  html += `<div style="font-size:12px;color:var(--text-400)">Externe SQL-Datenbanken für das Agent-Tool <code>db_query</code>. Jede Quelle ist <b>read-only</b> (Standard) oder <b>read/write</b>. Bei read-only <b>muss</b> der hinterlegte DB-Benutzer ein Read-only-Grant sein (Postgres-Sessions werden zusätzlich schreibgeschützt geöffnet; MSSQL kennt kein Session-Read-only — dort trägt der db_datareader-Login). DDL (CREATE/ALTER/DROP …) ist auch auf read/write-Quellen gesperrt.</div>`;
 
   /* Access policy */
   html += SEC('Zugriff', 'Wer darf db_query nutzen? Freigaben sind ADDITIV (Rolle ODER Team ODER Benutzer genügt). Administratoren haben immer Zugriff — außer der globale Schalter ist aus, der gilt für alle. Ohne gespeicherte Policy gilt: nur Administratoren.');
@@ -3591,6 +3591,7 @@ async function _genTab_data_sources(C) {
       html += `<div style="${ROW}">
         <span style="font-size:13px;font-weight:500;color:var(--text-100)">${esc(s.name)}</span>
         ${BADGE(s.type)}
+        ${s.access_mode === 'rw' ? BADGE('read/write', 'var(--error)') : BADGE('read-only')}
         <span style="${MONO};flex:1">${s.dsn_set ? esc(s.dsn_masked) : (s.env_key ? 'env: ' + esc(s.env_key) : '—')}</span>
         <button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="_dsEdit('${esc(s.name)}')">Bearbeiten</button>
         <button class="btn-secondary" style="padding:2px 8px;font-size:11px;color:var(--error)" onclick="deleteDataSource('${esc(s.name)}')">Löschen</button>
@@ -3609,7 +3610,12 @@ async function _genTab_data_sources(C) {
       <div style="width:160px"><label class="form-label">Typ</label><select class="form-select" id="ds-type" style="width:100%">
         ${(data.wired_types || ['postgres']).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}
       </select></div>
+      <div style="width:160px"><label class="form-label">Zugriffsmodus</label><select class="form-select" id="ds-access-mode" style="width:100%">
+        <option value="ro">read-only</option>
+        <option value="rw">read/write</option>
+      </select></div>
     </div>
+    <div style="font-size:11px;color:var(--warning)">read/write: Schreibzugriff (INSERT/UPDATE/DELETE/MERGE) durch den Agenten — die DB-Grants des hinterlegten Benutzers sind die letzte Instanz. DDL bleibt gesperrt.</div>
     <div><label class="form-label">DSN (Verbindungs-URL, inkl. Read-only-Benutzer)</label>
       <input class="form-input" id="ds-dsn" type="password" autocomplete="off" placeholder="postgresql://user:pass@host:5432/db — beim Bearbeiten leer lassen = unverändert"></div>
     <div style="display:flex;gap:8px">
@@ -3632,6 +3638,7 @@ function _dsEdit(name) {
   document.getElementById('ds-original-name').value = s ? s.name : '';
   document.getElementById('ds-name').value = s ? s.name : '';
   document.getElementById('ds-type').value = s ? s.type : 'postgres';
+  document.getElementById('ds-access-mode').value = s ? (s.access_mode || 'ro') : 'ro';
   document.getElementById('ds-dsn').value = '';
   document.getElementById('ds-env-key').value = s ? (s.env_key || '') : '';
   document.getElementById('ds-timeout').value = s ? (s.options?.statement_timeout_ms ?? '') : '';
@@ -3655,6 +3662,7 @@ async function saveDataSource() {
       source: {
         name, dsn, env_key: envKey,
         type: document.getElementById('ds-type').value,
+        access_mode: document.getElementById('ds-access-mode').value,
         options: {
           statement_timeout_ms: document.getElementById('ds-timeout').value,
           connect_timeout: document.getElementById('ds-connect-timeout').value,

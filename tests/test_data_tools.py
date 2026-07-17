@@ -225,6 +225,10 @@ _TEST_SOURCES = [
     # Layer-2 proof source: OWNER credentials (may write by grant) — the
     # session read-only must still block writes.
     {"name": "braintest_owner", "type": "postgres", "dsn": _PG_OWNER_DSN},
+    # rw source (E5): owner creds + access_mode rw — writes pass layer 1
+    # and the session is NOT opened read-only.
+    {"name": "braintest_rw", "type": "postgres", "dsn": _PG_OWNER_DSN,
+     "access_mode": "rw"},
     {"name": "dead_db", "type": "postgres",
      "dsn": "postgresql://x:x@localhost:59999/nope",
      "options": {"connect_timeout": 2}},
@@ -389,6 +393,146 @@ class TestDbQueryAccessPolicy(unittest.TestCase):
             out = json.loads(data_tools.tool_db_query(
                 {"source": "braintest", "sql": "SELECT 1"}))
         self.assertIn("access denied", out["error"])
+
+
+# ---------------------------------------------------------------------------
+# access_mode ro/rw (DATA_SOURCES_V2_PLAN.md Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestCheckStatementAllowed(unittest.TestCase):
+    """Pure unit — layer 1 per mode. ro stays the shared SELECT/WITH check
+    but a WRITE attempt must name the mode (the model should ask for an rw
+    source, not rework the SQL); rw admits DML, never DDL (O3), and the
+    single-statement rule holds in both modes."""
+
+    def _c(self, sql, mode):
+        return data_tools._check_statement_allowed(sql, mode)
+
+    def test_ro_select_passes(self):
+        self.assertIsNone(self._c("SELECT 1", "ro"))
+        self.assertIsNone(self._c("WITH x AS (SELECT 1) SELECT * FROM x",
+                                  "ro"))
+
+    def test_ro_write_names_the_mode(self):
+        for sql in ("INSERT INTO t VALUES (1)", "UPDATE t SET a=1",
+                    "DELETE FROM t", "MERGE INTO t USING s ON 1=1",
+                    "DROP TABLE t"):
+            err = self._c(sql, "ro")
+            self.assertIn("read-only", err)
+            self.assertIn("rw source", err)
+
+    def test_ro_garbage_keeps_select_error(self):
+        self.assertIn("SELECT", self._c("EXPLAIN SELECT 1", "ro"))
+
+    def test_rw_dml_passes(self):
+        for sql in ("SELECT 1", "WITH x AS (SELECT 1) SELECT * FROM x",
+                    "INSERT INTO t VALUES (1)", "UPDATE t SET a=1",
+                    "DELETE FROM t WHERE a=1",
+                    "MERGE INTO t USING s ON t.id=s.id WHEN MATCHED THEN "
+                    "UPDATE SET a=1"):
+            self.assertIsNone(self._c(sql, "rw"), sql)
+
+    def test_rw_ddl_blocked(self):
+        for sql in ("CREATE TABLE x (a INT)", "ALTER TABLE t ADD b INT",
+                    "DROP TABLE t", "TRUNCATE t",
+                    "GRANT ALL ON t TO PUBLIC", "REVOKE ALL ON t FROM x"):
+            err = self._c(sql, "rw")
+            self.assertIn("DDL", err, sql)
+
+    def test_rw_multi_statement_blocked(self):
+        self.assertIn("ONE statement",
+                      self._c("INSERT INTO t VALUES (1); DROP TABLE t", "rw"))
+
+    def test_rw_unknown_keyword_blocked(self):
+        self.assertIn("allowed", self._c("VACUUM t", "rw"))
+
+    def test_rw_empty(self):
+        self.assertIn("empty", self._c("  ", "rw"))
+
+    def test_source_access_mode_default_ro(self):
+        self.assertEqual(data_tools._source_access_mode({}), "ro")
+        self.assertEqual(data_tools._source_access_mode(
+            {"access_mode": "RW"}), "rw")
+        self.assertEqual(data_tools._source_access_mode(
+            {"access_mode": "nonsense"}), "ro")
+
+
+@unittest.skipUnless(_HAVE_PG, "local test postgres (braintest) not available")
+class TestDbQueryRw(unittest.TestCase):
+    """E5 live contract on postgres: an rw source really persists (commit
+    proven across connections), reports mode+rowcount, still blocks DDL and
+    multi-statements; the same write on an ro source dies in layer 1 with
+    the mode error text."""
+
+    @classmethod
+    def setUpClass(cls):
+        import psycopg2
+        cls._table = "rw_scratch_" + uuid.uuid4().hex[:8]
+        conn = psycopg2.connect(_PG_OWNER_DSN, connect_timeout=5)
+        conn.autocommit = True
+        conn.cursor().execute(
+            f"CREATE TABLE {cls._table} (id INT PRIMARY KEY, txt TEXT)")
+        conn.close()
+
+    @classmethod
+    def tearDownClass(cls):
+        import psycopg2
+        try:
+            conn = psycopg2.connect(_PG_OWNER_DSN, connect_timeout=5)
+            conn.autocommit = True
+            conn.cursor().execute(f"DROP TABLE IF EXISTS {cls._table}")
+            conn.close()
+        except Exception:
+            pass
+
+    def setUp(self):
+        self._sid = "datatools-rwtest-" + uuid.uuid4().hex[:8]
+        self.enterContext(request_context(
+            current_session_id=self._sid, current_agent=_FakeAgent(),
+            current_user_id="__system__"))
+        self.enterContext(mock.patch.object(
+            data_tools, "_data_sources", return_value=_TEST_SOURCES))
+
+    def _q(self, **args):
+        return json.loads(data_tools.tool_db_query(args))
+
+    def test_insert_select_roundtrip(self):
+        ins = self._q(source="braintest_rw",
+                      sql=f"INSERT INTO {self._table} (id, txt) "
+                          f"VALUES (1, 'hello')")
+        self.assertEqual(ins.get("mode"), "rw")
+        self.assertEqual(ins.get("rowcount"), 1)
+        # Read back on a FRESH connection — proves the commit, not just the
+        # session-local view.
+        sel = self._q(source="braintest_rw",
+                      sql=f"SELECT txt FROM {self._table} WHERE id = 1")
+        self.assertIn("hello", sel["result"])
+        self.assertEqual(sel.get("mode"), "rw")
+        upd = self._q(source="braintest_rw",
+                      sql=f"UPDATE {self._table} SET txt='bye' WHERE id=1")
+        self.assertEqual(upd.get("rowcount"), 1)
+
+    def test_ddl_blocked_on_rw(self):
+        out = self._q(source="braintest_rw",
+                      sql=f"DROP TABLE {self._table}")
+        self.assertIn("DDL", out["error"])
+
+    def test_multi_statement_blocked_on_rw(self):
+        out = self._q(source="braintest_rw",
+                      sql=f"INSERT INTO {self._table} VALUES (9,'x'); "
+                          f"DELETE FROM {self._table}")
+        self.assertIn("ONE statement", out["error"])
+
+    def test_write_on_ro_source_names_mode(self):
+        out = self._q(source="braintest",
+                      sql=f"INSERT INTO {self._table} VALUES (2,'nope')")
+        self.assertIn("read-only", out["error"])
+        self.assertIn("rw source", out["error"])
+
+    def test_ro_result_has_no_rw_mode(self):
+        out = self._q(source="braintest", sql="SELECT 1 AS one")
+        self.assertNotIn("mode", out)
+        self.assertIn("read-only", out["read_only"])
 
 
 # ---------------------------------------------------------------------------

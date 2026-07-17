@@ -1364,27 +1364,31 @@ TOOL_DEFINITIONS = [
     {
         "name": "db_query",
         "description": (
-            "Run ONE read-only SQL SELECT against a CONFIGURED external "
-            "database/warehouse source (set up by the admin in Einstellungen "
-            "→ Datenquellen; currently PostgreSQL). Access is grant-gated per "
-            "user — an 'access denied' error is final for this user, do NOT "
-            "retry. Pass the configured source "
-            "NAME — if it is wrong, the error lists the available names. The "
-            "connection is read-only at session level AND the configured DB "
-            "user must be a read-only grant, so writes are impossible; only "
-            "SELECT/WITH passes. Explore an unknown schema with e.g. "
-            "sql=\"SELECT table_name FROM information_schema.tables WHERE "
-            "table_schema='public'\" — never guess table names. A server-side "
-            "statement timeout caps runaway queries. Returns up to 50 rows "
-            "plus the total row count; pass out='name.csv' to save the FULL "
-            "result (up to 200k rows) as an artifact. For FILES (.parquet/"
-            ".csv/.duckdb) use data_query, for .xlsx use xlsx_query."
+            "Run ONE SQL statement against a CONFIGURED external database "
+            "source (set up by the admin in Einstellungen → Datenquellen; "
+            "PostgreSQL or MSSQL). Access is grant-gated per user — an "
+            "'access denied' error is final for this user, do NOT retry. "
+            "Pass the configured source NAME — if it is wrong, the error "
+            "lists the available names. Each source is read-only (ro, the "
+            "default) or read/write (rw) — the MODE COMES FROM THE SOURCE, "
+            "not from you: on an ro source only SELECT/WITH passes ('source "
+            "is read-only' means writes need an rw source — final, do not "
+            "rework the SQL); on an rw source INSERT/UPDATE/DELETE/MERGE "
+            "also pass and the result reports mode:'rw' + rowcount. DDL "
+            "(CREATE/ALTER/DROP/TRUNCATE/GRANT) is blocked on every source. "
+            "Explore an unknown schema with e.g. sql=\"SELECT table_name "
+            "FROM information_schema.tables WHERE table_schema='public'\" — "
+            "never guess table names. A server-side statement timeout caps "
+            "runaway queries. SELECTs return up to 50 rows plus the total "
+            "row count; pass out='name.csv' to save the FULL result (up to "
+            "200k rows) as an artifact. For FILES (.parquet/.csv/.duckdb) "
+            "use data_query, for .xlsx use xlsx_query."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "source": {"type": "string", "description": "Configured data-source name (config.json → data_sources; wrong name → error lists the available ones)"},
-                "sql": {"type": "string", "description": "One SELECT statement (dialect of the source, e.g. PostgreSQL)"},
+                "sql": {"type": "string", "description": "One SQL statement (dialect of the source: PostgreSQL or T-SQL). Writes only pass on rw sources."},
                 "out": {"type": "string", "description": "Optional relative .csv filename — writes the full result to your artifact folder"},
             },
             "required": ["source", "sql"],

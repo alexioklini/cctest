@@ -9339,6 +9339,12 @@
         "statement_timeout_ms": 60000,
         "connect_timeout": 10
       }
+    },
+    {
+      "name": "braintest_rw",
+      "type": "postgres",
+      "dsn": "postgresql://readonly_user:YOUR_PASSWORD@host:5432/dbname",
+      "access_mode": "rw"
     }
   ],
   "data_sources_access": {

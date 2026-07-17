@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 
 from engine.context import get_request_context
 from engine.tool_exec import _ok, _err
@@ -248,8 +249,57 @@ _DB_READONLY_NOTE_MSSQL = (
     "statement gate only (layer 1) — MSSQL has no session read-only; "
     "operational requirement: the configured login must hold db_datareader "
     "only (layer 3)")
+_DB_RW_NOTE = ("rw source — DML allowed, DDL blocked; the configured DB "
+               "user's grants are the last instance")
 
 MSSQL_DEFAULT_ODBC_DRIVER = "ODBC Driver 17 for SQL Server"
+
+# access_mode (E5): "ro" (default) keeps today's SELECT/WITH-only contract;
+# "rw" additionally admits DML. DDL stays blocked even on rw (O3) — schema
+# changes by the agent are a different risk level; the DB grants of the
+# configured user remain the last instance either way.
+_RW_ALLOWED_KEYWORDS = ("select", "with", "insert", "update", "delete",
+                        "merge")
+_DDL_KEYWORDS = ("create", "alter", "drop", "truncate", "grant", "revoke")
+_WRITE_KEYWORDS = ("insert", "update", "delete", "merge")
+
+
+def _source_access_mode(src: dict) -> str:
+    return "rw" if (src.get("access_mode") or "").strip().lower() == "rw" \
+        else "ro"
+
+
+def _first_keyword(sql: str) -> str:
+    m = re.match(r"(?is)^\s*([a-z]+)\b", sql or "")
+    return m.group(1).lower() if m else ""
+
+
+def _check_statement_allowed(sql: str, mode: str) -> str | None:
+    """Layer 1 per access_mode. ro = the shared SELECT/WITH check (unchanged,
+    still what xlsx_query/data_query use — their ro semantics are not
+    configurable); rw admits DML but never DDL. ONE statement in both modes.
+    Returns an error message or None."""
+    if mode != "rw":
+        err = _check_select_only(sql)
+        if err and _first_keyword(sql) in _WRITE_KEYWORDS + _DDL_KEYWORDS:
+            return ("source is read-only — writes need an rw source "
+                    "(admin: Einstellungen → Datenquellen, access_mode); "
+                    "only SELECT/WITH is allowed here")
+        return err
+    body = (sql or "").strip().rstrip(";").strip()
+    if not body:
+        return "empty sql"
+    if ";" in body:
+        return ("only ONE statement is allowed — remove the ';' and send a "
+                "single statement")
+    kw = _first_keyword(body)
+    if kw in _DDL_KEYWORDS:
+        return (f"DDL ({kw.upper()}) is blocked even on rw sources — "
+                f"schema changes are not available to the agent")
+    if kw not in _RW_ALLOWED_KEYWORDS:
+        return ("allowed on an rw source: "
+                "SELECT/WITH/INSERT/UPDATE/DELETE/MERGE")
+    return None
 
 
 def _data_sources() -> list[dict]:
@@ -403,10 +453,11 @@ def _connect_mssql(src: dict):
     return conn, conn.cursor()
 
 
-def _connect_readonly(src: dict):
-    """Connect per source type with layer-2 read-only enforcement where the
-    driver supports it. Returns (conn, exec_cursor) — exec_cursor streams
-    so a huge SELECT never materialises client-side."""
+def _connect_readonly(src: dict, mode: str = "ro"):
+    """Connect per source type; in ro mode with layer-2 read-only enforcement
+    where the driver supports it. Returns (conn, exec_cursor) — the ro
+    postgres cursor streams (server-side) so a huge SELECT never materialises
+    client-side."""
     stype = (src.get("type") or "postgres").strip().lower()
     opts = src.get("options") or {}
     if stype == "mssql":
@@ -426,13 +477,17 @@ def _connect_readonly(src: dict):
     conn = psycopg2.connect(
         _source_dsn(src),
         connect_timeout=int(opts.get("connect_timeout") or DB_CONNECT_TIMEOUT_S))
-    # Layer 2: the SESSION refuses writes regardless of the user's grants.
-    conn.set_session(readonly=True)
+    if mode != "rw":
+        # Layer 2: the SESSION refuses writes regardless of the user's grants.
+        conn.set_session(readonly=True)
     setup = conn.cursor()
     timeout_ms = int(opts.get("statement_timeout_ms")
                      or DB_QUERY_STATEMENT_TIMEOUT_MS)
     setup.execute("SET statement_timeout = %s", (str(timeout_ms),))
     setup.close()
+    if mode == "rw":
+        # Plain cursor: psycopg2 named (server-side) cursors are SELECT-only.
+        return conn, conn.cursor()
     # Named cursor = server-side: rows stream in fetchmany-sized batches.
     cur = conn.cursor(name="brain_db_query")
     return conn, cur
@@ -453,14 +508,19 @@ def tool_db_query(args: dict) -> str:
         return _err("db_query: 'source' is required (a configured "
                     "data_sources name)")
     sql = args.get("sql") or ""
-    sel_err = _check_select_only(sql)
+    try:
+        src = _resolve_db_source(source)
+    except ValueError as e:
+        return _err(f"db_query: {e}")
+    # Guard order (E1): policy (WHO, above) → mode (ro/rw) → execute.
+    mode = _source_access_mode(src)
+    sel_err = _check_statement_allowed(sql, mode)
     if sel_err:
         return _err(f"db_query: {sel_err}")
     sql = sql.strip().rstrip(";")
     conn = None
     try:
-        src = _resolve_db_source(source)
-        conn, cur = _connect_readonly(src)
+        conn, cur = _connect_readonly(src, mode)
     except (ValueError, RuntimeError) as e:
         return _err(f"db_query: {e}")
     except Exception as e:
@@ -470,6 +530,16 @@ def tool_db_query(args: dict) -> str:
     try:
         try:
             cur.execute(sql)
+            # NB: mode gate is load-bearing — the ro postgres cursor is a
+            # NAMED cursor whose description stays None until the first
+            # fetch; only rw (plain cursor) can mean "DML, no result set".
+            if mode == "rw" and cur.description is None:
+                affected = cur.rowcount
+                conn.commit()
+                return _ok({"source": source, "mode": "rw",
+                            "rowcount": affected,
+                            "result": f"OK — {affected} row(s) affected",
+                            "note": _DB_RW_NOTE})
             rows = cur.fetchmany(DATA_MAX_RESULT_ROWS + 1)
         except Exception as e:
             # SQL errors carry the server's own hint text (unknown column
@@ -481,6 +551,10 @@ def tool_db_query(args: dict) -> str:
         if len(rows) > DATA_MAX_RESULT_ROWS:
             return _err(f"db_query: result exceeds {DATA_MAX_RESULT_ROWS:,} "
                         f"rows — aggregate or filter in SQL")
+        if mode == "rw":
+            # Covers INSERT/UPDATE ... RETURNING (has a result set but still
+            # writes); a commit after a plain SELECT is a no-op.
+            conn.commit()
         headers = [d[0] for d in cur.description or []]
         row_count = len(rows)
         md = _markdown_table(headers, rows[:QUERY_DISPLAY_ROWS])
@@ -506,11 +580,15 @@ def tool_db_query(args: dict) -> str:
                 out_path, "created", agent.agent_id if agent else "main")
             out_info = {"path": out_path, "rows": row_count}
         md = _brain._gdpr_anon_tool_text(md, f"db_query:{source}")
-        ro_note = (_DB_READONLY_NOTE_MSSQL
-                   if (src.get("type") or "").strip().lower() == "mssql"
-                   else _DB_READONLY_NOTE)
-        res = {"source": source, "row_count": row_count, "result": md,
-               "read_only": ro_note}
+        res = {"source": source, "row_count": row_count, "result": md}
+        if mode == "rw":
+            res["mode"] = "rw"
+            res["note"] = _DB_RW_NOTE
+        else:
+            res["read_only"] = (
+                _DB_READONLY_NOTE_MSSQL
+                if (src.get("type") or "").strip().lower() == "mssql"
+                else _DB_READONLY_NOTE)
         if out_info:
             res["saved"] = out_info
         return _ok(res)

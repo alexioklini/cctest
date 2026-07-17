@@ -526,6 +526,8 @@ class AdminConfigHandlers:
             sources.append({
                 "name": s.get("name") or "",
                 "type": s.get("type") or "postgres",
+                "access_mode": ("rw" if (s.get("access_mode") or "")
+                                .strip().lower() == "rw" else "ro"),
                 "env_key": s.get("env_key") or "",
                 "options": s.get("options") or {},
                 "dsn_set": bool((s.get("dsn") or "").strip()),
@@ -579,20 +581,29 @@ class AdminConfigHandlers:
             if any((x.get("name") or "") == name for x in others):
                 self._send_json({"error": f"Quelle '{name}' existiert bereits"}, 400)
                 return
-            opts = {}
-            for k in ("statement_timeout_ms", "connect_timeout"):
-                v = (s.get("options") or {}).get(k)
-                if v not in (None, ""):
-                    try:
-                        opts[k] = int(v)
-                    except (TypeError, ValueError):
-                        self._send_json({"error": f"options.{k} muss eine Zahl sein"}, 400)
-                        return
-            entry = {"name": name,
-                     "type": (s.get("type") or "postgres").strip().lower()}
-            dsn = (s.get("dsn") or "").strip()
             prev = next((x for x in srcs
                          if (x.get("name") or "") == (original or name)), None)
+            # Preserve config.json-only options (odbc_driver, windows_auth …)
+            # across GUI edits — the form only knows the two timeout knobs.
+            opts = dict((prev or {}).get("options") or {})
+            for k in ("statement_timeout_ms", "connect_timeout"):
+                v = (s.get("options") or {}).get(k)
+                if v in (None, ""):
+                    opts.pop(k, None)
+                    continue
+                try:
+                    opts[k] = int(v)
+                except (TypeError, ValueError):
+                    self._send_json({"error": f"options.{k} muss eine Zahl sein"}, 400)
+                    return
+            access_mode = (s.get("access_mode") or "ro").strip().lower()
+            if access_mode not in ("ro", "rw"):
+                self._send_json({"error": "access_mode muss 'ro' oder 'rw' sein"}, 400)
+                return
+            entry = {"name": name,
+                     "type": (s.get("type") or "postgres").strip().lower(),
+                     "access_mode": access_mode}
+            dsn = (s.get("dsn") or "").strip()
             if not dsn and prev:
                 dsn = (prev.get("dsn") or "").strip()  # keep stored secret
             if dsn:
