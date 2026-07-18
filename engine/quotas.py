@@ -1042,10 +1042,23 @@ class QuotaManager:
         now = datetime.datetime.now(datetime.timezone.utc)
         d_start, d_end = self._today_window(now)
         c_start, c_end = self.cycle_window(cfg, now)
-        # Aggregate windows
-        if _cost_tracker and user_id:
-            daily_used = _cost_tracker.sum_user_window(user_id, d_start.strftime("%Y-%m-%d %H:%M:%S"))
-            cycle_used = _cost_tracker.sum_user_window(user_id, c_start.strftime("%Y-%m-%d %H:%M:%S"))
+        # Aggregate windows. The cost tracker singleton is instantiated by
+        # server.py as `engine._cost_tracker = CostTracker()` — i.e. it lands on
+        # the brain/engine namespace, NOT this module's own `_cost_tracker`
+        # global (which the module-extraction refactor left as a never-set None).
+        # Reading the bare module global here silently yielded 0 for every user's
+        # daily/cycle quota. Resolve the live instance from brain (lazy, to avoid
+        # the import cycle), falling back to the local global if unset.
+        _ct = _cost_tracker
+        if _ct is None:
+            try:
+                import brain as _brain
+                _ct = getattr(_brain, "_cost_tracker", None)
+            except Exception:
+                _ct = None
+        if _ct and user_id:
+            daily_used = _ct.sum_user_window(user_id, d_start.strftime("%Y-%m-%d %H:%M:%S"))
+            cycle_used = _ct.sum_user_window(user_id, c_start.strftime("%Y-%m-%d %H:%M:%S"))
         else:
             daily_used, cycle_used = 0.0, 0.0
         warn_pct = float(cfg.get("warn_pct", 70))
