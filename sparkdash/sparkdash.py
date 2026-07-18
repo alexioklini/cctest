@@ -2059,6 +2059,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   .omlx-b.loaded{background:rgba(118,185,0,.18);color:var(--green)}
   .omlx-b.loading{background:rgba(224,169,61,.18);color:var(--amber)}
   .omlx-b.def{background:rgba(58,110,165,.20);color:var(--blue)}
+  .omlx-b.notloaded{background:#1e1e1e;color:#7a7a7a}
   .obtn{border:1px solid var(--line);background:#222;color:var(--text);border-radius:7px;padding:5px 12px;font-size:12px;cursor:pointer}
   .obtn.start:hover{border-color:var(--green);color:var(--green)}
   .obtn.stop:hover{border-color:var(--red);color:var(--red)}
@@ -2583,17 +2584,20 @@ async function renderOmlxPanel(){
   } else {
     stats=`<div style="color:var(--muted);font-size:13px;padding:6px 0">${st&&st.error?("oMLX unreachable — "+st.error):"oMLX not running"}</div>`;
   }
-  // model list — only LOADED models here, READ-ONLY (monitoring). Full roster +
-  // load/unload controls live in Settings → oMLX, not on the dashboard.
+  // model list — the FULL discovered roster, READ-ONLY (monitoring). Unloaded
+  // models render with a "not loaded" badge (lazy-loaded on first use) so the
+  // roster matches the discovered/loaded counts in the header. Load/unload
+  // controls live in Settings → oMLX, not on the dashboard.
   let models="";
   if(up){
     try{ const md=await (await fetch("/api/omlx/models",{cache:"no-store"})).json(); _omlxModels=md.models||[]; }catch(e){}
-    const loadedM=_omlxModels.filter(m=>m.loaded||m.is_loading);
-    if(loadedM.length){
-      models=`<div class="memhdr" style="margin-top:10px">Loaded models <span style="color:#8a8a8a">(manage in Settings → oMLX)</span></div>
-      <div class="omlx-models">`+loadedM.map(m=>{
+    if(_omlxModels.length){
+      models=`<div class="memhdr" style="margin-top:10px">Models <span style="color:#8a8a8a">(manage in Settings → oMLX)</span></div>
+      <div class="omlx-models">`+_omlxModels.map(m=>{
         const sz = m.actual_size||m.estimated_size; const szTxt = sz?(sz/GB).toFixed(1)+"G":"";
-        const badge = m.loaded?`<span class="omlx-b loaded">loaded</span>`:`<span class="omlx-b loading">loading…</span>`;
+        const badge = m.loaded?`<span class="omlx-b loaded">loaded</span>`
+                     :m.is_loading?`<span class="omlx-b loading">loading…</span>`
+                     :`<span class="omlx-b notloaded">not loaded</span>`;
         const defTag = (m.id===st.default_model)?`<span class="omlx-b def">default</span>`:"";
         return `<div class="omlx-row"><span class="om-id">${m.id}</span>${defTag}${badge}<span class="om-sz">${szTxt}</span></div>`;
       }).join("")+`</div>`;
