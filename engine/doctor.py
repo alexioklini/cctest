@@ -17,6 +17,7 @@ All checks reach Brain runtime lazily via `import brain as _brain` (engine modul
 must not top-level import brain — cycle).
 """
 
+import json
 import os
 import time
 
@@ -127,12 +128,27 @@ def _cfg():
     `brain._models_config`, NOT `server_config['models']` (server_config holds
     providers + scalar settings; models are a separate module global). Merge the
     real models in so model-ref checks see the actual enabled set — reading
-    server_config['models'] (absent) made every model-ref look 'not found'."""
+    server_config['models'] (absent) made every model-ref look 'not found'.
+
+    server_config is populated key-by-key at boot and does NOT include the
+    `mempalace` / `ocr` / `searxng` / `crawl4ai` sub-configs — the reranker/OCR/
+    embedding live-probes need those, so read them straight from config.json on
+    disk (same source the OCR service-status + doc_convert use)."""
     import brain as _brain
     cfg = dict(_brain._server_config() or {})
     live_models = getattr(_brain, "_models_config", None)
     if isinstance(live_models, dict) and live_models:
         cfg["models"] = live_models
+    try:
+        cfg_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
+        with open(cfg_path, encoding="utf-8") as f:
+            disk = json.load(f)
+        for key in ("mempalace", "ocr", "searxng", "crawl4ai"):
+            if key not in cfg and key in disk:
+                cfg[key] = disk[key]
+    except Exception:
+        pass
     return cfg
 
 
@@ -492,9 +508,13 @@ def run_live_checks():
     out = []
     import brain as _brain
 
-    # Live probe A: a test embedding (catches the CoreML-NaN trap for real).
+    # Live probe A: a test embedding — catches the CoreML-NaN trap AND, when
+    # embedding_device=remote (embeddinggemma served by the Mac mini), a dead
+    # remote endpoint. A remote failure is FAIL (memory ingest+search break),
+    # not WARN: without it the config still shows a green "device = remote".
+    _embed_remote = ((cfg.get("mempalace", {}) or {}).get(
+        "embedding_device") or "").lower() == "remote"
     try:
-        import math
         from mempalace.embedding import get_embedding_function
         ef = get_embedding_function()
         v = ef(["doctor connectivity probe"])[0]
@@ -505,11 +525,86 @@ def run_live_checks():
                                 "Every vector is NaN — semantic search is silently broken.",
                                 "Set embedding_device to mlx/cpu (NOT auto/coreml)."))
         else:
+            where = "remote (Mac mini)" if _embed_remote else "local"
             out.append(_finding("live_embed", _OK,
-                                f"Embedding OK ({len(v)}-dim, no NaN)"))
+                                f"Embedding OK ({len(v)}-dim, {where}, no NaN)"))
     except Exception as e:
-        out.append(_finding("live_embed", _WARN, "Embedding probe failed",
-                            f"{type(e).__name__}: {e}"))
+        if _embed_remote:
+            emb_url = (cfg.get("mempalace", {}) or {}).get("embedding_url") or "?"
+            out.append(_finding("live_embed", _FAIL,
+                                "Remote embedding unreachable",
+                                f"{type(e).__name__}: {e} — embeddinggemma at {emb_url} "
+                                f"is not answering; memory ingest + search are broken "
+                                f"(unless the local ONNX fallback engaged).",
+                                "Start/repair oMLX on the Mac mini, or set "
+                                "mempalace.embedding_device to cpu (local ONNX)."))
+        else:
+            out.append(_finding("live_embed", _WARN, "Embedding probe failed",
+                                f"{type(e).__name__}: {e}"))
+
+    # Live probe A2: reranker. When configured remote (Infinity on the Mac mini),
+    # actually hit /rerank — a config that SAYS remote but whose endpoint is down
+    # silently drops memory search back to vector order, so a dead endpoint must
+    # surface as FAIL, not a green "device = remote".
+    mp = cfg.get("mempalace", {}) or {}
+    rr = mp.get("reranker", {}) or {}
+    if rr.get("enabled") and (rr.get("device") or "").lower() == "remote":
+        url = (rr.get("url") or "").rstrip("/")
+        try:
+            import httpx
+            model = rr.get("model") or "BAAI/bge-reranker-v2-m3"
+            resp = httpx.post(f"{url}/rerank", json={
+                "model": model, "query": "doctor probe",
+                "documents": ["a", "b"], "return_documents": False},
+                timeout=float(rr.get("remote_timeout_s") or 8.0))
+            resp.raise_for_status()
+            n = len(resp.json().get("results") or [])
+            if n:
+                out.append(_finding("live_rerank", _OK,
+                                    f"Reranker reachable at {url} ({n} results)"))
+            else:
+                out.append(_finding("live_rerank", _FAIL,
+                                    f"Reranker at {url} returned no results",
+                                    "Endpoint answered but with an empty result set.",
+                                    "Check the Infinity service on the Mac mini."))
+        except Exception as e:
+            out.append(_finding("live_rerank", _FAIL,
+                                f"Reranker unreachable at {url}",
+                                f"{type(e).__name__}: {e} — memory search loses "
+                                f"reranking (falls back to vector order, ~−0.075 score).",
+                                "Start/repair the Infinity /rerank service on the Mac mini "
+                                "(MACMINI_SETUP.md §4)."))
+
+    # Live probe A3: remote OCR. When ocr.mlx_ocr_url is set (GLM-OCR served by the
+    # Mac mini oMLX), verify the endpoint answers a models/health query — a dead
+    # endpoint means scanned-document OCR silently produces nothing.
+    ocr = cfg.get("ocr", {}) or {}
+    ocr_url = (ocr.get("mlx_ocr_url") or "").rstrip("/")
+    if ocr.get("engine") == "mlx_ocr" and ocr_url:
+        try:
+            import httpx
+            headers = {}
+            if ocr.get("mlx_ocr_api_key"):
+                headers["Authorization"] = f"Bearer {ocr['mlx_ocr_api_key']}"
+            resp = httpx.get(f"{ocr_url}/v1/models", headers=headers, timeout=6.0)
+            resp.raise_for_status()
+            ids = [m.get("id") for m in (resp.json().get("data") or [])]
+            want = ocr.get("mlx_ocr_model") or "GLM-OCR-8bit"
+            base = want.split("/")[-1]
+            if any(base in (i or "") for i in ids):
+                out.append(_finding("live_ocr", _OK,
+                                    f"Remote OCR model reachable at {ocr_url} ({base})"))
+            else:
+                out.append(_finding("live_ocr", _WARN,
+                                    f"Remote OCR endpoint up but {base!r} not listed",
+                                    f"Served models: {', '.join(str(i) for i in ids) or '(none)'}",
+                                    "Register/load the OCR model on the Mac mini oMLX."))
+        except Exception as e:
+            out.append(_finding("live_ocr", _FAIL,
+                                f"Remote OCR unreachable at {ocr_url}",
+                                f"{type(e).__name__}: {e} — scanned-document OCR is dead.",
+                                "Start/repair oMLX on the Mac mini, or switch ocr.engine "
+                                "to mistral_ocr (cloud)."))
 
     # Live probe B: resolve + sanity each provider's credentials for its default model.
     providers = cfg.get("providers", {}) or {}

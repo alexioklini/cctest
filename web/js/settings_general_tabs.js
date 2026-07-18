@@ -2682,9 +2682,20 @@ function _libVersionsRender(d) {
   const groups = (d.groups || []).map(g => {
     const rows = (g.libs || []).map(l => {
       const ok = l.status === 'ok' && l.version;
-      const ver = ok
-        ? `<span style="${MONO};color:var(--text-200)">${esc(l.version)}</span>`
-        : `<span style="font-size:11px;color:var(--error)" title="${esc(l.status || '')}">${esc(l.status === 'missing' ? 'nicht installiert' : (l.status || 'unbekannt'))}</span>`;
+      let ver;
+      if (ok) {
+        ver = `<span style="${MONO};color:var(--text-200)">${esc(l.version)}</span>`;
+      } else if (l.status === 'remote') {
+        // Inference offloaded to the Mac mini — not an error. If the lib is still
+        // installed locally it's present-but-unused; show the version greyed out
+        // with a "remote" tag. If absent, just "läuft remote". Amber, not red.
+        const verBit = l.version
+          ? `<span style="${MONO};color:var(--text-500);text-decoration:line-through">${esc(l.version)}</span> `
+          : '';
+        ver = `${verBit}<span style="font-size:11px;color:var(--warning)" title="${esc(l.note || 'remote')}">remote</span>`;
+      } else {
+        ver = `<span style="font-size:11px;color:var(--error)" title="${esc(l.status || '')}">${esc(l.status === 'missing' ? 'nicht installiert' : (l.status || 'unbekannt'))}</span>`;
+      }
       const when = l.installed
         ? `<span style="font-size:11px;color:var(--text-400)">${esc(l.installed)}</span>`
         : `<span style="font-size:11px;color:var(--text-500)">—</span>`;
@@ -2694,6 +2705,9 @@ function _libVersionsRender(d) {
         ${when}
       </div>`;
     }).join('');
+    const groupNote = g.note
+      ? `<div style="font-size:11px;color:var(--warning);padding:6px 12px;border-top:1px solid var(--border-100)">${esc(g.note)}</div>`
+      : '';
     return `<div style="border:1px solid var(--border-100);border-radius:8px;margin-bottom:12px;overflow:hidden">
       <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-200)">
         <span style="font-size:13px;font-weight:600;color:var(--text-100);flex:1">${esc(g.title)}</span>
@@ -2703,6 +2717,7 @@ function _libVersionsRender(d) {
         <span>Bibliothek</span><span>Version</span><span>Aktualisiert</span>
       </div>
       ${rows}
+      ${groupNote}
     </div>`;
   }).join('');
   return head + groups;

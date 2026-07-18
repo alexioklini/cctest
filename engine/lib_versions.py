@@ -191,10 +191,44 @@ _SOURCE_LABELS = {
 }
 
 
+def _remote_inference() -> dict:
+    """Which MLX-served roles are configured REMOTE (on a Mac mini) and where.
+    When embedding/reranker/OCR run remote, the local MLX libs are legitimately
+    absent on this host — the 'Lokale Inferenz (MLX)' rows must then read
+    'läuft remote' instead of a red 'nicht installiert'. Reads config.json on
+    disk (server_config omits the mempalace/ocr sub-configs)."""
+    import re
+    info = {"any": False, "roles": [], "host": None}
+    try:
+        cfg_path = os.path.join(_ROOT, "config.json")
+        with open(cfg_path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except Exception:
+        return info
+    mp = cfg.get("mempalace", {}) or {}
+    urls = []
+    if (os.environ.get("MEMPALACE_EMBEDDING_DEVICE")
+            or mp.get("embedding_device") or "").lower() == "remote":
+        info["roles"].append("Embedding"); urls.append(mp.get("embedding_url", ""))
+    rr = mp.get("reranker", {}) or {}
+    if rr.get("enabled") and (rr.get("device") or "").lower() == "remote":
+        info["roles"].append("Reranker"); urls.append(rr.get("url", ""))
+    ocr = cfg.get("ocr", {}) or {}
+    if ocr.get("engine") == "mlx_ocr" and (ocr.get("mlx_ocr_url") or ""):
+        info["roles"].append("OCR"); urls.append(ocr.get("mlx_ocr_url", ""))
+    info["any"] = bool(info["roles"])
+    for u in urls:
+        m = re.search(r"//([^:/]+)", u or "")
+        if m:
+            info["host"] = m.group(1); break
+    return info
+
+
 def collect() -> dict:
     """Build the full library-versions report for the settings page."""
     sdk_py = os.path.join(_ROOT, ".venv_sdk", "bin", "python")
     c4_py = os.path.join(_ROOT, ".venv_crawl4ai", "bin", "python")
+    remote = _remote_inference()
 
     # One subprocess per venv, batching all that venv's packages.
     sdk_names = [n for _, src, libs in _GROUPS if src == "venv_sdk" for n, _ in libs]
@@ -220,9 +254,27 @@ def collect() -> dict:
                 info = _cbm_version()
             else:  # pragma: no cover
                 info = {"version": None, "installed": "", "status": "unknown source"}
+            # MLX group under remote inference: these libs are NOT used anymore —
+            # embedding/reranker/OCR run on the Mac mini. Mark every row 'remote'
+            # regardless of whether the lib is still installed locally, so the UI
+            # doesn't imply the local MLX stack is active. Missing → simply remote;
+            # installed → note that it's present but unused.
+            if title == "Lokale Inferenz (MLX)" and remote["any"]:
+                host = remote["host"] or "dem Mac mini"
+                if info.get("status") == "ok":
+                    info = {"version": info.get("version"), "installed": "",
+                            "status": "remote",
+                            "note": f"installiert, aber ungenutzt — läuft remote auf {host}"}
+                elif info.get("status") == "missing":
+                    info = {"version": None, "installed": "", "status": "remote",
+                            "note": f"läuft remote auf {host}"}
             rows.append({"name": label, "dist": dist_name, **info})
-        groups.append({"title": title, "source": _SOURCE_LABELS.get(src, src),
-                       "libs": rows})
+        group = {"title": title, "source": _SOURCE_LABELS.get(src, src), "libs": rows}
+        if title == "Lokale Inferenz (MLX)" and remote["any"]:
+            group["note"] = ("Inferenz ausgelagert (" + ", ".join(remote["roles"])
+                             + ") auf " + (remote["host"] or "den Mac mini")
+                             + " — lokale MLX-Bibliotheken hier nicht erforderlich.")
+        groups.append(group)
 
     return {
         "python": sys.version.split()[0],
