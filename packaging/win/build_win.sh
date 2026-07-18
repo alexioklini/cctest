@@ -39,16 +39,20 @@ QDRANT_VER="v1.18.2"
 QDRANT_URL="https://github.com/qdrant/qdrant/releases/download/${QDRANT_VER}/qdrant-x86_64-pc-windows-msvc.zip"
 QDRANT_ZIP="$DOWN/qdrant-${QDRANT_VER}-win-x64.zip"
 
-# MinGit = the bundle-friendly Git-for-Windows edition (bash.exe + coreutils,
-# no GUI). It makes execute_command work on Windows: install.ps1 points
-# tools_config.json -> execute_command.shell_path at usr/bin/bash.exe, so
+# PortableGit = the full Git-for-Windows portable edition (real bash.exe +
+# coreutils, no installer). It makes execute_command work on Windows: install.ps1
+# points tools_config.json -> execute_command.shell_path at usr/bin/bash.exe, so
 # `bash -l -c` runs commands exactly like the Mac login shell (the Unix-flavoured
 # tool prose — cat/head/ps/grep, 2>/dev/null, || true — stays valid). It ALSO
 # provides git.exe on PATH (the mempalace git-source miner + code-mode git UI).
+# NB: MinGit (the smaller edition used until v9.377.0) ships NO bash.exe — only
+# usr/bin/sh.exe — so `bash -l -c` could never resolve; PortableGit carries the
+# real usr/bin/bash.exe. Delivered as a self-extracting 7z (.7z.exe) → needs 7z
+# on the build host (brew install p7zip).
 GIT_VER="2.51.0"
 GIT_TAG="v${GIT_VER}.windows.1"
-GIT_URL="https://github.com/git-for-windows/git/releases/download/${GIT_TAG}/MinGit-${GIT_VER}-64-bit.zip"
-GIT_ZIP="$DOWN/MinGit-${GIT_VER}-64-bit.zip"
+GIT_URL="https://github.com/git-for-windows/git/releases/download/${GIT_TAG}/PortableGit-${GIT_VER}-64-bit.7z.exe"
+GIT_ZIP="$DOWN/PortableGit-${GIT_VER}-64-bit.7z.exe"
 
 # --- Gebündelte Host-Werkzeuge (Komponente "tools", optional) ------------------
 # Node.js: PORTABLE zip (kein MSI) — liefert node.exe für den render_diagram-
@@ -90,6 +94,11 @@ echo "==> Brain Agent v${VERSION} — Windows x64 bundle (cross-built on macOS)"
 for t in curl tar rsync zip uv unzip python3 git; do
   command -v "$t" >/dev/null 2>&1 || { echo "ERROR: missing tool: $t" >&2; exit 1; }
 done
+# 7z entpackt die PortableGit-.7z.exe (self-extracting). Ohne es scheitert der
+# execute_command-Shell-Bundle-Schritt. npm baut das Windows-mermaid-cli — fehlt
+# es, wird render_diagram im Bundle übersprungen (Warnung, kein Abbruch).
+SEVENZIP="$(command -v 7z || command -v 7zz || command -v 7za || true)"
+[[ -n "$SEVENZIP" ]] || { echo "ERROR: missing tool: 7z (brew install p7zip) — needed to unpack PortableGit" >&2; exit 1; }
 mkdir -p "$BUILD" "$DIST" "$DOWN"
 
 # ---------------------------------------------------------------- downloads
@@ -102,7 +111,7 @@ if [[ ! -f "$QDRANT_ZIP" ]]; then
   curl -# -L -o "$QDRANT_ZIP" "$QDRANT_URL"
 fi
 if [[ ! -f "$GIT_ZIP" ]]; then
-  echo "  -> Downloading MinGit ${GIT_VER} (windows-x64)..."
+  echo "  -> Downloading PortableGit ${GIT_VER} (windows-x64)..."
   curl -# -L -o "$GIT_ZIP" "$GIT_URL"
 fi
 if [[ ! -f "$NODE_ZIP" ]]; then
@@ -269,12 +278,14 @@ unzip -qo "$QDRANT_ZIP" -d "$OUT_DIR/qdrant"
   mv "$found" "$OUT_DIR/qdrant/qdrant.exe"
 }
 
-# MinGit (bash.exe + coreutils + git.exe for execute_command / git-source mining).
-# The MinGit zip is flat (cmd/ mingw64/ usr/); bash.exe lives at usr/bin/bash.exe.
+# PortableGit (real bash.exe + coreutils + git.exe for execute_command /
+# git-source mining). Self-extracting 7z; the tree is flat (cmd/ mingw64/ usr/),
+# bash.exe lives at usr/bin/bash.exe. Target dir stays "mingit" so install.ps1,
+# BrainAgent.bat and the component manifest need no path change.
 mkdir -p "$OUT_DIR/mingit"
-unzip -qo "$GIT_ZIP" -d "$OUT_DIR/mingit"
+"$SEVENZIP" x -y -o"$OUT_DIR/mingit" "$GIT_ZIP" >/dev/null
 [[ -f "$OUT_DIR/mingit/usr/bin/bash.exe" ]] || {
-  echo "ERROR: usr/bin/bash.exe not found in MinGit zip ($GIT_ZIP)" >&2; exit 1; }
+  echo "ERROR: usr/bin/bash.exe not found after extracting PortableGit ($GIT_ZIP)" >&2; exit 1; }
 # Deterministic mtimes so the mingit component sha stays byte-stable across
 # builds (same reason as browsers/revisions.txt) — else Delta-Updates re-ship it.
 find "$OUT_DIR/mingit" -exec touch -t 202601010000 {} + 2>/dev/null || true
@@ -551,9 +562,9 @@ Vollstaendige Anleitung: MACMINI_SETUP.md (in diesem Ordner). Kurzform:
 
 Shell-Befehle (execute_command)
 -------------------------------
-Funktioniert unter Windows genau wie auf dem Mac: das Bundle liefert MinGit
+Funktioniert unter Windows genau wie auf dem Mac: das Bundle liefert PortableGit
 (bash + coreutils) mit, BrainAgent.bat setzt BRAIN_SHELL_PATH darauf, und der
-Server fuehrt Befehle als `bash -l -c` aus. Unix-Kommandos (cat/head/grep/ps,
+Server fuehrt Befehle als \`bash -l -c\` aus. Unix-Kommandos (cat/head/grep/ps,
 2>/dev/null, ||) laufen damit unveraendert; git.exe steht ebenfalls auf dem PATH.
 
 Beigelegte Werkzeuge + Installer
@@ -585,7 +596,7 @@ Grenzen unter Windows
 - Interaktives Projekt-Terminal: nicht verfuegbar (kein PTY unter Windows).
 - Mermaid-Diagramme: im Voll-Profil einsatzbereit (Node + mermaid-cli gebuendelt).
   Im Minimal-Profil fehlt das Chromium -> render_diagram degradiert (der Agent
-  faellt auf ```mermaid-Codebloecke zurueck).
+  faellt auf einfache Mermaid-Codebloecke zurueck).
 - MSSQL (db_query): "ODBC Driver 17 for SQL Server" MSI separat installieren
   (Admin-Rechte noetig, NICHT beigelegt — Microsoft-Redistribution) — siehe
   DATA_SOURCES_V2_PLAN.md Anhang B.
@@ -641,7 +652,7 @@ entries_path, manifest_path, version = sys.argv[1:4]
 META = {  # name -> (required, dirs, title)
     "app":        (True,  ["app"],                    "Brain-Agent Programmcode + Skripte"),
     "python":     (True,  ["python"],                 "Python 3.13 Runtime + Bibliotheken"),
-    "mingit":     (True,  ["mingit"],                 "MinGit (bash + coreutils + git fuer execute_command)"),
+    "mingit":     (True,  ["mingit"],                 "PortableGit (bash + coreutils + git fuer execute_command)"),
     "websearch":  (False, ["venv-site", "browsers"],  "Websuche lokal (SearXNG + crawl4ai + Chromium)"),
     "qdrant":     (False, ["qdrant"],                 "Qdrant Vektor-DB lokal"),
     "hfcache":    (False, ["hf-cache"],               "Embedding-Offline-Fallback (ONNX)"),
