@@ -5,14 +5,14 @@
   },
   "providers": {
     "local-mlx-whisper": {
-      "base_url": "",
+      "base_url": "http://192.168.1.214:8001/v1",
       "api_key": "YOUR_API_KEY",
       "default_model": "",
-      "type": "in_process",
+      "type": "openai",
       "is_local": true
     },
     "Lokal": {
-      "base_url": "http://localhost:8000/v1",
+      "base_url": "http://192.168.1.214:8000/v1",
       "type": "openai",
       "api_key": "YOUR_API_KEY",
       "default_model": "",
@@ -114,7 +114,9 @@
     "mlx_ocr_model": "mlx-community/GLM-OCR-8bit",
     "mlx_ocr_max_tokens": 4096,
     "mlx_ocr_max_edge_px": 1600,
-    "describe_model": ""
+    "describe_model": "",
+    "mlx_ocr_url": "http://192.168.1.214:8000",
+    "mlx_ocr_api_key": "YOUR_API_KEY"
   },
   "default_provider": "mistral-direct",
   "max_context": 131072,
@@ -526,310 +528,6 @@
       "is_local": false,
       "warmup": false,
       "base_model_id": "magistral-medium-latest"
-    },
-    "gemma-4-26B-A4B-it-MLX-4bit": {
-      "enabled": false,
-      "shortname": "gemma-4-26B-A4B-it-MLX-4bit",
-      "display_name": "gemma-4-26B-A4B-it-MLX-4bit",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image",
-        "audio"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 96000,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "Lokal",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": true,
-      "warmup": false,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 44.7,
-            "n": 4,
-            "ts": "2026-06-04T09:38:58Z"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 60.1,
-            "n": 5,
-            "ts": "2026-06-04T09:39:16Z"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 97,
-            "tps": 62.1,
-            "n": 3,
-            "ts": "2026-06-04T09:40:07Z"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 97,
-            "tps": 61.7,
-            "n": 3,
-            "ts": "2026-06-04T09:40:52Z"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 97,
-            "tps": 40.4,
-            "n": 3,
-            "ts": "2026-06-04T09:40:57Z"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 97,
-            "tps": 41.4,
-            "n": 3,
-            "ts": "2026-06-04T09:41:00Z"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 98,
-            "tps": 59.4,
-            "n": 3,
-            "ts": "2026-06-04T09:41:32Z"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 83,
-            "tps": 48.2,
-            "n": 3,
-            "ts": "2026-06-04T09:41:38Z"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 10.8,
-            "n": 4,
-            "ts": "2026-06-04T09:41:39Z"
-          }
-        }
-      },
-      "auto_lcm": true,
-      "warmup_mode": "minimal"
-    },
-    "gemma-4-e2b-it-4bit": {
-      "enabled": false,
-      "shortname": "gemma-4-e2b-it-4bit",
-      "display_name": "gemma-4-e2b-it-4bit",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 32768,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "Lokal",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": true,
-      "warmup": false,
-      "warmup_allow_cloud": true,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 128.5,
-            "n": 4,
-            "ts": "2026-06-04T09:33:24Z"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 166.9,
-            "n": 5,
-            "ts": "2026-06-04T09:33:41Z"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 96,
-            "tps": 160.6,
-            "n": 3,
-            "ts": "2026-06-04T09:34:14Z"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 96,
-            "tps": 163.6,
-            "n": 3,
-            "ts": "2026-06-04T09:34:39Z"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 96,
-            "tps": 122.1,
-            "n": 3,
-            "ts": "2026-06-04T09:34:43Z"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 98,
-            "tps": 123.5,
-            "n": 3,
-            "ts": "2026-06-04T09:34:46Z"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 95,
-            "tps": 164.2,
-            "n": 3,
-            "ts": "2026-06-04T09:35:08Z"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 80,
-            "tps": 121.7,
-            "n": 3,
-            "ts": "2026-06-04T09:35:17Z"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 42.1,
-            "n": 4,
-            "ts": "2026-06-04T09:35:17Z"
-          }
-        }
-      }
-    },
-    "gemma-4-e4b-it-4bit": {
-      "enabled": false,
-      "shortname": "gemma-4-e4b-it-4bit",
-      "display_name": "gemma-4-e4b-it-4bit",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 131000,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "Lokal",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": true,
-      "warmup": false,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 75,
-            "tps": 98.3,
-            "n": 4,
-            "ts": "2026-06-04T09:35:41Z"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 107.3,
-            "n": 5,
-            "ts": "2026-06-04T09:36:04Z"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 96,
-            "tps": 106.8,
-            "n": 3,
-            "ts": "2026-06-04T09:36:51Z"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 96,
-            "tps": 106.5,
-            "n": 3,
-            "ts": "2026-06-04T09:37:31Z"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 95,
-            "tps": 78.8,
-            "n": 3,
-            "ts": "2026-06-04T09:37:34Z"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 97,
-            "tps": 74,
-            "n": 3,
-            "ts": "2026-06-04T09:37:39Z"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 98,
-            "tps": 105.7,
-            "n": 3,
-            "ts": "2026-06-04T09:38:13Z"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 72,
-            "tps": 83.1,
-            "n": 3,
-            "ts": "2026-06-04T09:38:20Z"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 24.9,
-            "n": 4,
-            "ts": "2026-06-04T09:38:20Z"
-          }
-        }
-      }
     },
     "mistral-medium-2505": {
       "enabled": false,
@@ -2367,133 +2065,6 @@
       "is_local": false,
       "warmup": false,
       "cost_per_page_usd": 0.004
-    },
-    "gemma-4-12B-it-qat-4bit": {
-      "enabled": false,
-      "shortname": "gemma-4-12B-it-qat-4bit",
-      "display_name": "gemma-4-12B-it-qat-4bit",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image",
-        "audio"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 246000,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "Lokal",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": true,
-      "auto_lcm": true,
-      "warmup": false,
-      "warmup_mode": "minimal",
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 20,
-            "n": 4,
-            "ts": "2026-07-03T17:52:50Z",
-            "source": "internal"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 23.5,
-            "n": 5,
-            "ts": "2026-07-03T17:53:36Z",
-            "source": "internal"
-          }
-        },
-        "research": {
-          "measured": {
-            "tps": 24.4,
-            "n": 3,
-            "ts": "2026-07-03T17:55:42Z",
-            "capability": 68,
-            "source": "artificialanalysis",
-            "raw": 22,
-            "official_name": "Gemma 4 12B (Reasoning)"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "tps": 24.1,
-            "n": 3,
-            "ts": "2026-07-03T17:57:31Z",
-            "capability": 68,
-            "source": "artificialanalysis",
-            "raw": 22,
-            "official_name": "Gemma 4 12B (Reasoning)"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "tps": 18.4,
-            "n": 3,
-            "ts": "2026-07-03T17:57:38Z",
-            "capability": 68,
-            "source": "artificialanalysis",
-            "raw": 22,
-            "official_name": "Gemma 4 12B (Reasoning)"
-          }
-        },
-        "creative": {
-          "measured": {
-            "tps": 17.1,
-            "n": 3,
-            "ts": "2026-07-03T17:57:44Z",
-            "capability": 68,
-            "source": "artificialanalysis",
-            "raw": 22,
-            "official_name": "Gemma 4 12B (Reasoning)"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "tps": 24.3,
-            "n": 3,
-            "ts": "2026-07-03T17:59:04Z",
-            "capability": 68,
-            "source": "artificialanalysis",
-            "raw": 22,
-            "official_name": "Gemma 4 12B (Reasoning)"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "tps": 22.2,
-            "n": 3,
-            "ts": "2026-07-03T17:59:22Z",
-            "capability": 68,
-            "source": "artificialanalysis",
-            "raw": 22,
-            "official_name": "Gemma 4 12B (Reasoning)"
-          }
-        },
-        "fast": {
-          "measured": {
-            "tps": 5,
-            "n": 4,
-            "ts": "2026-07-03T17:59:25Z",
-            "capability": 68,
-            "source": "artificialanalysis",
-            "raw": 22,
-            "official_name": "Gemma 4 12B (Reasoning)"
-          }
-        }
-      },
-      "scratchpad_mode": "auto"
     },
     "labs-leanstral-1-5-1": {
       "enabled": false,
@@ -5503,6 +5074,86 @@
       "provider": "Lokal",
       "profile": "speed",
       "_caps_canonical": true
+    },
+    "thinkingmachines/inkling": {
+      "enabled": false,
+      "shortname": "inkling",
+      "display_name": "inkling",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "inline_tags",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/auto-beta": {
+      "enabled": false,
+      "shortname": "auto-beta",
+      "display_name": "auto-beta",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "Kilo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/thinkingmachines/inkling": {
+      "enabled": false,
+      "shortname": "inkling",
+      "display_name": "inkling",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "inline_tags",
+      "provider": "openrouter",
+      "base_model_id": "thinkingmachines/inkling",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "openrouter/openrouter/auto-beta": {
+      "enabled": false,
+      "shortname": "auto-beta",
+      "display_name": "auto-beta",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "openrouter",
+      "base_model_id": "openrouter/auto-beta",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "mlx-community/whisper-large-v3-turbo": {
+      "enabled": false,
+      "shortname": "whisper-large-v3-turbo",
+      "display_name": "whisper-large-v3-turbo",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 0,
+      "max_output": 0,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "local-mlx-whisper",
+      "profile": "speed",
+      "_caps_canonical": true
     }
   },
   "nodes": {},
@@ -5585,10 +5236,11 @@
     "reranker": {
       "enabled": true,
       "model": "BAAI/bge-reranker-v2-m3",
-      "device": "auto",
+      "device": "remote",
       "top_k_in": 40,
       "max_chars_per_passage": 1500,
-      "batch_size": 16
+      "batch_size": 16,
+      "url": "http://192.168.1.214:8002"
     },
     "citation_reround": {
       "enabled": true,
@@ -5600,7 +5252,11 @@
       "enabled": false
     },
     "_qdrant_migration_note": "Qdrant backend config (url/api_key/quantization) lives in ~/.mempalace/config.json + env (MEMPALACE_BACKEND / MEMPALACE_QDRANT_* / MEMPALACE_QDRANT_QUANTIZATION), NOT here — see QDRANT_MIGRATION_PLAN.md. Currently on chroma backend.",
-    "_chroma_rollback_path": "/Users/alexander/.mempalace/brain"
+    "_chroma_rollback_path": "/Users/alexander/.mempalace/brain",
+    "embedding_device": "remote",
+    "embedding_url": "http://192.168.1.214:8000",
+    "embedding_remote_model": "embeddinggemma-300m-bf16",
+    "embedding_api_key": "YOUR_API_KEY"
   },
   "deleted_models": [
     "Mistral/mistral-medium-3-5",

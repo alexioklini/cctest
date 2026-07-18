@@ -27,10 +27,24 @@ import os
 import sys
 import tempfile
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _lock = threading.Lock()
 _DEFAULT_MODEL = "mlx-community/whisper-large-v3-turbo"
+
+# Live metrics so the dashboard can render this service as a peer of oMLX with
+# real numbers (not just an up/down dot). Updated under _lock during a request.
+_STARTED_AT = time.time()
+_METRICS = {
+    "requests_total": 0,        # transcription requests served
+    "requests_failed": 0,
+    "model_loaded": False,      # True once the model has served ≥1 request
+    "last_model": None,         # model id of the most recent request
+    "last_duration_s": None,    # wall-clock of the last transcription
+    "last_audio_s": None,       # decoded audio length of the last request
+    "total_audio_s": 0.0,       # cumulative transcribed audio seconds
+}
 
 # Map bare model ids Brain might send to full HF repos (mlx_whisper accepts a
 # repo directly, so a full repo passes through untouched).
@@ -106,6 +120,12 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path.rstrip("/") == "/v1/models":
             self._send_json(200, {"object": "list", "data": [
                 {"id": self.default_model, "object": "model"}]})
+        elif self.path.rstrip("/") == "/status":
+            with _lock:
+                m = dict(_METRICS)
+            m["uptime_seconds"] = round(time.time() - _STARTED_AT)
+            m["default_model"] = self.default_model
+            self._send_json(200, m)
         else:
             self._send_json(404, {"error": "not found"})
 
@@ -136,6 +156,7 @@ class Handler(BaseHTTPRequestHandler):
         fd, path = tempfile.mkstemp(suffix=".wav", prefix="stt-")
         with os.fdopen(fd, "wb") as f:
             f.write(audio)
+        t0 = time.time()
         try:
             import mlx_whisper
             kwargs = {"path_or_hf_repo": repo}
@@ -144,7 +165,13 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 result = mlx_whisper.transcribe(path, **kwargs)
             text = (result.get("text") or "").strip()
+            segs = result.get("segments") or []
+            audio_s = segs[-1].get("end") if segs else None
         except Exception as e:
+            with _lock:
+                _METRICS["requests_total"] += 1
+                _METRICS["requests_failed"] += 1
+                _METRICS["last_model"] = repo
             self._send_json(500, {"error": f"{type(e).__name__}: {e}"})
             return
         finally:
@@ -152,6 +179,15 @@ class Handler(BaseHTTPRequestHandler):
                 os.unlink(path)
             except Exception:
                 pass
+        with _lock:
+            _METRICS["requests_total"] += 1
+            _METRICS["model_loaded"] = True
+            _METRICS["last_model"] = repo
+            _METRICS["last_duration_s"] = round(time.time() - t0, 2)
+            if audio_s is not None:
+                _METRICS["last_audio_s"] = round(audio_s, 1)
+                _METRICS["total_audio_s"] = round(
+                    _METRICS["total_audio_s"] + audio_s, 1)
         self._send_json(200, {"text": text})
 
 

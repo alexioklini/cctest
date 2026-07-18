@@ -553,6 +553,165 @@ def omlx_status():
     }
 
 
+def _http_json(url, timeout=3):
+    """GET a URL and parse JSON, ("", data) or (err, None)."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as r:
+            return "", json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return type(e).__name__, None
+
+
+_MODEL_SIZE_CACHE = {}          # hf-repo-id -> (bytes, mtime-ish) so we don't du every poll
+
+
+def _hf_model_size_bytes(repo_id):
+    """On-disk size of an HF-cached model (e.g. 'BAAI/bge-reranker-v2-m3').
+    These services fetch weights from the HF hub, so the size lives under
+    ~/.cache/huggingface/hub/models--<org>--<name>/. Cached (walking a model
+    dir every 3s poll would be wasteful)."""
+    if not repo_id:
+        return None
+    if repo_id in _MODEL_SIZE_CACHE:
+        return _MODEL_SIZE_CACHE[repo_id]
+    hub = os.path.expanduser("~/.cache/huggingface/hub")
+    d = os.path.join(hub, "models--" + repo_id.replace("/", "--"))
+    total = None
+    if os.path.isdir(d):
+        # The HF cache keeps weights once in blobs/ and references them via
+        # symlinks in snapshots/ — walking both and following symlinks would
+        # double-count. Dedupe by the real inode path so each blob counts once.
+        seen = set()
+        total = 0
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                try:
+                    real = os.path.realpath(os.path.join(root, f))
+                    if real in seen:
+                        continue
+                    seen.add(real)
+                    total += os.path.getsize(real)
+                except OSError:
+                    pass
+    _MODEL_SIZE_CACHE[repo_id] = total
+    return total
+
+
+def _http_text(url, timeout=3):
+    import urllib.request
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as r:
+            return "", r.read().decode("utf-8")
+    except Exception as e:
+        return type(e).__name__, None
+
+
+def _reranker_status(port=8002):
+    """Rich status for the Infinity reranker — model, backend, live queue and
+    served-request counters (peer-level detail to oMLX, not just up/down)."""
+    base = f"http://127.0.0.1:{port}"
+    entry = {"key": "reranker", "label": "Reranker (Infinity)", "port": port,
+             "purpose": "MemPalace Retrieval-Reranking", "up": False}
+    err, models = _http_json(f"{base}/models")
+    if err or not models:
+        entry["error"] = err
+        return entry
+    entry["up"] = True
+    m = (models.get("data") or [{}])[0]
+    entry["model"] = m.get("id")
+    entry["model_size_bytes"] = _hf_model_size_bytes(m.get("id"))
+    entry["backend"] = m.get("backend")
+    entry["capabilities"] = m.get("capabilities") or []
+    st = m.get("stats") or {}
+    entry["queue"] = st.get("queue_absolute")
+    entry["batch_size"] = st.get("batch_size")
+    entry["pending"] = st.get("results_pending")
+    # served-request counts + latency sum from Prometheus /metrics
+    _e, txt = _http_text(f"{base}/metrics")
+    if txt:
+        import re
+        served = 0
+        for mm in re.finditer(r'http_requests_total\{[^}]*handler="/rerank"[^}]*\}\s+([\d.]+)', txt):
+            served += int(float(mm.group(1)))
+        entry["requests_total"] = served
+    return entry
+
+
+def _stt_status(port=8001):
+    """Rich status for the Whisper STT wrapper via its /status endpoint."""
+    base = f"http://127.0.0.1:{port}"
+    entry = {"key": "stt", "label": "Speech-to-Text (Whisper)", "port": port,
+             "purpose": "Audio-Transkription", "up": False}
+    err, st = _http_json(f"{base}/status")
+    if err or st is None:
+        entry["error"] = err
+        return entry
+    entry["up"] = True
+    entry["model"] = st.get("default_model")
+    entry["model_size_bytes"] = _hf_model_size_bytes(st.get("default_model"))
+    entry["model_loaded"] = st.get("model_loaded")
+    entry["uptime_seconds"] = st.get("uptime_seconds")
+    entry["requests_total"] = st.get("requests_total")
+    entry["requests_failed"] = st.get("requests_failed")
+    entry["last_duration_s"] = st.get("last_duration_s")
+    entry["last_audio_s"] = st.get("last_audio_s")
+    entry["total_audio_s"] = st.get("total_audio_s")
+    return entry
+
+
+def dependencies_status():
+    """Rich status of the auxiliary inference services on this box (reranker,
+    STT) — rendered as peers of oMLX with real per-service metrics."""
+    return {"services": [_reranker_status(), _stt_status()]}
+
+
+def _dependency_activity_poller():
+    """Poll the auxiliary inferencers' served-request counters and emit an
+    activity row whenever one advances — so reranker/STT calls show up in the
+    same activity log as oMLX, not only in their cards. Cheap (2 tiny GETs / 3s)."""
+    import time as _t
+    last = {}                       # key -> last seen requests_total
+    # Prime from the current counts so we don't replay history as fresh activity.
+    for st in (_reranker_status(), _stt_status()):
+        if st.get("requests_total") is not None:
+            last[st["key"]] = st["requests_total"]
+    while True:
+        _t.sleep(3)
+        try:
+            for st in (_reranker_status(), _stt_status()):
+                if not st.get("up"):
+                    continue
+                n = st.get("requests_total")
+                if n is None:
+                    continue
+                prev = last.get(st["key"], n)
+                if n > prev:
+                    ev = {
+                        "ts": _t.strftime("%H:%M:%S"),
+                        "instance": st["label"].split(" (")[0],  # "Reranker"/"Speech-to-Text"
+                        "client": "brain-server", "ip": "local",
+                        "endpoint": ("/rerank" if st["key"] == "reranker"
+                                     else "/v1/audio/transcriptions"),
+                        "status": "200",
+                        "tokens": None,
+                        "model": st.get("model"),
+                        "detail": (f"{n - prev} call(s)"
+                                   + (f", {st['last_duration_s']}s"
+                                      if st.get("last_duration_s") else "")),
+                    }
+                    with _activity_lock:
+                        _activity.append(ev)
+                        try:
+                            with open(_ACTIVITY_FILE, "a") as wf:
+                                wf.write(json.dumps(ev) + "\n")
+                        except Exception:
+                            pass
+                last[st["key"]] = n
+        except Exception:
+            pass
+
+
 def omlx_models():
     """Per-model load state from oMLX (/v1/models/status)."""
     ok, data = _omlx_request("/v1/models/status")
@@ -1656,6 +1815,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, json.dumps(omlx_models()))
         elif self.path.startswith("/api/omlx/cache"):
             self._send(200, json.dumps(omlx_cache_status()))
+        elif self.path.startswith("/api/dependencies"):
+            self._send(200, json.dumps(dependencies_status()))
         elif self.path.startswith("/api/omlx/settings"):
             ok, gs = omlx_global_settings()
             self._send(200 if ok else 502, json.dumps(gs if ok else {"error": gs.get("error")}))
@@ -1874,6 +2035,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   /* vLLM strip */
   #instpanels{grid-column:1 / -1}
   #omlxpanel{grid-column:1 / -1}
+  #depspanel{grid-column:1 / -1}
   .vllm{padding:18px 22px;margin-bottom:18px}
   .vllm h4{margin:0 0 4px;font-size:15px;font-weight:600}
   .model{font-size:13px;color:var(--green);margin-bottom:14px;font-family:ui-monospace,Menlo,monospace}
@@ -2089,6 +2251,9 @@ INDEX_HTML = r"""<!DOCTYPE html>
 
   <!-- oMLX server: status + per-model load control -->
   <div id="omlxpanel"></div>
+
+  <!-- Auxiliary inference dependencies (reranker, STT) served by this box -->
+  <div id="depspanel"></div>
 
   <!-- Inference activity log -->
   <div class="card activity">
@@ -2325,6 +2490,70 @@ function renderInstancePanels(insts){
 
 // oMLX server panel: server status + per-model load/unload control. oMLX is a
 // separate native app (not a SparkDash child process) kept for its SSD-tiered
+// Auxiliary dependency cards (reranker, STT) — the rest of the remote-inference
+// stack this box serves to the Brain server, shown as peers of oMLX.
+function _cell(label,val,unit,small){
+  const st=small?' style="font-size:18px"':'';
+  return `<div class="stat"><div class="l">${label}</div><div class="n"${st}>${val}${unit?`<small> ${unit}</small>`:""}</div></div>`;
+}
+// One card per auxiliary inferencer, built IDENTICALLY to the oMLX panel:
+// same `card vllm omlx` shell, same `.ihdr` header (dot · name · model · state),
+// same `.vgrid` stat grid — so it reads as a true peer, not a smaller box.
+function _depCard(s){
+  const dot=s.up?'var(--green)':'var(--muted)';
+  const state=s.up?'serving':(s.error?'unreachable':'down');
+  const meta=`127.0.0.1:${s.port} · ${state}`
+    + (s.backend?` · ${s.backend}`:'')
+    + ((s.capabilities&&s.capabilities.length)?` · ${s.capabilities.join(', ')}`:'');
+  // Header mirrors oMLX: the model id is NOT here (it gets its own row below with
+  // a badge + size, exactly like the oMLX "Loaded models" section).
+  const hdr=`<div class="ihdr"><span class="idot" style="background:${dot}"></span>
+      <span class="iname">${s.label}</span>
+      <span class="istate">${meta}</span></div>`;
+  let stats="";
+  if(!s.up){
+    stats=`<div style="color:var(--muted);font-size:13px;padding:6px 0">${s.error?(s.label+" unreachable — "+s.error):(s.label+" not running")}</div>`;
+  } else if(s.key==="reranker"){
+    stats=`<div class="vgrid">
+      ${_cell("Requests", s.requests_total??0)}
+      ${_cell("Active", s.queue??0)}
+      ${_cell("Pending", s.pending??0)}
+      ${_cell("Batch", s.batch_size??"–")}
+    </div>`;
+  } else if(s.key==="stt"){
+    const up=s.uptime_seconds;
+    stats=`<div class="vgrid">
+      ${_cell("Requests", s.requests_total??0)}
+      ${_cell("Failed", s.requests_failed??0)}
+      ${_cell("Last", s.last_duration_s!=null?s.last_duration_s:"–", s.last_duration_s!=null?"s":"")}
+      ${_cell("Audio", s.total_audio_s!=null?Math.round(s.total_audio_s):"–","s",true)}
+      ${_cell("Uptime", up!=null?(up>=60?Math.floor(up/60)+"m":up+"s"):"–","",true)}
+    </div>`;
+  }
+  // Model row — same .omlx-models/.omlx-row layout oMLX uses (id · badge · size).
+  let model="";
+  if(s.up && s.model){
+    const szTxt = (s.model_size_bytes!=null) ? (s.model_size_bytes/GB).toFixed(1)+"G" : "";
+    const warm = (s.key==="stt") ? s.model_loaded : true;  // reranker is always resident
+    const badge = warm ? `<span class="omlx-b loaded">loaded</span>`
+                       : `<span class="omlx-b loading">cold</span>`;
+    model=`<div class="memhdr" style="margin-top:10px">Model</div>
+      <div class="omlx-models"><div class="omlx-row">
+        <span class="om-id">${s.model}</span>${badge}<span class="om-sz">${szTxt}</span>
+      </div></div>`;
+  }
+  return `<div class="card vllm omlx">${hdr}${stats}${model}</div>`;
+}
+async function renderDependencies(){
+  const el=document.getElementById("depspanel");
+  if(!el) return;
+  let d=null;
+  try{ d=await (await fetch("/api/dependencies",{cache:"no-store"})).json(); }catch(e){ return; }
+  const svcs=(d&&d.services)||[];
+  if(!svcs.length){ el.innerHTML=""; return; }
+  el.innerHTML=svcs.map(_depCard).join("");
+}
+
 // KV cache (large contexts the GDPR/fallback role needs). Polled from
 // /api/omlx/status + /api/omlx/models.
 let _omlxModels=[];
@@ -2550,13 +2779,24 @@ async function tickActivity(){
       stCell = `<td style="color:${ok?"var(--green)":"var(--red)"};font-weight:600">`
         + (ok?"OK":String(r.status)) + "</td>";
     }
+    // oMLX rows carry per-call throughput/cache numbers; the auxiliary
+    // inferencers (reranker/STT) don't — they carry a `detail` string instead.
+    // Guard every numeric field (undefined.toFixed() would throw and kill the
+    // whole table render), and for a detail-only row span the metric columns.
+    const num=(v)=> (typeof v==="number") ? v.toFixed(1) : null;
+    const g=num(r.gen_tps), p=num(r.prompt_tps), k=num(r.kv_cache), pf=num(r.prefix_hit);
+    let metricCells;
+    if(g==null && p==null && r.detail){
+      metricCells = `<td colspan="5" style="text-align:left;color:#8a8a8a">${r.detail}</td>`;
+    } else {
+      metricCells = `<td>${g??"—"}</td><td>${p??"—"}</td>`
+        +`<td>${k??"—"}</td><td>${pf??"—"}</td>`
+        +`<td>${r.gpu_mem_gb!=null?r.gpu_mem_gb.toFixed(1)+" GB":"—"}</td>`;
+    }
     return `<tr class="busy"><td>${r.ts}</td><td style="text-align:left;color:var(--green)">${inst}</td>`
       +`<td style="text-align:left">${cl}</td>`
       +`<td style="text-align:left;color:#8a8a8a">${ep}</td>`
-      +stCell
-      +`<td>${r.gen_tps.toFixed(1)}</td><td>${r.prompt_tps.toFixed(1)}</td>`
-      +`<td>${r.kv_cache.toFixed(1)}</td><td>${r.prefix_hit.toFixed(1)}</td>`
-      +`<td>${r.gpu_mem_gb!=null?r.gpu_mem_gb.toFixed(1)+" GB":"—"}</td></tr>`;
+      +stCell+metricCells+`</tr>`;
   }).join("");
 }
 
@@ -2944,8 +3184,9 @@ const _hv=(location.hash||"").replace("#","");
 if(_hv==="settings") showPage("settings");
 else if(["processes","filesystems","resources"].includes(_hv)) switchView(_hv);
 
-tick(); tickActivity(); renderOmlxPanel();
+tick(); tickActivity(); renderOmlxPanel(); renderDependencies();
 setInterval(tick,2000); setInterval(tickActivity,3000); setInterval(renderOmlxPanel,4000);
+setInterval(renderDependencies,5000);
 window.addEventListener("resize",()=>tick());
 </script>
 </body>
@@ -2963,6 +3204,7 @@ def main():
     supervisor.restore_on_boot()
     threading.Thread(target=supervisor._watchdog, daemon=True).start()
     threading.Thread(target=_activity_tailer, daemon=True).start()
+    threading.Thread(target=_dependency_activity_poller, daemon=True).start()
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     auth = "configured" if auth_configured() else "NOT SET (first-run setup needed)"
     print(f"SparkDash on http://{args.host}:{args.port}  · auth: {auth}")
