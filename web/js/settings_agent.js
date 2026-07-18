@@ -226,14 +226,28 @@ async function switchAgentTab(agentId, tab, btn) {
         modelOption(mid, {selected: mid===cfg.model})
       ).join('');
       // Next-prompt suggestion config — override model drives where the
-      // ghost-text completion is generated. Empty = reuse session model
-      // (best cache reuse, but slow on thinking local models like Qwen3.6).
+      // ghost-text completion is generated. Empty here does NOT mean "session
+      // model": the server precedence is agent override → global service knob
+      // `next_prompt_model` (Einstellungen → Service-Modelle) → session model.
+      // So an empty override uses the globally configured model when one is set,
+      // and only falls back to the session model when that knob is also empty.
       const nps = (cfg.next_prompt_suggestions && typeof cfg.next_prompt_suggestions === 'object')
         ? cfg.next_prompt_suggestions : {};
       const npsEnabled = nps.enabled !== false;
       const npsModel = nps.model || '';
       const npsMaxWords = nps.max_words != null ? nps.max_words : 15;
-      const npsModelOptions = `<option value="" ${npsModel===''?'selected':''}>(Sitzungsmodell — beste Cache-Wiederverwendung)</option>`
+      // A pinned override that is no longer in the enabled-model list (model
+      // disabled/removed — e.g. a local model after a host was taken offline)
+      // would otherwise render as the first <option> ("Sitzungsmodell"),
+      // silently hiding a dead pin: the GUI shows "session model" while the
+      // server keeps calling the disabled model and produces nothing. Surface
+      // it as an explicit, selected warning option instead.
+      const npsPinDead = npsModel !== '' && !enabledModels.some(([mid]) => mid===npsModel);
+      const npsDeadOption = npsPinDead
+        ? `<option value="${esc(npsModel)}" selected>⚠ ${esc(npsModel)} — nicht verfügbar (deaktiviert/entfernt)</option>`
+        : '';
+      const npsModelOptions = `<option value="" ${npsModel===''?'selected':''}>(Standard — global konfiguriertes Modell, sonst Sitzungsmodell)</option>`
+        + npsDeadOption
         + enabledModels.map(([mid]) =>
             modelOption(mid, {selected: mid===npsModel})
           ).join('');

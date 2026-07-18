@@ -777,7 +777,8 @@ class SessionsHandlerMixin:
                     and cached.get("text")):
                 self._send_json({
                     "suggestion": cached["text"],
-                    "model_used": (cfg.get("model") or session.model),
+                    "model_used": (cached.get("model_used")
+                                   or cfg.get("model") or session.model),
                     "config": cfg, "cached": True,
                 })
                 return
@@ -785,13 +786,21 @@ class SessionsHandlerMixin:
             with engine.request_context():
                 engine.get_request_context().current_agent = engine.AgentConfig(session.agent_id)
                 text = engine.generate_next_prompt_suggestion(session)
+            # The model actually used (after override precedence + any GDPR swap)
+            # is set on the session by generate_next_prompt_suggestion; fall back
+            # to the naive computation only if it wasn't recorded. cfg.model or
+            # session.model is NOT reliable — an empty override runs the global
+            # next_prompt_model knob, not the session model.
+            model_used = (getattr(session, "_next_prompt_model_used", None)
+                          or cfg.get("model") or session.model)
             # Cache the result against the signature captured BEFORE the call (the
             # conversation didn't change during a read-only suggestion call).
             if text:
-                session._next_prompt_cache = {"sig": sig, "text": text}
+                session._next_prompt_cache = {"sig": sig, "text": text,
+                                              "model_used": model_used}
             self._send_json({
                 "suggestion": text,
-                "model_used": (cfg.get("model") or session.model),
+                "model_used": model_used,
                 "config": cfg, "cached": False,
             })
         except Exception as e:

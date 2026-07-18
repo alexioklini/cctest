@@ -8219,6 +8219,14 @@ def generate_next_prompt_suggestion(session) -> str | None:
         # Set current_user_id so client-mode ambient proxy routing can pick a
         # client owned by the session's user. session_id stays None — this is
         # a sessionless call (no live SSE on the chat).
+        # Record the model actually used (after override precedence AND any GDPR
+        # swap above) so the handler can report it truthfully — cfg.model or
+        # session.model at the call site is NOT what ran (empty override falls
+        # through to the global next_prompt_model knob, and GDPR may swap again).
+        try:
+            session._next_prompt_model_used = model
+        except Exception:
+            pass
         _prev_uid = get_request_context().current_user_id
         get_request_context().current_user_id = (getattr(session, "user_id", "") or "")
         try:
