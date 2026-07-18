@@ -676,6 +676,20 @@ def _drain_anthropic_stream_inner(resp, emit_delta, round_no: int,
                     rr.finish_reason = d["stop_reason"]
                 u = ev.get("usage") or {}
                 out_tokens = int(u.get("output_tokens", 0) or 0)
+                # cache_read_input_tokens is reported here in message_delta, NOT
+                # in message_start (verified against api.kimi.com: message_start
+                # always carries cache_read=0, the real value lands in the final
+                # message_delta). Prefer the delta value when present, so cache
+                # hits aren't silently reported as 0 (the k3 0%-caching bug).
+                if "cache_read_input_tokens" in u:
+                    rr._anth_cache_read = int(  # type: ignore[attr-defined]
+                        u.get("cache_read_input_tokens", 0) or 0)
+                # message_delta also carries a corrected NON-cached input_tokens
+                # (message_start over-reports it as the full prompt). Prefer it
+                # when present so prompt_tokens isn't double-counted once cached
+                # is added back below.
+                if "input_tokens" in u:
+                    in_tokens = int(u.get("input_tokens", 0) or 0)
                 # Assemble an OpenAI-shape usage dict so run_loop's existing
                 # split (prompt/cached/completion) works unchanged.
                 cached = getattr(rr, "_anth_cache_read", 0) or 0

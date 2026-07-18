@@ -1162,9 +1162,16 @@ function renderAssistantMessage(msg, idx) {
       ? cacheSavingsUSD(meta.model, tokCached) : 0;
     const _mCachePriced = Number(state.modelsConfig?.models?.[meta.model]?.cost_cache_read) > 0;
     const _sv = _cacheSave > 0 ? ` · −$${_cacheSave.toFixed(4)}` : '';
+    // Three cases: (a) priced cache → show $ saved; (b) tokens cached but no
+    // price on file → the model DOES cache (e.g. a plan model like k3 with no
+    // per-token tariff), just no $ figure; (c) no tokens AND no price → nothing
+    // cached this turn. Do NOT claim "kein Prompt-Caching" when tokCached>0 —
+    // that was wrong for cache-capable plan models (the k3 0%-display bug).
     const _cacheTitle = _mCachePriced
       ? `Prompt-Cache-Treffer: ${tokCached.toLocaleString()} Tokens = ${_cachePct}% des Prompts, zum ~0,1×-Tarif abgerechnet.${_cacheSave > 0 ? ' Ersparnis ggü. vollem Eingabe-Tarif: $' + _cacheSave.toFixed(4) + '.' : ''}`
-      : 'Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es findet kein Prompt-Caching statt.';
+      : (tokCached > 0
+        ? `Prompt-Cache-Treffer: ${tokCached.toLocaleString()} Tokens = ${_cachePct}% des Prompts. Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es wird keine $-Ersparnis berechnet.`
+        : 'Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es wird keine $-Ersparnis berechnet.');
     parts.push(`<span class="msg-cache-hit" title="${_cacheTitle}">⚡ ${tokCached.toLocaleString()} cached (${_cachePct}%${_sv})</span>`);
     // Thinking level (mirrors session-inspector badges, chat.js:756–758).
     // metadata.thinking_level is set per turn; absence with no _thinking → 'none'.
