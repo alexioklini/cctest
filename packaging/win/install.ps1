@@ -226,4 +226,11 @@ if ($skipWebsearch) {
 Write-Host ""
 Write-Host "Optionale Schritte (Admin-Rechte):"
 Write-Host " - LAN-Freigabe: netsh advfirewall firewall add rule name=""BrainAgent"" dir=in action=allow protocol=TCP localport=8420"
-Write-Host " - MSSQL (db_query): 'ODBC Driver 17 for SQL Server' MSI installieren."
+Write-Host " - MSSQL (db_query): 'ODBC Driver 17 for SQL Server' MSI installieren (nicht beigelegt)."
+if (Test-Path (Join-Path $Bundle "installers")) {
+    Write-Host " - Beigelegte Installer im Ordner 'installers\' (bei Bedarf ausfuehren):"
+    Write-Host "   Tesseract (OCR), LibreOffice (XLSX-Recalc), R (Quant-Workbench) — s. installers\README.txt"
+}
+if (Test-Path (Join-Path $Bundle "tools\node\node.exe")) {
+    Write-Host " - Node + mermaid-cli + yt-dlp sind gebuendelt (render_diagram/YouTube laufen out-of-the-box)."
+}

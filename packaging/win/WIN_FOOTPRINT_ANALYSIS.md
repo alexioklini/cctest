@@ -25,6 +25,8 @@ und Zahl der lokal zu betreibenden Dienste, nicht N×Installationen.
 | `hf-cache/` | 315 MB | ONNX-Embedding-Modell (NUR Notfall-Fallback, primär ist remote) |
 | `browsers/` | 294 MB | Chromium CfT + headless-shell (Zips, für crawl4ai) |
 | `qdrant/` | 81 MB | qdrant.exe (Vektor-DB) |
+| `tools/` | ~450 MB | Node-24-LTS (portabel) + win32-x64-mermaid-cli + yt-dlp.exe (Komponente `tools`, optional; seit v9.377.0) |
+| `installers/` | ~0,9 GB | Tesseract-Setup + LibreOffice-MSI + R-Setup (Komponente `installers`, optional; seit v9.377.0 — reine Installer, nicht entpackt) |
 | `app/` | 34 MB | Brain-Quellcode + Web-UI + agents-Skeleton |
 
 ## 3. Kategorie A — heute per Config auslagerbar (0 Codeänderung, **−1,3 GB / −60 %**)
@@ -87,6 +89,27 @@ bewerten, falls die Bank-Policy das Hosting auf dem Mini ausdrücklich erlaubt.
    knappe Win-Boxen bzw. wenn der Mini ohnehin gemanagt wird — −60 % Paket.
 3. Follow-ups in Reihenfolge des Nutzens: site-packages-Trim (−150 MB, risikoarm);
    der Reranker-Remote-Seam ist seit v9.376.0 umgesetzt; NER bleibt lokal.
-4. Nicht größenrelevanter Restaufwand auf Win11 (unverändert, nicht
-   auslagerbar): Firewall-Freigabe 8420 (einmalig, admin), optional ODBC-MSI
-   für MSSQL, optional Node.js für Mermaid.
+4. Nicht größenrelevanter Restaufwand auf Win11: Firewall-Freigabe 8420
+   (einmalig, admin) und — falls MSSQL gebraucht wird — das ODBC-Driver-17-MSI
+   (nicht beilegbar, Microsoft-EULA).
+
+## 8. Host-Werkzeuge + Installer gebündelt (v9.377.0)
+
+Frühere „externe Voraussetzungen" (Gruppe 4 der Komponenten-Matrix) sind jetzt
+im Paket — bis auf ODBC (Redistribution per EULA untersagt). Zwei Klassen:
+
+- **`tools`** (optional, ~450 MB): Node-24-LTS (portable ZIP) + ein für
+  **win32-x64 cross-installiertes** mermaid-cli (`npm install --os=win32 --cpu=x64`
+  + `PUPPETEER_SKIP_DOWNLOAD=1` — das Repo-`diagram_render/node_modules` ist
+  macOS-gebaut und hier nicht lauffähig) + `yt-dlp.exe`. `BrainAgent.bat` legt
+  Node/yt-dlp auf den PATH, setzt `DIAGRAM_RENDER_CLI` auf den Windows-cli.js und
+  `PUPPETEER_EXECUTABLE_PATH` auf das **ohnehin geladene Playwright-Chromium**
+  (kein Browser-Zweitdownload). `render_diagram` läuft damit out-of-the-box.
+- **`installers`** (optional, ~0,9 GB): Tesseract-/LibreOffice-/R-Setup als
+  Original-Installer (NSIS/MSI — keine portablen Assets, System-Registrierung
+  nötig), vom Operator bei Bedarf ausgeführt (`installers\README.txt`).
+
+Beide sind `required=false` → das **Minimal-Profil** und der App-only-Update-Pfad
+überspringen sie (setup_stage1.ps1 entscheidet manifest-generisch). Ohne die
+`tools`-Komponente (oder ohne lokales Chromium im Minimal-Profil) degradiert
+`render_diagram` sauber auf ```mermaid-Codeblöcke.

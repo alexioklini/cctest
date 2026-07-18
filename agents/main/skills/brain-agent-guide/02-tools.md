@@ -519,7 +519,9 @@ OCR is for scans/photos.**
 Page counts are logged to the cost ledger (`purpose='ocr'`, $0 — local engine —
 but the page count is an audit signal, same as the cloud OCR path). Needs the
 `tesseract` binary + language data on the host (`brew install tesseract
-tesseract-lang`); every tool fails LOUD with the install hint if it's missing.
+tesseract-lang`; on the Windows bundle the Tesseract installer ships in
+`installers\` — run it once, choosing the deu+eng language data); every tool
+fails LOUD with the install hint if it's missing.
 
 ## Document verification — deterministic checks (group `doc_checks`, v9.335.0)
 

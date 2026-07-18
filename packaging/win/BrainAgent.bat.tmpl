@@ -47,6 +47,28 @@ if exist "%SCRIPT_DIR%mingit\usr\bin\bash.exe" (
   set "PATH=%SCRIPT_DIR%mingit\cmd;%SCRIPT_DIR%mingit\usr\bin;%PATH%"
 )
 
+rem ---- Gebuendelte Host-Werkzeuge (Komponente "tools", optional): Node.js fuer
+rem ---- render_diagram (mmdc laeuft als `node cli.js`, _working_node() findet
+rem ---- node.exe ueber den PATH) und yt-dlp.exe (YouTube-Transkription, via
+rem ---- shutil.which). Fehlt die tools-Komponente (Minimal-Profil), bleibt der
+rem ---- PATH unveraendert und die Features degradieren sauber.
+if exist "%SCRIPT_DIR%tools\node\node.exe" set "PATH=%SCRIPT_DIR%tools\node;%PATH%"
+if exist "%SCRIPT_DIR%tools\bin\yt-dlp.exe" set "PATH=%SCRIPT_DIR%tools\bin;%PATH%"
+
+rem ---- Mermaid-Renderer (render_diagram): der Windows-CLI-Baum liegt in der
+rem ---- tools-Komponente (macOS-node_modules im Repo laeuft hier nicht). Server
+rem ---- liest DIAGRAM_RENDER_CLI (engine/tools/image_gen.py). mmdc/Puppeteer nutzt
+rem ---- das ohnehin geladene Playwright-Chromium via PUPPETEER_EXECUTABLE_PATH,
+rem ---- statt selbst einen Browser zu laden — Pfad dynamisch (chromium-<rev>).
+if exist "%SCRIPT_DIR%tools\diagram_render\node_modules\@mermaid-js\mermaid-cli\src\cli.js" (
+  set "DIAGRAM_RENDER_CLI=%SCRIPT_DIR%tools\diagram_render\node_modules\@mermaid-js\mermaid-cli\src\cli.js"
+)
+if not defined PUPPETEER_EXECUTABLE_PATH (
+  for /d %%D in ("%LOCALAPPDATA%\ms-playwright\chromium-*") do (
+    if exist "%%D\chrome-win64\chrome.exe" set "PUPPETEER_EXECUTABLE_PATH=%%D\chrome-win64\chrome.exe"
+  )
+)
+
 rem ---- Qdrant (remote im Minimal-Profil; skip start if already answering)
 if "%BRAIN_QDRANT_LOCAL%"=="0" goto qdrant_ok
 curl -s -o nul --max-time 2 http://127.0.0.1:6333/readyz

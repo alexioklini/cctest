@@ -50,6 +50,33 @@ GIT_TAG="v${GIT_VER}.windows.1"
 GIT_URL="https://github.com/git-for-windows/git/releases/download/${GIT_TAG}/MinGit-${GIT_VER}-64-bit.zip"
 GIT_ZIP="$DOWN/MinGit-${GIT_VER}-64-bit.zip"
 
+# --- Gebündelte Host-Werkzeuge (Komponente "tools", optional) ------------------
+# Node.js: PORTABLE zip (kein MSI) — liefert node.exe für den render_diagram-
+# mmdc-Aufruf (`node diagram_render/.../cli.js`; _working_node() findet es via
+# PATH). LTS, self-contained.
+NODE_VER="24.18.0"
+NODE_URL="https://nodejs.org/dist/v${NODE_VER}/node-v${NODE_VER}-win-x64.zip"
+NODE_ZIP="$DOWN/node-v${NODE_VER}-win-x64.zip"
+# yt-dlp: single-file .exe (MIT). Veraltet zwischen Releases (YouTube-Frontend
+# ändert sich) — Nutzer aktualisiert bei Bedarf mit `yt-dlp -U` (README).
+YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+YTDLP_EXE="$DOWN/yt-dlp.exe"
+
+# --- Beigelegte Installer (Komponente "installers", optional, groß) ------------
+# Diese drei sind KEINE portablen Assets (NSIS/MSI-Installer, System-Registrierung
+# nötig) → sie reisen als Original-Installer mit und werden vom Operator bei
+# Bedarf ausgeführt. Standard-Voll-Installation zieht sie mit; Minimal-Profil +
+# App-only-Update überspringen sie (required=false).
+TESS_VER="5.4.0.20240606"
+TESS_URL="https://github.com/UB-Mannheim/tesseract/releases/download/v${TESS_VER}/tesseract-ocr-w64-setup-${TESS_VER}.exe"
+TESS_EXE="$DOWN/tesseract-ocr-w64-setup-${TESS_VER}.exe"
+LO_VER="26.2.4"
+LO_URL="https://download.documentfoundation.org/libreoffice/stable/${LO_VER}/win/x86_64/LibreOffice_${LO_VER}_Win_x86-64.msi"
+LO_MSI="$DOWN/LibreOffice_${LO_VER}_Win_x86-64.msi"
+R_VER="4.6.1"
+R_URL="https://cran.r-project.org/bin/windows/base/R-${R_VER}-win.exe"
+R_EXE="$DOWN/R-${R_VER}-win.exe"
+
 HF_REPO="onnx-community/embeddinggemma-300m-ONNX"
 
 MEMPALACE_VENV_PKG="$HOME/.mempalace/venv/lib/python3.14/site-packages/mempalace"
@@ -77,6 +104,26 @@ fi
 if [[ ! -f "$GIT_ZIP" ]]; then
   echo "  -> Downloading MinGit ${GIT_VER} (windows-x64)..."
   curl -# -L -o "$GIT_ZIP" "$GIT_URL"
+fi
+if [[ ! -f "$NODE_ZIP" ]]; then
+  echo "  -> Downloading Node.js ${NODE_VER} (windows-x64 portable zip)..."
+  curl -# -L -o "$NODE_ZIP" "$NODE_URL"
+fi
+if [[ ! -f "$YTDLP_EXE" ]]; then
+  echo "  -> Downloading yt-dlp.exe (latest)..."
+  curl -# -L -o "$YTDLP_EXE" "$YTDLP_URL"
+fi
+if [[ ! -f "$TESS_EXE" ]]; then
+  echo "  -> Downloading Tesseract ${TESS_VER} installer (UB-Mannheim)..."
+  curl -# -L -o "$TESS_EXE" "$TESS_URL"
+fi
+if [[ ! -f "$LO_MSI" ]]; then
+  echo "  -> Downloading LibreOffice ${LO_VER} MSI..."
+  curl -# -L -o "$LO_MSI" "$LO_URL"
+fi
+if [[ ! -f "$R_EXE" ]]; then
+  echo "  -> Downloading R ${R_VER} installer (CRAN)..."
+  curl -# -L -o "$R_EXE" "$R_URL"
 fi
 
 # ------------------------------------------------------------ 1. Python 3.13
@@ -231,6 +278,72 @@ unzip -qo "$GIT_ZIP" -d "$OUT_DIR/mingit"
 # Deterministic mtimes so the mingit component sha stays byte-stable across
 # builds (same reason as browsers/revisions.txt) — else Delta-Updates re-ship it.
 find "$OUT_DIR/mingit" -exec touch -t 202601010000 {} + 2>/dev/null || true
+
+# --- tools/ : Node.js (portable) + yt-dlp.exe (Komponente "tools") -------------
+# BrainAgent.bat legt node/ und bin/ auf den PATH (analog MinGit). mmdc läuft
+# dann als `node cli.js` (render_diagram), yt-dlp.exe via shutil.which.
+mkdir -p "$OUT_DIR/tools/node" "$OUT_DIR/tools/bin"
+unzip -qo "$NODE_ZIP" -d "$OUT_DIR/tools/.node-tmp"
+# Der Node-Zip entpackt in node-vX.Y.Z-win-x64/ — flach nach tools/node/ ziehen.
+NODE_SRC="$(find "$OUT_DIR/tools/.node-tmp" -maxdepth 1 -type d -name 'node-v*-win-x64' | head -1)"
+[[ -n "$NODE_SRC" && -f "$NODE_SRC/node.exe" ]] || {
+  echo "ERROR: node.exe not found in Node zip ($NODE_ZIP)" >&2; exit 1; }
+rsync -a "$NODE_SRC/" "$OUT_DIR/tools/node/"
+rm -rf "$OUT_DIR/tools/.node-tmp"
+cp -p "$YTDLP_EXE" "$OUT_DIR/tools/bin/yt-dlp.exe"
+
+# mermaid-cli für WINDOWS: das Repo-diagram_render/node_modules ist macOS-gebaut
+# (darwin-Prebuilds von @napi-rs/canvas) und auf Win nicht lauffähig. Darum hier
+# ein Windows-node_modules cross-installieren: --os/--cpu ziehen die win32-x64-
+# Prebuilds, PUPPETEER_SKIP_DOWNLOAD=1 lässt das (macOS-)Chromium weg — mmdc nutzt
+# auf dem Client das ohnehin gebündelte Playwright-Chromium via
+# PUPPETEER_EXECUTABLE_PATH (in engine/tools/image_gen.py gesetzt). Der Server
+# ruft `node <tools/diagram_render/.../cli.js>` — install.ps1 patcht image_gen NICHT;
+# der CLI-Pfad wird per Env DIAGRAM_RENDER_CLI überschrieben (BrainAgent.bat).
+DR_WIN="$OUT_DIR/tools/diagram_render"
+mkdir -p "$DR_WIN"
+cp "$REPO/diagram_render/package.json" "$DR_WIN/package.json"
+if command -v npm >/dev/null 2>&1; then
+  echo "  -> Cross-installing mermaid-cli for Windows (win32-x64, no chromium)..."
+  ( cd "$DR_WIN" && PUPPETEER_SKIP_DOWNLOAD=1 PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=1 \
+      npm install --os=win32 --cpu=x64 --no-audit --no-fund --silent )
+  [[ -f "$DR_WIN/node_modules/@mermaid-js/mermaid-cli/src/cli.js" ]] || {
+    echo "ERROR: mermaid-cli cli.js not found after Windows cross-install" >&2; exit 1; }
+else
+  echo "  !! npm not found — skipping Windows mermaid-cli (render_diagram bleibt auf Win aus)" >&2
+fi
+# Deterministische mtimes → tools-Komponente sha bleibt build-stabil.
+find "$OUT_DIR/tools" -exec touch -t 202601010000 {} + 2>/dev/null || true
+
+# --- installers/ : Tesseract + LibreOffice + R (Komponente "installers") -------
+# KEINE portablen Assets — Original-Installer, vom Operator bei Bedarf ausgeführt
+# (README + KOMPONENTEN_MATRIX). Groß (~0,9 GB), darum eigene optionale Komponente.
+mkdir -p "$OUT_DIR/installers"
+cp -p "$TESS_EXE" "$OUT_DIR/installers/$(basename "$TESS_EXE")"
+cp -p "$LO_MSI"   "$OUT_DIR/installers/$(basename "$LO_MSI")"
+cp -p "$R_EXE"    "$OUT_DIR/installers/$(basename "$R_EXE")"
+cat > "$OUT_DIR/installers/README.txt" <<INST
+Beigelegte Installer (optional) — bei Bedarf einmalig ausführen.
+Diese Programme sind KEINE portablen Bundle-Bestandteile; sie registrieren sich
+im System (PATH/Registry) und brauchen ggf. Admin-Rechte.
+
+1. Tesseract OCR (tesseract-ocr-w64-setup-${TESS_VER}.exe)
+   -> deterministische lokale OCR (Tool ocr_extract). Bei der Installation
+      "Additional language data" mit deutsch (deu) + englisch (eng) wählen.
+      Danach steht tesseract.exe auf dem PATH; ocr_extract funktioniert.
+
+2. LibreOffice (LibreOffice_${LO_VER}_Win_x86-64.msi)
+   -> nur für XLSX-Formel-Recalc (recalc:true) und .xls/.ods->.xlsx nötig.
+      Nach der Installation config.json -> xlsx.soffice_path auf
+      soffice.exe zeigen lassen (z. B. C:\\Program Files\\LibreOffice\\program\\soffice.exe).
+
+3. R für Windows (R-${R_VER}-win.exe)
+   -> nur für R-Code im Quant-Workbench (kernel_exec lang=r). Nach der
+      Installation einmalig in einer R-Konsole:
+          install.packages("IRkernel"); IRkernel::installspec()
+      damit der Jupyter-R-Kernel registriert ist.
+INST
+find "$OUT_DIR/installers" -exec touch -t 202601010000 {} + 2>/dev/null || true
 
 # HF cache, web-stack site-packages, browser builds
 mkdir -p "$OUT_DIR/hf-cache"
@@ -443,20 +556,39 @@ Funktioniert unter Windows genau wie auf dem Mac: das Bundle liefert MinGit
 Server fuehrt Befehle als `bash -l -c` aus. Unix-Kommandos (cat/head/grep/ps,
 2>/dev/null, ||) laufen damit unveraendert; git.exe steht ebenfalls auf dem PATH.
 
+Beigelegte Werkzeuge + Installer
+--------------------------------
+Das Voll-Paket bringt Host-Werkzeuge und optionale Installer mit (Minimal-Profil
+laesst beide weg). BrainAgent.bat legt die Werkzeuge automatisch auf den PATH.
+- Node.js (portabel) + mermaid-cli: render_diagram funktioniert ohne weitere
+  Installation. Das Diagramm nutzt das ohnehin geladene Playwright-Chromium.
+- yt-dlp.exe: YouTube-Transkription. Veraltet zwischen Releases (YouTube aendert
+  sein Frontend) — bei Fehlern einmalig aktualisieren:  yt-dlp -U
+- Ordner "installers\\" (bei Bedarf ausfuehren, s. installers\\README.txt):
+  * Tesseract-Setup  -> deterministische OCR (ocr_extract); bei der Installation
+    die Sprachen deu + eng mitwaehlen.
+  * LibreOffice-MSI  -> nur fuer XLSX-Formel-Recalc; danach config.json ->
+    xlsx.soffice_path auf soffice.exe setzen.
+  * R-Setup          -> nur fuer R im Quant-Workbench; danach in R einmalig
+    install.packages("IRkernel"); IRkernel::installspec()
+
 Grenzen unter Windows
 ---------------------
 - OCR gescannter Dokumente: kein in-process MLX-OCR (Apple-only). Auf Win11
   laeuft OCR ueber ein Vision-Modell auf dem Mac mini (ocr.engine="local_vision"
   + geladenes Vision-gemma, s. MACMINI_SETUP.md 2c) oder ueber die Cloud
-  (ocr.engine="mistral_ocr"). Seed: OCR ist AUS ("none") bis eine dieser
-  Optionen in config.json gesetzt und das Modell verfuegbar ist.
+  (ocr.engine="mistral_ocr"). Deterministische lokale OCR (ocr_extract) braucht
+  den beigelegten Tesseract-Installer (s. o.). Seed: OCR ist AUS ("none") bis
+  eine dieser Optionen in config.json gesetzt und das Modell verfuegbar ist.
 - Sprach-Transkription/TTS: nur ueber einen erreichbaren Audio-Endpoint
   (Mac mini oder Cloud), kein lokales Whisper. Standardmaessig unkonfiguriert.
 - Interaktives Projekt-Terminal: nicht verfuegbar (kein PTY unter Windows).
-- Mermaid-Diagramme: benoetigen Node.js auf PATH (optional).
+- Mermaid-Diagramme: im Voll-Profil einsatzbereit (Node + mermaid-cli gebuendelt).
+  Im Minimal-Profil fehlt das Chromium -> render_diagram degradiert (der Agent
+  faellt auf ```mermaid-Codebloecke zurueck).
 - MSSQL (db_query): "ODBC Driver 17 for SQL Server" MSI separat installieren
-  (Admin-Rechte noetig) — siehe DATA_SOURCES_V2_PLAN.md Anhang B.
-- Deterministische OCR-Tools (ocr_extract etc.): benoetigen Tesseract auf PATH.
+  (Admin-Rechte noetig, NICHT beigelegt — Microsoft-Redistribution) — siehe
+  DATA_SOURCES_V2_PLAN.md Anhang B.
 README
 
 # CRLF for the .bat files + README
@@ -494,23 +626,27 @@ comp_zip() {  # $1=name  $2..=Pfade relativ zu OUT_DIR (dirs und/oder files)
 }
 # Die Pfadlisten muessen zu den "dirs" im Manifest passen (Swap-Ziele von
 # setup_stage1.ps1); Top-Level-Skripte reisen in der app-Komponente mit.
-comp_zip app       app install.ps1 BrainAgent.bat stop.bat README.txt MACMINI_SETUP.md WIN_FOOTPRINT_ANALYSIS.md macmini
-comp_zip python    python
-comp_zip mingit    mingit
-comp_zip websearch venv-site browsers
-comp_zip qdrant    qdrant
-comp_zip hfcache   hf-cache
+comp_zip app        app install.ps1 BrainAgent.bat stop.bat README.txt MACMINI_SETUP.md WIN_FOOTPRINT_ANALYSIS.md macmini
+comp_zip python     python
+comp_zip mingit     mingit
+comp_zip websearch  venv-site browsers
+comp_zip qdrant     qdrant
+comp_zip hfcache    hf-cache
+comp_zip tools      tools
+comp_zip installers installers
 
 python3 - "$COMP/.entries" "$MANIFEST" "$VERSION" <<'EOF'
 import json, sys
 entries_path, manifest_path, version = sys.argv[1:4]
 META = {  # name -> (required, dirs, title)
-    "app":       (True,  ["app"],                    "Brain-Agent Programmcode + Skripte"),
-    "python":    (True,  ["python"],                 "Python 3.13 Runtime + Bibliotheken"),
-    "mingit":    (True,  ["mingit"],                 "MinGit (bash + coreutils + git fuer execute_command)"),
-    "websearch": (False, ["venv-site", "browsers"],  "Websuche lokal (SearXNG + crawl4ai + Chromium)"),
-    "qdrant":    (False, ["qdrant"],                 "Qdrant Vektor-DB lokal"),
-    "hfcache":   (False, ["hf-cache"],               "Embedding-Offline-Fallback (ONNX)"),
+    "app":        (True,  ["app"],                    "Brain-Agent Programmcode + Skripte"),
+    "python":     (True,  ["python"],                 "Python 3.13 Runtime + Bibliotheken"),
+    "mingit":     (True,  ["mingit"],                 "MinGit (bash + coreutils + git fuer execute_command)"),
+    "websearch":  (False, ["venv-site", "browsers"],  "Websuche lokal (SearXNG + crawl4ai + Chromium)"),
+    "qdrant":     (False, ["qdrant"],                 "Qdrant Vektor-DB lokal"),
+    "hfcache":    (False, ["hf-cache"],               "Embedding-Offline-Fallback (ONNX)"),
+    "tools":      (False, ["tools"],                  "Host-Werkzeuge (Node.js fuer Mermaid + yt-dlp)"),
+    "installers": (False, ["installers"],             "Beigelegte Installer (Tesseract/LibreOffice/R, optional)"),
 }
 components = []
 for line in open(entries_path, encoding="utf-8"):

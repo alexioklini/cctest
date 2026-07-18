@@ -203,7 +203,7 @@ Function OptionsPageCreate
   ${If} $DepsFlag == "1"
     ${NSD_Check} $ChkDeps
   ${EndIf}
-  ${NSD_CreateCheckbox} 0 113u 100% 24u "Minimal-Installation: Websuche, Qdrant und Embedding-Fallback laufen auf dem Mac mini statt lokal (spart ~1,3 GB; nur bei Neuinstallation)"
+  ${NSD_CreateCheckbox} 0 113u 100% 24u "Minimal-Installation: Websuche, Qdrant, Embedding-Fallback, Host-Werkzeuge (Node/yt-dlp) und beigelegte Installer weglassen (spart ~2,2 GB; nur bei Neuinstallation)"
   Pop $ChkMinimal
   ${If} $MinimalFlag == "1"
     ${NSD_Check} $ChkMinimal

@@ -310,8 +310,14 @@ def _working_node() -> str:
 def _mmdc_invocation() -> list:
     """[node, cli.js] to run mermaid-cli with a known-good node, or [] if the
     cli or a working node is missing."""
-    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    cli = os.path.join(root, _MMDC_CLI_REL)
+    # DIAGRAM_RENDER_CLI overrides the cli.js location — the Windows bundle ships
+    # a separately cross-installed (win32-x64) mermaid-cli under tools/diagram_render/
+    # because the repo diagram_render/node_modules is macOS-built. BrainAgent.bat
+    # points this at the bundled Windows tree; unset → the in-repo path (Mac).
+    cli = os.environ.get("DIAGRAM_RENDER_CLI", "").strip()
+    if not cli:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        cli = os.path.join(root, _MMDC_CLI_REL)
     if not os.path.exists(cli):
         return []
     node = _working_node()

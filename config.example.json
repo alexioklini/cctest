@@ -6235,16 +6235,16 @@
     "default_local_fallback_model": "",
     "limits": {
       "admin": {
-        "daily_usd": 50.0,
-        "cycle_usd": 800.0
+        "daily_usd": 5.0,
+        "cycle_usd": 25.0
       },
       "poweruser": {
-        "daily_usd": 20.0,
-        "cycle_usd": 200.0
+        "daily_usd": 5.0,
+        "cycle_usd": 25.0
       },
       "user": {
         "daily_usd": 5.0,
-        "cycle_usd": 50.0
+        "cycle_usd": 25.0
       }
     },
     "user_overrides": {}

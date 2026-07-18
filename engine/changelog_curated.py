@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.377.0",
+        "date": "2026-07-18",
+        "title": "Windows-Paket: mehr direkt einsatzbereit",
+        "body": "Das Windows-Paket bringt jetzt mehr Werkzeuge fertig mit, "
+                "sodass weniger nachinstalliert werden muss: Diagramme "
+                "(Mermaid) und der YouTube-Abruf funktionieren nach der "
+                "Installation sofort. Für die deterministische "
+                "Text-Erkennung (Tesseract), die Excel-Formel-Neuberechnung "
+                "(LibreOffice) und R für die Quant-Werkbank liegen die "
+                "passenden Installationsprogramme im Ordner „installers“ bei "
+                "— bei Bedarf ein Doppelklick statt Suche im Internet. Nur "
+                "der SQL-Server-Treiber (ODBC) muss aus Lizenzgründen weiter "
+                "separat installiert werden. Die schlanke „Minimal“-"
+                "Installation lässt diese Zusätze wie gehabt weg.",
+        "audience": "admin",
+        "versions": ["9.377.0"],
+    },
+    {
         "version": "9.375.0",
         "date": "2026-07-17",
         "title": "Datenquellen im Chat und Projekt nutzen",

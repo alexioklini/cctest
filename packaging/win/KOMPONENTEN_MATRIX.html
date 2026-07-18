@@ -156,7 +156,7 @@
     <div class="grp"><span class="chip m4">Mac mini M4</span><span class="lbl">Inferenz-Box (LAN)</span></div>
     <div class="grp"><span class="chip cl">Client</span><span class="lbl">M2 heute · Win11 künftig</span></div>
     <div class="grp"><span class="chip cloud">Cloud</span><span class="lbl">optional, extern</span></div>
-    <div class="grp"><span class="tag good"><span class="dot good"></span>Ja</span><span class="lbl">dokumentiert / im Bundle</span></div>
+    <div class="grp"><span class="tag good"><span class="dot good"></span>Ja / Im Bundle / Beigelegt</span><span class="lbl">im Paket (Werkzeug gebündelt bzw. Installer beigelegt)</span></div>
     <div class="grp"><span class="tag warn"><span class="dot warn"></span>Extern</span><span class="lbl">separat / manuell nötig</span></div>
     <div class="grp"><span class="tag off"><span class="dot off"></span>N/A</span><span class="lbl">betrifft diese Maschine nicht</span></div>
   </div>
@@ -328,7 +328,7 @@
           </tr>
 
           <!-- ===================== GRUPPE 4 ===================== -->
-          <tr class="grouprow"><td colspan="5">Externe Voraussetzungen · nicht im Bundle <span class="gcount">— auf dem Client separat installieren / auf PATH bereitstellen</span></td></tr>
+          <tr class="grouprow"><td colspan="5">Host-Werkzeuge · gebündelt <span class="gcount">— portable Binaries im Paket, von <code>BrainAgent.bat</code> auf den PATH gelegt</span></td></tr>
 
           <tr>
             <td><span class="comp">MinGit<span class="sub">bash + coreutils + git</span></span></td>
@@ -338,46 +338,52 @@
             <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">MinGit 2.51.0 · eigene <code>required</code>-Komponente</span></td>
           </tr>
           <tr>
-            <td><span class="comp">ODBC Driver 17<span class="sub">SQL Server · MSSQL</span></span></td>
-            <td class="use">Bank-MSSQL-Zugriff (<code>db_query</code>). <code>pyodbc</code> ist im Bundle, der Treiber nicht.</td>
+            <td><span class="comp">Node.js + mermaid-cli<span class="sub">render_diagram</span></span></td>
+            <td class="use">Mermaid-Quelle→SVG/PNG/PDF-Artefakt. Nutzt das bereits geladene Playwright-Chromium (<code>PUPPETEER_EXECUTABLE_PATH</code>).</td>
             <td><div class="where"><span class="chip cl">Client</span></div></td>
             <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
-            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (MSI)</span><span class="cell-note">Separates MSI, Admin-Rechte — dokumentiert im Installer</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">Node 24-LTS portabel + win32-x64-mermaid-cli (Komponente <code>tools</code>); kein Browser-Zweitdownload</span></td>
           </tr>
+          <tr>
+            <td><span class="comp">yt-dlp<span class="sub">YouTube-Transkription</span></span></td>
+            <td class="use">YouTube-URL→Audio-Download→STT. Single-Binary auf dem PATH.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note"><code>yt-dlp.exe</code> (Komponente <code>tools</code>); veraltet zwischen Releases → <code>yt-dlp -U</code></span></td>
+          </tr>
+
+          <tr class="grouprow"><td colspan="5">Beigelegte Installer · im Paket, einmalig auszuführen <span class="gcount">— System-Installer (kein portables Asset); optionale Komponente <code>installers</code>, Minimal-Profil lässt sie weg</span></td></tr>
+
           <tr>
             <td><span class="comp">Tesseract<span class="sub">ocr_extract</span></span></td>
-            <td class="use">Deterministische lokale OCR (kein LLM/Cloud). <code>pytesseract</code> im Bundle, Binary nicht.</td>
+            <td class="use">Deterministische lokale OCR (kein LLM/Cloud). <code>pytesseract</code> im Bundle, das Binary via Setup.</td>
             <td><div class="where"><span class="chip cl">Client</span></div></td>
             <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
-            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (PATH)</span><span class="cell-note">Tesseract 5.x auf PATH — in README genannt</span></td>
-          </tr>
-          <tr>
-            <td><span class="comp">Node.js + mermaid-cli<span class="sub">render_diagram</span></span></td>
-            <td class="use">Mermaid-Quelle→SVG/PNG/PDF-Artefakt. Nutzt die vorhandene Playwright-Chromium.</td>
-            <td><div class="where"><span class="chip cl">Client</span></div></td>
-            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
-            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (optional)</span><span class="cell-note">Node auf PATH + <code>npm install</code> in <code>diagram_render/</code></span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Beigelegt</span><span class="cell-note">Setup 5.4 (UB-Mannheim, NSIS) in <code>installers\</code> — Sprachen deu+eng mitwählen</span></td>
           </tr>
           <tr>
             <td><span class="comp">LibreOffice · soffice<span class="sub">xlsx recalc</span></span></td>
             <td class="use">Formel-Recalc + <code>.xls/.ods</code>→<code>.xlsx</code>. Nur bei explizitem <code>recalc:true</code> nötig.</td>
             <td><div class="where"><span class="chip cl">Client</span></div></td>
             <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
-            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (optional)</span><span class="cell-note">Nicht im Paket; <code>config.json → xlsx.soffice_path</code></span></td>
-          </tr>
-          <tr>
-            <td><span class="comp">yt-dlp<span class="sub">YouTube-Transkription</span></span></td>
-            <td class="use">YouTube-URL→Audio-Download→STT. Host-Abhängigkeit.</td>
-            <td><div class="where"><span class="chip cl">Client</span></div></td>
-            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
-            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (optional)</span><span class="cell-note">Nicht im Paket; stillschweigende Host-Voraussetzung</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Beigelegt</span><span class="cell-note">MSI 26.2.4 in <code>installers\</code>; danach <code>config.json → xlsx.soffice_path</code></span></td>
           </tr>
           <tr>
             <td><span class="comp">R / Rscript + IRkernel<span class="sub">kernel_exec lang=r</span></span></td>
             <td class="use">R-Code-Ausführung im Quant-Workbench (Jupyter-Kernel). Statische R-Analyse braucht kein R.</td>
             <td><div class="where"><span class="chip cl">Client</span></div></td>
             <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
-            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (optional)</span><span class="cell-note">Nicht im Paket; System-R + IRkernel nötig</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Beigelegt</span><span class="cell-note">Setup 4.6.1 (CRAN) in <code>installers\</code>; danach <code>IRkernel::installspec()</code></span></td>
+          </tr>
+
+          <tr class="grouprow"><td colspan="5">Externe Voraussetzung · nicht im Bundle <span class="gcount">— Lizenz verbietet Redistribution</span></td></tr>
+
+          <tr>
+            <td><span class="comp">ODBC Driver 17<span class="sub">SQL Server · MSSQL</span></span></td>
+            <td class="use">Bank-MSSQL-Zugriff (<code>db_query</code>). <code>pyodbc</code> ist im Bundle, der Treiber nicht.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (MSI)</span><span class="cell-note">Microsoft-EULA erlaubt keine Weitergabe; offizielles MSI, Admin-Rechte</span></td>
           </tr>
 
         </tbody>
@@ -389,7 +395,8 @@
     <div class="fnote"><span class="chip cloud" style="font-size:10.5px">Cloud*</span> &nbsp;OCR/TTS können optional über Mistral-Cloud laufen — Daten verlassen dann das Haus.</div>
     <div class="fnote" style="margin-top:6px"><span class="chip cl" style="font-size:10.5px">Client*</span> &nbsp;Embedding fällt bei Mac-mini-Ausfall auf ein lokales CPU-ONNX-Modell zurück (im Bundle, im Voll-Profil).</div>
     <div class="fnote" style="margin-top:6px"><span class="chip m4" style="font-size:10.5px">M4†</span> &nbsp;Qdrant/SearXNG/crawl4ai laufen nur im <strong>Minimal-Profil</strong> auf dem Mac mini — im Voll-Profil lokal auf dem Client.</div>
-    <div class="updated">Belegt gegen <code>build_win.sh</code> · <code>install.ps1</code> · <code>MACMINI_SETUP.md</code> · Server-Code (Stand v9.376.0, Trennungssimulation M2/M4)</div>
+    <div class="fnote" style="margin-top:6px"><span class="tag good" style="font-size:10.5px"><span class="dot good"></span>Beigelegt</span> &nbsp;Die Installer (Tesseract/LibreOffice/R) sind System-Installer, keine portablen Assets — sie reisen als optionale Komponente <code>installers</code> mit und werden bei Bedarf einmalig ausgeführt. Das <strong>Minimal-Profil</strong> lässt sowohl <code>tools</code> als auch <code>installers</code> weg (render_diagram degradiert dann mangels Chromium).</div>
+    <div class="updated">Belegt gegen <code>build_win.sh</code> · <code>install.ps1</code> · <code>BrainAgent.bat</code> · <code>setup_stage1.ps1</code> · Server-Code (Stand v9.377.0, Host-Werkzeuge + Installer gebündelt)</div>
   </footer>
 </div>
 
