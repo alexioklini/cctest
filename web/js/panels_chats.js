@@ -282,8 +282,11 @@ function updateStatusBar() {
       if (m.role === 'assistant' && m.metadata?.model) { _effCacheModel = m.metadata.model; break; }
     }
     const _save = (typeof cacheSavingsUSD === 'function') ? cacheSavingsUSD(_effCacheModel, totalCached) : 0;
-    // Whether this model is cache-priced at all (has cost_cache_read config).
-    // If NOT, caching never happens for it — say so in the tooltip.
+    // Whether caching HAPPENED is a token fact (totalCached>0), independent of
+    // whether the model has a $-tariff (cost_cache_read). Never conflate them:
+    // a plan model like k3 caches for real but has no per-token tariff, so the
+    // tooltip must not claim "kein Prompt-Caching" — the $-note is only a
+    // pricing caveat. (Mirrors chat_render.js; see the k3 0%-display bug.)
     const _mcfg = state.modelsConfig?.models?.[_effCacheModel] || {};
     const _cachePriced = Number(_mcfg.cost_cache_read) > 0;
     if (msgs.length === 0) {
@@ -292,11 +295,12 @@ function updateStatusBar() {
       cachedWrap.style.display = '';
       cachedLabel.textContent = `${totalCached.toLocaleString()} (${_hitPct}%)`;
       cachedLabel.style.color = totalCached > 0 ? '#10b981' : '';
-      if (!_cachePriced) {
-        cachedWrap.title = 'Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es findet kein Prompt-Caching statt. Bei cache-fähigen Modellen (z. B. glm, kimi, Mistral) wird der wiederholte Prefix zum ~0,1×-Tarif abgerechnet.';
-      } else {
-        cachedWrap.title = `Prompt-Cache-Treffer dieser Sitzung: ${totalCached.toLocaleString()} Tokens = ${_hitPct}% des Prompts, zum ~0,1×-Tarif abgerechnet.${_save > 0 ? ' Ersparnis ggü. vollem Eingabe-Tarif: $' + _save.toFixed(4) + '.' : ''}`;
-      }
+      const _priceNote = _cachePriced
+        ? (_save > 0 ? ` Ersparnis ggü. vollem Eingabe-Tarif: $${_save.toFixed(4)}.` : '')
+        : ' Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read), daher wird keine $-Ersparnis berechnet — das Caching selbst findet trotzdem statt.';
+      cachedWrap.title = totalCached > 0
+        ? `Prompt-Cache-Treffer dieser Sitzung: ${totalCached.toLocaleString()} Tokens = ${_hitPct}% des Prompts${_cachePriced ? ', zum ~0,1×-Tarif abgerechnet' : ''}.${_priceNote}`
+        : `Kein Cache-Treffer in dieser Sitzung (0 Tokens).${_cachePriced ? '' : _priceNote}`;
     }
   }
 
