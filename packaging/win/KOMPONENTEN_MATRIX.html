@@ -1,0 +1,400 @@
+<meta charset="utf-8">
+<title>Brain-Agent — Externe Komponenten-Matrix</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#f4f7fb; --panel:#ffffff; --ink:#0f1720; --ink-soft:#47576b;
+    --line:#dde5ef; --line-soft:#eaf0f7;
+    --accent:#2f6df6; --accent-soft:#e7effe;
+    --good:#1f8a5b; --good-bg:#e3f4ea;
+    --warn:#a9720a; --warn-bg:#f8eed6;
+    --off:#7a8699; --off-bg:#eef1f6;
+    /* Plattform-Töne — je Maschine eine eigene gedämpfte Kennung */
+    --m4:#6a4fd0; --m4-bg:#ece7fb;          /* Mac mini M4 — Inferenz */
+    --cl:#0e7490; --cl-bg:#dcf0f5;          /* Client (M2 / Win11) */
+    --cloud:#8a6d3b; --cloud-bg:#f2ead9;    /* Cloud */
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0c1017; --panel:#141b24; --ink:#e4ebf3; --ink-soft:#98a7b8;
+      --line:#243040; --line-soft:#1b242f;
+      --accent:#6ea0ff; --accent-soft:#17273f;
+      --good:#3fcf8e; --good-bg:#122a20;
+      --warn:#e0b24a; --warn-bg:#2c2411;
+      --off:#7c8ba0; --off-bg:#1a222d;
+      --m4:#a58cf0; --m4-bg:#241d3a; --cl:#4bc5dc; --cl-bg:#0f2a30;
+      --cloud:#cbab6f; --cloud-bg:#2a2314;
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#f4f7fb; --panel:#ffffff; --ink:#0f1720; --ink-soft:#47576b;
+    --line:#dde5ef; --line-soft:#eaf0f7; --accent:#2f6df6; --accent-soft:#e7effe;
+    --good:#1f8a5b; --good-bg:#e3f4ea; --warn:#a9720a; --warn-bg:#f8eed6;
+    --off:#7a8699; --off-bg:#eef1f6; --m4:#6a4fd0; --m4-bg:#ece7fb;
+    --cl:#0e7490; --cl-bg:#dcf0f5; --cloud:#8a6d3b; --cloud-bg:#f2ead9;
+  }
+  :root[data-theme="dark"]{
+    --bg:#0c1017; --panel:#141b24; --ink:#e4ebf3; --ink-soft:#98a7b8;
+    --line:#243040; --line-soft:#1b242f; --accent:#6ea0ff; --accent-soft:#17273f;
+    --good:#3fcf8e; --good-bg:#122a20; --warn:#e0b24a; --warn-bg:#2c2411;
+    --off:#7c8ba0; --off-bg:#1a222d; --m4:#a58cf0; --m4-bg:#241d3a;
+    --cl:#4bc5dc; --cl-bg:#0f2a30; --cloud:#cbab6f; --cloud-bg:#2a2314;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+    font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1200px; margin:0 auto; padding:40px 24px 80px}
+
+  header{margin-bottom:32px}
+  .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:.12em;
+    text-transform:uppercase; color:var(--accent); margin:0 0 10px;
+    display:flex; align-items:center; gap:10px;
+  }
+  .eyebrow::before{content:""; width:26px; height:2px; background:var(--accent); display:inline-block}
+  h1{
+    font-size:clamp(26px,4vw,38px); line-height:1.1; margin:0 0 12px;
+    font-weight:700; letter-spacing:-.02em; text-wrap:balance;
+  }
+  .lede{color:var(--ink-soft); max-width:64ch; margin:0; font-size:15.5px}
+  .lede code{font-family:var(--mono); font-size:.86em; background:var(--off-bg);
+    padding:1px 5px; border-radius:4px; color:var(--ink)}
+
+  /* Legende */
+  .legend{
+    display:flex; flex-wrap:wrap; gap:10px 22px; margin:26px 0 8px;
+    padding:16px 18px; background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; font-size:13px;
+  }
+  .legend h2{font-size:12px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--ink-soft); margin:0 100% 4px 0; width:100%; font-weight:600}
+  .legend .grp{display:flex; align-items:center; gap:8px}
+  .legend .grp + .grp{border-left:1px solid var(--line-soft); padding-left:22px}
+  .legend .lbl{color:var(--ink-soft)}
+
+  .chip{
+    display:inline-flex; align-items:center; gap:5px; font-family:var(--mono);
+    font-size:11.5px; font-weight:600; letter-spacing:.01em; line-height:1;
+    padding:4px 8px; border-radius:6px; white-space:nowrap;
+  }
+  .chip.m4{color:var(--m4); background:var(--m4-bg)}
+  .chip.cl{color:var(--cl); background:var(--cl-bg)}
+  .chip.cloud{color:var(--cloud); background:var(--cloud-bg)}
+  .dot{width:7px; height:7px; border-radius:50%; flex:none}
+  .dot.good{background:var(--good)} .dot.warn{background:var(--warn)} .dot.off{background:var(--off)}
+
+  .tag{
+    display:inline-flex; align-items:center; gap:6px; font-size:12.5px;
+    font-weight:600; padding:3px 9px 3px 8px; border-radius:20px; line-height:1.3;
+  }
+  .tag.good{color:var(--good); background:var(--good-bg)}
+  .tag.warn{color:var(--warn); background:var(--warn-bg)}
+  .tag.off{color:var(--off); background:var(--off-bg)}
+
+  /* Tabelle */
+  .tablecard{
+    margin-top:22px; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; overflow:hidden;
+  }
+  .scroll{overflow-x:auto}
+  table{border-collapse:collapse; width:100%; min-width:940px}
+  thead th{
+    position:sticky; top:0; z-index:2; background:var(--panel);
+    text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:.07em;
+    color:var(--ink-soft); font-weight:600; padding:14px 16px 12px;
+    border-bottom:1.5px solid var(--line);
+  }
+  tbody td{padding:13px 16px; border-bottom:1px solid var(--line-soft); vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover td{background:var(--accent-soft)}
+  tbody tr:hover td.grouprow{background:var(--panel)}
+
+  .grouprow td{
+    background:var(--bg); padding:16px 16px 8px; border-bottom:1px solid var(--line);
+    font-family:var(--mono); font-size:11.5px; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--accent); font-weight:700;
+  }
+  .grouprow .gcount{color:var(--ink-soft); font-weight:500; letter-spacing:.04em}
+
+  .comp{font-weight:650; font-size:14.5px; color:var(--ink); letter-spacing:-.005em}
+  .comp .sub{display:block; font-family:var(--mono); font-size:11.5px; font-weight:500;
+    color:var(--ink-soft); margin-top:3px; letter-spacing:0}
+  .use{color:var(--ink-soft); font-size:13.5px; max-width:34ch}
+  .where{display:flex; flex-wrap:wrap; gap:5px}
+  .cell-note{font-size:12px; color:var(--ink-soft); margin-top:5px; display:block; max-width:30ch}
+  .cell-note code{font-family:var(--mono); font-size:.92em}
+  td.evid{white-space:normal}
+
+  .colcomp{width:20%} .coluse{width:24%} .colwhere{width:15%}
+  .colmd{width:20%} .colwin{width:21%}
+
+  footer{margin-top:34px; color:var(--ink-soft); font-size:12.5px; line-height:1.7}
+  footer code{font-family:var(--mono); font-size:.92em; background:var(--off-bg);
+    padding:1px 5px; border-radius:4px}
+  footer .fnote{padding-left:16px; position:relative}
+  footer .fnote::before{content:"→"; position:absolute; left:0; color:var(--accent)}
+  .updated{font-family:var(--mono); font-size:11.5px; color:var(--ink-soft); margin-top:18px;
+    padding-top:14px; border-top:1px solid var(--line)}
+  a{color:var(--accent)}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:3px}
+</style>
+
+<div class="wrap">
+  <header>
+    <p class="eyebrow">Betriebsübersicht · Trennungs-Architektur</p>
+    <h1>Externe Komponenten des Brain-Agent</h1>
+    <p class="lede">Jede extern genutzte, betriebsnotwendige Komponente — wofür sie dient, auf welcher der drei Maschinen sie läuft, und ob ihr Aufbau abgedeckt ist. Der <strong>Server</strong> läuft auf dem Client (heute <code>Mac Studio M2</code>, künftig <code>Win11</code>); GPU-/MLX-Inferenz läuft remote auf dem <code>Mac mini M4</code>.</p>
+  </header>
+
+  <div class="legend">
+    <h2>Legende</h2>
+    <div class="grp"><span class="chip m4">Mac mini M4</span><span class="lbl">Inferenz-Box (LAN)</span></div>
+    <div class="grp"><span class="chip cl">Client</span><span class="lbl">M2 heute · Win11 künftig</span></div>
+    <div class="grp"><span class="chip cloud">Cloud</span><span class="lbl">optional, extern</span></div>
+    <div class="grp"><span class="tag good"><span class="dot good"></span>Ja</span><span class="lbl">dokumentiert / im Bundle</span></div>
+    <div class="grp"><span class="tag warn"><span class="dot warn"></span>Extern</span><span class="lbl">separat / manuell nötig</span></div>
+    <div class="grp"><span class="tag off"><span class="dot off"></span>N/A</span><span class="lbl">betrifft diese Maschine nicht</span></div>
+  </div>
+
+  <div class="tablecard">
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="colcomp">Komponente</th>
+            <th class="coluse">Wofür genutzt</th>
+            <th class="colwhere">Läuft auf</th>
+            <th class="colmd">M4 in <code>MACMINI_SETUP.md</code>?</th>
+            <th class="colwin">Win11 via <code>setup.exe</code>?</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <!-- ===================== GRUPPE 1 ===================== -->
+          <tr class="grouprow"><td colspan="5">Remote-Inferenz · Mac mini M4 <span class="gcount">— GPU/MLX-Dienste, die der Client über LAN aufruft</span></td></tr>
+
+          <tr>
+            <td><span class="comp">oMLX<span class="sub">Chat-LLM · :8000</span></span></td>
+            <td class="use">Chat + alle LLM-Hintergrundaufrufe (Zusammenfassung, Klassifikator, Next-Prompt, Wiki). Provider „Lokal", gemma-4-12B.</td>
+            <td><div class="where"><span class="chip m4">M4</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§1 Dienst einrichten · §2 Modelle</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern</span><span class="cell-note">Läuft auf dem M4; <code>install.ps1</code> patcht nur die IP</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">Reranker · Infinity<span class="sub">bge-reranker-v2-m3 · :8002</span></span></td>
+            <td class="use">Retrieval-Reranking der Gedächtnis-Treffer (+0,075 Score). Latcht bei Ausfall auf Vektor-Reihenfolge.</td>
+            <td><div class="where"><span class="chip m4">M4</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§4 · Pins <code>optimum&lt;1.24</code> + <code>click&lt;8.2</code></span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern</span><span class="cell-note">Nicht gebündelt (braucht torch); IP-Patch</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">Whisper · STT<span class="sub">whisper-large-v3-turbo · :8001</span></span></td>
+            <td class="use">Sprach-Transkription über OpenAI-kompatiblen Wrapper. Auf dem M2 in-process via <code>mlx_whisper</code>.</td>
+            <td><div class="where"><span class="chip m4">M4</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§2d + §4 · Wrapper <code>whisper_stt_server.py</code></span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern</span><span class="cell-note">Skript reist im Bundle mit, Betrieb auf M4; kein lokales Whisper</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">ffmpeg<span class="sub">STT-Audio-Dekodierung</span></span></td>
+            <td class="use">Wird von <code>mlx_whisper</code> intern aufgerufen (Audio→WAV). Ohne ffmpeg im PATH bleibt die Transkription leer.</td>
+            <td><div class="where"><span class="chip m4">M4</span></div></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Implizit</span><span class="cell-note">Von STT vorausgesetzt; PATH muss <code>/opt/homebrew/bin</code> enthalten</span></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span><span class="cell-note">Nur auf dem M4 (STT läuft dort)</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">GLM-OCR<span class="sub">GLM-OCR-8bit · :8003</span></span></td>
+            <td class="use">OCR gescannter Dokumente (Bild→Text) über Wrapper. Alternativen: Cloud (<code>mistral_ocr</code>) oder <code>local_vision</code>.</td>
+            <td><div class="where"><span class="chip m4">M4</span><span class="chip cloud">Cloud*</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§4a Wrapper · §2c Alternativen</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern</span><span class="cell-note">Skript im Bundle, Betrieb auf M4; IP-Patch</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">Embedding<span class="sub">embeddinggemma-300m</span></span></td>
+            <td class="use">MemPalace-Gedächtnis-Embedding. Primär über oMLX; bei Ausfall lokaler CPU-ONNX-Fallback.</td>
+            <td><div class="where"><span class="chip m4">M4</span><span class="chip cl">Client*</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§2b · Modell nach <code>~/.omlx/models</code></span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Fallback</span><span class="cell-note">ONNX-Modell im Bundle (<code>hfcache</code>); Minimal-Profil lässt es weg</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">TTS<span class="sub">Voxtral / oMLX-TTS</span></span></td>
+            <td class="use">Podcast/Vorlesen. Heute Mistral-Cloud <code>voxtral-mini-tts</code>; lokale Alternative als M4-Wrapper.</td>
+            <td><div class="where"><span class="chip cloud">Cloud</span><span class="chip m4">M4*</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§2d + §4 (optional)</span></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span><span class="cell-note">Cloud-Provider oder M4-Wrapper; optional</span></td>
+          </tr>
+
+          <!-- ===================== GRUPPE 2 ===================== -->
+          <tr class="grouprow"><td colspan="5">Client-Dienste · lokal im Voll-Profil <span class="gcount">— eigene Prozesse auf dem Client; im Minimal-Profil auf den M4 verlagert</span></td></tr>
+
+          <tr>
+            <td><span class="comp">Qdrant<span class="sub">Vektor-DB · :6333</span></span></td>
+            <td class="use">MemPalace-Vektor-DB (Gedächtnis-Suche). Brain spricht nur REST.</td>
+            <td><div class="where"><span class="chip cl">Client</span><span class="chip m4">M4†</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§6.1 — nur im Minimal-Profil auf dem M4</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note"><code>qdrant.exe</code> v1.18.2 (Komponente <code>qdrant</code>)</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">SearXNG<span class="sub">Websuche · :8088</span></span></td>
+            <td class="use">Websuche (<code>searxng_search</code> + Websuche-Tab). Vendored Checkout, <code>python -m searx.webapp</code>.</td>
+            <td><div class="where"><span class="chip cl">Client</span><span class="chip m4">M4†</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§6.2 — nur im Minimal-Profil</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">venv + Checkout (Komponente <code>websearch</code>)</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">crawl4ai + Chromium<span class="sub">JS-Render · :8422</span></span></td>
+            <td class="use">JS-Seiten→Markdown (<code>web_fetch</code>-Fallback). Headless-Chromium via Playwright; degradiert graceful.</td>
+            <td><div class="where"><span class="chip cl">Client</span><span class="chip m4">M4†</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Ja</span><span class="cell-note">§6.3 — nur im Minimal-Profil</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">venv + Chromium-CfT (Komponente <code>websearch</code>)</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">valkey<span class="sub">Redis-kompatibel</span></span></td>
+            <td class="use">SearXNG-Abhängigkeit — kein eigener Redis-Server nötig (Limiter aus).</td>
+            <td><div class="where"><span class="chip cl">Client</span><span class="chip m4">M4†</span></div></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>implizit</span><span class="cell-note">über SearXNG §6.2</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">in <code>venv-site/searxng</code></span></td>
+          </tr>
+
+          <!-- ===================== GRUPPE 3 ===================== -->
+          <tr class="grouprow"><td colspan="5">Bibliotheken · in-process im Bundle <span class="gcount">— Python-Pakete des Servers; auf Win11 in der <code>python</code>-Komponente enthalten</span></td></tr>
+
+          <tr>
+            <td><span class="comp">Python-Runtime<span class="sub">CPython 3.13.13</span></span></td>
+            <td class="use">Server-Interpreter + Python-Kernel des Quant-Workbench. Portable Standalone-Build.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">Komponente <code>python</code> · 3.13 wg. spaCy-Wheels</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">MemPalace<span class="sub">Gedächtnis-Engine</span></span></td>
+            <td class="use">In-process-Gedächtnis (Suche, Knowledge-Graph, Closets). Kein MCP/Subprozess.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">gepatchte Version aus dem Mac-venv</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">spaCy + NER-Modelle<span class="sub">de/en · GDPR/PII</span></span></td>
+            <td class="use">GDPR/PII-NER-Scanner (Bank-Kernfeature). Bleibt bewusst lokal (fail-closed).</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">win32-gated; erzwingt Python 3.13</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">markitdown<span class="sub">Doku-Konvertierung</span></span></td>
+            <td class="use">Bevorzugter Backend der Dokument-Extraktion (Subprozess-CLI, dann eigene Parser als Fallback).</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">pip → <code>Scripts/markitdown.exe</code></span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">PyMuPDF + pdfplumber<span class="sub">pymupdf4llm</span></span></td>
+            <td class="use">PDF→Text/Markdown im Extraktions-Chokepoint; pdfplumber rekonstruiert Tabellen.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">größter Posten (~97 MB)</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">DuckDB<span class="sub">data_query</span></span></td>
+            <td class="use">Tabellen-Abfragen + SQL-Lineage im Quant-Workbench.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">tree-sitter · sqlglot<span class="sub">Code-Graph · SQL-Lineage</span></span></td>
+            <td class="use">Tree-sitter-AST für den Code-Graph; sqlglot für SQL-Lineage-Analyse.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">Office-Erzeugung<span class="sub">docx · pptx · pdf · xlsx</span></span></td>
+            <td class="use"><code>write_document</code>: python-docx, python-pptx, reportlab, openpyxl, Pillow — direkt, kein externer Prozess.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">oletools + pyxlsb<span class="sub">Legacy-Office</span></span></td>
+            <td class="use">.xlsb-Reader + VBA-Quellcode-Extraktion (nie ausgeführt).</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span></td>
+          </tr>
+
+          <!-- ===================== GRUPPE 4 ===================== -->
+          <tr class="grouprow"><td colspan="5">Externe Voraussetzungen · nicht im Bundle <span class="gcount">— auf dem Client separat installieren / auf PATH bereitstellen</span></td></tr>
+
+          <tr>
+            <td><span class="comp">MinGit<span class="sub">bash + coreutils + git</span></span></td>
+            <td class="use">Macht <code>execute_command</code> unter Windows lauffähig (<code>bash -l -c</code>) und liefert <code>git.exe</code> auf PATH.</td>
+            <td><div class="where"><span class="chip cl">Win11</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span><span class="cell-note">Auf dem Mac nativ; der Mini leistet dazu nichts</span></td>
+            <td class="evid"><span class="tag good"><span class="dot good"></span>Im Bundle</span><span class="cell-note">MinGit 2.51.0 · eigene <code>required</code>-Komponente</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">ODBC Driver 17<span class="sub">SQL Server · MSSQL</span></span></td>
+            <td class="use">Bank-MSSQL-Zugriff (<code>db_query</code>). <code>pyodbc</code> ist im Bundle, der Treiber nicht.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (MSI)</span><span class="cell-note">Separates MSI, Admin-Rechte — dokumentiert im Installer</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">Tesseract<span class="sub">ocr_extract</span></span></td>
+            <td class="use">Deterministische lokale OCR (kein LLM/Cloud). <code>pytesseract</code> im Bundle, Binary nicht.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (PATH)</span><span class="cell-note">Tesseract 5.x auf PATH — in README genannt</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">Node.js + mermaid-cli<span class="sub">render_diagram</span></span></td>
+            <td class="use">Mermaid-Quelle→SVG/PNG/PDF-Artefakt. Nutzt die vorhandene Playwright-Chromium.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (optional)</span><span class="cell-note">Node auf PATH + <code>npm install</code> in <code>diagram_render/</code></span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">LibreOffice · soffice<span class="sub">xlsx recalc</span></span></td>
+            <td class="use">Formel-Recalc + <code>.xls/.ods</code>→<code>.xlsx</code>. Nur bei explizitem <code>recalc:true</code> nötig.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (optional)</span><span class="cell-note">Nicht im Paket; <code>config.json → xlsx.soffice_path</code></span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">yt-dlp<span class="sub">YouTube-Transkription</span></span></td>
+            <td class="use">YouTube-URL→Audio-Download→STT. Host-Abhängigkeit.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (optional)</span><span class="cell-note">Nicht im Paket; stillschweigende Host-Voraussetzung</span></td>
+          </tr>
+          <tr>
+            <td><span class="comp">R / Rscript + IRkernel<span class="sub">kernel_exec lang=r</span></span></td>
+            <td class="use">R-Code-Ausführung im Quant-Workbench (Jupyter-Kernel). Statische R-Analyse braucht kein R.</td>
+            <td><div class="where"><span class="chip cl">Client</span></div></td>
+            <td class="evid"><span class="tag off"><span class="dot off"></span>N/A</span></td>
+            <td class="evid"><span class="tag warn"><span class="dot warn"></span>Extern (optional)</span><span class="cell-note">Nicht im Paket; System-R + IRkernel nötig</span></td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer>
+    <div class="fnote"><span class="chip cloud" style="font-size:10.5px">Cloud*</span> &nbsp;OCR/TTS können optional über Mistral-Cloud laufen — Daten verlassen dann das Haus.</div>
+    <div class="fnote" style="margin-top:6px"><span class="chip cl" style="font-size:10.5px">Client*</span> &nbsp;Embedding fällt bei Mac-mini-Ausfall auf ein lokales CPU-ONNX-Modell zurück (im Bundle, im Voll-Profil).</div>
+    <div class="fnote" style="margin-top:6px"><span class="chip m4" style="font-size:10.5px">M4†</span> &nbsp;Qdrant/SearXNG/crawl4ai laufen nur im <strong>Minimal-Profil</strong> auf dem Mac mini — im Voll-Profil lokal auf dem Client.</div>
+    <div class="updated">Belegt gegen <code>build_win.sh</code> · <code>install.ps1</code> · <code>MACMINI_SETUP.md</code> · Server-Code (Stand v9.376.0, Trennungssimulation M2/M4)</div>
+  </footer>
+</div>
+
+<script>
+  // Theme toggle stamps data-theme on <html>; nothing else needed — CSS handles both.
+  // Keep tabular figures aligned even if the browser's default differs.
+  document.documentElement.style.setProperty('font-variant-numeric','tabular-nums');
+</script>
