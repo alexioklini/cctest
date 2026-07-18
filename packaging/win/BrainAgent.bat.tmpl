@@ -37,6 +37,16 @@ set "HF_HUB_OFFLINE=1"
 set "PYTHONDONTWRITEBYTECODE=1"
 set "PYTHONUNBUFFERED=1"
 
+rem ---- execute_command shell: bundled MinGit bash so `bash -l -c` runs commands
+rem ---- exactly like the Mac login shell (coreutils cat/head/ps/grep on PATH via
+rem ---- /etc/profile). Points at the bundle (survives data-dir updates); the
+rem ---- server reads BRAIN_SHELL_PATH when tools_config execute_command.shell_path
+rem ---- is empty. Also puts git.exe on PATH (mempalace git-source miner).
+if exist "%SCRIPT_DIR%mingit\usr\bin\bash.exe" (
+  set "BRAIN_SHELL_PATH=%SCRIPT_DIR%mingit\usr\bin\bash.exe"
+  set "PATH=%SCRIPT_DIR%mingit\cmd;%SCRIPT_DIR%mingit\usr\bin;%PATH%"
+)
+
 rem ---- Qdrant (remote im Minimal-Profil; skip start if already answering)
 if "%BRAIN_QDRANT_LOCAL%"=="0" goto qdrant_ok
 curl -s -o nul --max-time 2 http://127.0.0.1:6333/readyz

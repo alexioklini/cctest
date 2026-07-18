@@ -205,7 +205,7 @@ class KernelManager:
         env["PYTHONDONTWRITEBYTECODE"] = "1"
         if lang == "python" and venv_path and os.path.isdir(venv_path):
             env["PYTHONPATH"] = venv_path + (
-                (":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
+                (os.pathsep + env["PYTHONPATH"]) if env.get("PYTHONPATH") else "")
         os.makedirs(cwd, exist_ok=True)
         km.start_kernel(cwd=cwd, env=env)
         kc = km.client()

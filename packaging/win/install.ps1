@@ -71,6 +71,9 @@ if 'MACMINI_IP' in mp_pre.get('embedding_url', ''):
 rr_pre = mp_pre.get('reranker', {})
 if 'MACMINI_IP' in rr_pre.get('url', ''):
     rr_pre['url'] = rr_pre['url'].replace('MACMINI_IP', ip)
+ocr_pre = cfg.get('ocr', {})
+if 'MACMINI_IP' in ocr_pre.get('mlx_ocr_url', ''):
+    ocr_pre['mlx_ocr_url'] = ocr_pre['mlx_ocr_url'].replace('MACMINI_IP', ip)
 if model:
     cfg['default_model'] = model
     prov['default_model'] = model

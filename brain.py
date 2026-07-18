@@ -4983,10 +4983,16 @@ class MCPStdioClient:
             # Same approach as _build_shell_command() for execute_command.
             _exec_cfg = get_tool_config().get("execute_command", {})
             use_login_shell = _exec_cfg.get("login_shell", True)
+            _shell_path = _exec_cfg.get("shell_path", "") or os.environ.get("BRAIN_SHELL_PATH", "")
             if os.name == "nt":
-                use_login_shell = False  # no POSIX login shell on Windows
+                # On Windows a POSIX login shell only works if a bash is available
+                # (MinGit/Git-Bash from the bundle, located via shell_path or
+                # BRAIN_SHELL_PATH set by BrainAgent.bat); then /etc/profile builds
+                # the coreutils PATH exactly like on the Mac. Without it, start the
+                # stdio server directly (no /bin/zsh fallback → no FileNotFoundError).
+                use_login_shell = bool(_shell_path and os.path.isfile(_shell_path))
             if use_login_shell:
-                shell_path = _exec_cfg.get("shell_path", "") or os.environ.get("SHELL", "/bin/zsh")
+                shell_path = _shell_path or os.environ.get("SHELL", "/bin/zsh")
                 full_cmd = " ".join([self.command] + self.args)
                 cmd = [shell_path, "-l", "-c", full_cmd]
             else:

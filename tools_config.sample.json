@@ -27,11 +27,11 @@
   },
   "refinement": {
     "enabled": true,
-    "model": "CLIProxyAPI/mistral-small-latest"
+    "model": ""
   },
   "read_document": {
     "max_file_size_mb": 50,
-    "vision_model": "Mistral/mistral-medium-3.5"
+    "vision_model": ""
   },
   "write_document": {},
   "edit_document": {},
@@ -46,15 +46,17 @@
     "venv_path": ""
   },
   "transcribe_audio": {
-    "default_model": "voxtral-mini-latest",
-    "fallback_model": "whisper-base"
+    "_comment": "STT braucht auf Win11 einen erreichbaren Audio-Endpoint. Es gibt KEIN lokales MLX-Whisper auf Windows: entweder ein Transkriptions-Modell mit Provider 'Lokal' (oMLX /v1/audio/transcriptions auf dem Mac mini, s. MACMINI_SETUP.md 2d/4) ODER die voxtral-*-Cloud (mistral-direct, Internet+Freigabe noetig). Leer = STT-Tool meldet 'kein Modell konfiguriert' statt zu crashen.",
+    "default_model": "",
+    "fallback_model": ""
   },
   "translation": {
     "enabled": true,
-    "default_model": "CLIProxyAPI/mistral-small-latest",
-    "detection_fallback_model": "mistral-vibe-cli-fast"
+    "default_model": "",
+    "detection_fallback_model": ""
   },
   "text_to_speech": {
+    "_comment": "TTS (Podcast/Vorlesen) braucht einen /v1/audio/speech-Endpoint: voxtral-mini-tts via mistral-direct (Cloud) ODER ein lokaler TTS-Wrapper auf dem Mac mini (MACMINI_SETUP.md 4). Ohne Konfiguration bleibt das Feature deaktiviert (kein sonstiger Funktionsverlust).",
     "enabled": true,
     "default_model": "voxtral-mini-tts-latest",
     "voice": "en_paul_neutral"

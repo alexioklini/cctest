@@ -323,6 +323,12 @@ def _ocr_config() -> dict:
         # see engine/mlx_ocr.py for why that is both faster and smaller.
         "mlx_ocr_model": ocr.get("mlx_ocr_model", ""),
         "mlx_ocr_max_tokens": int(ocr.get("mlx_ocr_max_tokens", 4096)),
+        # Remote GLM-OCR wrapper (the no-MLX / Windows path): an OpenAI-compatible
+        # vision endpoint on the Mac mini serving the SAME GLM-OCR model. When set,
+        # engine/mlx_ocr.extract() goes over HTTP instead of in-process mlx_vlm —
+        # identical model, prompts and return shape. See MACMINI_SETUP.md.
+        "mlx_ocr_url": (ocr.get("mlx_ocr_url") or "").strip(),
+        "mlx_ocr_api_key": (ocr.get("mlx_ocr_api_key") or "").strip(),
         # Which model DESCRIBES an image whose text gave us nothing (a scene
         # photo, a diagram). "" = the local MLX OCR model, which also describes
         # when asked to (see mlx_ocr._DESCRIBE_PROMPT). Set a chat-model id here

@@ -12,9 +12,9 @@ airgapped oder Online-Download vom GitHub-Release/Mirror — **für den Mac mini
 macht der Installationsweg keinen Unterschied**, nur das gewählte Profil zählt)
 kennt zwei Profile:
 
-| Windows-Profil | Pflicht auf dem Mini | Optional auf dem Mini |
+| Windows-Profil | Pflicht auf dem Mini | Empfohlen / Optional auf dem Mini |
 |---|---|---|
-| **Voll-Installation** (Standard, ~2,1 GB auf dem Client) | oMLX: Chat-Modell + Embedding (§1–§3) | Vision/OCR (§2c), STT/TTS (§2d/§4), Reranker via Infinity (§4) |
+| **Voll-Installation** (Standard, ~2,1 GB auf dem Client) | oMLX: Chat-Modell + Embedding (§1–§3) | GLM-OCR-Wrapper (§4a) + Reranker via Infinity (§4) — beide im Windows-Seed aktiv; STT/TTS (§2d/§4) optional |
 | **Minimal-Installation** (~0,9 GB auf dem Client) | zusätzlich SearXNG + crawl4ai + Qdrant (§6) | dito |
 
 Windows-seitige Updates (setup.exe erneut ausführen bzw. app-only-Payload)
@@ -26,16 +26,18 @@ Windows-seitige Updates (setup.exe erneut ausführen bzw. app-only-Payload)
 |---|---|---|
 | Chat / alle LLM-Hintergrundaufrufe (Zusammenfassungen, Klassifikator, Next-Prompt, Wiki, …) | oMLX `/v1/chat/completions` mit einem Chat-Modell | **Pflicht** |
 | MemPalace-Gedächtnis-Embedding | oMLX `/v1/embeddings` mit `embeddinggemma-300m-bf16` | **Pflicht** (sonst CPU-Fallback auf dem Client, deutlich langsamer) |
-| OCR gescannter Dokumente (`ocr.engine: "local_vision"`) | oMLX mit einem Vision-Modell (z. B. `GLM-OCR-8bit` oder `gemma-4-12B`-Vision) | Optional |
-| Bild-Beschreibung bei Text-Modellen (`attachments.image_model`) | dito Vision-Modell | Optional |
+| OCR gescannter Dokumente (`ocr.engine: "mlx_ocr"` remote) | **GLM-OCR-Wrapper** auf Port 8003 (Abschnitt 4a) — volle Qualitätsparität zum Mac-Studio-In-Process-Pfad | Empfohlen (Windows-Seed: aktiv) |
+| Bild-Beschreibung bei Text-Modellen (`attachments.image_model`) | dito GLM-OCR-Wrapper (Port 8003) oder ein Vision-gemma via oMLX | Optional |
 | Sprach-Transkription (STT) | oMLX `/v1/audio/transcriptions` mit Whisper-Modell — sonst Zusatz-Inferencer, s. Abschnitt 4 | Optional |
 | Podcast/Vorlesen (TTS) | oMLX `/v1/audio/speech` mit TTS-Modell — sonst Zusatz-Inferencer/Cloud, s. Abschnitt 4 | Optional |
 | Retrieval-Reranker (bessere Gedächtnis-Treffer, +0.075 Score) | Infinity `/rerank` auf Port 8002, s. Abschnitt 4 — Windows-Seed: **aktiv/remote**; läuft der Dienst nicht, latcht der Client nach 2 Fehlversuchen automatisch auf die Vektor-Reihenfolge (kein Ausfall) | Optional (empfohlen) |
 
-Alles andere (GDPR/PII-NER, Dokument-Extraktion, DuckDB, Code-Graph — und in der
-**Voll-Installation** auch Qdrant + Websuche) läuft CPU-seitig auf dem
-Windows-Client und braucht den Mac mini nicht. In der **Minimal-Installation**
-liegen SearXNG, crawl4ai und Qdrant zusätzlich auf dem Mini → Abschnitt 6.
+Alles andere (GDPR/PII-NER, Dokument-Extraktion, DuckDB, Code-Graph,
+Shell-Befehle via `execute_command` — dafür liegt MinGit/bash im Windows-Bundle,
+der Mini leistet dazu nichts — und in der **Voll-Installation** auch Qdrant +
+Websuche) läuft CPU-seitig auf dem Windows-Client und braucht den Mac mini nicht.
+In der **Minimal-Installation** liegen SearXNG, crawl4ai und Qdrant zusätzlich
+auf dem Mini → Abschnitt 6.
 
 ## 1. oMLX installieren und als Dienst einrichten
 
@@ -95,14 +97,23 @@ Die Modell-ID `embeddinggemma-300m-bf16` ist im Windows-Seed als
 `mempalace.embedding_remote_model` hinterlegt — bei abweichendem Ordnernamen
 dort anpassen.
 
-### 2c. Vision-Modell für OCR/Bildbeschreibung (optional, empfohlen)
+### 2c. OCR gescannter Dokumente (empfohlen — der Windows-Seed erwartet es)
 
-`GLM-OCR-8bit` (OCR-spezialisiert) oder ein Vision-fähiges gemma registrieren.
-Dann im Windows-`config.json`:
+Auf dem Mac Studio läuft OCR in-process über das dedizierte Modell `GLM-OCR-8bit`
+(schneller + genauer als ein Vision-Generalist). Für die Windows-Kombi gibt es
+dafür einen kleinen **GLM-OCR-Wrapper** auf dem Mac mini (gleiches Modell, gleiche
+Prompts, gleicher Output — nur über HTTP): **Einrichtung in Abschnitt 4a.** Der
+Windows-Seed ist bereits darauf gestellt (`ocr.engine: "mlx_ocr"`,
+`mlx_ocr_url: http://<MACMINI_IP>:8003`).
 
-```json
-"ocr": {"engine": "local_vision", "local_vision_model": "<modell-id>"}
-```
+Alternativen ohne den Wrapper:
+- `ocr.engine: "local_vision"` + ein Vision-fähiges gemma via oMLX (Port 8000) —
+  langsamer/generalistischer, aber kein Zusatzdienst:
+  ```json
+  "ocr": {"engine": "local_vision", "local_vision_model": "gemma-4-12B-it-qat-oQ4-fp16"}
+  ```
+- `ocr.engine: "mistral_ocr"` (Cloud, beste Qualität, aber Dokumente verlassen das
+  Haus — für Bankdaten i. d. R. nicht zulässig).
 
 ### 2d. Whisper/STT und TTS (optional)
 
@@ -137,13 +148,50 @@ dem Windows-Client gerechnet. Brain spricht überall nur OpenAI-kompatible
 HTTP-Endpoints; ein weiterer Dienst ist also nur ein weiterer Provider-Eintrag
 (eigener Port) im Windows-`config.json`.
 
-- **STT (falls oMLX kein Whisper bedient):** `mlx-whisper` hinter einem
-  kleinen OpenAI-kompatiblen `/v1/audio/transcriptions`-Wrapper (FastAPI,
-  eigener Port z. B. 8001, launchd-KeepAlive) — Metal-beschleunigt, dieselbe
-  Bibliothek, die der bisherige In-Process-Pfad nutzt. Alternative ohne
-  Metal: `speaches` (faster-whisper/CTranslate2, CPU — auf dem M4 für
-  gelegentliche Diktate ausreichend). Windows-Seite: Transkriptions-Modell
-  mit einem Provider anlegen, dessen `base_url` auf diesen Port zeigt.
+Die beiden Wrapper-Dienste liegen im Repo unter `packaging/macmini/`
+(`glm_ocr_server.py`, `whisper_stt_server.py`) — auf den Mac mini kopieren.
+
+### 4a. GLM-OCR-Wrapper (Port 8003) — volle OCR-Parität ohne Cloud
+
+Bedient dasselbe `GLM-OCR-8bit`, das der Mac-Studio-Server in-process nutzt,
+hinter einem OpenAI-kompatiblen `/v1/chat/completions`-Vision-Endpoint. Brain
+schickt das Bild als base64 (kein geteiltes Dateisystem nötig); Modell, Prompts
+und Rückgabeform sind identisch zum In-Process-Pfad → gleiche OCR-Qualität.
+
+```bash
+# Voraussetzung: mlx-vlm im System-Python (oder eigenem venv) des Mac mini:
+pip3 install --break-system-packages mlx-vlm
+# Start (foreground-Test):
+python3 packaging/macmini/glm_ocr_server.py --host 0.0.0.0 --port 8003 \
+        --model mlx-community/GLM-OCR-8bit
+# Funktionstest (vom Mac mini): ein Foto mit Text durchschicken:
+IMG=$(base64 -i test.png)
+curl -s -X POST http://localhost:8003/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d "{\"model\":\"mlx-community/GLM-OCR-8bit\",\"max_tokens\":512,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"Text Recognition:\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,$IMG\"}}]}]}"
+# -> {"choices":[{"message":{"content":"<erkannter Text>"}}]}
+```
+
+Als launchd-Dienst mit KeepAlive einrichten (analog zu oMLX). Optionaler
+Bearer-Schutz: `OCR_API_KEY` in der Env setzen und im Windows-`config.json` unter
+`ocr.mlx_ocr_api_key` denselben Wert eintragen. Der erste Request lädt das Modell
+(~1,5 GB Unified Memory) und ist langsamer; danach bleibt es warm. Steht der
+Dienst nicht, meldet Brain pro Dokument einen OCR-Fehler und extrahiert ohne
+OCR-Text weiter — kein Absturz.
+
+- **STT (falls oMLX kein Whisper bedient):** `mlx-whisper` hinter dem
+  mitgelieferten Wrapper `packaging/macmini/whisper_stt_server.py`
+  (OpenAI-kompatibel `/v1/audio/transcriptions`, eigener Port z. B. 8001,
+  launchd-KeepAlive) — Metal-beschleunigt, dieselbe Bibliothek wie der
+  In-Process-Pfad:
+  ```bash
+  pip3 install --break-system-packages mlx-whisper
+  python3 packaging/macmini/whisper_stt_server.py --host 0.0.0.0 --port 8001 \
+          --default-model mlx-community/whisper-large-v3-turbo
+  ```
+  Alternative ohne Metal: `speaches` (faster-whisper/CTranslate2, CPU). Windows-
+  Seite: ein Transkriptions-Modell mit einem Provider anlegen, dessen `base_url`
+  auf `http://<MACMINI_IP>:8001/v1` zeigt (NICHT `local-mlx-whisper`).
 - **TTS (falls oMLX kein TTS-Modell bedient):** Heute läuft TTS über
   Mistral-Cloud (`voxtral-mini-tts` via Provider `mistral-direct`) — das
   funktioniert auch vom Windows-Client, braucht aber Internet + Cloud-Freigabe.

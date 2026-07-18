@@ -39,6 +39,17 @@ QDRANT_VER="v1.18.2"
 QDRANT_URL="https://github.com/qdrant/qdrant/releases/download/${QDRANT_VER}/qdrant-x86_64-pc-windows-msvc.zip"
 QDRANT_ZIP="$DOWN/qdrant-${QDRANT_VER}-win-x64.zip"
 
+# MinGit = the bundle-friendly Git-for-Windows edition (bash.exe + coreutils,
+# no GUI). It makes execute_command work on Windows: install.ps1 points
+# tools_config.json -> execute_command.shell_path at usr/bin/bash.exe, so
+# `bash -l -c` runs commands exactly like the Mac login shell (the Unix-flavoured
+# tool prose — cat/head/ps/grep, 2>/dev/null, || true — stays valid). It ALSO
+# provides git.exe on PATH (the mempalace git-source miner + code-mode git UI).
+GIT_VER="2.51.0"
+GIT_TAG="v${GIT_VER}.windows.1"
+GIT_URL="https://github.com/git-for-windows/git/releases/download/${GIT_TAG}/MinGit-${GIT_VER}-64-bit.zip"
+GIT_ZIP="$DOWN/MinGit-${GIT_VER}-64-bit.zip"
+
 HF_REPO="onnx-community/embeddinggemma-300m-ONNX"
 
 MEMPALACE_VENV_PKG="$HOME/.mempalace/venv/lib/python3.14/site-packages/mempalace"
@@ -62,6 +73,10 @@ fi
 if [[ ! -f "$QDRANT_ZIP" ]]; then
   echo "  -> Downloading Qdrant ${QDRANT_VER} (windows-x64)..."
   curl -# -L -o "$QDRANT_ZIP" "$QDRANT_URL"
+fi
+if [[ ! -f "$GIT_ZIP" ]]; then
+  echo "  -> Downloading MinGit ${GIT_VER} (windows-x64)..."
+  curl -# -L -o "$GIT_ZIP" "$GIT_URL"
 fi
 
 # ------------------------------------------------------------ 1. Python 3.13
@@ -207,6 +222,16 @@ unzip -qo "$QDRANT_ZIP" -d "$OUT_DIR/qdrant"
   mv "$found" "$OUT_DIR/qdrant/qdrant.exe"
 }
 
+# MinGit (bash.exe + coreutils + git.exe for execute_command / git-source mining).
+# The MinGit zip is flat (cmd/ mingw64/ usr/); bash.exe lives at usr/bin/bash.exe.
+mkdir -p "$OUT_DIR/mingit"
+unzip -qo "$GIT_ZIP" -d "$OUT_DIR/mingit"
+[[ -f "$OUT_DIR/mingit/usr/bin/bash.exe" ]] || {
+  echo "ERROR: usr/bin/bash.exe not found in MinGit zip ($GIT_ZIP)" >&2; exit 1; }
+# Deterministic mtimes so the mingit component sha stays byte-stable across
+# builds (same reason as browsers/revisions.txt) — else Delta-Updates re-ship it.
+find "$OUT_DIR/mingit" -exec touch -t 202601010000 {} + 2>/dev/null || true
+
 # HF cache, web-stack site-packages, browser builds
 mkdir -p "$OUT_DIR/hf-cache"
 rsync -a "$BUILD/hf-cache/hub" "$OUT_DIR/hf-cache/"
@@ -255,7 +280,12 @@ cat > "$OUT_DIR/app/config.json" <<'JSON'
     "jwt_secret": "JWT_SECRET_PLACEHOLDER"
   },
   "telegram": {"enabled": false},
-  "ocr": {"engine": "none", "provider": "", "model": ""},
+  "ocr": {
+    "engine": "mlx_ocr",
+    "mlx_ocr_model": "mlx-community/GLM-OCR-8bit",
+    "mlx_ocr_url": "http://MACMINI_IP:8003",
+    "_comment": "GLM-OCR remote: dedizierter OCR-Endpoint auf dem Mac mini (Port 8003, MACMINI_SETUP.md Abschnitt 4a). Volle Qualitaetsparitaet zum Mac-Studio-In-Process-Pfad (gleiches Modell). Steht der Dienst nicht, meldet OCR pro Dokument einen Fehler und die Extraktion laeuft ohne OCR-Text weiter (kein Absturz). Cloud-Alternative: engine='mistral_ocr' + provider='mistral-direct'. Rein lokal ohne Mini: engine='local_vision' mit einem Vision-Modell."
+  },
   "searxng": {
     "enabled": true,
     "auto_start": true,
@@ -334,6 +364,11 @@ cp "$HERE/BrainAgent.bat.tmpl" "$OUT_DIR/BrainAgent.bat"
 cp "$HERE/stop.bat.tmpl" "$OUT_DIR/stop.bat"
 cp "$HERE/MACMINI_SETUP.md" "$OUT_DIR/MACMINI_SETUP.md"
 cp "$HERE/WIN_FOOTPRINT_ANALYSIS.md" "$OUT_DIR/WIN_FOOTPRINT_ANALYSIS.md"
+# Mac-mini Zusatz-Inferencer (GLM-OCR + Whisper-STT Wrapper) — der Operator
+# kopiert sie laut MACMINI_SETUP.md 4a auf den Mini. Reisen im app-Bundle mit.
+mkdir -p "$OUT_DIR/macmini"
+cp "$REPO/packaging/macmini/glm_ocr_server.py" "$OUT_DIR/macmini/glm_ocr_server.py"
+cp "$REPO/packaging/macmini/whisper_stt_server.py" "$OUT_DIR/macmini/whisper_stt_server.py"
 
 cat > "$OUT_DIR/README.txt" <<README
 Brain Agent v${VERSION} — Windows x64 (Bank-Testausrollung)
@@ -401,16 +436,27 @@ Vollstaendige Anleitung: MACMINI_SETUP.md (in diesem Ordner). Kurzform:
 - Was oMLX nicht kann (STT/TTS/Reranker), loest ein Zusatz-Inferencer auf
   dem Mac mini — siehe MACMINI_SETUP.md Abschnitt 4.
 
+Shell-Befehle (execute_command)
+-------------------------------
+Funktioniert unter Windows genau wie auf dem Mac: das Bundle liefert MinGit
+(bash + coreutils) mit, BrainAgent.bat setzt BRAIN_SHELL_PATH darauf, und der
+Server fuehrt Befehle als `bash -l -c` aus. Unix-Kommandos (cat/head/grep/ps,
+2>/dev/null, ||) laufen damit unveraendert; git.exe steht ebenfalls auf dem PATH.
+
 Grenzen unter Windows
 ---------------------
-- OCR: kein MLX-OCR (Apple-only). Optionen: ocr.engine="local_vision"
-  (Vision-Modell auf dem Mac mini) oder "mistral_ocr" (Cloud) in config.json.
+- OCR gescannter Dokumente: kein in-process MLX-OCR (Apple-only). Auf Win11
+  laeuft OCR ueber ein Vision-Modell auf dem Mac mini (ocr.engine="local_vision"
+  + geladenes Vision-gemma, s. MACMINI_SETUP.md 2c) oder ueber die Cloud
+  (ocr.engine="mistral_ocr"). Seed: OCR ist AUS ("none") bis eine dieser
+  Optionen in config.json gesetzt und das Modell verfuegbar ist.
 - Sprach-Transkription/TTS: nur ueber einen erreichbaren Audio-Endpoint
-  (Mac mini oder Cloud), kein lokales Whisper.
+  (Mac mini oder Cloud), kein lokales Whisper. Standardmaessig unkonfiguriert.
 - Interaktives Projekt-Terminal: nicht verfuegbar (kein PTY unter Windows).
 - Mermaid-Diagramme: benoetigen Node.js auf PATH (optional).
 - MSSQL (db_query): "ODBC Driver 17 for SQL Server" MSI separat installieren
   (Admin-Rechte noetig) — siehe DATA_SOURCES_V2_PLAN.md Anhang B.
+- Deterministische OCR-Tools (ocr_extract etc.): benoetigen Tesseract auf PATH.
 README
 
 # CRLF for the .bat files + README
@@ -448,8 +494,9 @@ comp_zip() {  # $1=name  $2..=Pfade relativ zu OUT_DIR (dirs und/oder files)
 }
 # Die Pfadlisten muessen zu den "dirs" im Manifest passen (Swap-Ziele von
 # setup_stage1.ps1); Top-Level-Skripte reisen in der app-Komponente mit.
-comp_zip app       app install.ps1 BrainAgent.bat stop.bat README.txt MACMINI_SETUP.md WIN_FOOTPRINT_ANALYSIS.md
+comp_zip app       app install.ps1 BrainAgent.bat stop.bat README.txt MACMINI_SETUP.md WIN_FOOTPRINT_ANALYSIS.md macmini
 comp_zip python    python
+comp_zip mingit    mingit
 comp_zip websearch venv-site browsers
 comp_zip qdrant    qdrant
 comp_zip hfcache   hf-cache
@@ -460,6 +507,7 @@ entries_path, manifest_path, version = sys.argv[1:4]
 META = {  # name -> (required, dirs, title)
     "app":       (True,  ["app"],                    "Brain-Agent Programmcode + Skripte"),
     "python":    (True,  ["python"],                 "Python 3.13 Runtime + Bibliotheken"),
+    "mingit":    (True,  ["mingit"],                 "MinGit (bash + coreutils + git fuer execute_command)"),
     "websearch": (False, ["venv-site", "browsers"],  "Websuche lokal (SearXNG + crawl4ai + Chromium)"),
     "qdrant":    (False, ["qdrant"],                 "Qdrant Vektor-DB lokal"),
     "hfcache":   (False, ["hf-cache"],               "Embedding-Offline-Fallback (ONNX)"),

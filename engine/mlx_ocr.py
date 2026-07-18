@@ -25,6 +25,8 @@ dominate the runtime.
 
 from __future__ import annotations
 
+import base64
+import mimetypes
 import os
 import queue
 import re
@@ -72,12 +74,81 @@ def _run_on_worker(fn, *, label: str = "ocr"):
 
 
 def is_available() -> bool:
-    """True when mlx_vlm can be imported (Apple Silicon + package installed)."""
+    """True when the OCR model can be reached — locally via mlx_vlm (Apple
+    Silicon) OR via a configured remote GLM-OCR endpoint (the Windows path, where
+    there is no MLX so a Mac-mini HTTP wrapper serves the same GLM-OCR model)."""
+    if _remote_endpoint()[0]:
+        return True
     try:
         import mlx_vlm  # noqa: F401
         return True
     except Exception:
         return False
+
+
+def _remote_endpoint() -> tuple[str, str, str]:
+    """(base_url, api_key, model) for a remote GLM-OCR wrapper, or ("","","").
+
+    Set `ocr.mlx_ocr_url` in config.json to an OpenAI-compatible vision endpoint
+    (a thin FastAPI wrapper on the Mac mini serving GLM-OCR via mlx_vlm — see
+    MACMINI_SETUP.md). This is what makes the fast dedicated-OCR lane work on a
+    box without MLX (Windows): the model, prompts and return shape are identical,
+    only the transport is HTTP instead of an in-process mlx_vlm call.
+
+    Reads through doc_convert._ocr_config() (the single per-call OCR-config
+    reader) rather than re-parsing config.json here.
+    """
+    try:
+        from engine import doc_convert
+        ocr = doc_convert._ocr_config()
+    except Exception:
+        return "", "", ""
+    url = (ocr.get("mlx_ocr_url") or "").rstrip("/")
+    if not url:
+        return "", "", ""
+    api_key = ocr.get("mlx_ocr_api_key") or ""
+    model = (ocr.get("mlx_ocr_model") or DEFAULT_MODEL).strip()
+    return url, api_key, model
+
+
+def _extract_remote(base_url: str, api_key: str, model: str, path: str,
+                    prompt: str, max_tokens: int) -> tuple[str, str | None]:
+    """OCR one image via a remote OpenAI-compatible vision endpoint.
+
+    Same (text, error) contract as extract(); never raises. The image is inlined
+    as a base64 data URI so no shared filesystem with the Mac mini is needed.
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except Exception as e:
+        return "", f"{type(e).__name__}: {e}"
+    mime = mimetypes.guess_type(path)[0] or "image/png"
+    data_uri = f"data:{mime};base64," + base64.b64encode(raw).decode("ascii")
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": prompt or DEFAULT_PROMPT},
+            {"type": "image_url", "image_url": {"url": data_uri}},
+        ]}],
+        "max_tokens": max_tokens,
+        "temperature": 0,
+        "stream": False,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    try:
+        import httpx
+        # OCR of a full page can take a few seconds on the mini; generous timeout.
+        resp = httpx.post(f"{base_url}/v1/chat/completions", json=payload,
+                          headers=headers, timeout=120.0)
+        resp.raise_for_status()
+        data = resp.json()
+        text = (data["choices"][0]["message"]["content"] or "").strip()
+    except Exception as e:
+        return "", f"remote OCR failed ({type(e).__name__}): {e}"
+    return (text, None) if text else ("", None)
 
 
 def _get(repo: str):
@@ -183,6 +254,12 @@ def extract(path: str, *, repo: str = "", prompt: str = "",
     repo = repo or DEFAULT_MODEL
     if not os.path.isfile(path):
         return "", f"file not found: {path}"
+    # Remote GLM-OCR wrapper takes precedence when configured (the no-MLX path):
+    # same model + prompt over HTTP. On the Mac this key is unset → in-process MLX.
+    r_url, r_key, r_model = _remote_endpoint()
+    if r_url:
+        return _extract_remote(r_url, r_key, r_model, path,
+                               prompt or DEFAULT_PROMPT, max_tokens)
     try:
         from mlx_vlm import generate
         from mlx_vlm.prompt_utils import apply_chat_template

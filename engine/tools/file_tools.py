@@ -3773,12 +3773,30 @@ def _build_shell_command(command: str) -> tuple[list | str, bool]:
     Returns (cmd, shell_flag) for subprocess.Popen.
     If login_shell is True, wraps the command in a login shell invocation
     so that ~/.zprofile, ~/.zshrc etc. are sourced (giving full PATH).
+
+    On Windows the POSIX login-shell path only works if a bash is available (the
+    bundle ships MinGit); bash -l -c then sources /etc/profile so the MinGit
+    coreutils (cat/ls/grep/head/git/…) resolve and the Unix-flavoured tool prose
+    stays valid. The bash is located, in order: execute_command.shell_path from
+    config, then the BRAIN_SHELL_PATH env var (BrainAgent.bat sets it to the
+    bundled mingit\\usr\\bin\\bash.exe — survives bundle updates, no config patch
+    needed). If neither resolves we must NOT fall back to $SHELL/'/bin/zsh'
+    (nonexistent on Windows → FileNotFoundError on every call); use cmd.exe.
     """
     import brain as _brain
     _exec_cfg = _brain.get_tool_config().get("execute_command", {})
     use_login_shell = _exec_cfg.get("login_shell", True)
+    shell_path = _exec_cfg.get("shell_path", "")
+    if os.name == "nt":
+        bash = shell_path or os.environ.get("BRAIN_SHELL_PATH", "")
+        if bash and os.path.isfile(bash):
+            # MinGit / Git-Bash: login shell so /etc/profile builds the coreutils PATH.
+            return [bash, "-l", "-c", command], False
+        # No bash available — run via the native command processor so the tool
+        # still works (built-ins: dir/type/…) instead of crashing on /bin/zsh.
+        return command, True
     if use_login_shell:
-        shell_path = _exec_cfg.get("shell_path", "") or os.environ.get("SHELL", "/bin/zsh")
+        shell_path = shell_path or os.environ.get("SHELL", "/bin/zsh")
         return [shell_path, "-l", "-c", command], False
     return command, True
 
@@ -3834,7 +3852,7 @@ def _streaming_execute_command(command: str, timeout: int, cwd: str | None,
     # External per-tool kill mid-stream → process group SIGKILLed.
     if proc.returncode is not None and proc.returncode < 0:
         import signal as sig
-        if proc.returncode == -sig.SIGKILL:
+        if proc.returncode == -(getattr(sig, "SIGKILL", 9)):
             return _err("execute_command: cancelled by user (process killed).")
 
     output = "".join(output_lines)
@@ -3939,7 +3957,7 @@ def tool_execute_command(args: dict) -> str:
         # External per-tool kill → process group SIGKILLed mid-run.
         if proc.returncode is not None and proc.returncode < 0:
             import signal as sig
-            if proc.returncode == -sig.SIGKILL:
+            if proc.returncode == -(getattr(sig, "SIGKILL", 9)):
                 return _err("execute_command: cancelled by user (process killed).")
 
         output = _strip_ansi(stdout.decode("utf-8", errors="replace"))
@@ -4551,7 +4569,7 @@ def tool_python_exec(args: dict) -> str:
     env["PYTHONDONTWRITEBYTECODE"] = "1"
     env["PYTHONUNBUFFERED"] = "1"
     if venv_path and os.path.isdir(venv_path):
-        env["PYTHONPATH"] = venv_path + ((":" + env.get("PYTHONPATH", "")) if env.get("PYTHONPATH") else "")
+        env["PYTHONPATH"] = venv_path + ((os.pathsep + env.get("PYTHONPATH", "")) if env.get("PYTHONPATH") else "")
 
     _proc_key = None
     try:
@@ -4587,7 +4605,7 @@ def tool_python_exec(args: dict) -> str:
         # cancelled result so the model knows this tool was aborted on purpose.
         if proc.returncode is not None and proc.returncode < 0:
             import signal as sig
-            if proc.returncode == -sig.SIGKILL:
+            if proc.returncode == -(getattr(sig, "SIGKILL", 9)):
                 return _err("python_exec: cancelled by user (process killed).")
 
         output = stdout.decode("utf-8", errors="replace")
@@ -4800,7 +4818,7 @@ def tool_r_exec(args: dict) -> str:
             unregister_tool_process(_proc_key)
         if proc.returncode is not None and proc.returncode < 0:
             import signal as sig
-            if proc.returncode == -sig.SIGKILL:
+            if proc.returncode == -(getattr(sig, "SIGKILL", 9)):
                 return _err("r_exec: cancelled by user (process killed).")
 
         output = stdout.decode("utf-8", errors="replace")
