@@ -1162,16 +1162,17 @@ function renderAssistantMessage(msg, idx) {
       ? cacheSavingsUSD(meta.model, tokCached) : 0;
     const _mCachePriced = Number(state.modelsConfig?.models?.[meta.model]?.cost_cache_read) > 0;
     const _sv = _cacheSave > 0 ? ` · −$${_cacheSave.toFixed(4)}` : '';
-    // Three cases: (a) priced cache → show $ saved; (b) tokens cached but no
-    // price on file → the model DOES cache (e.g. a plan model like k3 with no
-    // per-token tariff), just no $ figure; (c) no tokens AND no price → nothing
-    // cached this turn. Do NOT claim "kein Prompt-Caching" when tokCached>0 —
-    // that was wrong for cache-capable plan models (the k3 0%-display bug).
-    const _cacheTitle = _mCachePriced
-      ? `Prompt-Cache-Treffer: ${tokCached.toLocaleString()} Tokens = ${_cachePct}% des Prompts, zum ~0,1×-Tarif abgerechnet.${_cacheSave > 0 ? ' Ersparnis ggü. vollem Eingabe-Tarif: $' + _cacheSave.toFixed(4) + '.' : ''}`
-      : (tokCached > 0
-        ? `Prompt-Cache-Treffer: ${tokCached.toLocaleString()} Tokens = ${_cachePct}% des Prompts. Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es wird keine $-Ersparnis berechnet.`
-        : 'Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read) — es wird keine $-Ersparnis berechnet.');
+    // Whether caching HAPPENED is a token fact (tokCached>0), independent of
+    // whether the model has a $-tariff. Never conflate the two: a priced model
+    // can have a cold turn (0 cached), and a plan model like k3 caches for real
+    // but carries no cost_cache_read. So state the cache hit from the tokens,
+    // and add the $-note only as a pricing caveat.
+    const _priceNote = _mCachePriced
+      ? (_cacheSave > 0 ? ` Ersparnis ggü. vollem Eingabe-Tarif: $${_cacheSave.toFixed(4)}.` : '')
+      : ' Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read), daher wird keine $-Ersparnis berechnet — das Caching selbst findet trotzdem statt.';
+    const _cacheTitle = tokCached > 0
+      ? `Prompt-Cache-Treffer: ${tokCached.toLocaleString()} Tokens = ${_cachePct}% des Prompts${_mCachePriced ? ', zum ~0,1×-Tarif abgerechnet' : ''}.${_priceNote}`
+      : `Kein Cache-Treffer in diesem Turn (0 Tokens).${_mCachePriced ? '' : _priceNote}`;
     parts.push(`<span class="msg-cache-hit" title="${_cacheTitle}">⚡ ${tokCached.toLocaleString()} cached (${_cachePct}%${_sv})</span>`);
     // Thinking level (mirrors session-inspector badges, chat.js:756–758).
     // metadata.thinking_level is set per turn; absence with no _thinking → 'none'.
