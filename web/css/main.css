@@ -2274,10 +2274,10 @@ textarea { resize: none; }
 .messages-scroll[data-fade-top="1"] { --fade-top: 48px; }
 .messages-scroll[data-fade-bottom="1"] { --fade-bottom: 48px; }
 .messages-container {
-  /* Dynamic reading column: span the middle two thirds of the available width,
-     leaving ~1/6 (16.67%) empty on the left and right. Scales with the window
-     instead of a fixed max-width so wide browsers no longer waste screen space. */
-  width: 66.6667%;
+  /* Dynamic reading column: 85% of the available width, leaving ~7.5% empty on
+     the left and right. Scales with the window instead of a fixed max-width so
+     wide browsers no longer waste screen space. */
+  width: 85%;
   margin: 0 auto;
   padding: 16px 24px 24px;
 }
@@ -4857,8 +4857,8 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   flex-shrink: 0;
 }
 .chat-composer-wrapper {
-  /* Match .messages-container: middle two thirds, ~1/6 empty each side. */
-  width: 66.6667%;
+  /* Match .messages-container: 85% wide, ~7.5% empty each side. */
+  width: 85%;
   margin: 0 auto;
 }
 
@@ -5416,9 +5416,9 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 
 .project-detail-composer {
   /* Dynamic reading column, same as the chat view (.messages-container):
-     middle two thirds, ~1/6 empty each side. */
+     85% wide, ~7.5% empty each side. */
   padding: 24px;
-  width: 66.6667%;
+  width: 85%;
   margin: 0 auto;
 }
 .project-detail-prompt-hint {
@@ -5429,9 +5429,9 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 
 .project-detail-chats-wrap {
-  /* Match .project-detail-composer / chat view: middle two thirds. */
+  /* Match .project-detail-composer / chat view: 85% wide. */
   padding: 0 24px 24px;
-  width: 66.6667%;
+  width: 85%;
   margin: 0 auto;
 }
 .project-chats-header {
@@ -7820,7 +7820,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 
   .welcome-text { font-size: 28px; }
   .composer-wrapper { max-width: 100%; }
-  /* On narrow screens the 1/6-each-side reading margin would starve the column,
+  /* On narrow screens the 7.5%-each-side reading margin would starve the column,
      so let the chat column and composer go near-full-width instead. */
   .messages-container,
   .chat-composer-wrapper,
