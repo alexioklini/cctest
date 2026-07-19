@@ -1790,6 +1790,10 @@ Seitenleiste → **Wiki**. Dein durchsuchbares, editierbares Wissens-Wiki — un
 zugleich das Langzeit-Gedächtnis des Agenten: jede gespeicherte Seite wird in
 MemPalace gespiegelt, sodass der Agent sie bei der Suche findet.
 
+Für maximale Arbeitsfläche fährt die linke Hauptnavigation im Wiki automatisch
+auf die schmale Icon-Leiste ein (wie im Code-Modus); beim Verlassen des Wikis
+kehrt sie in ihren vorherigen Zustand zurück.
+
 **Aufbau:**
 - **Links** der Seitenbaum. Der obere Filter schaltet den Sichtbarkeitsbereich
   (**Alle** / **Meine** / **Team** / **Alle sichtbar**). Das **Gruppieren nach**-
@@ -1797,6 +1801,18 @@ MemPalace gespiegelt, sodass der Agent sie bei der Suche findet.
   Drag&Drop), **Thema**, **Projekt**, **Quelle** (Chat / Studio / …), **Erstellt
   von**, **Geändert von**. Jede Zeile zeigt ein Bereichs-Symbol, einen kleinen
   grünen Punkt (in MemPalace durchsuchbar) und ihre Tags.
+- **Suche im Baum:** Das Suchfeld **„Seiten durchsuchen…"** filtert den Baum
+  sofort nach freiem Text — es durchsucht **Titel, Tags UND den Seiteninhalt**
+  (Volltext), sodass auch Seiten gefunden werden, deren Suchbegriff nur im Text
+  steht. (Für sinngemäße/semantische Treffer über alle Wikis gibt es zusätzlich
+  die globale Lupe im Seitenleisten-Kopf.)
+- **Auf-/Zuklappen:** Seiten mit Unterseiten haben im *Manuell*-Baum ein
+  Pfeil-Symbol zum Auf-/Zuklappen; der Baum startet **standardmäßig
+  eingeklappt** (nur oberste Ebene). Öffnest du eine tief verschachtelte Seite,
+  klappen ihre übergeordneten Ebenen automatisch auf.
+- **Breite verstellbar:** Die Trennlinie zwischen Baum und Editor lässt sich
+  ziehen, um die Baum-Spalte breiter/schmaler zu machen (die Breite bleibt
+  gespeichert).
 - **Tags & Filter:** Seiten bekommen beim Erstellen/Aktualisieren automatisch
   Themen-Tags (KI-vorgeschlagen); du kannst eigene Tags ergänzen oder entfernen
   (deine Tags bleiben erhalten). Die Tag-Leiste oben filtert den Baum; ein Klick
@@ -1806,17 +1822,20 @@ MemPalace gespiegelt, sodass der Agent sie bei der Suche findet.
   eine andere Seite ziehen (verschachteln/umordnen).
 - **Zur Quelle springen:** Aus einem Chat/Studio/… erzeugte Seiten zeigen unter
   dem Titel einen Link (z. B. „Zum Chat"), der das Ursprungsobjekt öffnet.
-- **Rechts** der Editor mit zwei Ansichten, umschaltbar oben rechts:
-  **Ansicht** (gerendertes Markdown) ↔ **Markdown** (Roh-Editor mit
-  Zeilennummern). Titel oben ist direkt editierbar.
+- **Rechts** der Editor mit zwei Ansichten, oben rechts über Symbol-Knöpfe
+  umschaltbar: **Ansicht** (Auge — gerendertes Markdown) ↔ **Markdown** (Stift —
+  Roh-Editor mit Zeilennummern, folgt dem hellen/dunklen Design). Titel oben ist
+  direkt editierbar; die Werkzeugleiste daneben ist rein icon-basiert.
 
 **Aktionen:** **+ Seite** legt eine neue Seite an (Bereich richtet sich nach dem
-aktiven Filter; optional als Unterseite der offenen Seite). **Speichern**
-schreibt eine neue Version. **Versionen** zeigt den Verlauf — jede Bearbeitung
-ist eine unveränderliche Version; **Ansehen** öffnet eine schreibgeschützte
-Vorschau, **Aktivieren** macht eine alte Version wieder zur aktuellen (nur die
-aktuelle Version ist editierbar und durchsuchbar). **Löschen** entfernt die
-Seite; Unterseiten bleiben erhalten (rücken eine Ebene hoch).
+aktiven Filter; optional als Unterseite der offenen Seite). Der **Speichern**-
+Knopf (Disketten-Symbol) schreibt eine neue Version. Der **Versionen**-Knopf
+(Uhr-Symbol) zeigt den Verlauf — jede Bearbeitung ist eine unveränderliche
+Version; **Ansehen** öffnet eine schreibgeschützte Vorschau, **Aktivieren** macht
+eine alte Version wieder zur aktuellen (nur die aktuelle Version ist editierbar
+und durchsuchbar). Der **Löschen**-Knopf (Papierkorb-Symbol) entfernt die Seite;
+Unterseiten bleiben erhalten (rücken eine Ebene hoch). Alle Kopf-Knöpfe sind
+Symbol-Knöpfe mit Tooltip beim Überfahren.
 
 **Bereiche (Scopes):** *Meine* Seiten sehen nur du, *Team*-Seiten dein Team,
 *globale* Seiten alle. Aus Chats, Studio-Ergebnissen, geplanten Aufgaben und
@@ -1824,13 +1843,15 @@ Workflows automatisch erzeugte Seiten tragen eine Quell-Markierung (↩) und
 werden bei einer Änderung der Quelle als neue Version fortgeschrieben statt
 doppelt angelegt.
 
-**Erzeugen & Medien (Seitenkopf):**
-- **🔊** liest die Seite vor (Sprache wird automatisch erkannt).
-- **Zusammenfassung** erzeugt per KI eine kompakte Zusammenfassung als
-  Unterseite (optional inklusive aller Unterseiten).
-- **🎧 Podcast** erzeugt eine zweistimmige Audio-Übersicht (MP3) als Unterseite.
-- **📎 Medien** lädt Bild / Audio / Video hoch und fügt es in die Seite ein;
-  in der Ansicht wird es als `<img>`/`<audio>`/`<video>` dargestellt.
+**Erzeugen & Medien (Seitenkopf — alle als Symbol-Knöpfe mit Tooltip):**
+- **Lautsprecher-Symbol** liest die Seite vor (Sprache wird automatisch erkannt).
+- **Listen-Symbol (Zusammenfassung)** erzeugt per KI eine kompakte
+  Zusammenfassung als Unterseite (optional inklusive aller Unterseiten).
+- **Kopfhörer-Symbol (Podcast)** erzeugt eine zweistimmige Audio-Übersicht (MP3)
+  als Unterseite.
+- **Büroklammer-Symbol (Medien)** lädt Bild / Audio / Video hoch und fügt es in
+  die Seite ein; in der Ansicht wird es als `<img>`/`<audio>`/`<video>`
+  dargestellt.
 
 Wie in Studio brauchen Zusammenfassung und Podcast Quellen-Inhalt und ein
 konfiguriertes Hintergrund- bzw. TTS-Modell; die Erzeugung läuft synchron

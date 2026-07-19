@@ -57,6 +57,7 @@ class API {
     const q = new URLSearchParams({ filter: filter || 'all' });
     if (opts?.team_id) q.set('team_id', opts.team_id);
     if (opts?.project_id) q.set('project_id', opts.project_id);
+    if (opts?.q) q.set('q', opts.q);
     return this.get(`/v1/wiki/tree?${q.toString()}`);
   }
   static wikiGet(id) { return this.get(`/v1/wiki/pages/${id}`); }

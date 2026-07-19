@@ -463,7 +463,7 @@ def get_page(page_id):
     return _decorate(page)
 
 
-def list_tree(filter_mode="all", project_id=None, team_id=None):
+def list_tree(filter_mode="all", project_id=None, team_id=None, query=None):
     """Accessible pages as flat rows (UI assembles the tree from parent_id/
     position). Filter modes:
       - 'mine'   → the caller's own user-scope pages
@@ -473,6 +473,9 @@ def list_tree(filter_mode="all", project_id=None, team_id=None):
       - 'all'    → union of everything accessible to the caller (own + teams +
                    global). DEFAULT.
     `project_id` further filters to pages tagged with that project, if given.
+    `query`, if given, keeps only rows whose title, tags, OR body text contain
+    the (case-insensitive) substring — a literal full-text tree filter. Body is
+    still stripped from the returned rows; the match runs before the strip.
     """
     uid, tids = _caller()
     ChatDB = _chatdb()
@@ -496,11 +499,23 @@ def list_tree(filter_mode="all", project_id=None, team_id=None):
         rows = ChatDB.list_wiki_pages_for_user(uid, list(tids))
         if project_id is not None:
             rows = [r for r in rows if (r.get("project_id") or "") == project_id]
+    # Optional literal full-text filter (title + tags + body), case-insensitive.
+    q = (query or "").strip().lower()
     # Decorate (parse tags, mirrored flag) and drop the heavy body from tree rows
-    # — the client fetches body on open. Keeps all grouping/filter fields.
+    # — the client fetches body on open. Keeps all grouping/filter fields. When a
+    # query is set, match against the body BEFORE stripping it.
     out = []
     for r in rows:
         _decorate(r)
+        if q:
+            hay = " ".join([
+                str(r.get("title") or ""),
+                " ".join(r.get("tags") or []),
+                str(r.get("body_md") or ""),
+            ]).lower()
+            if q not in hay:
+                r.pop("body_md", None)
+                continue
         r.pop("body_md", None)
         out.append(r)
     return out

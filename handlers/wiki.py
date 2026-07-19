@@ -94,9 +94,11 @@ class WikiHandlerMixin:
         filter_mode = (q.get("filter", q.get("scope", ["all"]))[0]) or "all"
         project_id = q.get("project_id", [""])[0] or None
         team_id = q.get("team_id", [""])[0] or None
+        query = q.get("q", [""])[0] or None
         cm = self._with_wiki_ctx()
         try:
-            rows = wiki_store.list_tree(filter_mode, project_id=project_id, team_id=team_id)
+            rows = wiki_store.list_tree(filter_mode, project_id=project_id,
+                                        team_id=team_id, query=query)
             self._send_json({"filter": filter_mode, "pages": rows})
         except wiki_store.WikiAccessError as e:
             self._send_json({"error": str(e)}, 403)

@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.379.0",
+        "date": "2026-07-19",
+        "title": "Wiki: komfortabler suchen und bearbeiten",
+        "body": "Das Wiki lässt sich jetzt angenehmer bedienen: Ein neues "
+                "Suchfeld über dem Seitenbaum findet Seiten auch anhand ihres "
+                "Inhalts, nicht nur am Titel — Sie tippen einen Begriff und "
+                "sehen sofort alle passenden Seiten. Der Seitenbaum startet "
+                "übersichtlich eingeklappt und lässt sich pro Zweig auf- und "
+                "zuklappen; die Breite der Baum-Spalte ziehen Sie nach Wunsch "
+                "zurecht. Beim Öffnen des Wikis tritt die linke Navigation "
+                "zurück, sodass mehr Platz zum Arbeiten bleibt. Der "
+                "Markdown-Editor folgt endlich dem dunklen Design, die "
+                "Werkzeugleiste über der Seite nutzt klare Symbole, und der "
+                "gerenderte Text füllt die volle Breite.",
+        "audience": "user",
+        "versions": ["9.379.0"],
+    },
+    {
         "version": "9.378.0",
         "date": "2026-07-19",
         "title": "Aufgeräumte Navigation und Ansichten",

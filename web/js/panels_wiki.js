@@ -14,6 +14,9 @@ window._wiki = window._wiki || {
   dirty: false,
   dragId: null,       // page id being dragged
   palette: {},        // tag name (lowercase) → color, from the global palette
+  expanded: {},       // page id → true when its subtree is expanded (manual mode)
+  treeInit: false,    // first render seeds collapsed-by-default state once
+  search: '',         // free-text tree filter (title + tags)
 };
 
 // A tag's color from the global palette (neutral grey if undefined).
@@ -47,6 +50,7 @@ const WIKI_ICONS = {
   source:  '<svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 0 10h-2"/><line x1="8" y1="12" x2="16" y2="12"/></svg>',
 };
 const WIKI_ICONS_EDIT = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>';
+const WIKI_ICONS_CARET = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg>';
 const WIKI_ICONS_TRASH = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
 const WIKI_ICONS_FILTER = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>';
 const WIKI_ICONS_GEAR = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
@@ -64,7 +68,39 @@ function wikiScopeIcon(scope) {
 }
 
 function loadWikiView() {
+  // Restore a previously dragged sidebar width.
+  const w = parseInt(localStorage.getItem('wiki-sidebar-w') || '', 10);
+  const sb = document.getElementById('wiki-sidebar');
+  if (sb && w >= 180 && w <= 640) sb.style.width = w + 'px';
   wikiRefreshTree();
+}
+
+// ── Sidebar resize (drag the handle between tree + editor) ──
+function wikiResizeStart(e) {
+  e.preventDefault();
+  const sb = document.getElementById('wiki-sidebar');
+  const handle = document.getElementById('wiki-resize');
+  if (!sb) return;
+  const startX = e.clientX;
+  const startW = sb.getBoundingClientRect().width;
+  if (handle) handle.classList.add('dragging');
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+  const onMove = (ev) => {
+    const w = Math.max(180, Math.min(640, startW + (ev.clientX - startX)));
+    sb.style.width = w + 'px';
+    if (window._wiki.cm) window._wiki.cm.refresh();   // keep CM layout in sync
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (handle) handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem('wiki-sidebar-w', String(Math.round(sb.getBoundingClientRect().width)));
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
 }
 
 async function wikiRefreshTree() {
@@ -72,7 +108,8 @@ async function wikiRefreshTree() {
   if (!tree) return;
   try {
     await wikiLoadPalette();   // colors for the pills/filter
-    const res = await API.wikiTree(window._wiki.filter);
+    // A search query is applied server-side (matches title + tags + body text).
+    const res = await API.wikiTree(window._wiki.filter, { q: window._wiki.search || '' });
     window._wiki.pages = res.pages || [];
     wikiRenderTree();
   } catch (e) {
@@ -96,17 +133,50 @@ function wikiSetGrouping(mode) {
   wikiRenderTree();
 }
 
+// Free-text tree filter. Matches title + tags + BODY text (server-side, so it
+// finds pages by their content, not just their name). A non-empty query flattens
+// the tree to matching rows so results aren't hidden inside collapsed branches.
+// Debounced: re-fetch the tree ~220ms after the last keystroke.
+function wikiSetSearch(q) {
+  window._wiki.search = (q || '').trim().toLowerCase();
+  clearTimeout(window._wiki._searchTimer);
+  window._wiki._searchTimer = setTimeout(() => { wikiRefreshTree(); }, 220);
+}
+
+// Collapse/expand a node's subtree (manual tree mode).
+function wikiToggleExpand(id) {
+  window._wiki.expanded[id] = !window._wiki.expanded[id];
+  wikiRenderTree();
+}
+
+// Expand every ancestor of `id` so a page opened from elsewhere is visible.
+function wikiExpandAncestors(id) {
+  const byId = {}; window._wiki.pages.forEach(p => { byId[p.id] = p; });
+  let cur = byId[id];
+  let guard = 0;
+  while (cur && cur.parent_id && guard++ < 100) {
+    window._wiki.expanded[cur.parent_id] = true;
+    cur = byId[cur.parent_id];
+  }
+}
+
 // One tree row. `manual` mode is draggable + indented; grouped modes are flat.
-function wikiRowHtml(page, depth, draggable) {
+// `caret` is 'none' (grouped/leaf) | 'open' | 'collapsed' (manual mode w/ children).
+function wikiRowHtml(page, depth, draggable, caret) {
   const active = window._wiki.current?.id === page.id;
   const tags = (page.tags || []).map(t =>
     wikiTagPill(t, { onClick: `event.stopPropagation();wikiToggleTag('${esc(t)}')` })).join('');
   const srcLabel = WIKI_SOURCE_LABELS[page.source] || page.source || '';
   const dot = `<span class="wiki-mp-dot ${page.mirrored ? 'on' : ''}" title="${page.mirrored ? 'In MemPalace durchsuchbar' : 'Nicht gespiegelt'}"></span>`;
+  const caretHtml = caret === 'none' ? ''
+    : `<span class="wiki-caret${caret === 'collapsed' ? ' collapsed' : ''}${caret === 'leaf' ? ' leaf' : ''}"
+        onclick="event.stopPropagation();wikiToggleExpand('${page.id}')"
+        title="${caret === 'collapsed' ? 'Aufklappen' : 'Zuklappen'}">${WIKI_ICONS_CARET}</span>`;
   return `<div class="wiki-tree-item${active ? ' active' : ''}"
       ${draggable ? `draggable="true" ondragstart="wikiDragStart(event,'${page.id}')" ondragend="wikiDragEnd(event)" ondragover="wikiDragOver(event)" ondragleave="wikiDragLeave(event)" ondrop="wikiDrop(event,'${page.id}')"` : ''}
       onclick="wikiOpenPage('${page.id}')" style="padding-left:${8 + depth * 14}px"
       title="${esc(srcLabel)}">
+      ${caretHtml}
       ${dot}
       <span class="wiki-row-icon">${wikiScopeIcon(page.scope)}</span>
       <span class="wiki-row-title">${esc(page.title || 'Ohne Titel')}${tags ? ' ' + tags : ''}</span>
@@ -127,6 +197,8 @@ function wikiVisiblePages() {
       return filters.some(f => pt.includes(f));
     });
   }
+  // NB: no client-side text filter here — a search query is applied server-side
+  // in wikiRefreshTree (so it can match page BODY, which tree rows don't carry).
   return pages;
 }
 
@@ -140,6 +212,14 @@ function wikiRenderTree() {
     return;
   }
   const mode = window._wiki.grouping;
+  // A text search flattens the tree to matches (parents may not match), so drop
+  // the nested/collapsible path when a query is active — same as tag filters.
+  if (window._wiki.search) {
+    tree.innerHTML = pages
+      .sort((a, b) => (a.title || '').localeCompare(b.title || ''))
+      .map(p => wikiRowHtml(p, 0, false, 'none')).join('');
+    return;
+  }
   if (mode === 'manual' && !(window._wiki.tagFilters || []).length) {
     // Editable nested tree (parent_id/position), drag-and-drop enabled.
     const byParent = {};
@@ -147,12 +227,18 @@ function wikiRenderTree() {
     Object.values(byParent).forEach(arr => arr.sort((a, b) => (a.position || 0) - (b.position || 0)));
     const ids = new Set(pages.map(p => p.id));
     const roots = pages.filter(p => !p.parent_id || !ids.has(p.parent_id));
+    // First render: collapse every node by default (per user preference).
+    if (!window._wiki.treeInit) { window._wiki.expanded = {}; window._wiki.treeInit = true; }
     const seen = new Set();
     const render = (page, depth) => {
       if (seen.has(page.id)) return '';
       seen.add(page.id);
-      let html = wikiRowHtml(page, depth, true);
-      (byParent[page.id] || []).filter(k => k.id !== page.id).forEach(k => { html += render(k, depth + 1); });
+      const kids = (byParent[page.id] || []).filter(k => k.id !== page.id);
+      const hasKids = kids.length > 0;
+      const open = !!window._wiki.expanded[page.id];
+      const caret = !hasKids ? 'leaf' : (open ? 'open' : 'collapsed');
+      let html = wikiRowHtml(page, depth, true, caret);
+      if (hasKids && open) kids.forEach(k => { html += render(k, depth + 1); });
       return html;
     };
     tree.innerHTML = roots.map(r => render(r, 0)).join('');
@@ -172,7 +258,7 @@ function wikiRenderTree() {
   const keys = Object.keys(groups).sort((a, b) => a.localeCompare(b));
   tree.innerHTML = keys.map(k => {
     const rows = groups[k].sort((a, b) => (a.title || '').localeCompare(b.title || ''))
-      .map(p => wikiRowHtml(p, 0, false)).join('');
+      .map(p => wikiRowHtml(p, 0, false, 'none')).join('');
     return `<div class="wiki-group-header">${esc(k)} <span style="opacity:.6">· ${groups[k].length}</span></div>${rows}`;
   }).join('');
 }
@@ -438,6 +524,7 @@ async function wikiOpenPage(id) {
     document.getElementById('wiki-title-input').value = page.title || '';
     wikiRenderMeta(page);
     wikiSetMode('render');
+    wikiExpandAncestors(id);   // reveal the opened page if it's nested
     wikiRenderTree();   // refresh active highlight
   } catch (e) {
     alert('Fehler beim Laden: ' + e.message);
@@ -460,10 +547,11 @@ function wikiRenderMeta(page) {
   }
   // Per-page tag manager: colored pills (× removes from THIS page) + an add control.
   const tags = (page.tags || []).map(t =>
-    wikiTagPill(t, { onClick: `wikiToggleTag('${esc(t)}')`, onRemove: `wikiRemoveTagFromPage('${esc(t)}')` })).join(' ');
-  const addBtn = `<span class="wiki-tag" onclick="wikiAddTagToPage()" title="Tag hinzufügen"
-      style="background:transparent;color:var(--text-400);border-style:dashed;cursor:pointer">+ Tag</span>`;
-  meta.innerHTML = bits.join('  ·  ') + '<br><span style="display:inline-flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center">' + tags + ' ' + addBtn + '</span>';
+    wikiTagPill(t, { onClick: `wikiToggleTag('${esc(t)}')`, onRemove: `wikiRemoveTagFromPage('${esc(t)}')` })).join('');
+  const addBtn = `<span class="wiki-tag wiki-tag-add" onclick="wikiAddTagToPage()" title="Tag hinzufügen">+ Tag</span>`;
+  meta.innerHTML =
+    `<div class="wiki-meta-info">${bits.join('<span class="wiki-meta-sep">·</span>')}</div>` +
+    `<div class="wiki-meta-tags">${tags}${addBtn}</div>`;
 }
 
 // Page tag assignment: a small modal to pick WHICH existing palette tags apply
@@ -584,11 +672,12 @@ function wikiSetMode(mode) {
   const raw = document.getElementById('wiki-raw');
   const bRender = document.getElementById('wiki-mode-render');
   const bRaw = document.getElementById('wiki-mode-raw');
-  [bRender, bRaw].forEach(b => { if (b) { b.classList.remove('active'); b.style.background = 'transparent'; b.style.color = 'var(--text-300)'; } });
+  // Active state is CSS-driven now (.wiki-mode-btn.active) — just toggle the class.
+  [bRender, bRaw].forEach(b => { if (b) b.classList.remove('active'); });
   if (mode === 'raw') {
     render.style.display = 'none';
     raw.style.display = 'block';
-    if (bRaw) { bRaw.classList.add('active'); bRaw.style.background = 'var(--bg-300)'; bRaw.style.color = 'var(--text-000)'; }
+    if (bRaw) bRaw.classList.add('active');
     wikiEnsureEditor();
   } else {
     // Render the (possibly edited) markdown. Replace [[image|audio|video:<id>]]
@@ -603,7 +692,7 @@ function wikiSetMode(mode) {
     render.innerHTML = (typeof renderMarkdown === 'function') ? renderMarkdown(md) : (window.marked ? marked.parse(md) : esc(md));
     render.style.display = 'block';
     raw.style.display = 'none';
-    if (bRender) { bRender.classList.add('active'); bRender.style.background = 'var(--bg-300)'; bRender.style.color = 'var(--text-000)'; }
+    if (bRender) bRender.classList.add('active');
     media.forEach(m => wikiHydrateMedia(m.slot, m.kind, m.id));
   }
 }

@@ -11248,18 +11248,20 @@ code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
 #wiki-view { display: none; height: 100%; }
 #wiki-view.active { display: block; }
 
+/* Match the left-nav (.sb-nav-item) metrics: font-size 15px / weight 450 /
+   line-height 1.4 / 9px 12px padding / 8px radius / 12px gap. */
 #wiki-view .wiki-tree-item {
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px 8px; border-radius: 6px; cursor: pointer;
-  font-family: var(--font-ui); font-size: 14px; color: var(--text-100);
-  line-height: 1.35;
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px; border-radius: 8px; cursor: pointer;
+  font-family: var(--font-ui); font-size: 15px; font-weight: 450;
+  color: var(--text-100); line-height: 1.4; letter-spacing: -0.01em;
 }
 #wiki-view .wiki-tree-item:hover { background: var(--bg-200); }
 #wiki-view .wiki-tree-item.active { background: var(--bg-300); }
 #wiki-view .wiki-tree-item .wiki-row-title {
   flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-#wiki-view .wiki-tree-item svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.7; flex-shrink: 0; color: var(--text-400); }
+#wiki-view .wiki-tree-item svg { width: 19px; height: 19px; stroke: currentColor; fill: none; stroke-width: 1.8; flex-shrink: 0; color: var(--text-400); }
 #wiki-view .wiki-tree-item.active svg { color: var(--text-200); }
 #wiki-view .wiki-row-actions { display: none; gap: 2px; flex-shrink: 0; }
 #wiki-view .wiki-tree-item:hover .wiki-row-actions { display: flex; }
@@ -11282,9 +11284,9 @@ code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
 #wiki-view .wiki-tag.active { background: var(--accent-main-100, #2563eb); color: #fff; border-color: transparent; }
 #wiki-view .wiki-tag-row { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; }
 #wiki-view .wiki-tagbar-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 4px 10px; border-radius: 6px; cursor: pointer;
-  font-family: var(--font-ui); font-size: 12px;
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  font-family: var(--font-ui); font-size: 14px;
   background: var(--bg-200); color: var(--text-200); border: 1px solid var(--border-100);
 }
 #wiki-view .wiki-tagbar-btn:hover { background: var(--bg-300); color: var(--text-000); }
@@ -11302,15 +11304,123 @@ code, pre, .tool-result-pre, .wf-card-fname, .font-mono {
 #wiki-view .wiki-tree-item.dragging { opacity: 0.45; }
 #wiki-view .wiki-tree-item.drag-over { background: var(--bg-300); box-shadow: inset 0 -2px 0 var(--accent-main-100, #2563eb); }
 
+/* ── Page header (title + editor/render toolbar) ──
+   Uniform 34px icon buttons on one baseline so nothing is misaligned. */
+#wiki-view .wiki-page-header {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 10px 18px; border-bottom: 1px solid var(--border-100);
+}
+#wiki-view .wiki-title-input {
+  flex: 1; min-width: 200px; font-size: 18px; font-weight: 600;
+  font-family: var(--font-ui); background: transparent; border: none;
+  color: var(--text-000); outline: none; letter-spacing: -0.01em;
+}
+/* Ansicht/Markdown segmented toggle */
+#wiki-view .wiki-mode-toggle {
+  display: flex; border: 1px solid var(--border-100); border-radius: 8px; overflow: hidden;
+}
+#wiki-view .wiki-mode-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border: none; background: transparent;
+  color: var(--text-400); cursor: pointer; padding: 0;
+}
+#wiki-view .wiki-mode-btn:hover { background: var(--bg-200); color: var(--text-100); }
+#wiki-view .wiki-mode-btn.active { background: var(--bg-300); color: var(--text-000); }
+#wiki-view .wiki-mode-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+/* Standalone header action buttons — same square footprint, aligned with the toggle */
+#wiki-view .wiki-hdr-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 8px; padding: 0; cursor: pointer;
+  border: 1px solid var(--border-100); background: transparent; color: var(--text-300);
+}
+#wiki-view .wiki-hdr-btn:hover { background: var(--bg-200); color: var(--text-100); }
+#wiki-view .wiki-hdr-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+#wiki-view .wiki-hdr-btn.primary {
+  background: var(--accent-main-100, #2563eb); border-color: transparent; color: #fff;
+}
+#wiki-view .wiki-hdr-btn.primary:hover { filter: brightness(1.08); color: #fff; }
+#wiki-view .wiki-hdr-btn.danger { color: var(--error, #dc2626); }
+#wiki-view .wiki-hdr-btn.danger:hover { background: var(--error-bg, rgba(220,38,38,.12)); color: var(--error, #dc2626); }
+#wiki-view .wiki-page-meta {
+  padding: 8px 18px; border-bottom: 1px solid var(--border-100);
+  display: flex; flex-direction: column; gap: 8px;
+}
+#wiki-view .wiki-meta-info {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  font-family: var(--font-ui); font-size: 12px; color: var(--text-400); line-height: 1.4;
+}
+#wiki-view .wiki-meta-sep { color: var(--text-500); }
+#wiki-view .wiki-meta-info .wiki-jump { color: var(--accent-blue); cursor: pointer; text-decoration: underline; }
+#wiki-view .wiki-meta-tags { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+/* Meta tag pills — matched to the meta text (12px) with even padding. */
+#wiki-view .wiki-meta-tags .wiki-tag {
+  font-size: 12px; padding: 2px 9px; line-height: 1.4;
+}
+#wiki-view .wiki-tag-add {
+  background: transparent; color: var(--text-400);
+  border-style: dashed; cursor: pointer;
+}
+
 /* Render pane = chat message typography */
 #wiki-view .wiki-render { font-family: var(--font-ui); color: var(--text-100); font-size: 16px; }
 
 /* Grouping dropdown */
 #wiki-view .wiki-group-select {
-  width: 100%; padding: 5px 8px; border-radius: 6px; font-size: 12px;
+  width: 100%; padding: 8px 10px; border-radius: 8px; font-size: 14px;
   background: var(--bg-200); color: var(--text-100); border: 1px solid var(--border-100);
   font-family: var(--font-ui); cursor: pointer; margin-top: 6px;
 }
+
+/* Tree text search (filters pages by title/tags) */
+#wiki-view .wiki-search {
+  width: 100%; padding: 8px 10px; border-radius: 8px; font-size: 14px;
+  background: var(--bg-200); color: var(--text-100); border: 1px solid var(--border-100);
+  font-family: var(--font-ui); margin-top: 6px; box-sizing: border-box; outline: none;
+}
+#wiki-view .wiki-search::placeholder { color: var(--text-400); }
+#wiki-view .wiki-search:focus { border-color: var(--accent-main-100, #2563eb); }
+
+/* Collapse caret (manual tree mode). A fixed-width slot keeps titles aligned
+   whether or not a row has children. */
+#wiki-view .wiki-caret {
+  width: 14px; height: 14px; flex-shrink: 0; display: inline-flex;
+  align-items: center; justify-content: center; cursor: pointer;
+  color: var(--text-400); border-radius: 3px;
+}
+#wiki-view .wiki-caret:hover { background: var(--bg-300); color: var(--text-100); }
+#wiki-view .wiki-caret svg { width: 11px; height: 11px; transition: transform .12s; }
+#wiki-view .wiki-caret.collapsed svg { transform: rotate(-90deg); }
+#wiki-view .wiki-caret.leaf { visibility: hidden; }
+
+/* Sidebar resize handle (drag to set the tree column width). */
+#wiki-view .wiki-resize {
+  width: 5px; flex-shrink: 0; cursor: col-resize; background: transparent;
+  margin-left: -3px; z-index: 2;
+}
+#wiki-view .wiki-resize:hover,
+#wiki-view .wiki-resize.dragging { background: var(--accent-main-100, #2563eb); }
+
+/* Raw markdown editor — the CodeMirror default theme hardcodes a white surface,
+   so in dark mode the editor pane stayed light. Theme it to follow the app vars
+   (mirrors the .editor-cm rules used by the code-mode editor). */
+#wiki-raw .CodeMirror {
+  height: 100%; font-size: 13px; font-family: var(--font-mono);
+  background: var(--bg-100); color: var(--text-100);
+}
+#wiki-raw .CodeMirror-gutters {
+  background: var(--bg-100); border-right: 1px solid var(--border-100);
+}
+#wiki-raw .CodeMirror-linenumber { color: var(--text-500); }
+#wiki-raw .CodeMirror-cursor { border-left-color: var(--text-100); }
+#wiki-raw .CodeMirror-selected { background: var(--bg-300); }
+#wiki-raw .CodeMirror-focused .CodeMirror-selected { background: var(--accent-blue-bg); }
+#wiki-raw .CodeMirror-activeline-background { background: var(--bg-100); }
+:root[data-mode="dark"] #wiki-raw .cm-header { color: #569cd6; }
+:root[data-mode="dark"] #wiki-raw .cm-quote { color: #6a9955; }
+:root[data-mode="dark"] #wiki-raw .cm-link { color: #ce9178; }
+:root[data-mode="dark"] #wiki-raw .cm-url { color: #9cdcfe; }
+:root[data-mode="dark"] #wiki-raw .cm-string { color: #ce9178; }
+:root[data-mode="dark"] #wiki-raw .cm-comment { color: #6a9955; }
 
 .pt-realfile.pt-selected { background:var(--sidebar-hover); }
 

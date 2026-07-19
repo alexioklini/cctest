@@ -4425,29 +4425,6 @@
       "is_local": false,
       "warmup": false
     },
-    "qwen/qwen3-next-80b-a3b-instruct:free": {
-      "enabled": false,
-      "shortname": "qwen3-next-80b-a3b-instruct:free",
-      "display_name": "qwen3-next-80b-a3b-instruct:free",
-      "icon": "🐼",
-      "priority": 50,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [],
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "nvidia/nemotron-nano-9b-v2:free": {
       "enabled": false,
       "shortname": "nemotron-nano-9b-v2:free",
@@ -4482,51 +4459,6 @@
       "is_local": false,
       "warmup": false
     },
-    "qwen/qwen3-coder:free": {
-      "enabled": false,
-      "shortname": "qwen3-coder:free",
-      "display_name": "qwen3-coder:free",
-      "icon": "🐼",
-      "priority": 50,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [],
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "cognitivecomputations/dolphin-mistral-24b-venice-edition:free": {
-      "enabled": false,
-      "shortname": "dolphin-mistral-24b-venice-edition:free",
-      "display_name": "dolphin-mistral-24b-venice-edition:free",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition": {
       "enabled": false,
       "shortname": "dolphin-mistral-24b-venice-edition",
@@ -4545,75 +4477,6 @@
       "raw_formats": [],
       "provider": "openrouter",
       "base_model_id": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "meta-llama/llama-3.3-70b-instruct:free": {
-      "enabled": false,
-      "shortname": "llama-3.3-70b-instruct:free",
-      "display_name": "llama-3.3-70b-instruct:free",
-      "icon": "🦙",
-      "priority": 40,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [],
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "meta-llama/llama-3.2-3b-instruct:free": {
-      "enabled": false,
-      "shortname": "llama-3.2-3b-instruct:free",
-      "display_name": "llama-3.2-3b-instruct:free",
-      "icon": "🦙",
-      "priority": 40,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [],
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "nousresearch/hermes-3-llama-3.1-405b:free": {
-      "enabled": false,
-      "shortname": "hermes-3-llama-3.1-405b:free",
-      "display_name": "hermes-3-llama-3.1-405b:free",
-      "icon": "🦙",
-      "priority": 40,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [],
-      "provider": "openrouter",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,

@@ -11,6 +11,16 @@ function navigateTo(view, opts) {
   // Stop code-mode init/file-tree polling when leaving project-detail.
   if (view !== 'project-detail' && typeof stopCodeModePoll === 'function') stopCodeModePoll();
 
+  // Wiki gets a fullscreen work area: squeeze the app nav to its icon rail while
+  // it's open (same as code-mode terminal). Leaving wiki restores the user's
+  // saved sidebar preference. A manual toggle while in wiki wins (rewrites the
+  // localStorage flag the restore reads).
+  if (view === 'wiki') {
+    document.getElementById('sidebar')?.classList.add('collapsed');
+  } else if (localStorage.getItem('sidebar-collapsed') !== '1') {
+    document.getElementById('sidebar')?.classList.remove('collapsed');
+  }
+
   // Hide all views
   document.getElementById('welcome-view').style.display = 'none';
   document.getElementById('chat-view').classList.remove('active');
