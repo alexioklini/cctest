@@ -32,30 +32,35 @@ def _slug_from_prompt(prompt: str) -> str:
     return safe or "image"
 
 
-_MISTRAL_BASE = "https://api.mistral.ai"
 _agent_id_lock = threading.Lock()
 _cached_agent_id = None  # in-memory cache; persisted to config.json
 
 
-def _mistral_api_key() -> str:
-    """Resolve the Mistral provider API key from config."""
+def _image_api() -> tuple[str, str]:
+    """(base_url, api_key) of the DEFAULT provider — since the llm-router
+    switchover (2026-07-19) that is the router, which passthrough-routes the
+    Mistral Agents API surface (/agents, /conversations, /files/<id>/content)
+    to Mistral with the upstream credentials it manages. Replaces the old
+    hardcoded _MISTRAL_BASE + providers-scan-for-'mistral.ai' credential
+    lookup, so image generation follows provider routing like every other
+    call. base_url includes the /v1 suffix (brain provider convention)."""
     import brain
     try:
         with open(brain.CONFIG_PATH) as f:
             cfg = json.load(f)
-        for prov in cfg.get("providers", {}).values():
-            if "mistral.ai" in prov.get("base_url", ""):
-                keys = prov.get("api_keys") or []
-                if isinstance(keys, list) and keys:
-                    k = keys[0]
-                    return k.get("key", "") if isinstance(k, dict) else str(k)
-                return prov.get("api_key", "")
+        dp = cfg.get("default_provider") or ""
+        prov = (cfg.get("providers") or {}).get(dp) or {}
+        base = (prov.get("base_url") or "").rstrip("/")
+        key = prov.get("api_key") or ""
+        if not key and prov.get("api_keys"):
+            k0 = prov["api_keys"][0]
+            key = k0.get("key", "") if isinstance(k0, dict) else str(k0)
+        return base, key
     except Exception:
-        pass
-    return ""
+        return "", ""
 
 
-def _get_or_create_image_agent(api_key: str) -> str:
+def _get_or_create_image_agent(base_url: str, api_key: str) -> str:
     """Return a cached Mistral image-generation agent ID, creating it on first call."""
     import brain
     global _cached_agent_id
@@ -74,7 +79,9 @@ def _get_or_create_image_agent(api_key: str) -> str:
         except Exception:
             cfg = {}
 
-        # Create agent on Mistral's side
+        # Create agent on Mistral's side (via the router's /agents passthrough).
+        # NB: the model here is the UPSTREAM Mistral model id for the agent —
+        # deliberately not a router model id (the router forwards it verbatim).
         payload = json.dumps({
             "model": "mistral-medium-latest",
             "name": "Brain Image Generation Agent",
@@ -83,7 +90,7 @@ def _get_or_create_image_agent(api_key: str) -> str:
             "tools": [{"type": "image_generation"}],
         }).encode()
         req = urllib.request.Request(
-            f"{_MISTRAL_BASE}/v1/agents",
+            f"{base_url}/agents",
             data=payload,
             headers={
                 "Authorization": f"Bearer {api_key}",
@@ -129,7 +136,8 @@ def tool_generate_image(args: dict) -> str:
 
     # M2 (G7) — UNCONDITIONAL cloud-egress check.
     #
-    # This tool ALWAYS posts to api.mistral.ai (_MISTRAL_BASE), no matter which
+    # This tool ALWAYS ends up at the Mistral Agents API (since 2026-07-19 via
+    # the llm-router's passthrough — still a CLOUD egress), no matter which
     # model the session runs on. That breaks the assumption every other guard
     # rests on: "local model ⇒ nothing leaves the machine". It does not — the
     # egress happens at the TOOL, not at the chat model. Session 5175bf8fdf70 sent
@@ -146,16 +154,15 @@ def tool_generate_image(args: dict) -> str:
     except Exception:
         pass  # scanner failure must not break image generation outright
 
-    api_key = _mistral_api_key()
-    if not api_key:
+    base_url, api_key = _image_api()
+    if not base_url or not api_key:
         return _err(
-            "generate_image: No Mistral API key found. "
-            "Add a provider entry with base_url 'https://api.mistral.ai/v1' "
-            "and an api_key to config.json."
+            "generate_image: Kein default_provider mit api_key konfiguriert — "
+            "die Bildgenerierung läuft über den Standard-Provider (llm-router)."
         )
 
     try:
-        agent_id = _get_or_create_image_agent(api_key)
+        agent_id = _get_or_create_image_agent(base_url, api_key)
     except Exception as e:
         return _err(str(e))
 
@@ -165,7 +172,7 @@ def tool_generate_image(args: dict) -> str:
         "inputs": full_prompt,
     }).encode()
     req = urllib.request.Request(
-        f"{_MISTRAL_BASE}/v1/conversations",
+        f"{base_url}/conversations",
         data=conv_payload,
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -242,7 +249,7 @@ def tool_generate_image(args: dict) -> str:
             _n += 1
 
         dl_req = urllib.request.Request(
-            f"{_MISTRAL_BASE}/v1/files/{file_id}/content",
+            f"{base_url}/files/{file_id}/content",
             headers={"Authorization": f"Bearer {api_key}"},
             method="GET",
         )

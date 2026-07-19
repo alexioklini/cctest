@@ -1050,7 +1050,8 @@ write/exec tool is deliberately excluded.
   `diagram` tool word → the `documents` group, so such requests route to
   render_diagram automatically.)
   **Datenschutz (v9.343.0)**: `generate_image` schickt den Prompt **IMMER** an
-  einen Cloud-Dienst (api.mistral.ai) — auch aus einer lokalen Sitzung. Es ist
+  einen Cloud-Dienst (Mistral-Agents-API; seit v9.380.0 über den llm-router
+  geroutet, bleibt aber Cloud-Egress) — auch aus einer lokalen Sitzung. Es ist
   daher ein **Egress-Tool** (Gate wie bei den Web-Tools) und hat zusätzlich einen
   **mapping-unabhängigen** PII-Scan: enthält der Prompt personenbezogene Daten,
   wird er NICHT gesendet (`cloud_egress_blocked_pii`) — formuliere ihn dann mit
