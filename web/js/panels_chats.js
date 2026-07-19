@@ -56,17 +56,14 @@ function applyStatusBarRoleVisibility() {
   const hide = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? 'none' : ''; };
   const isUser = role === 'user';
   const isPower = role === 'poweruser';
-  hide('status-tokens-in-wrap',  isUser);
-  hide('status-tokens-out-wrap', isUser);
+  hide('status-tokens-wrap',     isUser);
   hide('status-speed-wrap',      isUser);
   hide('status-cost-wrap',       isUser);
-  hide('status-cached-wrap',     isUser);
   hide('status-inspect-btn',     isUser);
-  // Pool + queue: hidden for powerusers and users (admins-only).
-  // Their monitors set display:flex on poll — see _renderPoolIndicator + QueueMonitor._render.
+  // Infra icon (warm pool + provider queue): admins only.
+  // The monitors set display:flex on poll — see InfraMonitor render below.
   if (isUser || isPower) {
-    hide('status-warmpool', true);
-    hide('status-queue', true);
+    hide('status-infra', true);
   }
   return role;
 }
@@ -75,7 +72,6 @@ function updateStatusBar() {
   const chat = state.activeChat;
   if (!chat) return;
 
-  document.getElementById('status-agent').textContent = state.activeAgentId || '';
   document.getElementById('status-model').textContent = '';
   document.getElementById('status-session').textContent = chat.sessionId ? (chat.sessionId.startsWith('sched-') ? chat.sessionId : chat.sessionId.substring(0,8)) : '';
 
@@ -256,53 +252,22 @@ function updateStatusBar() {
     }
   }
 
-  document.getElementById('status-tokens-in').textContent = totalIn ? totalIn.toLocaleString() : '0';
-  document.getElementById('status-tokens-out').textContent = totalOut ? totalOut.toLocaleString() : '0';
-  document.getElementById('status-speed').textContent = lastSpeed ? `${lastSpeed} tok/s` : '-';
-
-  // Prompt-cache hit indicator — a first-class status item RIGHT AFTER the cost
-  // item (belongs with the token+cost group; #status-cached-wrap in index.html).
-  // Shows cumulative cached tokens + session cache-hit % + $ saved. Shown whenever
-  // the token group is (non-user role); dimmed grey at 0 (cold / short session),
-  // green once hits accumulate. Cache-hit % = cached / (full-price in + cached);
-  // savings = those tokens at the full input rate minus the cache_read rate.
-  const cachedWrap = document.getElementById('status-cached-wrap');
-  const cachedLabel = document.getElementById('status-cached-label');
-  if (cachedWrap && cachedLabel) {
+  // Combined token display: in / out / cached (no labels, no percentages).
+  const tokensEl = document.getElementById('status-tokens');
+  if (tokensEl) {
+    tokensEl.textContent = `${totalIn.toLocaleString()} / ${totalOut.toLocaleString()} / ${totalCached.toLocaleString()}`;
+    tokensEl.style.color = totalCached > 0 ? '' : '';
+    // Cache-hit context stays in the tooltip only (no on-bar percentage).
     const _promptTot = totalIn + totalCached;
     const _hitPct = _promptTot ? Math.round(100 * totalCached / _promptTot) : 0;
-    // Effective model for cache pricing: chat.model can be a VIRTUAL directive
-    // (moa / auto / auto-cloud / auto-local) that has no cost config — keying
-    // the tariff check on it falsely claimed "kein Cache-Tarif hinterlegt"
-    // (MoA eval chats, glm-5.2 aggregator). Use the last turn's actual
-    // answering model from its metadata; fall back to chat.model.
-    let _effCacheModel = chat.model;
-    for (let mi = msgs.length - 1; mi >= 0; mi--) {
-      const m = msgs[mi];
-      if (m.role === 'assistant' && m.metadata?.model) { _effCacheModel = m.metadata.model; break; }
-    }
-    const _save = (typeof cacheSavingsUSD === 'function') ? cacheSavingsUSD(_effCacheModel, totalCached) : 0;
-    // Whether caching HAPPENED is a token fact (totalCached>0), independent of
-    // whether the model has a $-tariff (cost_cache_read). Never conflate them:
-    // a plan model like k3 caches for real but has no per-token tariff, so the
-    // tooltip must not claim "kein Prompt-Caching" — the $-note is only a
-    // pricing caveat. (Mirrors chat_render.js; see the k3 0%-display bug.)
-    const _mcfg = state.modelsConfig?.models?.[_effCacheModel] || {};
-    const _cachePriced = Number(_mcfg.cost_cache_read) > 0;
-    if (msgs.length === 0) {
-      cachedWrap.style.display = 'none';
-    } else {
-      cachedWrap.style.display = '';
-      cachedLabel.textContent = `${totalCached.toLocaleString()} (${_hitPct}%)`;
-      cachedLabel.style.color = totalCached > 0 ? '#10b981' : '';
-      const _priceNote = _cachePriced
-        ? (_save > 0 ? ` Ersparnis ggü. vollem Eingabe-Tarif: $${_save.toFixed(4)}.` : '')
-        : ' Für dieses Modell ist kein Cache-Tarif hinterlegt (cost_cache_read), daher wird keine $-Ersparnis berechnet — das Caching selbst findet trotzdem statt.';
-      cachedWrap.title = totalCached > 0
-        ? `Prompt-Cache-Treffer dieser Sitzung: ${totalCached.toLocaleString()} Tokens = ${_hitPct}% des Prompts${_cachePriced ? ', zum ~0,1×-Tarif abgerechnet' : ''}.${_priceNote}`
-        : `Kein Cache-Treffer in dieser Sitzung (0 Tokens).${_cachePriced ? '' : _priceNote}`;
+    const tokWrap = document.getElementById('status-tokens-wrap');
+    if (tokWrap) {
+      tokWrap.title = `Token dieser Sitzung — Eingabe: ${totalIn.toLocaleString()} · `
+        + `Ausgabe: ${totalOut.toLocaleString()} · Cache-Treffer: ${totalCached.toLocaleString()}`
+        + (totalCached > 0 ? ` (${_hitPct}% des Prompts aus dem Cache)` : '');
     }
   }
+  document.getElementById('status-speed').textContent = lastSpeed ? `${lastSpeed} tok/s` : '-';
 
   // Context fill bar — use last API tokens_in as real context usage
   const wrap = document.getElementById('status-context-wrap');
@@ -408,19 +373,17 @@ function updateStatusBar() {
   const _listDiffers = sessionCostList !== undefined && sessionCostList > sessionCost * 1.01 + 0.0001;
   if (sawCostField) {
     costWrap.style.display = '';
+    // Effective (billed) cost only — the API list-price comparison was dropped
+    // from the status line (still available in the Plan-usage / cost breakdown).
+    costLabel.textContent = _fmt$(sessionCost);
     if (sessionCost <= 0 && !_listDiffers) {
-      costLabel.textContent = '0.00';
       costLabel.style.color = 'var(--text-400)';
-      costWrap.title = 'Sitzungskosten: $0.00 — für dieses Modell sind keine Preise hinterlegt. cost_input/cost_output unter Einstellungen → Modelle festlegen.';
-    } else if (_listDiffers) {
-      // Flatrate-Modell: verrechnet (real) + API-Listenpreis nebeneinander.
-      costLabel.innerHTML = `${esc(_fmt$(sessionCost))} <span style="color:var(--text-400);font-size:10px">(API ${esc(_fmt$(sessionCostList))})</span>`;
-      costLabel.style.color = '';
-      costWrap.title = `Sitzungskosten verrechnet: $${sessionCost.toFixed(4)} (Flatrate/Coding-Plan) · zum API-Listenpreis wären es $${sessionCostList.toFixed(4)} — Ersparnis $${(sessionCostList - sessionCost).toFixed(4)}.`;
+      costWrap.title = 'Effektive Sitzungskosten: $0.00 — für dieses Modell sind keine Preise hinterlegt. cost_input/cost_output unter Einstellungen → Modelle festlegen.';
     } else {
-      costLabel.textContent = _fmt$(sessionCost);
       costLabel.style.color = '';
-      costWrap.title = `Sitzungskosten: $${sessionCost.toFixed(4)}`;
+      costWrap.title = _listDiffers
+        ? `Effektive Sitzungskosten (verrechnet): $${sessionCost.toFixed(4)} — zum API-Listenpreis wären es $${sessionCostList.toFixed(4)} (Ersparnis $${(sessionCostList - sessionCost).toFixed(4)}).`
+        : `Effektive Sitzungskosten: $${sessionCost.toFixed(4)}`;
     }
   } else {
     costWrap.style.display = 'none';

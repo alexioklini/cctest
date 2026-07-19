@@ -1544,21 +1544,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span class="connection-dot disconnected" id="status-connection-dot"></span>
     </div>
     <div class="status-item">
-      <span class="status-agent" id="status-agent">main</span>
-    </div>
-    <div class="status-item">
       <span class="status-model" id="status-model"></span>
     </div>
-    <div class="status-item" id="status-tokens-in-wrap" title="Eingabe-Token (gesamt)">
-      <span class="status-label">Ein:</span>
-      <span class="status-value" id="status-tokens-in">0</span>
-    </div>
-    <div class="status-item" id="status-tokens-out-wrap" title="Ausgabe-Token (gesamt)">
-      <span class="status-label">Aus:</span>
-      <span class="status-value" id="status-tokens-out">0</span>
+    <div class="status-item" id="status-tokens-wrap" title="Token: Eingabe / Ausgabe / Cache-Treffer">
+      <span class="status-value" id="status-tokens">0 / 0 / 0</span>
     </div>
     <div class="status-item" id="status-speed-wrap" title="Geschwindigkeit der letzten Anfrage">
-      <span class="status-label">Tempo:</span>
       <span class="status-value" id="status-speed">-</span>
     </div>
     <div class="status-item" id="status-context-wrap" style="display:none">
@@ -1569,13 +1560,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         <span id="status-lcm-badge-text"></span>
       </span>
     </div>
-    <div class="status-item" id="status-cost-wrap" style="display:none" title="Sitzungskosten">
+    <div class="status-item" id="status-cost-wrap" style="display:none" title="Effektive Sitzungskosten">
       <span class="status-label">$</span>
       <span class="status-value" id="status-cost-label">0.00</span>
-    </div>
-    <div class="status-item" id="status-cached-wrap" style="display:none" title="Prompt-Cache-Treffer dieser Sitzung">
-      <span class="status-label">⚡</span>
-      <span class="status-value" id="status-cached-label">0</span>
     </div>
     <div class="status-item" id="status-quota" style="display:none;cursor:pointer;gap:4px" title="Plan-Nutzung — für Details klicken" onclick="openQuotaModal()">
       <svg id="status-quota-donut" width="16" height="16" viewBox="0 0 16 16" style="display:block">
@@ -1587,15 +1574,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
       <span class="status-label">Plan</span>
       <span class="status-value" id="status-quota-label">—</span>
     </div>
-    <div class="status-item" id="status-warmpool" style="display:none;cursor:pointer;gap:4px" title="Warm-Pool — für Details klicken" onclick="openWarmPoolModal()">
-      <span class="warmup-dot" id="status-warmpool-dot"></span>
-      <span class="status-label">Pool</span>
-      <span class="status-value" id="status-warmpool-label">0/0</span>
-    </div>
-    <div class="status-item" id="status-queue" style="display:none;cursor:pointer;gap:4px" title="Provider-Warteschlange — für Details klicken" onclick="openQueueModal()">
-      <span class="warmup-dot" id="status-queue-dot"></span>
-      <span class="status-label">Warteschlange</span>
-      <span class="status-value" id="status-queue-label">0/0</span>
+    <div class="status-item" id="status-infra" style="display:none;cursor:pointer;gap:4px" title="Infrastruktur: Warm-Pool & Provider-Warteschlange — für Details klicken" onclick="openInfraModal()">
+      <span class="warmup-dot" id="status-infra-dot"></span>
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="display:block"><rect x="2" y="3" width="20" height="6" rx="1.5"/><rect x="2" y="14" width="20" height="6" rx="1.5"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="17" x2="6.01" y2="17"/></svg>
     </div>
     <div class="status-item" id="status-kernel" style="display:none;gap:4px" title="Persistenter Kernel dieser Sitzung">
       <span class="warmup-dot warm" id="status-kernel-dot"></span>

@@ -155,26 +155,44 @@ function poolTooltip(st) {
   return '';
 }
 
-// Warm-pool status modal — opened from the status bar "Pool" indicator. Live
-// updated by WarmupMonitor._render() (polls /v1/warmup/status).
-function openWarmPoolModal() {
-  if (document.getElementById('warmpool-modal')) return;
+// Combined infrastructure modal — warm-session pool + provider queue in one
+// dialog, opened from the single status-bar infra icon. Both sections are live
+// updated by their monitors' _render() while the modal is open.
+function openInfraModal() {
+  if (document.getElementById('infra-modal')) { document.getElementById('infra-modal').remove(); return; }
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
-  overlay.id = 'warmpool-modal';
+  overlay.id = 'infra-modal';
+  overlay.style.display = 'flex';
   overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-  overlay.innerHTML = `<div class="modal-content" style="max-width:680px;max-height:80vh;display:flex;flex-direction:column">
+  overlay.innerHTML = `<div class="modal-content" style="max-width:720px;width:92%;max-height:85vh;display:flex;flex-direction:column">
     <div style="display:flex;align-items:center;padding:20px 24px 0;gap:12px">
-      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Warm-Session-Pool${helpIcon('Warmup hält Modelle vorgeladen, um die Latenz bis zum ersten Token zu verringern. Der Modus wird pro Modell im Tab „Modelle“ festgelegt:\n\nfull: lädt System-Prompt + Werkzeuge in den KV-Cache vor (~5-6 s bis zur ersten Antwort).\n\nminimal: lädt nur die Modellgewichte, keinen Prompt und keine Werkzeuge (~10-15 s bis zur ersten Antwort).\n\nVoll vorgeladene Modelle teilen sich den GPU-Speicher — bei Engpässen verdrängen sie sich gegenseitig.\n\nIst kein Modell mit Warmup aktiviert: Aktivieren Sie Warmup für ein Modell im Tab „Modelle“, um Sessions vorzubereiten.')}</h2>
-      <span id="warmpool-modal-hint" style="font-size:12px;color:var(--text-400)"></span>
+      <h2 style="margin:0;font-size:18px;font-weight:600;color:var(--text-000)">Infrastruktur</h2>
       <button class="modal-close" onclick="this.closest('.modal-overlay').remove()" style="margin-left:auto">&times;</button>
     </div>
-    <div id="warmpool-body" style="flex:1;overflow-y:auto;padding:12px 24px 24px">
-      <div style="color:var(--text-400);padding:24px;text-align:center">Wird geladen...</div>
+    <div style="flex:1;overflow-y:auto;padding:8px 24px 24px">
+      <div style="display:flex;align-items:center;gap:8px;margin:12px 0 4px">
+        <h3 style="margin:0;font-size:14px;font-weight:600;color:var(--text-100)">Warm-Session-Pool</h3>
+        ${helpIcon('Warmup hält Modelle vorgeladen, um die Latenz bis zum ersten Token zu verringern. Der Modus wird pro Modell im Tab „Modelle“ festgelegt:\n\nfull: lädt System-Prompt + Werkzeuge in den KV-Cache vor (~5-6 s bis zur ersten Antwort).\n\nminimal: lädt nur die Modellgewichte, keinen Prompt und keine Werkzeuge (~10-15 s bis zur ersten Antwort).\n\nVoll vorgeladene Modelle teilen sich den GPU-Speicher — bei Engpässen verdrängen sie sich gegenseitig.')}
+        <span id="warmpool-modal-hint" style="font-size:12px;color:var(--text-400)"></span>
+      </div>
+      <div id="warmpool-body">
+        <div style="color:var(--text-400);padding:16px;text-align:center">Wird geladen...</div>
+      </div>
+      <h3 style="margin:20px 0 4px;font-size:14px;font-weight:600;color:var(--text-100)">Lokale Provider-Warteschlange</h3>
+      <div id="queue-modal-body"><em style="color:var(--text-muted)">Wird geladen…</em></div>
+      <div style="color:var(--text-muted);font-size:12px;margin-top:8px">
+        Provider mit <code>max_concurrent &gt; 0</code> in <code>config.json</code> serialisieren ihre Aufrufe (FIFO), damit
+        mehrere Chats und Hintergrund-Tasks nicht um dasselbe lokale LLM-Gateway konkurrieren.
+      </div>
     </div>
   </div>`;
   document.body.appendChild(overlay);
   renderWarmPoolModalBody();
+  renderQueueModalBody();
+  // Kick the queue monitor into fast mode while the modal is open.
+  QueueMonitor._mode = 'fast';
+  QueueMonitor._tick();
 }
 
 function renderWarmPoolModalBody() {
@@ -321,20 +339,17 @@ const WarmupMonitor = {
       el.title = `Warmup: ${st.state}` + (st.state === 'warm' ? ` · ${age}` : '')
               + poolTooltip(st) + (st.last_error ? ` · ${st.last_error}` : '');
     });
-    // Status-bar pool indicator + modal body live-refresh
+    // Status-bar infra indicator + modal body live-refresh
     this._renderPoolIndicator();
-    if (document.getElementById('warmpool-modal')) {
+    if (document.getElementById('infra-modal')) {
       renderWarmPoolModalBody();
     }
   },
-  _renderPoolIndicator() {
-    const wrap = document.getElementById('status-warmpool');
-    if (!wrap) return;
-    // Admins-only — pool is infra detail not relevant to powerusers/users.
-    if ((state.authUser?.role || 'admin') !== 'admin') { wrap.style.display = 'none'; return; }
-    const entries = Object.entries(this.states);
-    const warmupModels = entries.filter(([_, st]) => st.enabled);
-    if (!warmupModels.length) { wrap.style.display = 'none'; return; }
+  // Compute this monitor's contribution to the combined infra dot, then let
+  // the shared updater decide the icon's visibility + colour.
+  poolSummary() {
+    const warmupModels = Object.entries(this.states).filter(([_, st]) => st.enabled);
+    if (!warmupModels.length) return null;
     let ready = 0, target = 0, building = 0, failed = 0, anyWarm = false;
     for (const [_, st] of warmupModels) {
       ready += st.ready ?? 0;
@@ -343,18 +358,11 @@ const WarmupMonitor = {
       if (st.state === 'failed') failed++;
       if (st.state === 'warm') anyWarm = true;
     }
-    wrap.style.display = 'flex';
-    const dot = document.getElementById('status-warmpool-dot');
-    let dotCls = 'idle';
-    if (failed && !anyWarm) dotCls = 'failed';
-    else if (building > 0 || this.anyWarming) dotCls = 'warming';
-    else if (ready > 0) dotCls = 'warm';
-    dot.className = 'warmup-dot ' + dotCls;
-    document.getElementById('status-warmpool-label').textContent = `${ready}/${target}`;
-    wrap.title = `Warm-Pool: ${ready}/${target} bereit`
-               + (building ? ` · ${building} im Aufbau` : '')
-               + (failed ? ` · ${failed} fehlgeschlagen` : '')
-               + ' — für Details klicken';
+    return { count: warmupModels.length, ready, target, building, failed, anyWarm,
+             warming: building > 0 || this.anyWarming };
+  },
+  _renderPoolIndicator() {
+    updateInfraIndicator();
   },
   _applyComposerDot(id, model) {
     const el = document.getElementById(id);
@@ -425,35 +433,51 @@ const QueueMonitor = {
     } catch {}
     this._schedule();
   },
-  _render() {
-    const wrap = document.getElementById('status-queue');
-    if (!wrap) return;
-    // Admins-only — provider queue is infra detail not relevant to powerusers/users.
-    if ((state.authUser?.role || 'admin') !== 'admin') { wrap.style.display = 'none'; return; }
+  // This monitor's contribution to the combined infra dot.
+  queueSummary() {
     const entries = Object.entries(this.providers);
-    // Hide only when no providers are configured for queueing at all.
-    if (!entries.length) { wrap.style.display = 'none'; return; }
+    if (!entries.length) return null;
     let active = 0, waiting = 0, capacity = 0;
     for (const [_, p] of entries) {
       active += p.active_count || 0;
       waiting += p.waiting_count || 0;
       capacity += p.max_concurrent || 0;
     }
-    wrap.style.display = 'flex';
-    const dot = document.getElementById('status-queue-dot');
-    let dotCls = 'idle';
-    if (waiting > 0) dotCls = 'warming';
-    else if (active > 0) dotCls = 'warm';
-    dot.className = 'warmup-dot ' + dotCls;
-    const label = document.getElementById('status-queue-label');
-    if (label) label.textContent = waiting > 0 ? `${active}+${waiting}/${capacity}` : `${active}/${capacity}`;
-    wrap.title = waiting > 0 || active > 0
-      ? `Provider-Warteschlange — ${active} aktiv, ${waiting} wartend (Kapazität ${capacity}) — für Details klicken`
-      : `Provider-Warteschlange — inaktiv (Kapazität ${capacity}) — für Details klicken`;
-
-    if (document.getElementById('queue-modal')) renderQueueModalBody();
+    return { count: entries.length, active, waiting, capacity };
+  },
+  _render() {
+    updateInfraIndicator();
+    if (document.getElementById('infra-modal')) renderQueueModalBody();
   },
 };
+
+// ─── Combined infra indicator (warm pool + provider queue) ───
+// One status-bar icon whose dot colour summarises both monitors. Admin-only.
+// Click opens the combined modal (openInfraModal).
+function updateInfraIndicator() {
+  const wrap = document.getElementById('status-infra');
+  if (!wrap) return;
+  if ((state.authUser?.role || 'admin') !== 'admin') { wrap.style.display = 'none'; return; }
+  const pool = (typeof WarmupMonitor !== 'undefined' && WarmupMonitor.poolSummary) ? WarmupMonitor.poolSummary() : null;
+  const queue = (typeof QueueMonitor !== 'undefined' && QueueMonitor.queueSummary) ? QueueMonitor.queueSummary() : null;
+  if (!pool && !queue) { wrap.style.display = 'none'; return; }
+  wrap.style.display = 'flex';
+  // Dot priority: failed > warming/waiting > warm/active > idle.
+  let dotCls = 'idle';
+  if (pool && pool.failed && !pool.anyWarm) dotCls = 'failed';
+  else if ((pool && pool.warming) || (queue && queue.waiting > 0)) dotCls = 'warming';
+  else if ((pool && pool.ready > 0) || (queue && queue.active > 0)) dotCls = 'warm';
+  const dot = document.getElementById('status-infra-dot');
+  if (dot) dot.className = 'warmup-dot ' + dotCls;
+  const parts = [];
+  if (pool) parts.push(`Warm-Pool ${pool.ready}/${pool.target} bereit`
+    + (pool.building ? ` (${pool.building} im Aufbau)` : '')
+    + (pool.failed ? ` (${pool.failed} fehlgeschlagen)` : ''));
+  if (queue) parts.push(`Warteschlange ${queue.active} aktiv`
+    + (queue.waiting ? ` / ${queue.waiting} wartend` : '')
+    + ` (Kapazität ${queue.capacity})`);
+  wrap.title = parts.join(' · ') + ' — für Details klicken';
+}
 
 /* ─── Quota monitor ─── */
 // Polls /v1/quotas/me, updates the status-bar Plan-usage pill and any open
@@ -1031,33 +1055,6 @@ async function deleteCodingPlan(planId) {
     showToast('Plan gelöscht.');
     loadCodingPlansSection();
   } catch (e) { showToast('Löschen fehlgeschlagen: ' + (e.message || e), true); }
-}
-
-function openQueueModal() {
-  const existing = document.getElementById('queue-modal');
-  if (existing) { existing.remove(); return; }
-  const backdrop = document.createElement('div');
-  backdrop.id = 'queue-modal';
-  backdrop.className = 'modal-overlay';
-  backdrop.style.display = 'flex';
-  backdrop.onclick = (e) => { if (e.target === backdrop) backdrop.remove(); };
-  backdrop.innerHTML = `
-    <div class="modal-content" style="max-width:720px;width:92%;max-height:85vh;display:flex;flex-direction:column">
-      <div class="modal-header">
-        <h2>Lokale Provider-Warteschlange</h2>
-        <button class="modal-close" onclick="document.getElementById('queue-modal').remove()" style="margin-left:auto">&times;</button>
-      </div>
-      <div class="modal-body" id="queue-modal-body" style="overflow-y:auto"><em style="color:var(--text-muted)">Wird geladen…</em></div>
-      <div class="modal-footer" style="color:var(--text-muted);font-size:12px">
-        Provider mit <code>max_concurrent &gt; 0</code> in <code>config.json</code> serialisieren ihre Aufrufe, damit
-        mehrere Chats und Hintergrund-Tasks nicht um dasselbe lokale LLM-Gateway konkurrieren. FIFO.
-      </div>
-    </div>`;
-  document.body.appendChild(backdrop);
-  renderQueueModalBody();
-  // Kick the monitor into fast mode while the modal is open
-  QueueMonitor._mode = 'fast';
-  QueueMonitor._tick();
 }
 
 function renderQueueModalBody() {
