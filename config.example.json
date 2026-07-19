@@ -84,6 +84,13 @@
       ],
       "is_local": false,
       "_comment": "OpenRouter direct (openrouter.ai) — angelegt 2026-07-11 fuer die GPT-5.6-Modelle (luna/terra/sol +/- pro). Gleiche Upstream-IDs wie Kilo (openai/gpt-5.6-*), daher provider-scoped Keys openrouter/openai/gpt-5.6-*."
+    },
+    "llm-router": {
+      "base_url": "http://127.0.0.1:8424/v1",
+      "type": "openai",
+      "api_key": "YOUR_API_KEY",
+      "is_local": false,
+      "_comment": "LLM-Router (Test-Betrieb parallel zu den Direkt-Providern; Ziel: spaeter einziger Provider). Port 8424, launchd com.llm-router.server."
     }
   },
   "ocr": {
@@ -4951,6 +4958,541 @@
       "raw_formats": [],
       "provider": "local-mlx-whisper",
       "profile": "speed",
+      "_caps_canonical": true
+    },
+    "llm-router/deepseek-v4-flash": {
+      "enabled": false,
+      "shortname": "deepseek-v4-flash",
+      "display_name": "deepseek-v4-flash",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "llm-router",
+      "base_model_id": "deepseek-v4-flash",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/deepseek-v4-pro": {
+      "enabled": false,
+      "shortname": "deepseek-v4-pro",
+      "display_name": "deepseek-v4-pro",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "llm-router",
+      "base_model_id": "deepseek-v4-pro",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/gemma-4-12B-it-qat-oQ4-fp16": {
+      "provider": "llm-router",
+      "base_model_id": "gemma-4-12B-it-qat-oQ4-fp16",
+      "display_name": "Gemma-4 12B (Router-Test)",
+      "shortname": "gemma-router",
+      "enabled": true,
+      "max_context": 256000,
+      "max_output": 8192,
+      "thinking_format": "reasoning_field",
+      "is_local": false
+    },
+    "llm-router/glm-5.2": {
+      "enabled": false,
+      "shortname": "glm-5.2",
+      "display_name": "glm-5.2",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "glm-5.2",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/k3": {
+      "enabled": false,
+      "shortname": "k3",
+      "display_name": "k3",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "k3",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/kimi-k2.6": {
+      "enabled": false,
+      "shortname": "kimi-k2.6",
+      "display_name": "kimi-k2.6",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "kimi-k2.6",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/mistral-medium-3.5": {
+      "enabled": false,
+      "shortname": "mistral-medium-3.5",
+      "display_name": "mistral-medium-3.5",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "mistral-medium-3.5",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/mistral-ocr-latest": {
+      "enabled": false,
+      "shortname": "mistral-ocr-latest",
+      "display_name": "mistral-ocr-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "mistral-ocr-latest",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/mistral-small-latest": {
+      "enabled": false,
+      "shortname": "mistral-small-latest",
+      "display_name": "mistral-small-latest",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "mistral_blocks",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "mistral-small-latest",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/openai/gpt-5.6-luna": {
+      "enabled": false,
+      "shortname": "gpt-5.6-luna",
+      "display_name": "gpt-5.6-luna",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "openai/gpt-5.6-luna",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/openai/gpt-5.6-sol": {
+      "enabled": false,
+      "shortname": "gpt-5.6-sol",
+      "display_name": "gpt-5.6-sol",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "openai/gpt-5.6-sol",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/openai/gpt-5.6-terra": {
+      "enabled": false,
+      "shortname": "gpt-5.6-terra",
+      "display_name": "gpt-5.6-terra",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "openai/gpt-5.6-terra",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/openrouter/openai/gpt-5.6-luna": {
+      "enabled": false,
+      "shortname": "gpt-5.6-luna",
+      "display_name": "gpt-5.6-luna",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "openrouter/openai/gpt-5.6-luna",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/openrouter/openai/gpt-5.6-sol": {
+      "enabled": false,
+      "shortname": "gpt-5.6-sol",
+      "display_name": "gpt-5.6-sol",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "openrouter/openai/gpt-5.6-sol",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/openrouter/openai/gpt-5.6-terra": {
+      "enabled": false,
+      "shortname": "gpt-5.6-terra",
+      "display_name": "gpt-5.6-terra",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "openrouter/openai/gpt-5.6-terra",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-mini-2602": {
+      "enabled": false,
+      "shortname": "voxtral-mini-2602",
+      "display_name": "voxtral-mini-2602",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-mini-2602",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-mini-latest": {
+      "enabled": false,
+      "shortname": "voxtral-mini-latest",
+      "display_name": "voxtral-mini-latest",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-mini-latest",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-mini-realtime-2602": {
+      "enabled": false,
+      "shortname": "voxtral-mini-realtime-2602",
+      "display_name": "voxtral-mini-realtime-2602",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-mini-realtime-2602",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-mini-realtime-latest": {
+      "enabled": false,
+      "shortname": "voxtral-mini-realtime-latest",
+      "display_name": "voxtral-mini-realtime-latest",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-mini-realtime-latest",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-mini-transcribe-realtime-2602": {
+      "enabled": false,
+      "shortname": "voxtral-mini-transcribe-realtime-2602",
+      "display_name": "voxtral-mini-transcribe-realtime-2602",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-mini-transcribe-realtime-2602",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-mini-tts-2603": {
+      "enabled": false,
+      "shortname": "voxtral-mini-tts-2603",
+      "display_name": "voxtral-mini-tts-2603",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "tts"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-mini-tts-2603",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-mini-tts-latest": {
+      "enabled": false,
+      "shortname": "voxtral-mini-tts-latest",
+      "display_name": "voxtral-mini-tts-latest",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "tts"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-mini-tts-latest",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-small-2507": {
+      "enabled": false,
+      "shortname": "voxtral-small-2507",
+      "display_name": "voxtral-small-2507",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-small-2507",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/voxtral-small-latest": {
+      "enabled": false,
+      "shortname": "voxtral-small-latest",
+      "display_name": "voxtral-small-latest",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-small-latest",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/whisper-base": {
+      "enabled": false,
+      "shortname": "whisper-base",
+      "display_name": "whisper-base",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 0,
+      "max_output": 0,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "whisper-base",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/whisper-large-v3": {
+      "enabled": false,
+      "shortname": "whisper-large-v3",
+      "display_name": "whisper-large-v3",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 0,
+      "max_output": 0,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "whisper-large-v3",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/whisper-large-v3-turbo": {
+      "enabled": false,
+      "shortname": "whisper-large-v3-turbo",
+      "display_name": "whisper-large-v3-turbo",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 0,
+      "max_output": 0,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "whisper-large-v3-turbo",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/whisper-medium": {
+      "enabled": false,
+      "shortname": "whisper-medium",
+      "display_name": "whisper-medium",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 0,
+      "max_output": 0,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "whisper-medium",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/whisper-small": {
+      "enabled": false,
+      "shortname": "whisper-small",
+      "display_name": "whisper-small",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 0,
+      "max_output": 0,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "whisper-small",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/whisper-tiny": {
+      "enabled": false,
+      "shortname": "whisper-tiny",
+      "display_name": "whisper-tiny",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 0,
+      "max_output": 0,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "whisper-tiny",
+      "profile": "balanced",
       "_caps_canonical": true
     }
   },

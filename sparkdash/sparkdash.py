@@ -391,6 +391,40 @@ def _omlx_request(path, method="GET", body=None, timeout=8):
         return False, {"error": f"{type(e).__name__}: {e}"}
 
 
+# ---------------------------------------------------------------------------
+# LLM-Router (read-only) — same server-side-proxy pattern as oMLX: the browser
+# only talks to SparkDash's origin; SparkDash calls the router's read-only
+# /stats API with the stats token. Config in ~/sparkdash.json:
+#   {"llmrouter": {"base_url": "http://127.0.0.1:8424", "stats_token": "lrs-…"}}
+# ---------------------------------------------------------------------------
+_LLMROUTER_DEFAULT_BASE = "http://127.0.0.1:8424"
+
+
+def _llmrouter_cfg():
+    cfg = _load_config().get("llmrouter", {}) or {}
+    return (
+        (cfg.get("base_url") or _LLMROUTER_DEFAULT_BASE).rstrip("/"),
+        cfg.get("stats_token") or "",
+        bool(cfg.get("enabled", True)),
+    )
+
+
+def _llmrouter_request(path, timeout=8):
+    """GET a router /stats endpoint with the stats token. (ok, data|error)."""
+    import urllib.request
+    base, token, enabled = _llmrouter_cfg()
+    if not enabled:
+        return False, {"error": "LLM-Router in der SparkDash-Config deaktiviert"}
+    req = urllib.request.Request(base + path)
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    try:
+        raw = urllib.request.urlopen(req, timeout=timeout).read().decode()
+        return True, (json.loads(raw) if raw else {})
+    except Exception as e:
+        return False, {"error": f"{type(e).__name__}: {e}"}
+
+
 # oMLX admin session — the cache/global-settings/device-info endpoints live
 # behind /admin and need a session cookie minted from the api_key. Cached so we
 # don't re-login every poll; auto re-login on 401.
@@ -1829,6 +1863,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(400, json.dumps({"error": "q required"}))
             else:
                 self._send(200, json.dumps(hf_search(query, mlx_only=mlx)))
+        elif self.path.startswith("/api/llmrouter/config"):
+            base, token, enabled = _llmrouter_cfg()
+            self._send(200, json.dumps({"base_url": base, "enabled": enabled,
+                                        "token_set": bool(token)}))
+        elif self.path.startswith("/api/llmrouter/"):
+            sub = self.path[len("/api/llmrouter/"):].split("?")[0]
+            target = {
+                "overview": "/stats/overview?range=24h",
+                "month": "/stats/overview?range=month",
+                "models": "/stats/models?range=7d",
+                "plans": "/stats/plans",
+                "live": "/stats/live",
+            }.get(sub)
+            if not target:
+                self._send(404, json.dumps({"error": "not found"}))
+            else:
+                ok, data = _llmrouter_request(target)
+                self._send(200 if ok else 502, json.dumps(data))
         elif self.path in ("/", "/index.html"):
             self._send(200, INDEX_HTML, "text/html; charset=utf-8")
         else:
@@ -1892,6 +1944,21 @@ class Handler(BaseHTTPRequestHandler):
             ok, data = omlx_update_global_settings(body)
             return self._send(200 if ok else 502,
                               json.dumps({"ok": ok, **(data if isinstance(data, dict) else {})}))
+        # /api/llmrouter/config — sparkdash-side router connection (base_url/stats_token)
+        if self.path.rstrip("/") == "/api/llmrouter/config":
+            body = self._json_body()
+            if body is None:
+                return self._send(400, json.dumps({"error": "bad json"}))
+            cfg = _load_config()
+            o = cfg.setdefault("llmrouter", {})
+            for k in ("base_url", "enabled"):
+                if k in body:
+                    o[k] = body[k]
+            # empty stats_token in the form = keep the stored one
+            if body.get("stats_token"):
+                o["stats_token"] = body["stats_token"]
+            _save_config(cfg)
+            return self._send(200, json.dumps({"ok": True}))
         # /api/omlx/config  — sparkdash-side oMLX connection (base_url/api_key/enabled)
         if self.path.rstrip("/") == "/api/omlx/config":
             body = self._json_body()
@@ -2159,7 +2226,7 @@ INDEX_HTML = r"""<!DOCTYPE html>
   <div class="welcome">👋 Welcome</div>
   <div class="title">Your DGX Dashboard</div>
   <nav>
-    <a class="active" id="nav-home" onclick="showPage('home')">Home</a><a id="nav-settings" onclick="showPage('settings')">Settings</a><a>Docs ↗</a><a>Forums ↗</a><a>Resources ↗</a>
+    <a class="active" id="nav-home" onclick="showPage('home')">Home</a><a id="nav-llmrouter" onclick="showPage('llmrouter')">LLM Router</a><a id="nav-settings" onclick="showPage('settings')">Settings</a><a>Docs ↗</a><a>Forums ↗</a><a>Resources ↗</a>
     <span class="livepill"><span class="dot" id="livedot"></span><span id="livetxt">live</span></span>
   </nav>
 </header>
@@ -2274,6 +2341,29 @@ INDEX_HTML = r"""<!DOCTYPE html>
 </div><!-- /page-home -->
 
 <!-- ===================== SETTINGS PAGE ===================== -->
+<!-- ===== LLM ROUTER (read-only view; data via server-side proxy) ===== -->
+<div id="page-llmrouter" style="display:none">
+  <main style="display:block;max-width:1100px;margin:0 auto;padding:22px 28px">
+    <div id="lr_err" style="color:var(--amber);font-size:13px;min-height:18px;margin-bottom:6px"></div>
+    <div class="card" style="padding:18px 22px;margin-bottom:16px">
+      <h4 style="margin:0 0 12px;font-size:16px">LLM Router <span id="lr_sub" style="color:var(--muted);font-size:12px;font-weight:400"></span></h4>
+      <div id="lr_kpis" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px"></div>
+    </div>
+    <div class="card" style="padding:18px 22px;margin-bottom:16px">
+      <h4 style="margin:0 0 10px;font-size:15px">Pl&auml;ne &amp; Kontingente</h4>
+      <div id="lr_plans" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px"></div>
+    </div>
+    <div class="card" style="padding:18px 22px;margin-bottom:16px">
+      <h4 style="margin:0 0 10px;font-size:15px">Modelle (7 Tage)</h4>
+      <div id="lr_models" style="overflow-x:auto"></div>
+    </div>
+    <div class="card" style="padding:18px 22px;margin-bottom:16px">
+      <h4 style="margin:0 0 10px;font-size:15px">Aktivit&auml;t</h4>
+      <div id="lr_live"></div>
+    </div>
+  </main>
+</div>
+
 <div id="page-settings" style="display:none">
   <main style="display:block">
 
@@ -2325,6 +2415,19 @@ INDEX_HTML = r"""<!DOCTYPE html>
       <!-- full model roster + load/unload (moved here from the dashboard) -->
       <div id="omlxModels" style="margin-top:6px"></div>
       <div id="omlxMsg" style="margin-top:8px;font-size:13px;min-height:18px"></div>
+    </div>
+
+    <!-- LLM-Router connection card -->
+    <div class="card" style="padding:20px 24px;margin-bottom:18px">
+      <h4 style="margin:0 0 4px;font-size:16px">LLM Router</h4>
+      <div class="hint" style="color:var(--muted);font-size:13px">Verbindung zur Read-only-Ansicht des LLM-Routers (stats_token aus den Router-Einstellungen).</div>
+      <div class="form" style="margin-top:14px">
+        <label>Base URL<input id="lr_base" placeholder="http://127.0.0.1:8424"/></label>
+        <label>Stats-Token<input id="lr_token" type="password" placeholder="leer = unver&auml;ndert"/></label>
+        <label class="chk"><input id="lr_enabled" type="checkbox"/> LLM Router in diesem Dashboard anzeigen</label>
+        <div style="display:flex;align-items:flex-end"><button class="btn go" type="button" onclick="saveLlmrouterConn()">Save connection</button></div>
+      </div>
+      <div id="lrMsg" style="margin-top:8px;font-size:13px;min-height:18px"></div>
     </div>
 
     <!-- runtime / updater card -->
@@ -2810,10 +2913,101 @@ let needsSetup = false;    // true when no credentials configured yet
 
 function showPage(p){
   document.getElementById("page-home").style.display = p==="home"?"":"none";
+  document.getElementById("page-llmrouter").style.display = p==="llmrouter"?"":"none";
   document.getElementById("page-settings").style.display = p==="settings"?"":"none";
   document.getElementById("nav-home").classList.toggle("active", p==="home");
+  document.getElementById("nav-llmrouter").classList.toggle("active", p==="llmrouter");
   document.getElementById("nav-settings").classList.toggle("active", p==="settings");
   if(p==="settings") refreshAuthUI();
+  if(p==="llmrouter") renderLlmRouter();
+}
+
+// ===================== LLM ROUTER (read-only) =====================
+const _lrFmt = {
+  cost: v => "$"+(v==null?0:v).toLocaleString("de-DE",{minimumFractionDigits:2,maximumFractionDigits:4}),
+  pct:  v => v==null?"–":(v*100).toFixed(1).replace(".",",")+" %",
+  pct1: v => v==null?"–":String(v).replace(".",",")+" %",
+  tok:  v => v==null?"–":(v>=1e6?(v/1e6).toFixed(1)+"M":v>=1e3?(v/1e3).toFixed(1)+"k":String(v)),
+  ms:   v => v==null?"–":Math.round(v).toLocaleString("de-DE")+" ms",
+};
+function _lrKpi(label, val, sub){
+  return `<div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);border-radius:8px;padding:10px 12px">
+    <div style="font-size:11px;color:var(--muted);margin-bottom:4px">${label}</div>
+    <div style="font-size:19px;font-weight:600;font-variant-numeric:tabular-nums">${val}</div>
+    ${sub?`<div style="font-size:11px;color:var(--muted);margin-top:2px">${sub}</div>`:""}</div>`;
+}
+function _lrBar(pct, extra){
+  const p = Math.min(100, pct==null?0:pct);
+  const col = p>=90?"var(--red,#e5484d)":p>=70?"var(--amber,#f5a524)":"var(--green,#46a758)";
+  return `<div style="height:7px;border-radius:4px;background:rgba(255,255,255,0.08);overflow:hidden;margin:4px 0">
+    <div style="height:100%;width:${p}%;background:${col}"></div></div>
+    <div style="font-size:11px;color:var(--muted)">${extra||""}</div>`;
+}
+async function renderLlmRouter(){
+  const page = document.getElementById("page-llmrouter");
+  if(page.style.display==="none") return;
+  const err = document.getElementById("lr_err");
+  let ov, mon, mo, pl, lv;
+  try{
+    [ov, mon, mo, pl, lv] = await Promise.all([
+      fetch("/api/llmrouter/overview",{cache:"no-store"}).then(r=>r.json()),
+      fetch("/api/llmrouter/month",{cache:"no-store"}).then(r=>r.json()),
+      fetch("/api/llmrouter/models",{cache:"no-store"}).then(r=>r.json()),
+      fetch("/api/llmrouter/plans",{cache:"no-store"}).then(r=>r.json()),
+      fetch("/api/llmrouter/live",{cache:"no-store"}).then(r=>r.json()),
+    ]);
+  }catch(e){ err.textContent = "LLM-Router nicht erreichbar: "+e; return; }
+  if(ov && ov.error){ err.textContent = "LLM-Router: "+ov.error+" (Verbindung unter Settings konfigurieren)"; return; }
+  err.textContent = "";
+  document.getElementById("lr_sub").textContent = "· "+(ov.requests||0)+" Requests / 24h · "+(lv.in_flight?lv.in_flight.length:0)+" laufend";
+  document.getElementById("lr_kpis").innerHTML =
+    _lrKpi("Kosten 24h", _lrFmt.cost(ov.cost_usd), "Listenpreis "+_lrFmt.cost(ov.cost_list_usd)) +
+    _lrKpi("Kosten Monat", _lrFmt.cost(mon.cost_usd), "Ersparnis "+_lrFmt.cost(mon.savings_usd)) +
+    _lrKpi("Requests 24h", (ov.requests||0).toLocaleString("de-DE"), null) +
+    _lrKpi("Fehlerrate", _lrFmt.pct(ov.error_rate), null) +
+    _lrKpi("Cache-Hit", _lrFmt.pct(ov.cache_hit_rate), _lrFmt.tok(ov.tokens?ov.tokens.cache_read:0)+" Tokens") +
+    _lrKpi("TTFT p50", _lrFmt.ms(ov.ttft_p50), "p95 "+_lrFmt.ms(ov.ttft_p95)) +
+    _lrKpi("&Oslash; tok/s", ov.tok_per_s_avg==null?"–":String(ov.tok_per_s_avg).replace(".",","), null);
+  // Pläne
+  const plans = (pl.plans||[]);
+  document.getElementById("lr_plans").innerHTML = plans.length ? plans.map(p=>{
+    const badge = p.type==="credit" ? "Guthaben" : "Flatrate";
+    const wins = (p.windows||[]).map(w=>{
+      if(w.kind==="credit"){
+        return `<div style="margin-top:6px"><span style="font-size:12px">${w.label}: $${(w.used_usd||0).toFixed(2)} von $${(w.balance_usd||0).toFixed(2)}</span>
+          ${_lrBar(w.pct, (w.remaining_usd!=null?("Rest $"+w.remaining_usd.toFixed(2)):"")+(w.days_left_est?(" · reicht ~"+String(w.days_left_est).replace(".",",")+" Tage"):""))}</div>`;
+      }
+      const reset = w.resets_in_s!=null ? (" · Reset in "+(w.resets_in_s>7200?Math.round(w.resets_in_s/3600)+" h":Math.max(1,Math.round(w.resets_in_s/60))+" min")) : "";
+      return `<div style="margin-top:6px"><span style="font-size:12px">${w.label}: ${_lrFmt.tok(w.used_est)} / ${_lrFmt.tok(w.limit_tokens)} (${w.pct==null?"–":String(w.pct).replace(".",",")+" %"})</span>
+        ${_lrBar(w.pct, (w.projected_pct!=null?("Prognose "+String(w.projected_pct).replace(".",",")+" %"):"")+reset)}</div>`;
+    }).join("");
+    return `<div style="border:1px solid rgba(255,255,255,0.08);border-radius:8px;padding:12px 14px">
+      <div style="display:flex;align-items:center;gap:8px"><b style="font-size:13px">${p.name}</b>
+        <span style="font-size:10px;border:1px solid rgba(255,255,255,0.15);border-radius:4px;padding:1px 6px;color:var(--muted)">${badge}</span></div>
+      ${wins||'<div class="hint" style="font-size:12px;color:var(--muted)">keine Fenster</div>'}</div>`;
+  }).join("") : '<div style="color:var(--muted);font-size:13px">Keine Pl&auml;ne konfiguriert.</div>';
+  // Modelle
+  const models = (mo.models||[]).filter(m=>m.enabled).slice(0,20);
+  document.getElementById("lr_models").innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+    <tr style="color:var(--muted);text-align:left"><th style="padding:4px 8px">Modell</th><th>Provider</th><th>Wire</th>
+      <th style="text-align:right">Requests</th><th style="text-align:right">&Oslash; tok/s</th><th style="text-align:right">TTFT p50</th>
+      <th style="text-align:right">Fehler</th><th style="text-align:right">Cache-Hit</th><th style="text-align:right">Kosten</th></tr>` +
+    models.map(m=>`<tr style="border-top:1px solid rgba(255,255,255,0.06)">
+      <td style="padding:4px 8px;font-family:monospace">${m.id}${m.unpriced?' <span style="color:var(--amber);font-size:10px">unbepreist</span>':""}</td>
+      <td>${m.provider}</td><td>${m.wire_api}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${(m.requests||0).toLocaleString("de-DE")}</td>
+      <td style="text-align:right">${m.tok_per_s_avg==null?"–":String(m.tok_per_s_avg).replace(".",",")}</td>
+      <td style="text-align:right">${_lrFmt.ms(m.ttft_p50)}</td>
+      <td style="text-align:right">${_lrFmt.pct(m.error_rate)}</td>
+      <td style="text-align:right">${_lrFmt.pct(m.cache_hit_rate)}</td>
+      <td style="text-align:right;font-variant-numeric:tabular-nums">${_lrFmt.cost(m.cost_usd)}</td></tr>`).join("") + "</table>";
+  // Aktivität
+  const inflight = (lv.in_flight||[]).map(r=>`<div style="font-size:12px;padding:3px 0">⏳ <span style="font-family:monospace">${r.model}</span> · ${(r.elapsed_ms/1000).toFixed(1)} s · ${r.api_key_name||""}</div>`).join("");
+  const recent = (lv.recent||[]).slice(0,10).map(r=>`<div style="font-size:12px;padding:3px 0;color:${r.status==="ok"?"inherit":"var(--amber)"}">
+    <span style="font-family:monospace">${r.model}</span> · ${r.status} · ${r.duration_ms!=null?(r.duration_ms/1000).toFixed(1)+" s":"–"} · ${_lrFmt.cost(r.cost_usd)}</div>`).join("");
+  document.getElementById("lr_live").innerHTML =
+    (inflight?`<div style="margin-bottom:8px">${inflight}</div>`:"") +
+    (recent||'<div style="color:var(--muted);font-size:13px">Noch keine Requests.</div>');
 }
 
 const authHeaders = () => ({"Content-Type":"application/json"});  // cookie carries auth
@@ -2829,7 +3023,7 @@ async function refreshAuthUI(){
   // server treats requests as open until an account is created.
   if(s.configured && s.authed){
     gate.style.display="none"; mgr.style.display=""; loadInstances();
-    resetForm(); checkVersion(); loadOmlxConfig();
+    resetForm(); checkVersion(); loadOmlxConfig(); loadLlmrouterConfig();
   } else {
     mgr.style.display="none"; gate.style.display="";
     document.getElementById("authtitle").textContent = needsSetup ? "Create admin account" : "Sign in";
@@ -2867,6 +3061,30 @@ async function doLogout(){
 
 // oMLX config: sparkdash-side connection + oMLX-side cache/scheduler settings.
 let _omlxGS=null;
+async function loadLlmrouterConfig(){
+  try{
+    const c=await (await fetch("/api/llmrouter/config",{cache:"no-store"})).json();
+    document.getElementById("lr_base").value = c.base_url||"http://127.0.0.1:8424";
+    document.getElementById("lr_enabled").checked = c.enabled!==false;
+    document.getElementById("lr_token").placeholder = c.token_set?"gespeichert — leer = unverändert":"lrs-…";
+  }catch(e){}
+}
+async function saveLlmrouterConn(){
+  const body={base_url:document.getElementById("lr_base").value.trim(),
+              enabled:document.getElementById("lr_enabled").checked};
+  const tok=document.getElementById("lr_token").value.trim();
+  if(tok) body.stats_token=tok;
+  const msg=document.getElementById("lrMsg");
+  try{
+    const r=await fetch("/api/llmrouter/config",{method:"POST",headers:authHeaders(),body:JSON.stringify(body)});
+    if(r.status===401){ refreshAuthUI(); return; }
+    const j=await r.json();
+    msg.textContent = j.ok?"Gespeichert.":("Fehler: "+(j.error||r.status));
+    document.getElementById("lr_token").value="";
+    if(j.ok) loadLlmrouterConfig();
+  }catch(e){ msg.textContent="Fehler: "+e; }
+}
+
 async function loadOmlxConfig(){
   // connection (from oMLX status — reflects sparkdash.json)
   try{
@@ -3186,11 +3404,12 @@ async function doUpdate(){
 // honor deep-links: #settings page, or #processes/#filesystems sub-tab
 const _hv=(location.hash||"").replace("#","");
 if(_hv==="settings") showPage("settings");
+else if(_hv==="llmrouter") showPage("llmrouter");
 else if(["processes","filesystems","resources"].includes(_hv)) switchView(_hv);
 
 tick(); tickActivity(); renderOmlxPanel(); renderDependencies();
 setInterval(tick,2000); setInterval(tickActivity,3000); setInterval(renderOmlxPanel,4000);
-setInterval(renderDependencies,5000);
+setInterval(renderDependencies,5000); setInterval(renderLlmRouter,5000);
 window.addEventListener("resize",()=>tick());
 </script>
 </body>
