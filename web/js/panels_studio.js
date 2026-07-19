@@ -396,29 +396,29 @@ async function studioDeletePreset(presetId) {
 async function refreshStudioOutputs() {
   const agentId = state._studioAgent, projectName = state._studioProject;
   if (!agentId || !projectName) return;
-  let outputs = [], chatArts = [];
+  let outputs = [];
   try {
     const data = await API.listProjectOutputs(agentId, projectName);
     outputs = data.outputs || [];
-    chatArts = data.chat_artifacts || [];
   } catch (e) {
     const el = document.getElementById('studio-outputs');
     if (el) el.innerHTML = `<div style="padding:14px;color:var(--error);font-size:13px">${esc(e.message || e)}</div>`;
     return;
   }
   state._studioOutputs = outputs;
-  state._studioChatArtifacts = chatArts;
-  renderStudioOutputs(outputs, chatArts);
+  // The Studio lists ONLY studio-generated deliverables. Chat-produced output
+  // artifacts belong under the chats/artifacts views, not here — the former
+  // "Aus Projekt-Chats" section was removed on request.
+  renderStudioOutputs(outputs);
   // Poll while anything is still generating (mirrors panels_background.js).
   if (outputs.some(o => o.status === 'generating')) startStudioPoll();
   else stopStudioPoll();
 }
 
-function renderStudioOutputs(outputs, chatArts) {
+function renderStudioOutputs(outputs) {
   const el = document.getElementById('studio-outputs');
   if (!el) return;
-  chatArts = chatArts || [];
-  if (!outputs.length && !chatArts.length) {
+  if (!outputs.length) {
     el.innerHTML = `
       <div style="padding:18px 8px;color:var(--text-400);font-size:13px;text-align:center">
         Noch keine Ausgaben. Generiere oben eine Study Guide, ein Briefing, eine FAQ oder eine Timeline aus den Quellen dieses Projekts.
@@ -438,84 +438,7 @@ function renderStudioOutputs(outputs, chatArts) {
         <div style="display:flex;flex-wrap:wrap;gap:10px">${cards}</div>
       </div>`;
   }).join('');
-  // Chat-produced output artifacts (live join, separate section so provenance
-  // is clear and curated deliverables aren't conflated with chat files).
-  let chatSection = '';
-  if (chatArts.length) {
-    const cards = chatArts.map(studioChatArtifactCardHtml).join('');
-    chatSection = `
-      <div class="studio-group" style="margin-bottom:16px;${outputs.length ? 'border-top:1px solid var(--border-100);padding-top:14px' : ''}">
-        <div style="font-weight:600;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon('chat')}</span>Aus Projekt-Chats (${chatArts.length})</div>
-        <div style="display:flex;flex-wrap:wrap;gap:10px">${cards}</div>
-      </div>`;
-  }
-  el.innerHTML = generated + chatSection;
-}
-
-function studioChatArtifactCardHtml(a) {
-  const when = a.updated_at ? formatTimeAgo(new Date(a.updated_at * 1000)) : '';
-  const aid = esc(a.artifact_id);
-  return `
-    <div class="studio-card" data-aid="${aid}" style="flex:1 1 220px;min-width:200px;max-width:320px;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
-      <div style="font-weight:600;font-size:13px;line-height:1.3;display:flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon('attachment')}</span>${esc(a.name || '(Datei)')}</div>
-      <div style="font-size:11px;color:var(--text-400)">v${a.latest_version || 1} · ${esc(when)}</div>
-      <div style="display:flex;gap:6px;margin-top:4px">
-        <button class="studio-act" onclick="studioOpenChatArtifact('${aid}')"
-                style="background:var(--accent-brand);border:none;color:#fff;cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px">Öffnen</button>
-        <button class="studio-act" onclick="studioArchiveChatArtifact('${aid}')"
-                style="background:var(--bg-100);border:1px solid var(--border-200);color:var(--text-200);cursor:pointer;font-size:12px;padding:4px 12px;border-radius:6px">Archivieren</button>
-        <button class="studio-act" onclick="studioDeleteChatArtifact('${aid}')"
-                style="background:none;border:1px solid var(--border-200);color:var(--error);cursor:pointer;font-size:12px;padding:4px 10px;border-radius:6px;display:inline-flex;align-items:center" title="Löschen">${studioIcon('trash')}</button>
-      </div>
-    </div>`;
-}
-
-async function studioOpenChatArtifact(artifactId) {
-  const a = (state._studioChatArtifacts || []).find(x => x.artifact_id === artifactId);
-  const title = a ? (a.name || 'Datei') : 'Datei';
-  const isText = !a || !/\.(png|jpe?g|gif|webp|svg|pdf)$/i.test(a.name || '');
-  const overlay = document.createElement('div');
-  overlay.className = 'modal-overlay';
-  overlay.innerHTML = `<div class="modal-content" style="max-width:900px;width:90vw;max-height:88vh;display:flex;flex-direction:column">
-    <div class="modal-header" style="display:flex;align-items:center;gap:10px">
-      <span style="font-weight:600;display:inline-flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon('attachment')}</span>${esc(title)}</span>
-      <a class="btn-secondary" style="margin-left:auto;padding:3px 10px;font-size:12px;text-decoration:none" href="${esc(API.getArtifactDownloadUrl(artifactId))}" target="_blank" rel="noopener">Herunterladen</a>
-      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">&times;</button>
-    </div>
-    <div class="studio-view-body" style="flex:1;overflow:auto;padding:14px 18px"><div class="msg-content">Lädt…</div></div>
-  </div>`;
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
-  document.body.appendChild(overlay);
-  const body = overlay.querySelector('.studio-view-body');
-  if (!isText) {
-    body.innerHTML = `<img src="${esc(API.getArtifactDownloadUrl(artifactId))}" style="max-width:100%;height:auto" alt="${esc(title)}">`;
-    return;
-  }
-  try {
-    const data = await API.getArtifactContent(artifactId);
-    const text = (data && data.content) || '';
-    body.innerHTML = `<div class="msg-content">${renderMarkdown(text)}</div>`;
-    body.querySelectorAll('pre code').forEach(elc => { try { hljs.highlightElement(elc); } catch (_) {} });
-  } catch (e) {
-    body.innerHTML = `<div style="color:var(--error)">Inhalt konnte nicht geladen werden: ${esc(e.message || e)}</div>`;
-  }
-}
-
-async function studioArchiveChatArtifact(artifactId) {
-  try {
-    await API.archiveProjectArtifact(state._studioAgent, state._studioProject, artifactId, true);
-    showToast('Archiviert — bleibt in der Artefakt-Ansicht erhalten');
-    refreshStudioOutputs();
-  } catch (e) { showToast('Archivieren fehlgeschlagen: ' + (e.message || e), true); }
-}
-
-async function studioDeleteChatArtifact(artifactId) {
-  if (!confirm('Dieses Artefakt endgültig löschen? Die Datei wird entfernt.')) return;
-  try {
-    await API.deleteProjectArtifact(state._studioAgent, state._studioProject, artifactId);
-    showToast('Gelöscht');
-    refreshStudioOutputs();
-  } catch (e) { showToast('Löschen fehlgeschlagen: ' + (e.message || e), true); }
+  el.innerHTML = generated;
 }
 
 function studioOutputCardHtml(o) {
@@ -564,8 +487,8 @@ function studioOutputCardHtml(o) {
     if (parts) metaLine = `<div style="font-size:10px;color:var(--text-400)" title="Modell · Kosten dieser Generierung">${parts}</div>`;
   }
   return `
-    <div class="studio-card" data-oid="${esc(o.output_id)}" style="flex:1 1 220px;min-width:200px;max-width:320px;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
-      <div style="font-weight:600;font-size:13px;line-height:1.3;display:flex;align-items:center;gap:6px"><span style="color:var(--text-300)">${studioIcon(o.kind)}</span>${esc(o.title || o.kind)}</div>
+    <div class="studio-card" data-oid="${esc(o.output_id)}" style="flex:1 1 220px;min-width:200px;max-width:320px;overflow:hidden;border:1px solid var(--border-200);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:6px">
+      <div style="font-weight:600;font-size:13px;line-height:1.3;display:flex;align-items:center;gap:6px;min-width:0"><span style="color:var(--text-300);flex:0 0 auto">${studioIcon(o.kind)}</span><span title="${esc(o.title || o.kind)}" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.title || o.kind)}</span></div>
       <div style="font-size:11px">${statusLine}</div>
       ${metaLine}
       <div style="display:flex;gap:4px;margin-top:2px">${actions}</div>

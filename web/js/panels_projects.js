@@ -209,11 +209,29 @@ function openProject(agentId, projectName) {
     if (typeof updateStatusBar === 'function') updateStatusBar();
     if (typeof schedulePIIBadgeUpdate === 'function') schedulePIIBadgeUpdate();
   }
-  // Default to the Active tab on entry; the tab UI also resets visually below.
+  // Default to the Active (chats) tab on entry. Reset BOTH the tab-button
+  // classes AND the container visibility — otherwise, if the previous project
+  // was left on the Schedules/Studio/Research tab, that tab's container stays
+  // display:'' and keeps showing the PREVIOUS project's content while the
+  // freshly-loaded chats render into the hidden #project-detail-chats. Poll
+  // cleanup for the non-chats tabs mirrors setProjectChatsFilter('active').
   state._projectChatsFilter = 'active';
   document.querySelectorAll('.project-chats-tab').forEach(t => {
     t.classList.toggle('active', t.dataset.pcfilter === 'active');
   });
+  ['project-detail-chats', 'project-detail-schedules',
+   'project-detail-studio', 'project-detail-research'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = id === 'project-detail-chats' ? '' : 'none';
+  });
+  const _chatBulk = document.getElementById('project-chats-bulk');
+  const _schedBulk = document.getElementById('project-sched-bulk');
+  const _studioBulk = document.getElementById('project-studio-bulk');
+  if (_chatBulk) _chatBulk.style.display = '';
+  if (_schedBulk) _schedBulk.style.display = 'none';
+  if (_studioBulk) _studioBulk.style.display = 'none';
+  if (typeof stopStudioPoll === 'function') stopStudioPoll();
+  if (typeof stopResearchPoll === 'function') stopResearchPoll();
   navigateTo('project-detail', { agentId, projectName });
   // Wire the right-pane resize handle once the view is on screen. Idempotent
   // — repeat calls are short-circuited via the handle's _bound flag.
