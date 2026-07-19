@@ -680,6 +680,25 @@ function _ptCodeTreeOpenDirs(host) {
   return open;
 }
 
+// Collapse/expand the code-mode file list. Collapsed by default (see the
+// inline style on #project-codemode-files-body); persisted per browser so a
+// user who expands it keeps it open across visits.
+function toggleCodeModeFiles(forceOpen) {
+  const body = document.getElementById('project-codemode-files-body');
+  const btn = document.querySelector('.project-codemode-files-toggle');
+  if (!body) return;
+  const open = (typeof forceOpen === 'boolean')
+    ? forceOpen
+    : body.style.display === 'none';
+  body.style.display = open ? '' : 'none';
+  if (btn) {
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    const chev = btn.querySelector('.project-codemode-files-chevron');
+    if (chev) chev.style.transform = open ? 'rotate(90deg)' : '';
+  }
+  try { localStorage.setItem('project-codemode-files-open', open ? '1' : '0'); } catch (e) {}
+}
+
 async function refreshCodeWorkingTree(opts) {
   opts = opts || {};
   const host = document.getElementById('project-codemode-tree');

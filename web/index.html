@@ -578,14 +578,19 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             <div style="font-size:12px;color:var(--text-400);margin-bottom:4px">Arbeitsverzeichnis</div>
             <div style="display:flex;align-items:center;gap:8px">
               <div id="project-codemode-wd" style="flex:1;font-family:var(--font-mono);font-size:12px;color:var(--text-200);background:var(--bg-100);border:1px solid var(--border-100);border-radius:6px;padding:7px 10px;word-break:break-all">—</div>
-              <button class="btn-secondary" type="button" onclick="pickProjectWorkingDir()">Ordner wählen</button>
+              <button class="pt-act" type="button" onclick="pickProjectWorkingDir()" title="Arbeitsverzeichnis wählen" style="font-size:18px;line-height:1">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+              </button>
               <button class="pt-act" type="button" onclick="runProjectInit()" title="BRAIN.md generieren / aktualisieren (init): durchsucht das Arbeitsverzeichnis und schreibt eine Zusammenfassung als Projektgedächtnis" style="font-size:18px;line-height:1">
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
               </button>
             </div>
             <div class="project-panel-help" id="project-codemode-init-status" style="margin-top:6px"></div>
             <div style="display:flex;align-items:center;justify-content:space-between;margin-top:14px;margin-bottom:4px">
-              <span style="font-size:12px;color:var(--text-400)">Dateien im Arbeitsverzeichnis</span>
+              <button type="button" class="project-codemode-files-toggle" onclick="toggleCodeModeFiles()" aria-expanded="false" title="Dateiliste ein-/ausklappen" style="display:flex;align-items:center;gap:5px;background:none;border:none;padding:0;cursor:pointer;font-size:12px;color:var(--text-400)">
+                <svg class="project-codemode-files-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="transition:transform 0.15s"><polyline points="9 18 15 12 9 6"/></svg>
+                Dateien im Arbeitsverzeichnis
+              </button>
               <span style="display:flex;gap:4px">
                 <button class="pt-act" type="button" title="Gesamtes Verzeichnis als ZIP herunterladen" onclick="ptDownloadProjectZip()">
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -593,6 +598,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
                 <button class="pt-act" type="button" title="Aktualisieren" onclick="refreshCodeWorkingTree()">⟳</button>
               </span>
             </div>
+            <div id="project-codemode-files-body" style="display:none">
             <div id="project-codemode-tree" class="project-source-tree"></div>
             <!-- Legend: per-file index dots — single-line, like normal projects
                  (long explanation kept in the title tooltip). -->
@@ -602,6 +608,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
               <span title="Quelldatei, sollte im Index sein (Fehler / noch nicht synchronisiert)"><span class="pt-dot" data-state="error"></span>Nicht indexiert</span>
               <span title="Keine Quelldatei — wird nie indexiert (z. B. .md, .html, .txt)"><span class="pt-dot" data-state="muted"></span>Keine Quelldatei</span>
             </div>
+            </div><!-- /#project-codemode-files-body -->
             <!-- Code-Index (codebase-memory): status chip + icon actions, below
                  the files — mirrors normal projects' Speicher & Abgleich block. -->
             <div id="code-index-chip" class="project-sync-chip" style="display:flex;margin:10px 0 8px 0">

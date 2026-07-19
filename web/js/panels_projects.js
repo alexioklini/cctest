@@ -429,6 +429,12 @@ async function loadProjectDetail(agentId, projectName) {
     // init progress + auto-refresh on file changes. Non-code projects stop any
     // leftover poller.
     if (isCode) {
+      // Files list defaults collapsed; restore the user's last choice.
+      if (typeof toggleCodeModeFiles === 'function') {
+        let open = false;
+        try { open = localStorage.getItem('project-codemode-files-open') === '1'; } catch (e) {}
+        toggleCodeModeFiles(open);
+      }
       if (typeof refreshCodeWorkingTree === 'function') refreshCodeWorkingTree();
       _renderInitStatus({ state: 'idle' });
       if (typeof startCodeModePoll === 'function') startCodeModePoll();

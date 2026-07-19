@@ -1725,6 +1725,7 @@
     "toggleChatsSelectMode": "writable",
     "toggleChatSummary": "writable",
     "toggleChatTitleMenu": "writable",
+    "toggleCodeModeFiles": "writable",
     "toggleCostUseCase": "writable",
     "toggleDeepResearch": "writable",
     "toggleGdprDetails": "writable",
