@@ -1541,6 +1541,72 @@ function isRecentFilterActive(f) {
     || f.group !== RECENT_FILTER_DEFAULT.group;
 }
 
+// ── Run-status filter (scheduled runs + workflow executions) ──
+// Runs aren't sessions, so the chat filter (Typ/Status/Letzte Aktivität) doesn't
+// map. In those views the same filter button opens a smaller run-status +
+// recency menu. Persisted separately so it doesn't collide with the chat filter.
+const RUN_FILTER_DEFS = {
+  status:  { label: 'Status',           options: [['all','Alle'], ['success','Erfolg'], ['error','Fehler'], ['running','Läuft']] },
+  recency: { label: 'Letzte Aktivität', options: [['all','Alle'], ['today','Heute'], ['7d','7 Tage'], ['30d','30 Tage']] },
+};
+const RUN_FILTER_DEFAULT = { status: 'all', recency: 'all' };
+function getRunFilter() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('recentRunsFilter') || '{}');
+    return { ...RUN_FILTER_DEFAULT, ...raw };
+  } catch (_) { return { ...RUN_FILTER_DEFAULT }; }
+}
+function setRunFilter(f) {
+  try { localStorage.setItem('recentRunsFilter', JSON.stringify(f)); } catch (_) {}
+}
+function runFilterLabel(key, value) {
+  const opt = (RUN_FILTER_DEFS[key]?.options || []).find(o => o[0] === value);
+  return opt ? opt[1] : value;
+}
+function isRunFilterActive(f) {
+  return f.status !== RUN_FILTER_DEFAULT.status || f.recency !== RUN_FILTER_DEFAULT.recency;
+}
+// Normalise a run's raw status string to one of success|error|running.
+function _runStatusClass(raw) {
+  if (raw === 'running') return 'running';
+  if (raw === 'success' || raw === 'completed') return 'success';
+  return 'error';  // failed, timeout, cancelled, unknown, …
+}
+// Filter a run list by the run-status + recency filter. `startedAtMs(run)`
+// returns the run's start time in epoch ms (call site knows the field).
+function applyRunFilter(runs, f, startedAtMs) {
+  const now = Date.now();
+  const WINDOWS = { today: 86400e3, '7d': 7 * 86400e3, '30d': 30 * 86400e3 };
+  return runs.filter(r => {
+    if (f.status !== 'all' && _runStatusClass(r.status) !== f.status) return false;
+    if (f.recency !== 'all') {
+      const win = WINDOWS[f.recency];
+      const ts = startedAtMs(r);
+      if (win && ts && (now - ts) > win) return false;
+    }
+    return true;
+  });
+}
+
+// Which kind of list the sidebar "Zuletzt verwendet" shows right now. Drives
+// both the render branch and which filter menu the filter button opens.
+function _recentListContext() {
+  const onScheduledRun = state.currentView === 'chat'
+    && state.activeChat?._readonly
+    && state.activeChat?._scheduledRun;
+  if (state.currentView === 'scheduled' || onScheduledRun) return 'runs';
+  if (state.currentView === 'workflows') return 'workflow-runs';
+  if (state.currentView === 'favourites') return 'favourites';
+  if (state.currentView === 'translation') return 'translations';
+  if (state.currentView === 'data') return 'data';
+  if (state.currentView === 'wiki') return 'wiki';
+  const inProjectContext = state.currentView === 'project-detail'
+    || state.currentView === 'projects'
+    || !!state.currentProject;
+  if (inProjectContext) return 'project-chats';
+  return 'chats';
+}
+
 // A session counts as an "Aufgabe" when it carries a goal (🎯) — the closest
 // analog to claude.ai's tasks in this sidebar.
 function _isTaskSession(s) {
@@ -1576,6 +1642,23 @@ function _recentDateBucket(lastActive) {
   return 'Älter';
 }
 
+// Which filter rows the menu shows in the current context. `family` picks the
+// persisted filter + option DEFS; `rows` are the shown keys (a null entry = a
+// divider before the following row). Grouping ('group') always comes from the
+// chat filter (shared date-bucket toggle) regardless of family.
+function _recentFilterMenuSpec() {
+  const ctx = _recentListContext();
+  if (ctx === 'runs' || ctx === 'workflow-runs') {
+    return { family: 'run', rows: ['status', 'recency', null, 'group'] };
+  }
+  if (ctx === 'favourites' || ctx === 'translations' || ctx === 'data' || ctx === 'wiki') {
+    // No per-item status axis → recency + grouping only.
+    return { family: 'chat', rows: ['recency', null, 'group'] };
+  }
+  // chats / project-chats → full chat filter.
+  return { family: 'chat', rows: ['type', 'status', 'recency', null, 'group'] };
+}
+
 function toggleRecentFilterMenu(event) {
   const existing = document.getElementById('sb-recent-filter-menu');
   if (existing) { closeRecentFilterMenu(); return; }
@@ -1585,18 +1668,25 @@ function toggleRecentFilterMenu(event) {
   menu.id = 'sb-recent-filter-menu';
   menu.className = 'sb-recent-filter-menu';
 
-  const f = getRecentFilter();
+  const spec = _recentFilterMenuSpec();
+  // Accessors bound to the family this context uses. 'group' is always a chat
+  // filter key, so its row reads/writes the chat filter even in run family.
+  const isRunKey = (key) => spec.family === 'run' && key !== 'group';
+  const getVal = (key) => (isRunKey(key) ? getRunFilter() : getRecentFilter())[key];
+  const defsFor = (key) => (isRunKey(key) ? RUN_FILTER_DEFS : RECENT_FILTER_DEFS)[key];
+  const labelFor = (key, v) => (isRunKey(key) ? runFilterLabel : recentFilterLabel)(key, v);
+
   const chevron = '<svg class="rf-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 6 15 12 9 18"/></svg>';
   const rowHtml = (key) => {
-    const def = RECENT_FILTER_DEFS[key];
+    const def = defsFor(key);
     return `<div class="sb-recent-filter-row" data-key="${key}">
       <span class="rf-label">${esc(def.label)}</span>
-      <span class="rf-value"><span class="rf-value-text">${esc(recentFilterLabel(key, f[key]))}</span>${chevron}</span>
+      <span class="rf-value"><span class="rf-value-text">${esc(labelFor(key, getVal(key)))}</span>${chevron}</span>
     </div>`;
   };
-  menu.innerHTML =
-    rowHtml('type') + rowHtml('status') + rowHtml('recency') +
-    '<div class="sb-recent-filter-divider"></div>' + rowHtml('group');
+  menu.innerHTML = spec.rows.map(k =>
+    k === null ? '<div class="sb-recent-filter-divider"></div>' : rowHtml(k)
+  ).join('');
 
   document.body.appendChild(menu);
 
@@ -1616,13 +1706,14 @@ function toggleRecentFilterMenu(event) {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
       const key = row.dataset.key;
-      const opts = RECENT_FILTER_DEFS[key].options;
-      const cur = getRecentFilter();
+      const runKey = isRunKey(key);
+      const opts = defsFor(key).options;
+      const cur = runKey ? getRunFilter() : getRecentFilter();
       const idx = opts.findIndex(o => o[0] === cur[key]);
       const next = opts[(idx + 1) % opts.length][0];
       cur[key] = next;
-      setRecentFilter(cur);
-      row.querySelector('.rf-value-text').textContent = recentFilterLabel(key, next);
+      (runKey ? setRunFilter : setRecentFilter)(cur);
+      row.querySelector('.rf-value-text').textContent = labelFor(key, next);
       updateRecentFilterButtonState();
       renderRecentChats();
     });
@@ -1645,7 +1736,22 @@ function closeRecentFilterMenu() {
 
 function updateRecentFilterButtonState() {
   const btn = document.getElementById('sb-recent-filter-btn');
-  if (btn) btn.classList.toggle('filtered', isRecentFilterActive(getRecentFilter()));
+  if (!btn) return;
+  const spec = _recentFilterMenuSpec();
+  // A context is "filtered" if its own family filter is active. Grouping is a
+  // chat-filter axis and counts in every context.
+  const groupActive = getRecentFilter().group !== RECENT_FILTER_DEFAULT.group;
+  let active;
+  if (spec.family === 'run') {
+    active = isRunFilterActive(getRunFilter()) || groupActive;
+  } else if (spec.rows.includes('type')) {
+    active = isRecentFilterActive(getRecentFilter());  // full chat filter
+  } else {
+    // recency + grouping only (favourites/translations/data/wiki)
+    const rf = getRecentFilter();
+    active = rf.recency !== RECENT_FILTER_DEFAULT.recency || groupActive;
+  }
+  btn.classList.toggle('filtered', !!active);
 }
 
 function renderRecentChats() {
@@ -1653,28 +1759,19 @@ function renderRecentChats() {
   try { window.Favourites?.renderSidebar?.(); } catch(_) {}
   updateRecentFilterButtonState();
   const container = document.getElementById('sb-recent-chats');
-  // Sidebar shows scheduled runs whenever the user is browsing the scheduled
-  // view OR currently looking at a read-only scheduled-run timeline (which
-  // technically lives in the chat view). Keeps the runs list pinned while the
-  // user click-through-explores the runs.
-  const onScheduledRun = state.currentView === 'chat'
-    && state.activeChat?._readonly
-    && state.activeChat?._scheduledRun;
-  if (state.currentView === 'scheduled' || onScheduledRun) {
-    renderRecentScheduledRuns(container);
-    return;
-  }
-  // In any project context — the projects list, a project detail page, or a
-  // chat that belongs to a project — the sidebar shows project chats the user
-  // has access to. Project access is gated server-side via /v1/projects.
-  // Inversely, the normal-chat sidebar excludes every project chat so the two
-  // worlds stay visually separated.
-  const inProjectContext = state.currentView === 'project-detail'
-    || state.currentView === 'projects'
-    || !!state.currentProject;
-  if (inProjectContext) {
-    renderRecentProjectChats(container);
-    return;
+  // The "Zuletzt verwendet" list is context-aware: each top-level area shows
+  // the data that belongs to it (and the filter button opens the matching
+  // menu — see toggleRecentFilterMenu). Scheduled runs also stay pinned while
+  // the user click-through-explores a read-only run timeline (chat view).
+  switch (_recentListContext()) {
+    case 'runs':          renderRecentScheduledRuns(container); return;
+    case 'workflow-runs': renderRecentWorkflowRuns(container); return;
+    case 'favourites':    renderRecentFavouriteItems(container); return;
+    case 'translations':  renderRecentTranslations(container); return;
+    case 'data':          renderRecentClassifications(container); return;
+    case 'wiki':          renderRecentWikiPages(container); return;
+    case 'project-chats': renderRecentProjectChats(container); return;
+    // 'chats' → falls through to the normal-chat logic below.
   }
   if (!state.activeAgentId) {
     // Show recent across all agents
@@ -1982,6 +2079,32 @@ async function renderRecentProjectChats(container) {
     }));
   }
 
+  // The default session load fetches only ACTIVE sessions. When the Status
+  // filter asks for archived/all, pull the archived set for every project
+  // agent once (per-agent _archivedLoaded guard, same as the normal path) so
+  // "Archiviert"/"Alle" isn't silently empty. Merge in place — do NOT call
+  // _loadArchivedForAgent here (it re-enters renderRecentChats).
+  const rf = getRecentFilter();
+  if (rf.status === 'archived' || rf.status === 'all') {
+    const need = [...projectAgents].filter(a => state.agentSessions[a] && !state.agentSessions[a]._archivedLoaded);
+    if (need.length) {
+      await Promise.all(need.map(async aid => {
+        const entry = state.agentSessions[aid];
+        entry._archivedLoaded = true;  // set before await so concurrent renders don't stack fetches
+        try {
+          const resp = await API.getSessionsForAgent(aid, 'archived');
+          const seen = new Set((entry.sessions || []).map(s => s.id || s.session_id));
+          for (const s of (resp.sessions || [])) {
+            const sid = s.id || s.session_id;
+            if (!seen.has(sid)) { entry.sessions.push(s); seen.add(sid); }
+          }
+        } catch (_) {
+          entry._archivedLoaded = false;  // allow retry on next filter change
+        }
+      }));
+    }
+  }
+
   // In project-detail view, the main area already lists THIS project's chats.
   // Suppress them in the sidebar to avoid visual duplication; show only
   // chats from other accessible projects.
@@ -1993,7 +2116,10 @@ async function renderRecentProjectChats(container) {
   let sessions = [];
   for (const [agentId, data] of Object.entries(state.agentSessions || {})) {
     for (const s of (data?.sessions || [])) {
-      if (s.status === 'archived' || s.status === 'code') continue;
+      // Status (Aktiv/Archiviert/Alle) is governed by the recent filter below —
+      // do NOT hard-exclude archived here, that was the "only date grouping
+      // works" bug. Code sessions are never chats.
+      if (s.status === 'code') continue;
       if ((s.message_count || 0) === 0) continue;
       const proj = s.project || '';
       if (!proj) continue;
@@ -2003,6 +2129,9 @@ async function renderRecentProjectChats(container) {
       sessions.push({...s, agentId});
     }
   }
+  // Apply Typ / Status / Letzte-Aktivität exactly like the normal-chat path
+  // (grouping is applied later in renderSessionsList).
+  sessions = applyRecentFilter(sessions, rf);
   // Merged across agents/projects → client sort needed; raw last_active (epoch
   // seconds, send-only since v9.251.0), not new Date(seconds).
   sessions.sort((a, b) => (b.last_active || 0) - (a.last_active || 0));
@@ -2037,7 +2166,11 @@ async function renderRecentScheduledRuns(container) {
       API.manageSchedule({ action: 'history', limit: 50 }),
     ]);
     const liveNames = new Set((schedRes.schedules || []).map(s => s.name));
-    const runs = (histRes.history || []).filter(h => liveNames.has(h.schedule_name)).slice(0, 20);
+    let runs = (histRes.history || []).filter(h => liveNames.has(h.schedule_name));
+    // Apply the run-status + recency filter (started_at is a UTC string).
+    runs = applyRunFilter(runs, getRunFilter(),
+      h => (h.started_at ? new Date(h.started_at + 'Z').getTime() : 0));
+    runs = runs.slice(0, 20);
     // Bail if dataset.mode flipped to 'chats' meanwhile (user navigated to a
     // chat-centric view).
     if (container.dataset.mode !== 'runs') return;
@@ -2046,8 +2179,10 @@ async function renderRecentScheduledRuns(container) {
       return;
     }
     // Cheap stable signature to skip the DOM rebuild when nothing changed
-    // (id+status; status changes mid-run, e.g. running → success).
-    const sig = runs.map(h => `${h.id}:${h.status||''}`).join(',');
+    // (id+status; status changes mid-run, e.g. running → success). Include the
+    // grouping mode so toggling Gruppieren forces a rebuild (headers appear).
+    const grouping = getRecentFilter().group === 'date';
+    const sig = (grouping ? 'g:' : '') + runs.map(h => `${h.id}:${h.status||''}`).join(',');
     const activeId = state.activeScheduledRunId || null;
     if (container.dataset.sig === sig && container.dataset.activeRun === String(activeId || '')) {
       return;
@@ -2055,7 +2190,21 @@ async function renderRecentScheduledRuns(container) {
     container.dataset.sig = sig;
     container.dataset.activeRun = String(activeId || '');
     container.innerHTML = '';
+    let currentBucket = null;
     for (const h of runs) {
+      // Date grouping: inject a header when the bucket changes (list is
+      // newest-first, so buckets descend by recency).
+      if (grouping) {
+        const ms = h.started_at ? new Date(h.started_at + 'Z').getTime() : 0;
+        const bucket = _recentDateBucket(ms / 1000);
+        if (bucket !== currentBucket) {
+          currentBucket = bucket;
+          const hdr = document.createElement('div');
+          hdr.className = 'sb-recent-group-header';
+          hdr.textContent = bucket;
+          container.appendChild(hdr);
+        }
+      }
       const ok = h.status === 'success' || h.status === 'completed';
       const running = h.status === 'running';
       const dotColor = running ? '#3b82f6' : (ok ? '#10b981' : (h.status === 'timeout' ? '#f59e0b' : '#ef4444'));
@@ -2076,6 +2225,211 @@ async function renderRecentScheduledRuns(container) {
     if (!wasRuns) {
       container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default;color:var(--error)">Fehlgeschlagen: ${esc(e.message)}</div>`;
     }
+  }
+}
+
+// ── Generic icon-row list for the non-chat contexts ──────────────
+// items: [{ icon (html|''), title, tip, bucketMs (epoch ms, for date grouping),
+//           onClick }]. `mode` tags the container so a mode flip forces a
+// clean rebuild. Applies date grouping when the shared group filter is 'date'.
+function _renderRecentItemList(container, items, mode, emptyText, dotColorForItem) {
+  container.dataset.mode = mode;
+  container.innerHTML = '';
+  if (!items.length) {
+    container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default">${esc(emptyText)}</div>`;
+    return;
+  }
+  const grouping = getRecentFilter().group === 'date';
+  let currentBucket = null;
+  for (const it of items) {
+    if (grouping) {
+      const bucket = _recentDateBucket((it.bucketMs || 0) / 1000);
+      if (bucket !== currentBucket) {
+        currentBucket = bucket;
+        const hdr = document.createElement('div');
+        hdr.className = 'sb-recent-group-header';
+        hdr.textContent = bucket;
+        container.appendChild(hdr);
+      }
+    }
+    const div = document.createElement('div');
+    div.className = 'sb-session-item';
+    if (it.tip) div.title = it.tip;
+    const iconStyle = it.dotColor ? ` style="color:${it.dotColor}"` : '';
+    div.innerHTML = `
+      <span class="sb-sess-icon"${iconStyle}>${it.icon || ''}</span>
+      <span class="sb-session-title">${esc((it.title || '').slice(0, 60))}</span>
+    `;
+    div.onclick = it.onClick;
+    container.appendChild(div);
+  }
+}
+
+// Recency-only filter for the item contexts (favourites/translations/wiki):
+// keep items whose timestamp is within the selected window. Reuses the chat
+// filter's `recency` value; `tsMs(item)` → epoch ms.
+function _applyRecencyMs(items, tsMs) {
+  const rf = getRecentFilter();
+  if (rf.recency === 'all') return items;
+  const WINDOWS = { today: 86400e3, '7d': 7 * 86400e3, '30d': 30 * 86400e3 };
+  const win = WINDOWS[rf.recency];
+  if (!win) return items;
+  const now = Date.now();
+  return items.filter(it => { const t = tsMs(it); return t && (now - t) <= win; });
+}
+
+// ── Favourites view → all favourite items (newest first) ──────────
+async function renderRecentFavouriteItems(container) {
+  if (!container) return;
+  try { await FavouritesCache.load(); } catch (_) {}
+  let rows = (FavouritesCache.rows || []).filter(r => r.available !== false);
+  rows = _applyRecencyMs(rows, r => (r.updated_at || 0) * 1000);
+  rows.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  rows = rows.slice(0, 30);
+  const items = rows.map(r => {
+    const def = (typeof FAVOURITES_TYPE_DEFAULTS !== 'undefined' && FAVOURITES_TYPE_DEFAULTS[r.item_type]) || {};
+    const rawIcon = r.icon || r.source_icon || '';
+    const customIcon = (rawIcon && rawIcon !== def.icon) ? rawIcon : '';
+    const icon = customIcon ? esc(customIcon)
+      : (typeof favouriteTypeGlyphSvg === 'function' ? favouriteTypeGlyphSvg(r.item_type, 16) : '');
+    return {
+      icon, title: r.title || '(ohne Titel)',
+      tip: `${r.item_type} · ${typeof labelForScope === 'function' ? labelForScope(r.scope, r.scope_id) : ''}`,
+      bucketMs: (r.updated_at || 0) * 1000,
+      onClick: () => openFavouriteRow(r),
+    };
+  });
+  _renderRecentItemList(container, items, 'favourites', 'Noch keine Favoriten');
+}
+
+// ── Workflows view → execution history (filtered by run status) ──
+async function renderRecentWorkflowRuns(container) {
+  if (!container) return;
+  const wasMode = container.dataset.mode === 'workflow-runs';
+  if (!wasMode) container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Läufe werden geladen…</div>';
+  try {
+    const rf = getRunFilter();
+    const params = new URLSearchParams({ limit: '50' });
+    // Server understands ?status=success|error|running for the coarse buckets.
+    if (rf.status !== 'all') params.set('status', rf.status);
+    const data = await API.get(`/v1/workflows/history?${params.toString()}`);
+    if (_recentListContext() !== 'workflow-runs') return;  // navigated away
+    let rows = data.executions || [];
+    // Client recency filter (server may not gate by time).
+    rows = applyRunFilter(rows, { status: 'all', recency: rf.recency },
+      r => (r.started_at ? new Date(r.started_at).getTime() : 0));
+    rows = rows.slice(0, 30);
+    const items = rows.map(r => {
+      const cls = _runStatusClass(r.status);
+      const dot = cls === 'running' ? '#3b82f6' : (cls === 'success' ? '#10b981' : '#ef4444');
+      const when = r.started_at ? new Date(r.started_at).toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+      return {
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>',
+        dotColor: dot,
+        title: r.workflow_name || `Lauf ${(''+(r.execution_id||'')).slice(0,8)}`,
+        tip: `${r.workflow_name || ''}\n${r.status || ''}${when ? ' · ' + when : ''}`,
+        bucketMs: r.started_at ? new Date(r.started_at).getTime() : 0,
+        onClick: () => { try { wfShowHistoryDetail(r.execution_id); } catch(_) {} },
+      };
+    });
+    _renderRecentItemList(container, items, 'workflow-runs', 'Noch keine Workflow-Läufe');
+  } catch (e) {
+    if (!wasMode) container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default;color:var(--error)">Fehlgeschlagen: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Translation view → translation history (recency filter) ──────
+async function renderRecentTranslations(container) {
+  if (!container) return;
+  const wasMode = container.dataset.mode === 'translations';
+  if (!wasMode) container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Verlauf wird geladen…</div>';
+  try {
+    const data = await API.get('/v1/translate/history');
+    if (_recentListContext() !== 'translations') return;
+    let rows = data.entries || [];
+    rows = _applyRecencyMs(rows, e => (e.created_at || 0) * 1000);
+    rows.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    rows = rows.slice(0, 30);
+    const TYPE_GLYPH = {
+      text: '📝', document: '📄', media: '🎧', live: '🎙️',
+    };
+    const items = rows.map(e => {
+      const langs = [e.source_lang, e.target_lang].filter(Boolean).join(' → ');
+      const title = e.title || langs || 'Übersetzung';
+      return {
+        icon: esc(TYPE_GLYPH[e.type] || '📝'),
+        title,
+        tip: `${e.type || ''}${langs ? ' · ' + langs : ''}`,
+        bucketMs: (e.created_at || 0) * 1000,
+        onClick: () => {
+          navigateTo('translation');
+          setTimeout(() => { try { trJumpToHistoryEntry && trJumpToHistoryEntry(e.id); } catch(_) {} }, 120);
+        },
+      };
+    });
+    _renderRecentItemList(container, items, 'translations', 'Noch kein Verlauf');
+  } catch (e) {
+    if (!wasMode) container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default;color:var(--error)">Fehlgeschlagen: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Data view → document-classification scans (recency filter) ───
+async function renderRecentClassifications(container) {
+  if (!container) return;
+  const wasMode = container.dataset.mode === 'data';
+  if (!wasMode) container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Scans werden geladen…</div>';
+  try {
+    const data = await API.get('/v1/classification/scans');
+    if (_recentListContext() !== 'data') return;
+    let rows = data.scans || [];
+    rows = _applyRecencyMs(rows, s => (s.created_at || 0) * 1000);
+    rows.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+    rows = rows.slice(0, 30);
+    const items = rows.map(s => {
+      const when = s.created_at ? new Date(s.created_at * 1000).toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+      const title = s.source_label || s.source_kind || `Scan ${(''+(s.scan_id||'')).slice(0,8)}`;
+      return {
+        icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>',
+        title,
+        tip: `${s.source_kind || ''}${when ? ' · ' + when : ''}`,
+        bucketMs: (s.created_at || 0) * 1000,
+        onClick: () => {
+          navigateTo('data');
+          setTimeout(() => { try { clsOpenScan && clsOpenScan(s.scan_id); } catch(_) {} }, 120);
+        },
+      };
+    });
+    _renderRecentItemList(container, items, 'data', 'Noch keine Scans');
+  } catch (e) {
+    if (!wasMode) container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default;color:var(--error)">Fehlgeschlagen: ${esc(e.message)}</div>`;
+  }
+}
+
+// ── Wiki view → recently changed pages (recency filter) ──────────
+async function renderRecentWikiPages(container) {
+  if (!container) return;
+  const wasMode = container.dataset.mode === 'wiki';
+  if (!wasMode) container.innerHTML = '<div class="sb-session-item" style="opacity:.6;cursor:default">Seiten werden geladen…</div>';
+  try {
+    const data = await API.wikiTree('all');
+    if (_recentListContext() !== 'wiki') return;
+    let rows = data.pages || [];
+    rows = _applyRecencyMs(rows, p => (p.updated_at || 0) * 1000);
+    rows.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    rows = rows.slice(0, 30);
+    const items = rows.map(p => ({
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+      title: p.title || 'Ohne Titel',
+      tip: (typeof WIKI_SOURCE_LABELS !== 'undefined' && WIKI_SOURCE_LABELS[p.source]) || p.source || '',
+      bucketMs: (p.updated_at || 0) * 1000,
+      onClick: () => {
+        navigateTo('wiki');
+        setTimeout(() => { try { wikiOpenPage && wikiOpenPage(p.id); } catch(_) {} }, 120);
+      },
+    }));
+    _renderRecentItemList(container, items, 'wiki', 'Noch keine Wiki-Seiten');
+  } catch (e) {
+    if (!wasMode) container.innerHTML = `<div class="sb-session-item" style="opacity:.6;cursor:default;color:var(--error)">Fehlgeschlagen: ${esc(e.message)}</div>`;
   }
 }
 

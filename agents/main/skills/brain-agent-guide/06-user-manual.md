@@ -42,6 +42,17 @@ wechsle zu `04-recipes.md` und führe sie aus.
   vorausgewählt): links die Versionen, rechts pro Eintrag was die Version
   bringt — aus Nutzersicht beschrieben, mit „Für alle“/„Für Admins“-Markierung.
 
+**„Zuletzt verwendet"** (unten in der Seitenleiste) — passt sich der offenen
+Ansicht an: In **Chats** zeigt sie die letzten Chats, in **Projekten** die
+Projekt-Chats, in **Favoriten** alle Favoriten, in **Geplant** die letzten
+Ausführungen, in **Workflows** die letzten Läufe, in **Übersetzung** den
+Übersetzungs-Verlauf, in **Daten** die letzten Klassifizierungs-Scans und im
+**Wiki** die zuletzt geänderten Seiten. Der **Filter-Knopf** daneben öffnet je
+nach Ansicht das passende Menü — Chats bieten Typ/Status/Letzte Aktivität,
+Läufe (Geplant/Workflows) bieten einen Status-Filter, die übrigen Ansichten
+bieten „Letzte Aktivität"; überall lässt sich zusätzlich **nach Datum
+gruppieren**. Ein Klick auf einen Eintrag öffnet ihn direkt.
+
 **Hauptbereich** — die jeweils gewählte Ansicht. Die Willkommensansicht
 zeigt Begrüßung + Eingabefeld + Prompt-Karten.
 
