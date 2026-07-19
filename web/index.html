@@ -143,7 +143,7 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
   <div class="chat-sidebar-content" id="chat-sidebar-content">
     <!-- "Neuer Chat" quick action, always available above the tab rail. -->
     <div class="sb-newchat-row">
-      <div class="sb-nav-item sb-newchat-item" onclick="newChat()" data-view="welcome">
+      <div class="sb-nav-item sb-newchat-item" onclick="newChat({inheritProject: ''})" data-view="welcome">
         <span class="sb-icon"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>
         <span class="sb-label">Neuer Chat</span>
       </div>

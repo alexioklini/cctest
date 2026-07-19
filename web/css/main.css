@@ -796,20 +796,38 @@ textarea { resize: none; }
 #terminal-tree-head .tt-title {
   /* Same font/size as the file rows below (no uppercase/letter-spacing label
      style), just a slightly dimmer colour to read as a header. */
-  font-size: 14px; color: var(--text-300); font-family: var(--font-ui);
+  font-size: 15px; color: var(--text-300); font-family: var(--font-ui);
   /* Shrink + ellipsis so the long title never pushes the action buttons out of
      the column (they were overflowing + clipping at the default width). */
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* Tighten the header so all 6 actions fit the default column width. */
 #terminal-tree-head { gap: 2px; padding: 4px 6px; }
-#terminal-tree-head .pt-act { padding: 2px; flex: 0 0 auto; }
-#terminal-tree-head .pt-act { color: var(--text-300); }
+#terminal-tree-head .pt-act { flex: 0 0 auto; color: var(--text-300); }
+/* Uniform icon-button size across all code-mode toolbars (tree head, area strip,
+   chats head, per-pane tab bar) — same 28px square as the editor .ed-iconbtn. */
+#terminal-tree-head .pt-act,
+#terminal-strip .pt-act,
+.tc-hist-head .pt-act,
+.tpane-bar .pt-act {
+  width: 28px; height: 28px; min-width: 28px; padding: 0;
+  border-radius: 6px;
+}
 #terminal-tree-head .tt-toggle.active { color: var(--accent-brand); }
 #terminal-tree {
   flex: var(--tree-grow, 1) 1 0; min-height: 40px; overflow: auto; padding: 6px 4px;
-  font-family: var(--font-ui); font-size: 14px; line-height: 1.5; color: var(--text-100);
+  font-family: var(--font-ui); font-size: 15px; line-height: 1.4; color: var(--text-100);
 }
+/* Rows match the wiki tree / left-nav (.wiki-tree-item, .sb-nav-item):
+   15px / weight 450 / 9px 12px padding / 8px radius / 12px gap. */
+#terminal-tree .pt-row {
+  gap: 8px; padding: 9px 12px; border-radius: 8px;
+  font-weight: 450; letter-spacing: -0.01em;
+}
+#terminal-tree .pt-caret { width: 14px; height: 14px; }
+#terminal-tree .pt-caret svg { width: 11px; height: 11px; }
+#terminal-tree .pt-icon svg,
+#terminal-tree .pt-fileicon svg { width: 19px; height: 19px; }
 /* Horizontal drag handle between the file tree and the Terminal-Chats section. */
 #terminal-tree-vsplit { flex: 0 0 5px; cursor: ns-resize; background: transparent; }
 #terminal-tree-vsplit:hover { background: var(--accent-brand); }
@@ -992,7 +1010,7 @@ textarea { resize: none; }
                         0 0 11px color-mix(in srgb, var(--git-modified) 60%, transparent); } }
 .terminal-tab {
   display: flex; align-items: center; gap: 6px;
-  padding: 3px 10px; font-size: 12px; color: var(--text-300);
+  padding: 5px 12px; font-size: 14px; color: var(--text-300);
   background: var(--bg-300); border: 1px solid var(--border-200); border-bottom: none;
   border-radius: 5px 5px 0 0; cursor: grab; white-space: nowrap;
 }
@@ -1004,7 +1022,7 @@ textarea { resize: none; }
 /* file changed on disk while the tab had unsaved edits (conflict). */
 .terminal-tab.ed-conflict .tt-name { color: var(--git-modified); }
 .terminal-tab.ed-conflict { border-color: var(--git-modified); }
-.terminal-tab-close { opacity: .6; font-size: 10px; cursor: pointer; }
+.terminal-tab-close { opacity: .6; font-size: 12px; cursor: pointer; }
 .terminal-tab-close:hover { opacity: 1; color: var(--git-deleted); }
 /* xterm host fills the pane body; xterm paints its own (theme-aware) bg. */
 .terminal-xterm { position: absolute; inset: 0; padding: 4px 6px; }
@@ -1331,7 +1349,7 @@ textarea { resize: none; }
 #terminal-chats.tc-collapsed { flex: 0 0 auto; min-height: 0; }
 .tc-hist-head { display: flex; align-items: center; gap: 4px; padding: 4px 8px;
   background: var(--bg-200); cursor: pointer; flex: 0 0 auto; }
-.tc-hist-title { font-size: 14px; color: var(--text-300);
+.tc-hist-title { font-size: 15px; color: var(--text-300);
   font-family: var(--font-ui); }
 .tc-hist-head .pt-caret { display: inline-flex; transition: transform .12s; }
 .tc-hist-head .pt-caret.open { transform: rotate(90deg); }
@@ -1340,9 +1358,11 @@ textarea { resize: none; }
 #terminal-chats { background: var(--bg-000); }
 .tc-hist-body { flex: 1 1 auto; overflow-y: auto; padding: 4px; min-height: 0;
   background: var(--bg-000); color: var(--text-100);
-  font-family: var(--font-ui); font-size: 14px; line-height: 1.5; }
-.tc-hist-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px;
-  border-radius: 4px; color: var(--text-200); cursor: pointer; white-space: nowrap; }
+  font-family: var(--font-ui); font-size: 15px; line-height: 1.4; }
+/* Chat rows match the wiki tree / left-nav metrics. */
+.tc-hist-row { display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  border-radius: 8px; font-weight: 450; letter-spacing: -0.01em;
+  color: var(--text-200); cursor: pointer; white-space: nowrap; }
 .tc-hist-row:hover { background: var(--bg-200); }
 /* Open (in a tab) = subtle; ACTIVE (currently shown) = accent-highlighted so the
    selected chat is clearly marked, like the file tree's pt-selected. */
@@ -1352,7 +1372,7 @@ textarea { resize: none; }
 .tc-hist-row.tc-hist-active .tc-hist-icon { color: var(--accent-brand); }
 .tc-hist-icon { color: var(--accent-brand); flex: 0 0 auto; }
 .tc-hist-label { overflow: hidden; text-overflow: ellipsis; }
-.tc-hist-empty { color: var(--text-400); padding: 4px 6px; font-size: 11px; }
+.tc-hist-empty { color: var(--text-400); padding: 9px 12px; font-size: 15px; }
 /* Per-row delete: hidden until the row is hovered. */
 .tc-hist-del { flex: 0 0 auto; border: none; background: transparent; cursor: pointer;
   color: var(--text-400); font-size: 11px; padding: 0 2px; opacity: 0; transition: opacity .1s; }
@@ -1361,8 +1381,8 @@ textarea { resize: none; }
 /* Expandable per-chat output folder (chats/<slug>_<date>_<sid>/) under its row. */
 .tc-hist-row .pt-caret, .tc-hist-row .pt-caret-spacer { flex: 0 0 auto; }
 .tc-hist-files { padding: 1px 0 3px; }
-.tc-hf-row { display: flex; align-items: center; gap: 5px; padding: 2px 6px;
-  border-radius: 4px; color: var(--text-300); font-size: 12px; white-space: nowrap; }
+.tc-hf-row { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 18px;
+  border-radius: 6px; color: var(--text-300); font-size: 14px; white-space: nowrap; }
 .tc-hf-row .tc-hf-ico { flex: 0 0 auto; color: var(--text-400); display: inline-flex; }
 .tc-hf-row .tc-hf-name { overflow: hidden; text-overflow: ellipsis; }
 .tc-hf-file { cursor: pointer; }
@@ -1399,8 +1419,8 @@ textarea { resize: none; }
   background: var(--bg-200); border-bottom: 1px solid var(--border-200); }
 /* SVG-only icon buttons (no text labels). */
 .ed-iconbtn { display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 24px; padding: 0; border: 1px solid transparent;
-  background: transparent; color: var(--text-300); border-radius: 5px; cursor: pointer; }
+  width: 28px; height: 28px; padding: 0; border: 1px solid transparent;
+  background: transparent; color: var(--text-300); border-radius: 6px; cursor: pointer; }
 .ed-iconbtn:hover { background: var(--bg-300); color: var(--text-100); }
 .ed-iconbtn:disabled { opacity: .4; cursor: default; background: transparent; }
 .ed-iconbtn.ed-mode.active { background: var(--accent-brand); color: #fff; border-color: var(--accent-brand); }
@@ -2254,12 +2274,12 @@ textarea { resize: none; }
 .messages-scroll[data-fade-top="1"] { --fade-top: 48px; }
 .messages-scroll[data-fade-bottom="1"] { --fade-bottom: 48px; }
 .messages-container {
-  /* 48rem → 53rem: widen the column slightly so the left/right margin is ~10%
-     narrower (closer to Claude Desktop's reading width) without going full-bleed. */
-  max-width: 53rem;
+  /* Dynamic reading column: span the middle two thirds of the available width,
+     leaving ~1/6 (16.67%) empty on the left and right. Scales with the window
+     instead of a fixed max-width so wide browsers no longer waste screen space. */
+  width: 66.6667%;
   margin: 0 auto;
   padding: 16px 24px 24px;
-  width: 100%;
 }
 
 /* Message turn */
@@ -4837,9 +4857,9 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   flex-shrink: 0;
 }
 .chat-composer-wrapper {
-  max-width: 48rem;
+  /* Match .messages-container: middle two thirds, ~1/6 empty each side. */
+  width: 66.6667%;
   margin: 0 auto;
-  width: 100%;
 }
 
 /* Streaming indicator */
@@ -5348,7 +5368,8 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 13px;
+  font-size: 15px;
+  letter-spacing: -0.01em;
   color: var(--text-400);
   margin-bottom: 8px;
   cursor: pointer;
@@ -5394,10 +5415,11 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 
 .project-detail-composer {
+  /* Dynamic reading column, same as the chat view (.messages-container):
+     middle two thirds, ~1/6 empty each side. */
   padding: 24px;
-  max-width: 760px;
+  width: 66.6667%;
   margin: 0 auto;
-  width: 100%;
 }
 .project-detail-prompt-hint {
   text-align: center;
@@ -5407,10 +5429,10 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 
 .project-detail-chats-wrap {
+  /* Match .project-detail-composer / chat view: middle two thirds. */
   padding: 0 24px 24px;
-  max-width: 760px;
+  width: 66.6667%;
   margin: 0 auto;
-  width: 100%;
 }
 .project-chats-header {
   display: flex;
@@ -5529,17 +5551,20 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   justify-content: space-between;
   margin-bottom: 8px;
 }
+/* Section headers read at the left-nav item scale (.sb-nav-item: 15px), not the
+   tiny section-label size — the panel should be uniform with the navbar. */
 .project-panel-section-title {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: var(--text-000);
 }
 .project-panel-section-action {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--brand-text);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 4px 8px;
+  border-radius: 6px;
 }
 .project-panel-section-action:hover { background: var(--bg-300); }
 /* Icon buttons for the Speicher & Abgleich section — square, tooltip on hover.
@@ -5578,11 +5603,13 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 }
 
 /* ── Project source tree (unified Quellen panel) ─────────────────────────── */
-.project-source-tree { margin-top: 6px; font-size: 13px; }
+/* Row metrics match the wiki tree / left-nav (.sb-nav-item, .wiki-tree-item):
+   15px / weight 450 / line-height 1.4 / 9px 12px padding / 8px radius. */
+.project-source-tree { margin-top: 6px; font-size: 15px; }
 .pt-legend {
   display: flex; flex-wrap: wrap; gap: 12px;
-  font-size: 11px; color: var(--text-400);
-  padding: 4px 2px 10px; border-bottom: 1px solid var(--border-100); margin-bottom: 6px;
+  font-size: 15px; color: var(--text-400);
+  padding: 9px 2px 12px; border-bottom: 1px solid var(--border-100); margin-bottom: 6px;
 }
 .pt-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .pt-dot {
@@ -5601,27 +5628,38 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   padding: 4px 6px; border-radius: 6px; cursor: default;
   min-width: 0;
 }
+/* In the project config panel, rows match the wiki tree / left-nav metrics.
+   Scoped to .project-source-tree so the dense code-mode #terminal-tree keeps
+   its own compact row density. */
+.project-source-tree .pt-row {
+  gap: 8px; padding: 9px 12px; border-radius: 8px;
+  line-height: 1.4; font-weight: 450; letter-spacing: -0.01em;
+}
 .pt-typerow { cursor: pointer; font-weight: 600; }
 .pt-item, .pt-folderrow, .pt-realrow, .pt-realfile { cursor: default; }
 .pt-folderrow, .pt-realrow { cursor: pointer; }
 .pt-row:hover { background: var(--bg-200); }
 .pt-row:hover .pt-actions { opacity: 1; }
 
+/* Caret + row icons match the wiki tree (.wiki-caret: 14px slot / 11px svg;
+   .wiki-tree-item svg: 19px). */
 .pt-caret {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 14px; flex-shrink: 0; color: var(--text-400);
+  width: 14px; height: 14px; flex-shrink: 0; color: var(--text-400);
   transition: transform 0.12s;
 }
+.pt-caret svg { width: 11px; height: 11px; }
 .pt-caret.open { transform: rotate(90deg); }
 .pt-icon { flex-shrink: 0; display: inline-flex; align-items: center; color: var(--text-400); }
+.pt-icon svg { width: 19px; height: 19px; }
 .pt-svgicon { display: block; }
 .pt-typerow .pt-icon { color: var(--text-300); }
 .pt-label {
   flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--sidebar-text); font-weight: 400;
+  color: var(--sidebar-text); font-weight: 450;
 }
 .pt-typerow .pt-label { color: var(--sidebar-text); }
-.pt-count { color: var(--text-400); font-size: 11px; font-weight: 400; flex-shrink: 0; }
+.pt-count { color: var(--text-400); font-size: 13px; font-weight: 400; flex-shrink: 0; }
 
 .pt-actions {
   display: inline-flex; gap: 2px; flex-shrink: 0;
@@ -5637,10 +5675,10 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 
 .pt-children { margin-left: 14px; border-left: 1px solid var(--border-100); padding-left: 4px; }
 .pt-items { display: flex; flex-direction: column; }
-.pt-empty, .pt-loading { color: var(--text-400); font-size: 12px; padding: 4px 8px; font-style: italic; }
+.pt-empty, .pt-loading { color: var(--text-400); font-size: 15px; padding: 9px 12px; font-style: italic; }
 /* Cap the expanded instructions so a long doc stays scrollable and the
    files/folders/web-URL nodes below it remain visible without endless scrolling. */
-.pt-instructions { padding: 4px 8px; color: var(--text-200); font-size: 12.5px;
+.pt-instructions { padding: 6px 10px; color: var(--text-200); font-size: 13px;
   max-height: 220px; overflow-y: auto; }
 .pt-instructions :is(p, ul, ol) { margin: 4px 0; }
 .pt-instructions :first-child { margin-top: 0; }
@@ -5673,12 +5711,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .pt-legend { align-items: center; }
 
 .project-panel-section-body {
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text-300);
   line-height: 1.5;
 }
 .project-panel-placeholder {
-  font-size: 13px;
+  font-size: 15px;
   color: var(--text-400);
   font-style: italic;
 }
@@ -5693,12 +5731,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-400);
   background: none;
   border: 1px solid var(--border-200);
   border-radius: 6px;
-  padding: 3px 9px;
+  padding: 5px 11px;
   cursor: pointer;
 }
 .project-panel-help-toggle button:hover { background: var(--bg-300); }
@@ -5709,11 +5747,11 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 /* Per-section help text: hidden until the panel is in help mode. */
 .project-panel-help {
   display: none;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-400);
   line-height: 1.5;
   margin-bottom: 8px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   background: var(--bg-300);
   border-radius: 6px;
 }
@@ -5743,7 +5781,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   background: var(--bg-200);
   border: 1px solid var(--border-100);
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text-200);
 }
@@ -5791,13 +5829,15 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 0;
-  font-size: 13px;
+  padding: 9px 0;
+  font-size: 15px;
+  font-weight: 450;
+  letter-spacing: -0.01em;
   color: var(--text-200);
 }
 .project-file-item svg {
-  width: 14px;
-  height: 14px;
+  width: 19px;
+  height: 19px;
   color: var(--text-400);
   flex-shrink: 0;
 }
@@ -5844,11 +5884,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 10px;
+  padding: 7px 14px;
   border-radius: 12px;
   background: var(--bg-200);
   border: 1px solid var(--border-200);
-  font-size: 12px;
+  font-size: 15px;
+  letter-spacing: -0.01em;
   color: var(--text-400);
   transition: all 0.15s;
   /* Chip is informational only — clicks are unreliable for triggering
@@ -5863,7 +5904,7 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
   line-height: 1.3;
 }
 .project-sync-sublabel {
-  font-size: 10px;
+  font-size: 13px;
   color: var(--text-500);
   display: none;
 }
@@ -7770,6 +7811,12 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 
   .welcome-text { font-size: 28px; }
   .composer-wrapper { max-width: 100%; }
+  /* On narrow screens the 1/6-each-side reading margin would starve the column,
+     so let the chat column and composer go near-full-width instead. */
+  .messages-container,
+  .chat-composer-wrapper,
+  .project-detail-composer,
+  .project-detail-chats-wrap { width: 100%; }
 
   /* Composer footer: on 342px the left tools + the model selector + send
      button don't fit on one row and overflowed the composer's right edge
