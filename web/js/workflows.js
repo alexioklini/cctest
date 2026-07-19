@@ -47,7 +47,7 @@ function wfRenderList() {
         <div class="wf-card-main">
           <div class="wf-card-title">
             <span class="wf-card-fav-slot" data-wf-fav="${escapeHtml(wf.name)}"></span>
-            ${escapeHtml(wf.display_name || wf.name)}
+            <span class="wf-card-title-text">${escapeHtml(wf.display_name || wf.name)}</span>
           </div>
           <div class="wf-card-desc">${escapeHtml(wf.description || '')}</div>
           <div class="wf-card-meta">

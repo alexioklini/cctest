@@ -6339,13 +6339,22 @@ details.refs-section[open] > .refs-section-header .refs-section-disclosure {
 .sched-card-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 6px;
 }
+/* Name takes the middle space and ellipsis-truncates so a long (user-controlled)
+   schedule name can't push the badge out or bleed past the card. */
 .sched-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 15px;
   font-weight: 600;
   color: var(--text-000);
 }
+.sched-card-fav-slot,
+.sched-card-badge { flex: 0 0 auto; }
 .sched-card-badge {
   display: inline-flex;
   align-items: center;
@@ -9210,9 +9219,11 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
 .artifact-browse-card .fav-star-btn.is-favourited { opacity: 1; }
 .artifact-browse-card:has(.fav-star-btn.is-favourited) .artifact-browse-fav-slot { opacity: 1; }
 
-/* Workflow-card star: inline in title row. */
-.wf-card-title { display: inline-flex; align-items: center; gap: 6px; }
-.wf-card-fav-slot { display: inline-flex; }
+/* Workflow-card star: inline in title row. min-width:0 + the text span's
+   ellipsis keep a long (user-controlled) name from bleeding past the card. */
+.wf-card-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.wf-card-fav-slot { display: inline-flex; flex: 0 0 auto; }
+.wf-card-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Schedule-card star: leading slot in header row. */
 .sched-card-fav-slot { display: inline-flex; align-items: center; }
