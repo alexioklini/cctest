@@ -2285,6 +2285,11 @@ class AdminArtifactsHandlers:
         agent_id = qs.get("agent_id", [None])[0]
         limit = int(qs.get("limit", ["100"])[0])
         source_filter = qs.get("source", [None])[0]  # chat | scheduled | None
+        # context splits the browse by where the artifact was produced:
+        #   chat    → artifacts from plain (non-project) chats  → Startseite tab
+        #   project → artifacts from project chats              → Projekte tab
+        # (absent → no context split, the full cross-session grid.)
+        context = qs.get("context", [None])[0]  # chat | project | None
         artifacts = ChatDB.get_all_artifacts(agent_id=agent_id, limit=limit)
 
         # Enrich: source tag + schedule-run summary for scheduled artifacts.
@@ -2328,6 +2333,18 @@ class AdminArtifactsHandlers:
 
         if source_filter in ("chat", "scheduled", "translation"):
             artifacts = [a for a in artifacts if a.get("source") == source_filter]
+
+        # Context split (Startseite vs Projekte): a project artifact is one whose
+        # originating session carries a project / project_id. Scheduled +
+        # translation artifacts have no project and fall under "chat".
+        if context in ("chat", "project"):
+            def _is_project(a):
+                return bool((a.get("session_project") or "").strip()
+                            or (a.get("session_project_id") or "").strip())
+            if context == "project":
+                artifacts = [a for a in artifacts if _is_project(a)]
+            else:
+                artifacts = [a for a in artifacts if not _is_project(a)]
 
         # Fetch text preview for each text-based artifact; flag image artifacts
         # that have a precomputed thumbnail so the browse grid can request it

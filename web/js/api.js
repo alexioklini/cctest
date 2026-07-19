@@ -372,7 +372,6 @@ class API {
   static deleteProjectInstructionFile(agent, name, filename) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files/${encodeURIComponent(filename)}`); }
   // AI-generation of project instructions (agentic, review-before-save).
   static generateProjectInstructions(agent, name, prompt) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/generate-instructions`, { prompt }); }
-  static generateProjectDesignSystem(agent, name, payload) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/design-system/generate`, payload); }
   static getInstructionGen(agent, name, genId) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-gen/${encodeURIComponent(genId)}`); }
   static cancelInstructionGen(agent, name, genId) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-gen/${encodeURIComponent(genId)}/cancel`, {}); }
 
@@ -424,7 +423,7 @@ class API {
 
   // Artifacts
   static getArtifacts(sessionId) { return this.get(`/v1/artifacts?session_id=${encodeURIComponent(sessionId)}`); }
-  static browseArtifacts(agentId, limit) { return this.get(`/v1/artifacts/browse?${agentId ? 'agent_id=' + encodeURIComponent(agentId) + '&' : ''}limit=${limit || 100}`); }
+  static browseArtifacts(agentId, limit, context) { return this.get(`/v1/artifacts/browse?${agentId ? 'agent_id=' + encodeURIComponent(agentId) + '&' : ''}${context ? 'context=' + encodeURIComponent(context) + '&' : ''}limit=${limit || 100}`); }
   static getArtifactContent(id, version) { return this.get(`/v1/artifacts/${id}/content${version ? '?version=' + version : ''}`); }
   static getArtifactDownloadUrl(id, version) { return `${BASE_URL}/v1/artifacts/${id}/download${version ? '?version=' + version : ''}`; }
   static getArtifactThumbnailUrl(id, version) { return `${BASE_URL}/v1/artifacts/${id}/thumbnail${version ? '?version=' + version : ''}`; }
@@ -614,13 +613,11 @@ class API {
       body.deep_research = true;
     }
 
-    // Design-Turn flag (Design-Modus Phase B): deterministic, no classifier.
-    // True when the user armed the composer palette toggle (explicit design
-    // entry for a NEW draft) OR while the design canvas is active on an HTML
-    // artifact (comment-applies + follow-up sends). The server then injects
-    // the project's design_system wire-only; inert without one.
-    if ((state.activeChat && state.activeChat.designContext)
-        || (typeof DesignCanvas !== 'undefined' && DesignCanvas.isActive())) {
+    // Design-Turn flag: deterministic, no classifier. Set while the design
+    // canvas is active on an HTML artifact (comment-applies + follow-up sends)
+    // so the server adds the deck/export convention. (The per-project
+    // design_system override was removed — document styling is global now.)
+    if (typeof DesignCanvas !== 'undefined' && DesignCanvas.isActive()) {
       body.design_context = true;
     }
 

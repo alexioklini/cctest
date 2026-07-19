@@ -42,22 +42,6 @@
       "_comment": "Direct Mistral API (vibe-cli key) — since 9.278.0 the chat provider for all Mistral models (was CLIProxyAPI) + image generation (agents/conversations/files).",
       "coding_plan": "mistral-vibe"
     },
-    "Lokal-M4": {
-      "base_url": "http://192.168.1.214:8012/v1",
-      "type": "anthropic",
-      "api_key": "YOUR_API_KEY",
-      "default_model": "",
-      "max_concurrent": 8,
-      "api_keys": [
-        {
-          "name": "default",
-          "key": "YOUR_API_KEY",
-          "usage": "preferred"
-        }
-      ],
-      "is_local": true,
-      "_comment": "vllm-metal on Mac mini M4 (192.168.1.214:8012). Serves native Anthropic /v1/messages; sidecar talks to it DIRECTLY (no CLIProxyAPI). Local bg-task model = Qwen2.5-7B-Instruct-4bit. max_concurrent 8 per the c=8 sweep. launchd: com.brain-agent.vllm-metal on the M4."
-    },
     "Kilo": {
       "base_url": "https://kilo.ai/api/openrouter",
       "type": "openai",
@@ -1923,55 +1907,6 @@
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
-      "warmup": false
-    },
-    "Lokal-M4/Qwen2.5-7B-Instruct-4bit": {
-      "enabled": false,
-      "shortname": "Qwen2.5-7B (M4)",
-      "display_name": "Qwen2.5-7B Instruct 4bit (M4 local)",
-      "icon": "🐎",
-      "priority": 34,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 32768,
-      "max_output": 4096,
-      "inference": {
-        "temperature": 0.2,
-        "top_p": 0.85
-      },
-      "raw_formats": [],
-      "provider": "Lokal-M4",
-      "base_model_id": "Qwen2.5-7B-Instruct-4bit",
-      "profile": "speed",
-      "is_local": true,
-      "warmup": false,
-      "_caps_canonical": true,
-      "description": "Lokales Hintergrund-Modell (vllm-metal auf dem M4) — Kurz-Tasks: Refine, Soul-Chat, Memory-Klassifikation. Tool-Parser hermes.",
-      "parallel_tool_calls": false
-    },
-    "Qwen2.5-7B-Instruct-4bit": {
-      "enabled": false,
-      "shortname": "Qwen2.5-7B-Instruct-4bit",
-      "display_name": "Qwen2.5-7B-Instruct-4bit",
-      "icon": "🐼",
-      "priority": 50,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [],
-      "provider": "Lokal-M4",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": true,
       "warmup": false
     },
     "mistral-ocr-3-0": {

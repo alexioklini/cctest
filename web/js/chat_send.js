@@ -96,9 +96,6 @@ async function sendMessage() {
     // false, so a research turn started from the PROJECT-LANDING composer was
     // silently downgraded to a normal chat. Snapshot + restore across newChat().
     const _carryDeepResearch = _preChat ? !!_preChat.deepResearch : false;
-    // Design-Turn toggle: same trap (set on the project-landing composer,
-    // reset by newChat()). Snapshot + restore.
-    const _carryDesignContext = _preChat ? !!_preChat.designContext : false;
     newChat();
     state._pendingFiles = _carryFiles;
     state._pendingImages = _carryImages;
@@ -114,10 +111,8 @@ async function sendMessage() {
       if (_carryThinking !== undefined) _freshChat.thinkingLevel = _carryThinking;
       if (_carryCaveman !== undefined) _freshChat.cavemanMode = _carryCaveman;
       _freshChat.deepResearch = _carryDeepResearch;
-      _freshChat.designContext = _carryDesignContext;
       if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
       if (typeof refreshDeepResearchButton === 'function') refreshDeepResearchButton();
-      if (typeof refreshDesignContextButton === 'function') refreshDesignContextButton();
       if (typeof updateStatusBar === 'function') updateStatusBar();
     }
     if (typeof renderFilePreviews === 'function') renderFilePreviews();

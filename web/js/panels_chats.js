@@ -430,7 +430,6 @@ function updateStatusBar() {
   // state + cached backend availability (mirrors the other composer toggles —
   // controls are the source of truth, so repaint on every status-bar pass).
   if (typeof refreshDeepResearchButton === 'function') refreshDeepResearchButton();
-  if (typeof refreshDesignContextButton === 'function') refreshDesignContextButton();
 
   // Final pass: hide role-restricted items. Runs last so it wins over the
   // data-driven branches above (e.g. cost-wrap re-show on cost data arrival).
@@ -660,6 +659,15 @@ async function loadChatsList() {
       );
     }
 
+    // Apply the "Filtern nach" type filter (Alle / Chats / Aufgaben).
+    // "Archiviert" is fetched server-side above (state.chatsFilter), so it isn't
+    // re-applied here.
+    if (state.chatsTypeFilter === 'chats') {
+      allSessions = allSessions.filter(s => !_isChatTask(s));
+    } else if (state.chatsTypeFilter === 'tasks') {
+      allSessions = allSessions.filter(s => _isChatTask(s));
+    }
+
     container.innerHTML = '';
     for (const s of allSessions) {
       const csid = s.id || s.session_id;
@@ -668,29 +676,49 @@ async function loadChatsList() {
       const tip = s.summary ? ` title="${esc(s.summary)}"` : '';
       const div = document.createElement('div');
       const clStreaming = state.streamingSessions?.has(csid);
-      div.className = 'chat-list-item' + (clStreaming ? ' streaming' : '');
-      const clGoalPill = s.goal_status === 'active'
-        ? `<span class="sb-stream-pill" style="background:var(--accent-500, #6366f1)" title="Goal-Modus aktiv: ${esc(s.goal_text || '')}">🎯</span>`
-        : (s.goal_status === 'fulfilled'
-          ? `<span class="sb-stream-pill" style="background:var(--success, #22c55e)" title="Ziel erreicht: ${esc(s.goal_text || '')}">🎯✓</span>`
-          : '');
+      const subRows = (state.runningSubagents || {})[csid] || [];
+      const busy = clStreaming || subRows.length > 0;
+      const selected = state.chatsSelectMode && state.chatsSelected?.has(csid);
+      div.className = 'chat-list-item' + (busy ? ' streaming' : '') + (selected ? ' selected' : '');
+      // Attention dot: a chat that is streaming, has running subagents, or an
+      // active goal — the claude.ai orange "needs attention" marker.
+      const attention = busy || s.goal_status === 'active';
+      const dot = attention ? '<span class="chat-list-item-dot" title="Aktiv / benötigt Aufmerksamkeit"></span>' : '';
+      const icon = SEARCH_ICONS[_isChatTask(s) ? 'task' : (s.status === 'code' ? 'code' : 'chat')] || '';
+      const check = state.chatsSelectMode
+        ? `<span class="chat-list-item-check${selected ? ' on' : ''}">${selected ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}</span>`
+        : `<span class="chat-list-item-icon">${icon}</span>`;
       div.innerHTML = `
-        <div class="chat-list-item-title"${tip}>${esc(title)}${clGoalPill}${clStreaming ? '<span class="sb-stream-pill" title="Antwort wird gerade erstellt">läuft</span>' : ''}</div>
-        <div class="chat-list-item-meta">
-          Letzte Nachricht ${relativeTime(s.last_active)}
-          ${s.agentId ? ' in <span class="chat-list-item-agent">' + esc(s.agentDisplay) + '</span>' : ''}
-        </div>
+        ${check}
+        <span class="chat-list-item-title"${tip}>${esc(title)}</span>
+        <span class="chat-list-item-right">
+          ${dot}
+          <span class="chat-list-item-date">${searchRecencyLabel(s.last_active)}</span>
+          <button class="chat-list-item-menu" title="Aktionen" onclick="event.stopPropagation(); openChatRowMenu(event, '${esc(csid)}', '${esc(s.agentId || 'main')}')">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+          </button>
+        </span>
       `;
-      div.onclick = () => openSession(csid, s.agentId);
+      div.onclick = () => {
+        if (state.chatsSelectMode) { toggleChatSelected(csid); return; }
+        openSession(csid, s.agentId);
+      };
       container.appendChild(div);
     }
 
     if (!allSessions.length) {
       container.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-400)">Keine Chats gefunden</div>';
     }
+    _updateChatsSelectbar();
   } catch(e) {
     container.innerHTML = '<div style="padding:16px;color:var(--error)">Chats konnten nicht geladen werden</div>';
   }
+}
+
+// A session counts as an "Aufgabe" (task) when it carries a goal — mirrors the
+// sidebar filter's notion of tasks.
+function _isChatTask(s) {
+  return s.goal_status === 'active' || s.goal_status === 'fulfilled';
 }
 
 function filterChatsList() {
@@ -698,9 +726,108 @@ function filterChatsList() {
   loadChatsList();
 }
 
-function setChatFilter(filter, el) {
-  state.chatsFilter = filter;
-  document.querySelectorAll('.chats-tab').forEach(t => t.classList.remove('active'));
-  if (el) el.classList.add('active');
+// ── "Filtern nach" dropdown (Alle / Chats / Aufgaben / Archiviert) ──
+const CHATS_TYPE_FILTERS = [
+  ['all', 'Alle'],
+  ['chats', 'Chats'],
+  ['tasks', 'Aufgaben'],
+  ['archived', 'Archiviert'],
+];
+
+function toggleChatsFilterMenu(event) {
+  event.stopPropagation();
+  const existing = document.getElementById('chats-filter-menu');
+  if (existing) { existing.remove(); return; }
+  const anchor = document.getElementById('chats-filter');
+  const cur = state.chatsTypeFilter || (state.chatsFilter === 'archived' ? 'archived' : 'all');
+  const menu = document.createElement('div');
+  menu.id = 'chats-filter-menu';
+  menu.className = 'chats-filter-menu';
+  menu.innerHTML = CHATS_TYPE_FILTERS.map(([k, label]) =>
+    `<div class="chats-filter-item${k === cur ? ' active' : ''}" onclick="setChatFilter('${k}')">
+      <span>${label}</span>${k === cur ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>' : ''}
+    </div>`).join('');
+  anchor.appendChild(menu);
+  setTimeout(() => {
+    document.addEventListener('click', function close(e) {
+      if (!menu.contains(e.target) && !anchor.contains(e.target)) { menu.remove(); document.removeEventListener('click', close); }
+    });
+  }, 0);
+}
+
+function setChatFilter(filter) {
+  state.chatsTypeFilter = filter;
+  // "Archiviert" drives the server fetch; the other three are client-side type
+  // filters over the active set.
+  state.chatsFilter = filter === 'archived' ? 'archived' : 'all';
+  const valEl = document.getElementById('chats-filter-value');
+  if (valEl) valEl.textContent = (CHATS_TYPE_FILTERS.find(f => f[0] === filter) || [,'Alle'])[1];
+  document.getElementById('chats-filter-menu')?.remove();
   loadChatsList();
+}
+
+// ── Bulk select mode ──
+function toggleChatsSelectMode() {
+  state.chatsSelectMode = !state.chatsSelectMode;
+  state.chatsSelected = new Set();
+  const btn = document.getElementById('chats-select-btn');
+  if (btn) {
+    btn.textContent = state.chatsSelectMode ? 'Fertig' : 'Auswählen';
+    btn.classList.toggle('active', state.chatsSelectMode);
+  }
+  loadChatsList();
+}
+
+function toggleChatSelected(csid) {
+  if (!state.chatsSelected) state.chatsSelected = new Set();
+  if (state.chatsSelected.has(csid)) state.chatsSelected.delete(csid);
+  else state.chatsSelected.add(csid);
+  loadChatsList();
+}
+
+function _updateChatsSelectbar() {
+  const bar = document.getElementById('chats-selectbar');
+  if (!bar) return;
+  const n = state.chatsSelectMode ? (state.chatsSelected?.size || 0) : 0;
+  bar.style.display = state.chatsSelectMode ? 'flex' : 'none';
+  const cnt = document.getElementById('chats-selectbar-count');
+  if (cnt) cnt.textContent = `${n} ausgewählt`;
+}
+
+async function archiveSelectedChats() {
+  const ids = Array.from(state.chatsSelected || []);
+  if (!ids.length) return;
+  for (const id of ids) { try { await API.manageSession({ action: 'archive', session_id: id }); } catch (_) {} }
+  toggleChatsSelectMode();
+}
+
+async function deleteSelectedChats() {
+  const ids = Array.from(state.chatsSelected || []);
+  if (!ids.length) return;
+  if (!confirm(`${ids.length} Chat(s) endgültig löschen?`)) return;
+  for (const id of ids) { try { await API.manageSession({ action: 'delete', session_id: id }); } catch (_) {} }
+  toggleChatsSelectMode();
+}
+
+// ── Per-row ⋮ action menu (Öffnen / Archivieren / Löschen) ──
+function openChatRowMenu(event, csid, agentId) {
+  event.stopPropagation();
+  document.getElementById('chat-row-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.id = 'chat-row-menu';
+  menu.className = 'chat-row-menu';
+  menu.innerHTML = `
+    <div class="chat-row-menu-item" onclick="openSession('${esc(csid)}','${esc(agentId)}'); document.getElementById('chat-row-menu')?.remove()">Öffnen</div>
+    <div class="chat-row-menu-item" onclick="archiveSession('${esc(csid)}'); document.getElementById('chat-row-menu')?.remove()">Archivieren</div>
+    <div class="chat-row-menu-item danger" onclick="deleteSession('${esc(csid)}'); document.getElementById('chat-row-menu')?.remove()">Löschen</div>`;
+  document.body.appendChild(menu);
+  const r = event.currentTarget.getBoundingClientRect();
+  const mw = menu.offsetWidth;
+  menu.style.top = (r.bottom + 4) + 'px';
+  menu.style.left = Math.max(8, r.right - mw) + 'px';
+  setTimeout(() => {
+    document.addEventListener('click', function close(e) {
+      if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', close); }
+    });
+  }, 0);
 }

@@ -319,9 +319,8 @@ def _build_pinned_sources(agent_id, project_name, pinned):
     return head + "\n\n" + "\n\n---\n\n".join(blocks), used
 
 
-# Deck/export convention for design turns (Design-Modus Phase C): rides on
-# EVERY design turn (with or without a project design_system) so the agent
-# writes decks the PPTX exporter can split into slides and pages the PDF
+# Deck/export convention for design turns: rides on EVERY design turn so the
+# agent writes decks the PPTX exporter can split into slides and pages the PDF
 # printer renders cleanly. Wire-only like everything else in this preamble.
 _DESIGN_DECK_CONVENTION = (
     "[DESIGN-KONVENTION: Falls ein FOLIENDECK gewünscht ist, lege jede Folie "
@@ -337,58 +336,16 @@ _DESIGN_DECK_CONVENTION = (
 
 
 def _build_design_context_preamble(agent_id, project_name):
-    """Design-Turn (body.design_context, Design-Modus Phase B+C): the wire-only
-    preamble every design turn carries. Always contains the deck/export
-    convention (_DESIGN_DECK_CONVENTION, Phase C — so the agent writes
-    PPTX-exportable decks); additionally renders the project's `design_system`
-    (project.json, editor: Projekt-Seite → Design-System) when one is set, so
-    the draft follows the project's CI (colors/fonts/logo/tone/CSS base).
-    Injected ONLY on turns the client deterministically flags as design turns
-    — a normal Q&A turn in the same project never carries it. Wire-only like
-    the Websuche preamble: nothing enters session.messages/DB, the warm-pool
-    KV prefix stays byte-stable."""
-    ds = {}
-    if project_name:
-        try:
-            import brain as _engine
-            cfg = _engine.ProjectManager.get_project(agent_id, project_name) or {}
-            ds = cfg.get("design_system") or {}
-        except Exception:
-            ds = {}
-    if not isinstance(ds, dict):
-        ds = {}
-    colors = [c for c in (ds.get("colors") or [])
-              if isinstance(c, dict) and str(c.get("hex") or "").strip()]
-    font_h = str(ds.get("font_heading") or "").strip()
-    font_b = str(ds.get("font_body") or "").strip()
-    logo = str(ds.get("logo_url") or "").strip()
-    tone = str(ds.get("tone") or "").strip()
-    css = str(ds.get("css_snippet") or "").strip()
-    if not (colors or font_h or font_b or logo or tone or css):
-        return _DESIGN_DECK_CONVENTION
-    lines = [_DESIGN_DECK_CONVENTION,
-             "[PROJEKT-DESIGN-SYSTEM — verbindliche Gestaltungsvorgaben für "
-             "diesen Design-Auftrag. Setze sie in HTML-Artefakten konsequent "
-             "um; weiche nur ab, wo der Nutzer es ausdrücklich verlangt.]"]
-    if colors:
-        lines.append("Farben: " + ", ".join(
-            f"{str(c.get('hex')).strip()}"
-            + (f" ({str(c.get('role') or '').strip()})"
-               if str(c.get("role") or "").strip() else "")
-            for c in colors))
-    if font_h:
-        lines.append(f"Schrift Überschriften: {font_h}")
-    if font_b:
-        lines.append(f"Schrift Fließtext: {font_b}")
-    if logo:
-        lines.append(f"Logo: {logo} (als <img> mit dieser URL einbinden, "
-                     "nicht nachzeichnen)")
-    if tone:
-        lines.append(f"Tonalität/Sprache: {tone}")
-    if css:
-        lines.append("CSS-Basis (in <style> übernehmen und darauf aufbauen):\n"
-                     "```css\n" + css + "\n```")
-    return "\n".join(lines)
+    """Design-Turn (body.design_context): the wire-only preamble a design turn
+    carries — the deck/export convention (_DESIGN_DECK_CONVENTION) so the agent
+    writes PPTX-exportable decks / print-clean pages. Injected ONLY on turns the
+    client flags as design turns (design canvas active on an HTML artifact) — a
+    normal Q&A turn never carries it. Wire-only like the Websuche preamble:
+    nothing enters session.messages/DB, the warm-pool KV prefix stays byte-stable.
+
+    (The per-project design_system override — colors/fonts/logo/tone/CSS — was
+    removed; document styling is handled globally, not per project.)"""
+    return _DESIGN_DECK_CONVENTION
 
 
 def _inject_web_preamble_into_wire(messages, preamble):
@@ -4981,12 +4938,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         engine.get_request_context()._discipline_meta = _discipline_meta
                     except Exception:
                         pass
-                    # Design-Turn (Design-Modus Phase B): the client flags turns
-                    # sent while Design-Modus is active on an HTML artifact
-                    # (body.design_context, deterministic — no classifier). Inject
-                    # the project's design_system as a wire-only preamble so the
-                    # edit follows the project CI. Same ephemeral seam as the
-                    # Websuche preamble (never persisted, KV prefix untouched).
+                    # Design-Turn: the client flags turns sent while Design-Modus
+                    # is active on an HTML artifact (body.design_context,
+                    # deterministic — no classifier). Inject the deck/export
+                    # convention as a wire-only preamble. Same ephemeral seam as
+                    # the Websuche preamble (never persisted, KV prefix untouched).
                     if design_context:
                         _design_pre = _build_design_context_preamble(
                             session.agent_id,
@@ -7972,9 +7928,9 @@ class ChatHandlerMixin:
             content_blocks=content_blocks, disk_files=disk_files,
             auto_route=auto_route, want_auto=want_auto, deep_research=deep_research,
             pinned_sources=pinned_sources,
-            # Design-Turn-Flag (Design-Modus Phase B): the client sets it while
-            # Design-Modus is active on an HTML artifact → the worker injects
-            # the project's design_system wire-only.
+            # Design-Turn-Flag: the client sets it while Design-Modus is active
+            # on an HTML artifact → the worker injects the deck/export
+            # convention wire-only.
             design_context=bool(body.get("design_context", False)),
             # Interactive clients (web chat + terminal chat) send this flag —
             # it gates the MoA delegate-plan review (headless callers: none).

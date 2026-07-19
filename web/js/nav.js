@@ -30,15 +30,19 @@ function navigateTo(view, opts) {
   const wkView = document.getElementById('wiki-view');
   if (wkView) wkView.classList.remove('active');
 
-  // Update sidebar active state
+  // Update sidebar active state: highlight the matching sub-nav item and switch
+  // the tab rail to the section this view belongs to.
   document.querySelectorAll('.sb-nav-item').forEach(n => n.classList.remove('active'));
-  const navItem = document.querySelector(`.sb-nav-item[data-view="${view}"]`);
+  const navItem = document.querySelector(`.sb-subnav .sb-nav-item[data-view="${view}"]`);
   if (navItem) navItem.classList.add('active');
+  syncSidebarTabsToView(view);
 
   switch(view) {
     case 'welcome':
       document.getElementById('welcome-view').style.display = '';
-      updatePageHeader('Brain Agent');
+      // No page-header title on welcome — the sidebar brand already reads
+      // "Brain Agent", so a header title here is redundant.
+      updatePageHeader('');
       // Hide per-chat status bar — welcome is the new-chat landing screen,
       // there's no active session, so showing the previous chat's session
       // id / model / tokens / cost is misleading.
@@ -54,14 +58,16 @@ function navigateTo(view, opts) {
 
     case 'chats':
       document.getElementById('chats-view').classList.add('active');
-      updatePageHeader('Chats');  // German keeps the same word
+      // No page-header title — the view renders its own "Chats und Aufgaben"
+      // heading, so a top-bar title would be redundant.
+      updatePageHeader('');
       document.getElementById('status-bar').style.display = '';
       loadChatsList();
       break;
 
     case 'projects':
       document.getElementById('projects-view').classList.add('active');
-      updatePageHeader('Projekte');
+      updatePageHeader('');  // view has its own "Projekte" heading
       // Hide per-chat status bar — same reason as project-detail: no chat
       // in scope, the bar would otherwise show stale session data.
       document.getElementById('status-bar').style.display = 'none';
@@ -70,7 +76,7 @@ function navigateTo(view, opts) {
 
     case 'project-detail':
       document.getElementById('project-detail-view').classList.add('active');
-      updatePageHeader(opts?.projectName || 'Projekt');
+      updatePageHeader('');  // view shows the project name in its own heading
       // Hide the per-chat status bar — there's no chat in scope on this view,
       // so the bar would otherwise leak the previous chat's session id /
       // model / tokens / cost / context fill, which the user reads as
@@ -92,7 +98,6 @@ function navigateTo(view, opts) {
         refreshThinkingButton();
   if (typeof refreshResearchModeButton === 'function') refreshResearchModeButton();
   if (typeof refreshDeepResearchButton === 'function') refreshDeepResearchButton();
-  if (typeof refreshDesignContextButton === 'function') refreshDesignContextButton();
         if (typeof updateStatusBar === 'function') updateStatusBar();
         updateSendButton();
         renderFilePreviews();
@@ -102,7 +107,11 @@ function navigateTo(view, opts) {
 
     case 'artifacts':
       document.getElementById('artifacts-view').classList.add('active');
-      updatePageHeader('Artefakte');
+      updatePageHeader('');  // view has its own "Artefakte" heading
+      // Context split: Startseite → chat artifacts, Projekte → project artifacts.
+      if (typeof setArtifactsBrowseContext === 'function') {
+        setArtifactsBrowseContext(opts?.context || '');
+      }
       // Hide per-chat status bar — artifacts overview is a cross-session
       // grid; no chat in scope, so the bar would otherwise show stale
       // session data from whichever chat the user was last viewing.
@@ -112,7 +121,7 @@ function navigateTo(view, opts) {
 
     case 'scheduled':
       document.getElementById('scheduled-view').classList.add('active');
-      updatePageHeader('Geplant');
+      updatePageHeader('');  // view has its own "Geplant" heading
       // Hide per-chat status bar — scheduled is a list view with no chat
       // in scope. Once a run is opened (openScheduledArtifact → chat view)
       // the bar comes back with that run's actual data.
@@ -123,7 +132,7 @@ function navigateTo(view, opts) {
 
     case 'workflows':
       document.getElementById('workflows-view').classList.add('active');
-      updatePageHeader('Workflows');
+      updatePageHeader('');  // view has its own "Workflows" heading
       document.getElementById('status-bar').style.display = 'none';
       if (typeof loadWorkflows === 'function') loadWorkflows();
       break;
@@ -139,7 +148,7 @@ function navigateTo(view, opts) {
 
     case 'data': {
       document.getElementById('data-view').classList.add('active');
-      updatePageHeader('Daten');
+      updatePageHeader('');  // view has its own "Dokumentklassifizierung" heading
       document.getElementById('status-bar').style.display = 'none';
       if (typeof clsOpenView === 'function') clsOpenView();
       break;
@@ -147,7 +156,7 @@ function navigateTo(view, opts) {
 
     case 'wiki': {
       document.getElementById('wiki-view').classList.add('active');
-      updatePageHeader('Wiki');
+      updatePageHeader('');  // wiki renders its own heading
       document.getElementById('status-bar').style.display = 'none';
       if (typeof loadWikiView === 'function') loadWikiView();
       break;
@@ -155,7 +164,7 @@ function navigateTo(view, opts) {
 
     case 'favourites':
       if (favView) favView.classList.add('active');
-      updatePageHeader('Favoriten');
+      updatePageHeader('');  // view has its own "Favoriten" heading
       document.getElementById('status-bar').style.display = 'none';
       if (typeof loadFavouritesView === 'function') loadFavouritesView();
       break;
@@ -190,6 +199,157 @@ function navigateTo(view, opts) {
   closeMobileSidebar();
 }
 
+/* ═══════════════════════════════════════════════════════════
+   SIDEBAR TABS (top-level sections, claude.ai-style)
+   Icon-only tab rail; each tab reveals its own sub-nav below.
+   ═══════════════════════════════════════════════════════════ */
+// Reusable icon markup so the rail and the sub-nav share one glyph per concept.
+const SB_ICONS = {
+  home:        '<svg viewBox="0 0 24 24"><path d="M3 12l9-9 9 9"/><path d="M5 10v10a1 1 0 001 1h4v-6h4v6h4a1 1 0 001-1V10"/></svg>',
+  chats:       '<svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>',
+  projects:    '<svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>',
+  favourites:  '<svg viewBox="0 0 24 24"><polygon points="12 2 15 8.5 22 9.3 17 14 18.2 21 12 17.8 5.8 21 7 14 2 9.3 9 8.5 12 2"/></svg>',
+  artifacts:   '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+  scheduled:   '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+  workflows:   '<svg viewBox="0 0 24 24"><polyline points="4 7 8 11 4 15"/><polyline points="20 7 16 11 20 15"/><line x1="9" y1="18" x2="15" y2="6"/></svg>',
+  translation: '<svg viewBox="0 0 24 24"><path d="M5 8l6 6"/><path d="M4 14l6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="M22 22l-5-10-5 10"/><path d="M14 18h6"/></svg>',
+  data:        '<svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg>',
+  wiki:        '<svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  settings:    '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+};
+
+// A sub-nav item that opens the Anpassen (agent settings) modal. It's not a real
+// view — it never becomes the active view — so it carries no data-view.
+const SB_SETTINGS_ITEM = { label: 'Anpassen', icon: 'settings', onclick: 'openAgentSettings()' };
+
+// Top-level tabs. `views` lists every currentView that belongs to this tab (for
+// active-tab highlighting). `subnav` is the list shown when the tab is active.
+const SIDEBAR_TABS = [
+  { id: 'startseite',  title: 'Startseite',   icon: 'home',        activate: () => navigateTo('welcome'),
+    views: ['welcome', 'chat', 'chats', 'artifacts', 'search'],
+    subnav: [
+      { label: 'Chats',     icon: 'chats',     view: 'chats',     onclick: "navigateTo('chats')" },
+      { label: 'Artefakte', icon: 'artifacts', view: 'artifacts', onclick: "navigateTo('artifacts', {context:'chat'})" },
+      SB_SETTINGS_ITEM,
+    ] },
+  { id: 'projekte',    title: 'Projekte',     icon: 'projects',    activate: () => navigateTo('projects'),
+    views: ['projects', 'project-detail'],
+    subnav: [
+      { label: 'Projekte',  icon: 'projects',  view: 'projects',  onclick: "navigateTo('projects')" },
+      { label: 'Artefakte', icon: 'artifacts', view: 'artifacts', onclick: "navigateTo('artifacts', {context:'project'})" },
+      SB_SETTINGS_ITEM,
+    ] },
+  { id: 'favoriten',   title: 'Favoriten',    icon: 'favourites',  activate: () => navigateTo('favourites'),
+    views: ['favourites'],
+    subnav: [
+      { label: 'Favoriten', icon: 'favourites', view: 'favourites', onclick: "navigateTo('favourites')" },
+      SB_SETTINGS_ITEM,
+    ] },
+  { id: 'geplant',     title: 'Geplant',      icon: 'scheduled',   activate: () => navigateTo('scheduled'),
+    views: ['scheduled'],
+    subnav: [
+      { label: 'Geplant',   icon: 'scheduled', view: 'scheduled', onclick: "navigateTo('scheduled')" },
+      SB_SETTINGS_ITEM,
+    ] },
+  { id: 'workflows',   title: 'Workflows',    icon: 'workflows',   activate: () => navigateTo('workflows'),
+    views: ['workflows'],
+    subnav: [
+      { label: 'Workflows', icon: 'workflows', view: 'workflows', onclick: "navigateTo('workflows')" },
+      SB_SETTINGS_ITEM,
+    ] },
+  { id: 'uebersetzung', title: 'Übersetzung', icon: 'translation', activate: () => navigateTo('translation'),
+    views: ['translation'],
+    subnav: [
+      { label: 'Übersetzung', icon: 'translation', view: 'translation', onclick: "navigateTo('translation')" },
+      SB_SETTINGS_ITEM,
+    ] },
+  { id: 'daten',       title: 'Daten',        icon: 'data',        activate: () => navigateTo('data'),
+    views: ['data'],
+    subnav: [
+      { label: 'Daten',     icon: 'data',      view: 'data',      onclick: "navigateTo('data')" },
+      SB_SETTINGS_ITEM,
+    ] },
+  { id: 'wiki',        title: 'Wiki',         icon: 'wiki',        activate: () => navigateTo('wiki'),
+    views: ['wiki'],
+    subnav: [
+      { label: 'Wiki',      icon: 'wiki',      view: 'wiki',      onclick: "navigateTo('wiki')" },
+      SB_SETTINGS_ITEM,
+    ] },
+];
+
+// Which tab currently owns the sub-nav. Driven by the active view; falls back to
+// the first tab (Startseite) for views not claimed by any tab.
+let _activeSidebarTabId = 'startseite';
+
+function _tabForView(view) {
+  const t = SIDEBAR_TABS.find(tab => tab.views.includes(view));
+  return t ? t.id : _activeSidebarTabId;
+}
+
+function renderSidebarTabs() {
+  const rail = document.getElementById('sb-tab-rail');
+  if (!rail) return;
+  rail.innerHTML = SIDEBAR_TABS.map(tab => `
+    <button class="sb-tab${tab.id === _activeSidebarTabId ? ' active' : ''}"
+            role="tab" data-tab="${tab.id}" title="${esc(tab.title)}"
+            aria-label="${esc(tab.title)}" aria-selected="${tab.id === _activeSidebarTabId}"
+            onclick="selectSidebarTab('${tab.id}', true)">${SB_ICONS[tab.icon] || ''}</button>`).join('');
+  renderSidebarSubnav();
+}
+
+function renderSidebarSubnav() {
+  const host = document.getElementById('sb-subnav');
+  if (!host) return;
+  const tab = SIDEBAR_TABS.find(t => t.id === _activeSidebarTabId) || SIDEBAR_TABS[0];
+  // "Anpassen" opens admin-gated editors (soul/agent.json/MCP/hooks) — hide it
+  // for non-admins so the row doesn't tease an editor that 403s on save.
+  const isAdmin = (state.authUser?.role || 'admin') === 'admin';
+  const items = (tab.subnav || []).filter(item => item !== SB_SETTINGS_ITEM || isAdmin);
+  host.innerHTML = items.map(item => {
+    const dv = item.view ? ` data-view="${item.view}"` : '';
+    const active = item.view && item.view === state.currentView ? ' active' : '';
+    return `<div class="sb-nav-item${active}"${dv} onclick="${item.onclick}">
+      <span class="sb-icon">${SB_ICONS[item.icon] || ''}</span>
+      <span class="sb-label">${esc(item.label)}</span>
+    </div>`;
+  }).join('');
+}
+
+// Clicking a tab: switch the sub-nav and, when `navigate` is set (user click),
+// jump to that section's landing view.
+function selectSidebarTab(tabId, navigate) {
+  const tab = SIDEBAR_TABS.find(t => t.id === tabId);
+  if (!tab) return;
+  _activeSidebarTabId = tabId;
+  document.querySelectorAll('#sb-tab-rail .sb-tab').forEach(el => {
+    const on = el.dataset.tab === tabId;
+    el.classList.toggle('active', on);
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  renderSidebarSubnav();
+  if (navigate && typeof tab.activate === 'function') {
+    tab.activate();
+  }
+}
+
+// Keep the tab rail + sub-nav in sync when the view changes elsewhere (deep
+// link, programmatic navigation, opening a chat). No navigation side-effect.
+function syncSidebarTabsToView(view) {
+  const tabId = _tabForView(view);
+  if (tabId !== _activeSidebarTabId) {
+    _activeSidebarTabId = tabId;
+    document.querySelectorAll('#sb-tab-rail .sb-tab').forEach(el => {
+      const on = el.dataset.tab === tabId;
+      el.classList.toggle('active', on);
+      el.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    renderSidebarSubnav();
+  } else {
+    // Same tab, but the active sub-nav item may have changed.
+    renderSidebarSubnav();
+  }
+}
+
 const _TR_TAB_TITLES = {
   text: 'Textübersetzung',
   document: 'Dokumentübersetzung',
@@ -209,6 +369,12 @@ function _updateTranslationHeaderStar(tab) {
 
 function updatePageHeader(title, breadcrumb, breadcrumbAgentId, favouriteOpts, tooltip) {
   const el = document.getElementById('page-header-title');
+  // Collapse the header bar when it carries no title (list/tool views render
+  // their own heading) so the content isn't pushed down by an empty 48px bar.
+  // The right-side controls (Panel toggle, bg-tasks pill) are only meaningful on
+  // the chat view, which always has a title — so collapsing here is safe.
+  const hdr = document.getElementById('page-header');
+  if (hdr) hdr.classList.toggle('page-header--empty', !title && !breadcrumb);
   if (breadcrumb) {
     // When breadcrumbAgentId is set, the breadcrumb is a project name and the
     // span becomes a click target that opens the project view. The listener is
@@ -1074,6 +1240,7 @@ function closeAllDropdowns() {
 function toggleSbAgentDropdown() {
   const dropdown = document.getElementById('sb-agent-dropdown');
   const selector = document.getElementById('sb-agent-selector');
+  if (!dropdown || !selector) return;  // selector removed (single-agent deployment)
   const isOpen = !dropdown.classList.contains('hidden');
 
   if (isOpen) {
@@ -1154,9 +1321,9 @@ function toggleSbAgentDropdown() {
 }
 
 function switchToAgent(agentId) {
-  // Close dropdown
-  document.getElementById('sb-agent-dropdown').classList.add('hidden');
-  document.getElementById('sb-agent-selector').classList.remove('open');
+  // Close dropdown (selector may be absent in single-agent deployment)
+  document.getElementById('sb-agent-dropdown')?.classList.add('hidden');
+  document.getElementById('sb-agent-selector')?.classList.remove('open');
 
   selectAgent(agentId);
 
@@ -1177,13 +1344,18 @@ function switchToAgent(agentId) {
 }
 
 function updateSbAgentDisplay() {
+  // The sidebar agent selector was removed (single-agent deployment); only the
+  // welcome greeting still needs refreshing. Guard the selector elements in
+  // case they are ever reintroduced.
   const agent = state.agents.find(a => (a.id || a.name) === state.activeAgentId);
-  if (!agent) return;
-  const aid = agent.id || agent.name;
-  const display = agent.display_name || aid;
-
-  document.getElementById('sb-agent-selector-name').textContent = display;
-  document.getElementById('sb-agent-avatar-icon').textContent = aid;
+  if (agent) {
+    const aid = agent.id || agent.name;
+    const display = agent.display_name || aid;
+    const nameEl = document.getElementById('sb-agent-selector-name');
+    const iconEl = document.getElementById('sb-agent-avatar-icon');
+    if (nameEl) nameEl.textContent = display;
+    if (iconEl) iconEl.textContent = aid;
+  }
 
   refreshWelcomeGreeting();
 }
@@ -1215,6 +1387,49 @@ function toggleSidebar() {
   localStorage.setItem('sidebar-collapsed', sb.classList.contains('collapsed') ? '1' : '0');
 }
 
+/* ── Sidebar width resize (drag the right-edge handle) ── */
+const SIDEBAR_WIDTH_MIN = 220;
+const SIDEBAR_WIDTH_MAX = 480;
+const SIDEBAR_WIDTH_DEFAULT = 288;
+
+function applySidebarWidth(px) {
+  const w = Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, px));
+  document.documentElement.style.setProperty('--sidebar-width', w + 'px');
+  return w;
+}
+
+// Restore persisted width on load (called from init).
+function initSidebarWidth() {
+  const saved = parseInt(localStorage.getItem('sidebar-width') || '', 10);
+  if (saved) applySidebarWidth(saved);
+}
+
+function startSidebarResize(event) {
+  event.preventDefault();
+  const sb = document.getElementById('sidebar');
+  if (!sb || sb.classList.contains('collapsed')) return;
+  const startX = event.clientX;
+  const startW = sb.getBoundingClientRect().width;
+  sb.classList.add('resizing');
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+
+  const onMove = (e) => {
+    applySidebarWidth(startW + (e.clientX - startX));
+  };
+  const onUp = () => {
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    sb.classList.remove('resizing');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    const finalW = Math.round(sb.getBoundingClientRect().width);
+    localStorage.setItem('sidebar-width', String(finalW));
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
+
 // Collapsable sidebar sections: Navigate / Favourites / Recent.
 // Each section's open/closed state is persisted under sb-section-<id>; default
 // is open. Open sections share remaining vertical space via flex: 1 1 0;
@@ -1229,7 +1444,7 @@ function toggleSidebarSection(id) {
   localStorage.setItem('sb-section-' + id, el.classList.contains('collapsed') ? '0' : '1');
 }
 function restoreSidebarSections() {
-  for (const id of ['nav', 'favourites', 'recent']) {
+  for (const id of ['recent']) {
     const el = _sidebarSectionEl(id);
     if (!el) continue;
     const saved = localStorage.getItem('sb-section-' + id);
@@ -1292,9 +1507,151 @@ window.addEventListener('resize', () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════
+   RECENT-CHATS FILTER (sidebar "Zuletzt verwendet")
+   ═══════════════════════════════════════════════════════════ */
+// Filter state persisted to localStorage. Each control cycles through its
+// options in order when its row is clicked (label left, value right — matches
+// the official Claude.ai popover).
+const RECENT_FILTER_DEFS = {
+  type:   { label: 'Typ',              options: [['all','Alle'], ['chats','Chats'], ['tasks','Aufgaben']] },
+  status: { label: 'Status',           options: [['active','Aktiv'], ['archived','Archiviert'], ['all','Alle']] },
+  recency:{ label: 'Letzte Aktivität', options: [['all','Alle'], ['today','Heute'], ['7d','7 Tage'], ['30d','30 Tage']] },
+  group:  { label: 'Gruppieren nach',  options: [['none','Keine'], ['date','Datum']] },
+};
+const RECENT_FILTER_DEFAULT = { type: 'all', status: 'active', recency: 'all', group: 'none' };
+
+function getRecentFilter() {
+  try {
+    const raw = JSON.parse(localStorage.getItem('recentChatsFilter') || '{}');
+    return { ...RECENT_FILTER_DEFAULT, ...raw };
+  } catch (_) { return { ...RECENT_FILTER_DEFAULT }; }
+}
+function setRecentFilter(f) {
+  try { localStorage.setItem('recentChatsFilter', JSON.stringify(f)); } catch (_) {}
+}
+function recentFilterLabel(key, value) {
+  const opt = (RECENT_FILTER_DEFS[key]?.options || []).find(o => o[0] === value);
+  return opt ? opt[1] : value;
+}
+function isRecentFilterActive(f) {
+  return f.type !== RECENT_FILTER_DEFAULT.type
+    || f.status !== RECENT_FILTER_DEFAULT.status
+    || f.recency !== RECENT_FILTER_DEFAULT.recency
+    || f.group !== RECENT_FILTER_DEFAULT.group;
+}
+
+// A session counts as an "Aufgabe" when it carries a goal (🎯) — the closest
+// analog to claude.ai's tasks in this sidebar.
+function _isTaskSession(s) {
+  return s.goal_status === 'active' || s.goal_status === 'fulfilled';
+}
+
+// Apply Typ / Status / Letzte-Aktivität filters to a flat session list. Does NOT
+// group — grouping is applied at render time so it can inject date headers.
+function applyRecentFilter(sessions, f) {
+  const now = Date.now() / 1000;  // last_active is epoch seconds
+  const WINDOWS = { today: 86400, '7d': 7 * 86400, '30d': 30 * 86400 };
+  return sessions.filter(s => {
+    if (f.type === 'chats' && _isTaskSession(s)) return false;
+    if (f.type === 'tasks' && !_isTaskSession(s)) return false;
+    if (f.status === 'active'   && s.status === 'archived') return false;
+    if (f.status === 'archived' && s.status !== 'archived') return false;
+    if (f.recency !== 'all') {
+      const win = WINDOWS[f.recency];
+      if (win && (now - (s.last_active || 0)) > win) return false;
+    }
+    return true;
+  });
+}
+
+// Date-bucket label for grouping (Heute / Gestern / Diese Woche / Diesen Monat / Älter).
+function _recentDateBucket(lastActive) {
+  if (!lastActive) return 'Älter';
+  const ageDays = (Date.now() / 1000 - lastActive) / 86400;
+  if (ageDays < 1)  return 'Heute';
+  if (ageDays < 2)  return 'Gestern';
+  if (ageDays < 7)  return 'Diese Woche';
+  if (ageDays < 30) return 'Diesen Monat';
+  return 'Älter';
+}
+
+function toggleRecentFilterMenu(event) {
+  const existing = document.getElementById('sb-recent-filter-menu');
+  if (existing) { closeRecentFilterMenu(); return; }
+
+  const btn = document.getElementById('sb-recent-filter-btn');
+  const menu = document.createElement('div');
+  menu.id = 'sb-recent-filter-menu';
+  menu.className = 'sb-recent-filter-menu';
+
+  const f = getRecentFilter();
+  const chevron = '<svg class="rf-chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 6 15 12 9 18"/></svg>';
+  const rowHtml = (key) => {
+    const def = RECENT_FILTER_DEFS[key];
+    return `<div class="sb-recent-filter-row" data-key="${key}">
+      <span class="rf-label">${esc(def.label)}</span>
+      <span class="rf-value"><span class="rf-value-text">${esc(recentFilterLabel(key, f[key]))}</span>${chevron}</span>
+    </div>`;
+  };
+  menu.innerHTML =
+    rowHtml('type') + rowHtml('status') + rowHtml('recency') +
+    '<div class="sb-recent-filter-divider"></div>' + rowHtml('group');
+
+  document.body.appendChild(menu);
+
+  // Position below the filter button, right-aligned to it, clamped to viewport.
+  const rect = btn.getBoundingClientRect();
+  const mw = menu.offsetWidth;
+  let left = rect.right - mw;
+  if (left < 8) left = 8;
+  menu.style.top = (rect.bottom + 4) + 'px';
+  menu.style.left = left + 'px';
+  menu.classList.add('open');
+  btn.classList.add('active');
+
+  // Clicking a row cycles that control to its next option, updates the value
+  // text in place, persists, and re-renders the list live.
+  menu.querySelectorAll('.sb-recent-filter-row').forEach(row => {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const key = row.dataset.key;
+      const opts = RECENT_FILTER_DEFS[key].options;
+      const cur = getRecentFilter();
+      const idx = opts.findIndex(o => o[0] === cur[key]);
+      const next = opts[(idx + 1) % opts.length][0];
+      cur[key] = next;
+      setRecentFilter(cur);
+      row.querySelector('.rf-value-text').textContent = recentFilterLabel(key, next);
+      updateRecentFilterButtonState();
+      renderRecentChats();
+    });
+  });
+
+  setTimeout(() => {
+    document.addEventListener('click', function closeOnOutside(ev) {
+      if (!menu.contains(ev.target) && !btn.contains(ev.target)) {
+        closeRecentFilterMenu();
+        document.removeEventListener('click', closeOnOutside);
+      }
+    });
+  }, 0);
+}
+
+function closeRecentFilterMenu() {
+  document.getElementById('sb-recent-filter-menu')?.remove();
+  document.getElementById('sb-recent-filter-btn')?.classList.remove('active');
+}
+
+function updateRecentFilterButtonState() {
+  const btn = document.getElementById('sb-recent-filter-btn');
+  if (btn) btn.classList.toggle('filtered', isRecentFilterActive(getRecentFilter()));
+}
+
 function renderRecentChats() {
   // Always refresh the favourites sidebar block alongside Recent — same poll cadence.
   try { window.Favourites?.renderSidebar?.(); } catch(_) {}
+  updateRecentFilterButtonState();
   const container = document.getElementById('sb-recent-chats');
   // Sidebar shows scheduled runs whenever the user is browsing the scheduled
   // view OR currently looking at a read-only scheduled-run timeline (which
@@ -1336,7 +1693,7 @@ function renderRecentChats() {
     // (epoch seconds — server bumps it only on a sent message since v9.251.0),
     // NOT new Date(seconds) which mis-scales seconds-as-ms.
     allSessions.sort((a,b) => (b.last_active||0) - (a.last_active||0));
-    allSessions = allSessions.slice(0, 15);
+    allSessions = applyRecentFilter(allSessions, getRecentFilter()).slice(0, 15);
     renderSessionsList(container, allSessions);
     return;
   }
@@ -1344,22 +1701,71 @@ function renderRecentChats() {
   const data = state.agentSessions[state.activeAgentId];
   if (!data?.sessions) { container.innerHTML = ''; return; }
 
+  // The Status filter can ask for archived chats, but the sidebar's default
+  // session load only fetches the ACTIVE set — so "Archiviert"/"Alle" showed
+  // nothing until a full reload (the reported bug). When such a filter is
+  // active and we haven't yet loaded archived sessions for this agent, fetch
+  // them once and re-render. Guarded by a per-agent flag so it fires at most
+  // once per agent (not on every poll).
+  const rf = getRecentFilter();
+  if ((rf.status === 'archived' || rf.status === 'all') && !data._archivedLoaded) {
+    data._archivedLoaded = true;  // set before await so concurrent renders don't stack fetches
+    _loadArchivedForAgent(state.activeAgentId);
+  }
+
   // Single agent → the server already returns them ordered by last MODIFICATION
   // (newest message, v9.251.0). Don't re-sort — a client last_active sort would
-  // re-introduce the "opening a chat reshuffles the list" bug.
-  const sessions = data.sessions
-    .filter(s => s.status !== 'archived' && s.status !== 'code'
+  // re-introduce the "opening a chat reshuffles the list" bug. The archived
+  // vs active split is now driven by the Status filter (default: Aktiv).
+  const filtered = data.sessions
+    .filter(s => s.status !== 'code'
       && (s.message_count || 0) > 0
-      && !(s.project || ''))
-    .slice(0, 20);
+      && !(s.project || ''));
+  const sessions = applyRecentFilter(filtered, rf).slice(0, 20);
 
   renderSessionsList(container, sessions);
+}
+
+// Merge the agent's archived sessions into its cached session list, then
+// re-render the sidebar. Called on demand when the recent filter asks for
+// archived/all. Dedupes by id so re-runs are harmless.
+async function _loadArchivedForAgent(agentId) {
+  try {
+    const resp = await API.getSessionsForAgent(agentId, 'archived');
+    const archived = resp.sessions || [];
+    const entry = state.agentSessions[agentId];
+    if (!entry) return;
+    const seen = new Set((entry.sessions || []).map(s => s.id || s.session_id));
+    for (const s of archived) {
+      const sid = s.id || s.session_id;
+      if (!seen.has(sid)) { entry.sessions.push(s); seen.add(sid); }
+    }
+    renderRecentChats();
+  } catch (e) {
+    // Allow a retry on the next filter change if the fetch failed.
+    const entry = state.agentSessions[agentId];
+    if (entry) entry._archivedLoaded = false;
+  }
 }
 
 function renderSessionsList(container, sessions) {
   container.innerHTML = '';
   container.dataset.mode = 'chats';
+  const grouping = getRecentFilter().group === 'date';
+  let currentBucket = null;
   for (const s of sessions) {
+    // Date grouping: inject a small header whenever the bucket changes. The list
+    // is already newest-first, so buckets appear in descending recency order.
+    if (grouping) {
+      const bucket = _recentDateBucket(s.last_active);
+      if (bucket !== currentBucket) {
+        currentBucket = bucket;
+        const hdr = document.createElement('div');
+        hdr.className = 'sb-recent-group-header';
+        hdr.textContent = bucket;
+        container.appendChild(hdr);
+      }
+    }
     const div = document.createElement('div');
     const sid = s.id || s.session_id;
     const sagent = s.agent_id || s.agent || s.agentId || state.activeAgentId;

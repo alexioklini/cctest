@@ -321,18 +321,12 @@ streaming call, per-USER history, fixed read-only tool set. See
   ready|error|cancelled), phase, model, error, result_md (only when ready),
   steps[] (live tool-call log)}`
 - `POST .../projects/<name>/instruction-gen/<gen_id>/cancel` — abort the run (manage)
-- `POST .../projects/<name>/design-system/generate` — (v9.352.0, Design-Modus
-  Phase B) distill a design_system proposal from ONE source: `{url}` (company
-  website — fetched RAW html + up to 3 same-host stylesheets, NOT the markdown
-  path, because colors/fonts live in CSS) | `{file: {name, content(b64)}}` (CI
-  document via the shared doc pipeline, 25 MB cap) | `{text}` (pasted excerpt).
-  One synchronous background LLM call (cost_purpose `design_system_gen`,
-  GDPR/classification-gated) → `{design_system: {colors:[{hex,role}],
-  font_heading, font_body, logo_url, tone, css_snippet}, model}` for REVIEW —
-  saving still goes through the normal project update (manage). The saved
-  `project.json → design_system` is injected wire-only into turns that carry
-  `body.design_context: true` on `POST /v1/chat` (deterministic client flag:
-  design canvas active, or the composer palette toggle)
+- (removed) the per-project **design-system** feature — the `design-system/generate`
+  endpoint, `project.json → design_system` field, and its wire injection — was
+  taken out. Document styling is handled globally, not per project. Design turns
+  still exist: `body.design_context: true` on `POST /v1/chat` (set while the
+  design canvas is active on an HTML artifact) injects only the deck/export
+  convention wire-only, so drafts stay PPTX/PDF-exportable.
 - `GET .../projects/<name>/image` — project thumbnail
 - `POST .../projects/<name>/generate` — generate a grounded output from the
   project's sources. Body `{kind: study_guide|briefing|faq|timeline|audio_overview
@@ -734,7 +728,11 @@ Nutzer darf generieren (nicht admin-gated).
 ## Artifacts
 
 - `GET /v1/artifacts?session_id=&role=` — list
-- `GET /v1/artifacts/browse?path=` — directory browse
+- `GET /v1/artifacts/browse?agent_id=&limit=&source=&context=` — cross-session
+  artifact grid. `source` = `chat|scheduled|translation` (origin tag).
+  `context` = `chat|project` splits by whether the originating session belongs to
+  a project (drives the Startseite- vs. Projekte-Artefakte views); absent = all.
+  Rows carry `session_project`/`session_project_id` for the split.
 - `GET /v1/artifacts/<id>/content` — body
 - `GET /v1/artifacts/<id>/download` — file download
 - `GET /v1/artifacts/<id>/export?format=pdf|pptx|docx&version=N` — (v9.353.0,

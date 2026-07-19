@@ -363,15 +363,10 @@ async function loadProjectDetail(agentId, projectName) {
     }
     state._projectDetail = project;
 
-    // Mount the favourite star + share button into the page-header.
-    if (project.id) {
-      updatePageHeader(project.name || projectName, null, null, {
-        item_type: 'project',
-        item_id: project.id,
-        agent_id: agentId || 'main',
-        title: project.name || projectName,
-      });
-    }
+    // No page-header title: the view renders the project name (with its own
+    // favourite star) in its own heading, so a top-bar title + star would be
+    // redundant. Clearing it lets the empty header collapse.
+    updatePageHeader('');
 
     // Render header
     document.getElementById('project-detail-name').textContent = project.name || projectName;
@@ -454,11 +449,6 @@ async function loadProjectDetail(agentId, projectName) {
       kgProfileSel.disabled = rules;
       kgProfileSel.style.opacity = rules ? '0.5' : '';
     }
-
-    // Design-System editor: seed the working draft from the loaded project
-    // (deep copy — edits must not mutate _projectDetail until Save).
-    state._designDraft = JSON.parse(JSON.stringify(project.design_system || {}));
-    renderProjectDesignSystem();
 
     // Instructions now render inside the unified source tree (the Anweisungen
     // node) — no separate panel section.
@@ -1931,143 +1921,6 @@ async function toggleProjectKgProfile(profile) {
   } catch (e) {
     showToast('KG-Einstellung konnte nicht geändert werden', true);
   }
-}
-
-// ── Design-System (Design-Modus Phase B) ────────────────────
-// project.json → design_system {colors:[{hex,role}], font_heading, font_body,
-// logo_url, tone, css_snippet}. Edited here as a draft (state._designDraft,
-// seeded in loadProjectDetail); Speichern persists via update_project (the
-// server shape-coerces). Design turns (body.design_context) get it injected
-// wire-only server-side — nothing here touches chats directly.
-function renderProjectDesignSystem() {
-  const host = document.getElementById('project-design-body');
-  if (!host) return;
-  const ds = state._designDraft || {};
-  const colors = ds.colors || [];
-  const inputStyle = 'padding:6px 9px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-100);color:var(--text-100);font-size:12px;box-sizing:border-box';
-  const labelStyle = 'display:block;font-size:11px;font-weight:600;color:var(--text-400);margin:10px 0 3px';
-  const rows = colors.map((c, i) => `
-    <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-      <span style="flex:none;width:16px;height:16px;border-radius:4px;border:1px solid var(--border-200);background:${esc(c.hex || 'transparent')}"></span>
-      <input type="text" data-ds-color="${i}" data-ds-field="hex" value="${esc(c.hex || '')}" placeholder="#0F3D68" style="${inputStyle};width:96px;font-family:monospace">
-      <input type="text" data-ds-color="${i}" data-ds-field="role" value="${esc(c.role || '')}" placeholder="Rolle (z. B. Primär)" style="${inputStyle};flex:1;min-width:60px">
-      <button type="button" data-ds-remove="${i}" title="Farbe entfernen" style="border:none;background:none;color:var(--text-400);cursor:pointer;font-size:15px;padding:0 4px">&times;</button>
-    </div>`).join('');
-  host.innerHTML = `
-    <label style="${labelStyle};margin-top:0">Farben</label>
-    ${rows}
-    <button type="button" class="btn-secondary" data-ds-add="1" style="font-size:12px;padding:3px 10px">+ Farbe</button>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label style="${labelStyle}">Schrift Überschriften</label>
-        <input type="text" id="ds-font-heading" value="${esc(ds.font_heading || '')}" placeholder="z. B. Georgia, serif" style="${inputStyle};width:100%"></div>
-      <div><label style="${labelStyle}">Schrift Fließtext</label>
-        <input type="text" id="ds-font-body" value="${esc(ds.font_body || '')}" placeholder="z. B. Inter, system-ui" style="${inputStyle};width:100%"></div>
-    </div>
-    <label style="${labelStyle}">Logo (URL)</label>
-    <input type="text" id="ds-logo-url" value="${esc(ds.logo_url || '')}" placeholder="https://…/logo.svg — wird per &lt;img&gt; eingebunden" style="${inputStyle};width:100%">
-    <label style="${labelStyle}">Tonalität</label>
-    <input type="text" id="ds-tone" value="${esc(ds.tone || '')}" placeholder="z. B. Nüchtern, präzise, Sie-Anrede." style="${inputStyle};width:100%">
-    <label style="${labelStyle}">CSS-Snippet (optional, fortgeschritten)</label>
-    <textarea id="ds-css-snippet" rows="3" placeholder=":root { --brand: #0f3d68; } h1,h2 { font-family: Georgia, serif; }" style="${inputStyle};width:100%;font-family:monospace;resize:vertical">${esc(ds.css_snippet || '')}</textarea>`;
-  // Delegated handlers (host.onX properties — replaced wholesale on each
-  // render, so no listener stacking; no extra globals per row).
-  host.oninput = (e) => {
-    const idx = e.target.getAttribute && e.target.getAttribute('data-ds-color');
-    if (idx === null || idx === undefined) return;
-    const c = (state._designDraft.colors || [])[Number(idx)];
-    if (c) c[e.target.getAttribute('data-ds-field')] = e.target.value;
-  };
-  host.onclick = (e) => {
-    const btn = e.target.closest && e.target.closest('button');
-    if (!btn) return;
-    _designCaptureFields();
-    if (btn.hasAttribute('data-ds-add')) {
-      (state._designDraft.colors = state._designDraft.colors || []).push({ hex: '', role: '' });
-      renderProjectDesignSystem();
-    } else if (btn.hasAttribute('data-ds-remove')) {
-      state._designDraft.colors.splice(Number(btn.getAttribute('data-ds-remove')), 1);
-      renderProjectDesignSystem();
-    }
-  };
-}
-
-// Pull the current text-field values into the draft (colors already sync via
-// the delegated oninput) so a re-render or Save never loses typed text.
-function _designCaptureFields() {
-  const ds = state._designDraft || (state._designDraft = {});
-  for (const [id, key] of [['ds-font-heading', 'font_heading'],
-                           ['ds-font-body', 'font_body'],
-                           ['ds-logo-url', 'logo_url'],
-                           ['ds-tone', 'tone'],
-                           ['ds-css-snippet', 'css_snippet']]) {
-    const el = document.getElementById(id);
-    if (el) ds[key] = el.value;
-  }
-}
-
-async function saveProjectDesignSystem() {
-  const agentId = state._projectDetailAgent;
-  const projectName = state._projectDetailName;
-  if (!agentId || !projectName) return;
-  _designCaptureFields();
-  const ds = state._designDraft || {};
-  ds.colors = (ds.colors || []).filter(c => (c.hex || '').trim());
-  try {
-    await API.updateProject(agentId, projectName, { design_system: ds });
-    if (state._projectDetail) state._projectDetail.design_system = ds;
-    renderProjectDesignSystem();
-    showToast('Design-System gespeichert');
-  } catch (e) {
-    showToast('Design-System konnte nicht gespeichert werden', true);
-  }
-}
-
-// Generate from a source (review-before-save: the result only fills the
-// form; the user still presses Speichern). payload: {url} | {text} | {file}.
-async function _designGenerate(payload, label) {
-  const agentId = state._projectDetailAgent;
-  const projectName = state._projectDetailName;
-  if (!agentId || !projectName) return;
-  const status = document.getElementById('project-design-gen-status');
-  if (status) {
-    status.style.display = '';
-    status.textContent = `Analysiere ${label} … (das kann bis zu einer Minute dauern)`;
-  }
-  try {
-    const res = await API.generateProjectDesignSystem(agentId, projectName, payload);
-    if (res && res.error) throw new Error(res.error);
-    const ds = (res && res.design_system) || {};
-    if (!Object.keys(ds).length) throw new Error('kein Design-System erkannt');
-    state._designDraft = ds;
-    renderProjectDesignSystem();
-    if (status) status.textContent = 'Vorschlag eingefügt — prüfen und „Speichern“ drücken.';
-  } catch (e) {
-    if (status) status.textContent = `Generierung fehlgeschlagen: ${e.message || e}`;
-    showToast('Design-System-Generierung fehlgeschlagen', true);
-  }
-}
-
-async function generateProjectDesignSystemFromUrl() {
-  const url = await showPrompt('Adresse der Website, deren Erscheinungsbild übernommen werden soll:', 'https://', 'Aus Website generieren');
-  if (!url || !url.trim() || url.trim() === 'https://') return;
-  _designGenerate({ url: url.trim() }, 'Website');
-}
-
-function generateProjectDesignSystemFromDoc() {
-  document.getElementById('project-design-doc-input')?.click();
-}
-
-function _designDocPicked(inputEl) {
-  const file = inputEl.files && inputEl.files[0];
-  inputEl.value = '';
-  if (!file) return;
-  if (file.size > 25 * 1024 * 1024) { showToast('Datei zu groß (max. 25 MB)', true); return; }
-  const reader = new FileReader();
-  reader.onload = () => {
-    const b64 = String(reader.result).split(',', 2)[1] || '';
-    _designGenerate({ file: { name: file.name, content: b64 } }, `„${file.name}“`);
-  };
-  reader.readAsDataURL(file);
 }
 
 // ── Project-level web URLs ──────────────────────────────────

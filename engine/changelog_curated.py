@@ -29,6 +29,26 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.378.0",
+        "date": "2026-07-19",
+        "title": "Aufgeräumte Navigation und Ansichten",
+        "body": "Die linke Leiste ist übersichtlicher: Die Bereiche "
+                "(Startseite, Projekte, Favoriten, Geplant, Workflows, "
+                "Übersetzung, Daten, Wiki) erreichen Sie jetzt über eine "
+                "kompakte Symbolleiste, darunter erscheinen passend die "
+                "Unterpunkte des gewählten Bereichs. Die Suche liegt oben als "
+                "Lupe und öffnet ein schnelles Suchfenster mit Ihren zuletzt "
+                "verwendeten Chats. Die Seitenleiste lässt sich am Rand in der "
+                "Breite ziehen. Die Listen „Chats und Aufgaben“ und "
+                "„Artefakte“ wurden klarer gestaltet — mit Suche, Filter und "
+                "einzeiligen Einträgen samt Datum; die Artefakte zeigen je "
+                "nach Einstieg (Startseite oder Projekt) die passenden "
+                "Dateien. Doppelte Überschriften am Seitenkopf sind "
+                "entfernt, sodass der Inhalt weiter oben beginnt.",
+        "audience": "user",
+        "versions": ["9.378.0"],
+    },
+    {
         "version": "9.377.0",
         "date": "2026-07-18",
         "title": "Windows-Paket: mehr direkt einsatzbereit",

@@ -1511,13 +1511,17 @@ let _browseArtifactsSource = 'all';  // 'all' | 'chat' | 'scheduled'
 // Default hides intermediate files (helper scripts / json data dumps) so the
 // grid surfaces deliverables. Flip to 'all' to inspect the raw working set.
 let _browseArtifactsRole = 'output';
+// Context split: '' (all), 'chat' (Startseite → non-project artifacts) or
+// 'project' (Projekte → project artifacts). Set by navigateTo('artifacts', …).
+let _browseArtifactsContext = '';
+let _browseArtifactsQuery = '';
 
 async function loadArtifactsBrowse() {
   const grid = document.getElementById('artifacts-grid');
   grid.innerHTML = '<div class="artifacts-empty">Wird geladen …</div>';
 
   try {
-    const resp = await API.browseArtifacts(_browseArtifactsAgent);
+    const resp = await API.browseArtifacts(_browseArtifactsAgent, undefined, _browseArtifactsContext || undefined);
     _browseArtifactsCache = resp.artifacts || [];
   } catch (e) {
     grid.innerHTML = '<div class="artifacts-empty">Artefakte konnten nicht geladen werden</div>';
@@ -1553,6 +1557,13 @@ function renderArtifactsBrowse() {
   }
   if (_browseArtifactsRole === 'output') {
     filtered = filtered.filter(a => (a.role || 'output') === 'output');
+  }
+  if (_browseArtifactsQuery) {
+    const q = _browseArtifactsQuery.toLowerCase();
+    filtered = filtered.filter(a =>
+      (a.name || '').toLowerCase().includes(q) ||
+      (a.type || '').toLowerCase().includes(q) ||
+      (a.session_title || '').toLowerCase().includes(q));
   }
 
   if (filtered.length === 0) {
@@ -1784,6 +1795,18 @@ function _hydrateLazyArtifactPreviews(grid) {
     }
   }, { root: null, rootMargin: '200px' });
   cards.forEach(c => io.observe(c));
+}
+
+// Set the browse context ('' | 'chat' | 'project'). Called on navigation before
+// loadArtifactsBrowse(); does not itself reload (the caller does).
+function setArtifactsBrowseContext(ctx) {
+  _browseArtifactsContext = ctx || '';
+}
+
+// Client-side search over the loaded browse cache (name / type / source chat).
+function filterArtifactsSearch(q) {
+  _browseArtifactsQuery = (q || '').trim();
+  renderArtifactsBrowse();
 }
 
 function filterArtifactsBrowse(type) {

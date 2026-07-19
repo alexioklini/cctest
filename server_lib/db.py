@@ -2102,6 +2102,7 @@ class ChatDB:
             if agent_id:
                 rows = conn.execute("""
                     SELECT a.*, s.title as session_title, s.last_active as session_last_active,
+                           s.project as session_project, s.project_id as session_project_id,
                            COALESCE(v.latest_version, 0) as latest_version,
                            v.latest_created_at
                     FROM artifacts a
@@ -2115,6 +2116,7 @@ class ChatDB:
             else:
                 rows = conn.execute("""
                     SELECT a.*, s.title as session_title, s.last_active as session_last_active,
+                           s.project as session_project, s.project_id as session_project_id,
                            COALESCE(v.latest_version, 0) as latest_version,
                            v.latest_created_at
                     FROM artifacts a

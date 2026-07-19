@@ -518,36 +518,6 @@ async function refreshDeepResearchButton() {
   }
 }
 
-// ── Design-Turn toggle (composer palette — Design-Modus Phase B) ──────────
-// When active, every send carries body.design_context=true and the server
-// injects the PROJECT's design_system wire-only (colors/fonts/tone/CSS) —
-// the explicit "Design-Einstieg" for creating a new draft in CI. Per-chat
-// boolean on state.activeChat.designContext, read at send time by
-// API.streamChat (which ALSO sets the flag implicitly while the design
-// canvas is active — comment-applies need no toggle). Inert server-side
-// unless the session's project has a non-empty design_system.
-function toggleDesignContext() {
-  const chat = state.activeChat;
-  if (!chat) return;
-  chat.designContext = !chat.designContext;
-  refreshDesignContextButton();
-  showToast(chat.designContext
-    ? 'Design-Turn: an — Entwürfe wenden das Design-System des Projekts an'
-    : 'Design-Turn: aus');
-}
-
-function refreshDesignContextButton() {
-  const chat = state.activeChat;
-  const on = !!(chat && chat.designContext);
-  for (const btn of _composerToggleEls('btn-design-context')) {
-    btn.classList.toggle('active', on);
-    btn.style.color = on ? '#8b5cf6' : '';  // violet when on (design accent)
-    btn.title = on
-      ? 'Design-Turn: an — Entwürfe wenden das Design-System des Projekts an (klicken zum Ausschalten)'
-      : 'Design-Turn: aus — klicken, damit Entwürfe das Design-System des Projekts anwenden';
-  }
-}
-
 // Caveman mode icon set — one per level. Metaphor: off = fastest/modern
 // (spaceship), down through car, horse, to campfire = primitive.
 // Shared icon-toggle button used by every refine-with-AI surface
@@ -1088,14 +1058,10 @@ function renderUserMenu() {
   // so users don't briefly see admin-only fields before their first turn.
   if (typeof applyStatusBarRoleVisibility === 'function') applyStatusBarRoleVisibility();
 
-  // Sidebar "Customize" → admin-only (opens agent soul/agent.json/MCP/hooks
-  // editors, all admin-gated POSTs). Hide for non-admins so the row doesn't
-  // tease an editor that 403s on save.
-  const customizeNav = document.getElementById('sb-nav-customize');
-  if (customizeNav) {
-    const isAdmin = (state.authUser?.role || 'admin') === 'admin';
-    customizeNav.style.display = isAdmin ? '' : 'none';
-  }
+  // Sidebar sub-nav "Anpassen" is admin-only (opens agent soul/agent.json/MCP/
+  // hooks editors, all admin-gated POSTs). Re-render the sub-nav now that the
+  // auth role is known so renderSidebarSubnav() can drop it for non-admins.
+  if (typeof renderSidebarSubnav === 'function') renderSidebarSubnav();
 }
 
 function toggleUserDropdown() {
@@ -1266,6 +1232,8 @@ async function init() {
   if (localStorage.getItem('sidebar-collapsed') === '1') {
     document.getElementById('sidebar').classList.add('collapsed');
   }
+  if (typeof initSidebarWidth === 'function') initSidebarWidth();
+  if (typeof renderSidebarTabs === 'function') renderSidebarTabs();
   restoreSidebarSections();
 
   // Show the hamburger + set mobile body state for the current viewport
@@ -1390,43 +1358,12 @@ async function init() {
   if (typeof startRunningSubagentsPoll === 'function') startRunningSubagentsPoll();
 }
 
+// Favourite cards were removed from the welcome screen; keep this a no-op so
+// the callers (navigateTo('welcome') + the 'favourites:changed' listener) stay
+// valid and the container is cleared if anything ever populated it.
 async function renderPromptCards() {
   const container = document.getElementById('prompt-cards');
-  if (!container) return;
-
-  await FavouritesCache.load();
-  const favs = FavouritesCache.rows
-    .filter(r => r.available !== false)
-    .sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0))
-    .slice(0, 6);
-
-  if (!favs.length) {
-    container.innerHTML = '';
-    return;
-  }
-
-  container.innerHTML = favs.map((row, i) => {
-    const def = (typeof FAVOURITES_TYPE_DEFAULTS !== 'undefined' && FAVOURITES_TYPE_DEFAULTS[row.item_type]) || {};
-    const rawIcon = row.icon || row.source_icon || '';
-    const customIcon = (rawIcon && rawIcon !== def.icon) ? rawIcon : '';
-    const iconHtml = customIcon
-      ? esc(customIcon)
-      : (typeof favouriteTypeGlyphSvg === 'function' ? favouriteTypeGlyphSvg(row.item_type, 20) : '⭐');
-    const bg = row.color || row.source_color || def.color || 'var(--chip-bg)';
-    const title = (row.title || '(ohne Titel)').slice(0, 50);
-    const subtitle = (row.subtitle || '').slice(0, 80);
-    return `<button class="prompt-card" data-fav-idx="${i}" style="--card-accent:${esc(bg)}">
-      <span class="prompt-card-icon">${iconHtml}</span>
-      <span class="prompt-card-title">${esc(title)}</span>
-      ${subtitle ? `<span class="prompt-card-body">${esc(subtitle)}</span>` : ''}
-    </button>`;
-  }).join('');
-
-  container.querySelectorAll('.prompt-card').forEach((btn, i) => {
-    btn.addEventListener('click', () => {
-      if (typeof openFavouriteRow === 'function') openFavouriteRow(favs[i]);
-    });
-  });
+  if (container) container.innerHTML = '';
 }
 
 // Sidebar version badge — fetched independently of auth so it's visible
