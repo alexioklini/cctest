@@ -4,31 +4,24 @@
     "port": 8420
   },
   "providers": {
-    "local-mlx-whisper": {
-      "base_url": "http://192.168.1.214:8001/v1",
-      "api_key": "YOUR_API_KEY",
-      "default_model": "",
+    "llm-router": {
+      "base_url": "http://127.0.0.1:8424/v1",
       "type": "openai",
-      "is_local": true
+      "api_key": "YOUR_API_KEY",
+      "is_local": false,
+      "_comment": "DER Provider seit 2026-07-19: alle Cloud-Modelle laufen über den llm-router (Port 8424, Repo dev/llm-router). Provider-Keys/Wire/Plaene leben im Router."
     },
-    "Lokal": {
-      "base_url": "http://192.168.1.214:8000/v1",
+    "llm-router-local": {
+      "base_url": "http://127.0.0.1:8424/v1",
       "type": "openai",
       "api_key": "YOUR_API_KEY",
-      "default_model": "",
+      "is_local": true,
       "max_concurrent": 1,
-      "api_keys": [
-        {
-          "name": "default",
-          "key": "YOUR_API_KEY",
-          "usage": "round_robin"
-        }
-      ],
       "supports_chat_template_kwargs": true,
-      "is_local": true
+      "_comment": "Gleicher Router, aber is_local:true fuer die lokalen Modelle (gemma/whisper) — is_model_local() ist PROVIDER-basiert (GDPR-Weiche + Quota-Bypass + LocalProviderQueue). supports_chat_template_kwargs: brain sendet enable_thinking selbst (byte-stabil wie vor der Umstellung)."
     },
     "mistral-direct": {
-      "base_url": "https://api.mistral.ai/v1",
+      "base_url": "https://api.mistral.ai",
       "type": "openai",
       "api_key": "YOUR_API_KEY",
       "api_keys": [
@@ -39,58 +32,7 @@
         }
       ],
       "is_local": false,
-      "_comment": "Direct Mistral API (vibe-cli key) — since 9.278.0 the chat provider for all Mistral models (was CLIProxyAPI) + image generation (agents/conversations/files).",
-      "coding_plan": "mistral-vibe"
-    },
-    "Kilo": {
-      "base_url": "https://kilo.ai/api/openrouter",
-      "type": "openai",
-      "api_key": "YOUR_API_KEY",
-      "api_keys": [
-        {
-          "name": "default",
-          "key": "YOUR_API_KEY",
-          "usage": "preferred"
-        }
-      ],
-      "is_local": false,
-      "_comment": "Kilo aggregator (openrouter dialect) DIRECT — was fronted by CLIProxyAPI until 9.278.0. Serves deepseek/gemma-cloud; base_model_id carries the upstream id (deepseek/*:discounted, google/gemma-4-*). glm+kimi moved to their own direct coding-plan providers in 9.292.0 (Kilo's BYOK layer rate-limited GLM with 429s while the GLM plan itself was fine)."
-    },
-    "zai-coding": {
-      "base_url": "https://api.z.ai/api/coding/paas/v4",
-      "type": "openai",
-      "api_key": "YOUR_API_KEY",
-      "is_local": false,
-      "_comment": "GLM Coding Plan DIRECT (z.ai) — moved off Kilo in 9.292.0; model id is the plain plan id (glm-5.2), not the Kilo-scoped zai-coding/* form."
-    },
-    "kimi-coding": {
-      "base_url": "https://api.kimi.com/coding/v1",
-      "type": "openai",
-      "wire_api": "anthropic",
-      "api_key": "YOUR_API_KEY",
-      "is_local": false,
-      "_comment": "Kimi Coding Plan DIRECT (kimi.com) — moved off Kilo in 9.292.0. Model kimi-for-coding (K2.7 Code, thinking-ONLY, 262k ctx). wire_api:anthropic (9.293.0): the OpenAI endpoint (/chat/completions) rejects reasoning_effort:none (400) and is unstable with tools; the Anthropic endpoint (/v1/messages) supports thinking:{type:disabled} + tools together — verified vs Kilo. Brain speaks the Anthropic wire for this provider via llm_loop's adapter."
-    },
-    "openrouter": {
-      "base_url": "https://openrouter.ai/api/v1",
-      "type": "openai",
-      "api_key": "YOUR_API_KEY",
-      "api_keys": [
-        {
-          "name": "default",
-          "key": "YOUR_API_KEY",
-          "usage": "preferred"
-        }
-      ],
-      "is_local": false,
-      "_comment": "OpenRouter direct (openrouter.ai) — angelegt 2026-07-11 fuer die GPT-5.6-Modelle (luna/terra/sol +/- pro). Gleiche Upstream-IDs wie Kilo (openai/gpt-5.6-*), daher provider-scoped Keys openrouter/openai/gpt-5.6-*."
-    },
-    "llm-router": {
-      "base_url": "http://127.0.0.1:8424/v1",
-      "type": "openai",
-      "api_key": "YOUR_API_KEY",
-      "is_local": false,
-      "_comment": "LLM-Router (Test-Betrieb parallel zu den Direkt-Providern; Ziel: spaeter einziger Provider). Port 8424, launchd com.llm-router.server."
+      "_comment": "NUR Credential-Halter fuer die Bildgenerierung (engine/tools/image_gen.py scannt providers nach 'mistral.ai' in base_url und nutzt den Key gegen die hartkodierte Agents-API). base_url OHNE /v1, damit Model-Sync hier nichts entdeckt. KEINE Modelle zeigen hierauf; Chat/STT/TTS/OCR der Mistral-Modelle laufen ueber llm-router."
     }
   },
   "ocr": {
@@ -109,7 +51,7 @@
     "mlx_ocr_url": "http://192.168.1.214:8000",
     "mlx_ocr_api_key": "YOUR_API_KEY"
   },
-  "default_provider": "mistral-direct",
+  "default_provider": "llm-router",
   "max_context": 131072,
   "telegram": {
     "bot_token": "YOUR_BOT_TOKEN",
@@ -131,13 +73,14 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "local-mlx-whisper",
+      "provider": "llm-router-local",
       "is_local": true,
       "warmup": false,
       "manual": true,
       "max_context": 0,
       "_caps_canonical": true,
-      "cost_per_minute_usd": 0
+      "cost_per_minute_usd": 0,
+      "base_model_id": "whisper-tiny"
     },
     "whisper-base": {
       "enabled": true,
@@ -150,13 +93,14 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "local-mlx-whisper",
+      "provider": "llm-router-local",
       "is_local": true,
       "warmup": false,
       "manual": true,
       "max_context": 0,
       "_caps_canonical": true,
-      "cost_per_minute_usd": 0
+      "cost_per_minute_usd": 0,
+      "base_model_id": "whisper-base"
     },
     "whisper-small": {
       "enabled": true,
@@ -169,13 +113,14 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "local-mlx-whisper",
+      "provider": "llm-router-local",
       "is_local": true,
       "warmup": false,
       "manual": true,
       "max_context": 0,
       "_caps_canonical": true,
-      "cost_per_minute_usd": 0
+      "cost_per_minute_usd": 0,
+      "base_model_id": "whisper-small"
     },
     "whisper-medium": {
       "enabled": true,
@@ -188,13 +133,14 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "local-mlx-whisper",
+      "provider": "llm-router-local",
       "is_local": true,
       "warmup": false,
       "manual": true,
       "max_context": 0,
       "_caps_canonical": true,
-      "cost_per_minute_usd": 0
+      "cost_per_minute_usd": 0,
+      "base_model_id": "whisper-medium"
     },
     "whisper-large-v3": {
       "enabled": true,
@@ -207,13 +153,14 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "local-mlx-whisper",
+      "provider": "llm-router-local",
       "is_local": true,
       "warmup": false,
       "manual": true,
       "max_context": 0,
       "_caps_canonical": true,
-      "cost_per_minute_usd": 0
+      "cost_per_minute_usd": 0,
+      "base_model_id": "whisper-large-v3"
     },
     "mistral-medium-3.5": {
       "enabled": true,
@@ -235,8 +182,8 @@
       "raw_formats": [
         "image/*"
       ],
-      "provider": "mistral-direct",
-      "base_model_id": "mistral-medium-latest",
+      "provider": "llm-router",
+      "base_model_id": "mistral-medium-3.5",
       "profile": "balanced",
       "is_local": false,
       "warmup": false,
@@ -346,7 +293,8 @@
           }
         }
       },
-      "cost_cache_read": 0.15
+      "cost_cache_read": 0.15,
+      "coding_plan": "mistral-vibe"
     },
     "mistral-small-latest": {
       "enabled": true,
@@ -363,7 +311,7 @@
       "inference": {
         "temperature": 0.7
       },
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "base_model_id": "mistral-small-latest",
       "profile": "speed",
       "_caps_canonical": true,
@@ -477,7 +425,8 @@
         }
       },
       "raw_formats": [],
-      "cost_cache_read": 0.01275
+      "cost_cache_read": 0.01275,
+      "coding_plan": "mistral-vibe"
     },
     "mistral-medium-latest": {
       "enabled": false,
@@ -952,12 +901,14 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "base_model_id": "voxtral-small-2507",
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-small-latest": {
       "enabled": true,
@@ -972,12 +923,14 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "_audio_backfilled": true
+      "_audio_backfilled": true,
+      "base_model_id": "voxtral-small-latest",
+      "coding_plan": "mistral-vibe"
     },
     "mistral-large-2512": {
       "enabled": false,
@@ -1227,13 +1180,15 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "cost_per_minute_usd": 0.003
+      "cost_per_minute_usd": 0.003,
+      "base_model_id": "voxtral-mini-latest",
+      "coding_plan": "mistral-vibe"
     },
     "magistral-small-2509": {
       "enabled": false,
@@ -1413,12 +1368,14 @@
         "temperature": 0.7
       },
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
-      "cost_per_page_usd": 0.004
+      "cost_per_page_usd": 0.004,
+      "base_model_id": "mistral-ocr-latest",
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-2602": {
       "enabled": true,
@@ -1433,13 +1390,15 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "cost_per_minute_usd": 0.003
+      "cost_per_minute_usd": 0.003,
+      "base_model_id": "voxtral-mini-2602",
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-transcribe-realtime-2602": {
       "enabled": true,
@@ -1454,13 +1413,15 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "cost_per_minute_usd": 0.003
+      "cost_per_minute_usd": 0.003,
+      "base_model_id": "voxtral-mini-transcribe-realtime-2602",
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-realtime-2602": {
       "enabled": true,
@@ -1475,13 +1436,15 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "cost_per_minute_usd": 0.003
+      "cost_per_minute_usd": 0.003,
+      "base_model_id": "voxtral-mini-realtime-2602",
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-realtime-latest": {
       "enabled": true,
@@ -1496,13 +1459,15 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "cost_per_minute_usd": 0.003
+      "cost_per_minute_usd": 0.003,
+      "base_model_id": "voxtral-mini-realtime-latest",
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-tts-2603": {
       "enabled": true,
@@ -1517,13 +1482,15 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "cost_per_1k_chars_usd": 0.00015
+      "cost_per_1k_chars_usd": 0.00015,
+      "base_model_id": "voxtral-mini-tts-2603",
+      "coding_plan": "mistral-vibe"
     },
     "voxtral-mini-tts-latest": {
       "enabled": true,
@@ -1538,69 +1505,15 @@
       "max_context": 32768,
       "max_output": 4096,
       "raw_formats": [],
-      "provider": "mistral-direct",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
       "warmup": false,
       "_audio_backfilled": true,
-      "cost_per_1k_chars_usd": 0.00015
-    },
-    "gemma-4-26b-cloud": {
-      "enabled": false,
-      "shortname": "gemma-4-26b-cloud",
-      "display_name": "gemma-4-26b-cloud",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 256000,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false,
-      "base_model_id": "google/gemma-4-26b-a4b-it",
-      "coding_plan": "kilo-credit"
-    },
-    "gemma-4-31b-cloud": {
-      "enabled": false,
-      "shortname": "gemma-4-31b-cloud",
-      "display_name": "gemma-4-31b-cloud",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 256000,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false,
-      "base_model_id": "google/gemma-4-31b-it",
-      "coding_plan": "kilo-credit"
+      "cost_per_1k_chars_usd": 0.00015,
+      "base_model_id": "voxtral-mini-tts-latest",
+      "coding_plan": "mistral-vibe"
     },
     "deepseek-v4-pro": {
       "enabled": true,
@@ -1613,7 +1526,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "Kilo",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -1723,7 +1636,7 @@
           }
         }
       },
-      "base_model_id": "deepseek/deepseek-v4-pro:discounted",
+      "base_model_id": "deepseek-v4-pro",
       "coding_plan": "kilo-credit"
     },
     "deepseek-v4-flash": {
@@ -1737,7 +1650,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "Kilo",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -1847,7 +1760,7 @@
           }
         }
       },
-      "base_model_id": "deepseek/deepseek-v4-flash:discounted",
+      "base_model_id": "deepseek-v4-flash",
       "coding_plan": "kilo-credit"
     },
     "mistral-code-latest": {
@@ -2055,7 +1968,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "zai-coding",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2184,7 +2097,7 @@
         "image/*"
       ],
       "thinking_format": "reasoning_field",
-      "provider": "kimi-coding",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2295,473 +2208,8 @@
           }
         }
       },
-      "base_model_id": "kimi-for-coding",
+      "base_model_id": "kimi-k2.6",
       "coding_plan": "kimi-moderato"
-    },
-    "zai-coding/glm-5.2": {
-      "enabled": false,
-      "shortname": "glm-5.2",
-      "display_name": "glm-5.2",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "zai-coding/glm-4.7": {
-      "enabled": false,
-      "shortname": "glm-4.7",
-      "display_name": "glm-4.7",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "zai-coding/glm-5.1": {
-      "enabled": false,
-      "shortname": "glm-5.1",
-      "display_name": "glm-5.1",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "zai-coding/glm-5v-turbo": {
-      "enabled": false,
-      "shortname": "glm-5v-turbo",
-      "display_name": "glm-5v-turbo",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "zai-coding/glm-4.5-air": {
-      "enabled": false,
-      "shortname": "glm-4.5-air",
-      "display_name": "glm-4.5-air",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "zai-coding/glm-5-turbo": {
-      "enabled": false,
-      "shortname": "glm-5-turbo",
-      "display_name": "glm-5-turbo",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "kimi-coding/kimi-for-coding": {
-      "enabled": false,
-      "shortname": "kimi-for-coding",
-      "display_name": "kimi-for-coding",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "tencent/hy3:free": {
-      "enabled": false,
-      "shortname": "hy3:free",
-      "display_name": "hy3:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "tencent/hy3": {
-      "enabled": false,
-      "shortname": "hy3",
-      "display_name": "hy3",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "nex-agi/nex-n2-mini": {
-      "enabled": false,
-      "shortname": "nex-n2-mini",
-      "display_name": "nex-n2-mini",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "glm-4.5": {
-      "enabled": false,
-      "shortname": "glm-4.5",
-      "display_name": "glm-4.5",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "zai-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "glm-4.5-air": {
-      "enabled": false,
-      "shortname": "glm-4.5-air",
-      "display_name": "glm-4.5-air",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "zai-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "glm-4.6": {
-      "enabled": false,
-      "shortname": "glm-4.6",
-      "display_name": "glm-4.6",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "zai-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "glm-4.7": {
-      "enabled": false,
-      "shortname": "glm-4.7",
-      "display_name": "glm-4.7",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "zai-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "glm-5": {
-      "enabled": false,
-      "shortname": "glm-5",
-      "display_name": "glm-5",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "zai-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "glm-5-turbo": {
-      "enabled": false,
-      "shortname": "glm-5-turbo",
-      "display_name": "glm-5-turbo",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "zai-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "glm-5.1": {
-      "enabled": false,
-      "shortname": "glm-5.1",
-      "display_name": "glm-5.1",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "zai-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "kimi-for-coding": {
-      "enabled": false,
-      "shortname": "kimi-for-coding",
-      "display_name": "kimi-for-coding",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "kimi-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "aion-labs/aion-3.0-mini": {
-      "enabled": false,
-      "shortname": "aion-3.0-mini",
-      "display_name": "aion-3.0-mini",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "aion-labs/aion-3.0": {
-      "enabled": false,
-      "shortname": "aion-3.0",
-      "display_name": "aion-3.0",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "kimi-for-coding-highspeed": {
-      "enabled": false,
-      "shortname": "kimi-for-coding-highspeed",
-      "display_name": "kimi-for-coding-highspeed",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "kimi-coding",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openai/gpt-5.6-luna-pro": {
-      "enabled": false,
-      "shortname": "gpt-5.6-luna-pro",
-      "display_name": "gpt-5.6-luna-pro (Kilo)",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "raw_formats": [
-        "image/*"
-      ],
-      "thinking_format": "reasoning_field",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false,
-      "max_context": 1050000,
-      "max_output": 128000,
-      "cost_input": 1,
-      "cost_output": 6,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 116.5,
-            "n": 4,
-            "ts": "2026-07-11T10:59:01Z",
-            "source": "internal"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 87.6,
-            "n": 5,
-            "ts": "2026-07-11T10:59:13Z",
-            "source": "internal"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 97,
-            "tps": 330.5,
-            "n": 3,
-            "ts": "2026-07-11T10:59:46Z",
-            "source": "internal"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 98,
-            "tps": 305.5,
-            "n": 3,
-            "ts": "2026-07-11T11:00:17Z",
-            "source": "internal"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 98,
-            "tps": 57.1,
-            "n": 3,
-            "ts": "2026-07-11T11:00:33Z",
-            "source": "internal"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 97,
-            "tps": 51.6,
-            "n": 3,
-            "ts": "2026-07-11T11:00:47Z",
-            "source": "internal"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 99,
-            "tps": 292.8,
-            "n": 3,
-            "ts": "2026-07-11T11:01:14Z",
-            "source": "internal"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 82,
-            "tps": 136.4,
-            "n": 3,
-            "ts": "2026-07-11T11:01:29Z",
-            "source": "internal"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 14.5,
-            "n": 4,
-            "ts": "2026-07-11T11:01:37Z",
-            "source": "internal"
-          }
-        }
-      },
-      "coding_plan": "kilo-credit"
     },
     "openai/gpt-5.6-luna": {
       "enabled": true,
@@ -2777,7 +2225,7 @@
         "image/*"
       ],
       "thinking_format": "reasoning_field",
-      "provider": "Kilo",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -2885,115 +2333,8 @@
           }
         }
       },
-      "coding_plan": "kilo-credit"
-    },
-    "openai/gpt-5.6-terra-pro": {
-      "enabled": false,
-      "shortname": "gpt-5.6-terra-pro",
-      "display_name": "gpt-5.6-terra-pro (Kilo)",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "raw_formats": [
-        "image/*"
-      ],
-      "thinking_format": "reasoning_field",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false,
-      "max_context": 1050000,
-      "max_output": 128000,
-      "cost_input": 2.5,
-      "cost_output": 15,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 126.8,
-            "n": 4,
-            "ts": "2026-07-11T11:04:16Z",
-            "source": "internal"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 82.7,
-            "n": 5,
-            "ts": "2026-07-11T11:04:28Z",
-            "source": "internal"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 98,
-            "tps": 90.2,
-            "n": 3,
-            "ts": "2026-07-11T11:06:18Z",
-            "source": "internal"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 97,
-            "tps": 89.2,
-            "n": 3,
-            "ts": "2026-07-11T11:08:08Z",
-            "source": "internal"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 100,
-            "tps": 59,
-            "n": 3,
-            "ts": "2026-07-11T11:08:23Z",
-            "source": "internal"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 98,
-            "tps": 46.2,
-            "n": 3,
-            "ts": "2026-07-11T11:08:36Z",
-            "source": "internal"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 97,
-            "tps": 112.1,
-            "n": 3,
-            "ts": "2026-07-11T11:09:51Z",
-            "source": "internal"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 92,
-            "tps": 130.7,
-            "n": 3,
-            "ts": "2026-07-11T11:10:07Z",
-            "source": "internal"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 15.3,
-            "n": 4,
-            "ts": "2026-07-11T11:10:15Z",
-            "source": "internal"
-          }
-        }
-      },
-      "coding_plan": "kilo-credit"
+      "coding_plan": "kilo-credit",
+      "base_model_id": "openai/gpt-5.6-luna"
     },
     "openai/gpt-5.6-terra": {
       "enabled": true,
@@ -3009,7 +2350,7 @@
         "image/*"
       ],
       "thinking_format": "reasoning_field",
-      "provider": "Kilo",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -3117,115 +2458,8 @@
           }
         }
       },
-      "coding_plan": "kilo-credit"
-    },
-    "openai/gpt-5.6-sol-pro": {
-      "enabled": false,
-      "shortname": "gpt-5.6-sol-pro",
-      "display_name": "gpt-5.6-sol-pro (Kilo)",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "raw_formats": [
-        "image/*"
-      ],
-      "thinking_format": "reasoning_field",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false,
-      "max_context": 1050000,
-      "max_output": 128000,
-      "cost_input": 5,
-      "cost_output": 30,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 72.8,
-            "n": 4,
-            "ts": "2026-07-11T11:13:23Z",
-            "source": "internal"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 44.6,
-            "n": 5,
-            "ts": "2026-07-11T11:13:38Z",
-            "source": "internal"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 98,
-            "tps": 57.7,
-            "n": 3,
-            "ts": "2026-07-11T11:15:47Z",
-            "source": "internal"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 98,
-            "tps": 65.8,
-            "n": 3,
-            "ts": "2026-07-11T11:17:41Z",
-            "source": "internal"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 100,
-            "tps": 40.7,
-            "n": 3,
-            "ts": "2026-07-11T11:18:02Z",
-            "source": "internal"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 98,
-            "tps": 28.7,
-            "n": 3,
-            "ts": "2026-07-11T11:18:23Z",
-            "source": "internal"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 100,
-            "tps": 77.2,
-            "n": 3,
-            "ts": "2026-07-11T11:19:49Z",
-            "source": "internal"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 72,
-            "tps": 65.6,
-            "n": 3,
-            "ts": "2026-07-11T11:20:12Z",
-            "source": "internal"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 10,
-            "n": 4,
-            "ts": "2026-07-11T11:20:25Z",
-            "source": "internal"
-          }
-        }
-      },
-      "coding_plan": "kilo-credit"
+      "coding_plan": "kilo-credit",
+      "base_model_id": "openai/gpt-5.6-terra"
     },
     "openai/gpt-5.6-sol": {
       "enabled": true,
@@ -3241,7 +2475,7 @@
         "image/*"
       ],
       "thinking_format": "reasoning_field",
-      "provider": "Kilo",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "is_local": false,
@@ -3349,29 +2583,8 @@
           }
         }
       },
-      "coding_plan": "kilo-credit"
-    },
-    "cognitivecomputations/dolphin-mistral-24b-venice-edition": {
-      "enabled": false,
-      "shortname": "dolphin-mistral-24b-venice-edition",
-      "display_name": "dolphin-mistral-24b-venice-edition",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
+      "coding_plan": "kilo-credit",
+      "base_model_id": "openai/gpt-5.6-sol"
     },
     "whisper-large-v3-turbo": {
       "enabled": true,
@@ -3384,13 +2597,14 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "local-mlx-whisper",
+      "provider": "llm-router-local",
       "is_local": true,
       "warmup": false,
       "manual": true,
       "_audio_backfilled": true,
       "_caps_canonical": true,
-      "max_context": 0
+      "max_context": 0,
+      "base_model_id": "whisper-large-v3-turbo"
     },
     "gemma-4-12B-it-qat-oQ4-fp16": {
       "enabled": true,
@@ -3412,7 +2626,7 @@
       "raw_formats": [
         "image/*"
       ],
-      "provider": "Lokal",
+      "provider": "llm-router-local",
       "profile": "speed",
       "_caps_canonical": true,
       "is_local": true,
@@ -3501,116 +2715,8 @@
             "source": "internal"
           }
         }
-      }
-    },
-    "openrouter/openai/gpt-5.6-luna-pro": {
-      "enabled": false,
-      "shortname": "gpt-5.6-luna-pro",
-      "display_name": "gpt-5.6-luna-pro",
-      "icon": "🧭",
-      "priority": 10,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "raw_formats": [
-        "image/*"
-      ],
-      "thinking_format": "reasoning_field",
-      "provider": "openrouter",
-      "base_model_id": "openai/gpt-5.6-luna-pro",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "max_context": 1050000,
-      "max_output": 128000,
-      "cost_input": 1,
-      "cost_output": 6,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 140.9,
-            "n": 4,
-            "ts": "2026-07-11T10:38:12Z",
-            "source": "internal"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 105.3,
-            "n": 5,
-            "ts": "2026-07-11T10:38:22Z",
-            "source": "internal"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 98,
-            "tps": 350.3,
-            "n": 3,
-            "ts": "2026-07-11T10:38:56Z",
-            "source": "internal"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 98,
-            "tps": 269.6,
-            "n": 3,
-            "ts": "2026-07-11T10:39:34Z",
-            "source": "internal"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 100,
-            "tps": 70.7,
-            "n": 3,
-            "ts": "2026-07-11T10:39:47Z",
-            "source": "internal"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 98,
-            "tps": 61.3,
-            "n": 3,
-            "ts": "2026-07-11T10:39:59Z",
-            "source": "internal"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 100,
-            "tps": 303.9,
-            "n": 3,
-            "ts": "2026-07-11T10:40:23Z",
-            "source": "internal"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 92,
-            "tps": 162,
-            "n": 3,
-            "ts": "2026-07-11T10:40:35Z",
-            "source": "internal"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 19.8,
-            "n": 4,
-            "ts": "2026-07-11T10:40:42Z",
-            "source": "internal"
-          }
-        }
       },
-      "is_local": false,
-      "warmup": false,
-      "coding_plan": "openrouter-credit"
+      "base_model_id": "gemma-4-12B-it-qat-oQ4-fp16"
     },
     "openrouter/openai/gpt-5.6-luna": {
       "enabled": true,
@@ -3626,8 +2732,8 @@
         "image/*"
       ],
       "thinking_format": "reasoning_field",
-      "provider": "openrouter",
-      "base_model_id": "openai/gpt-5.6-luna",
+      "provider": "llm-router",
+      "base_model_id": "openrouter/openai/gpt-5.6-luna",
       "profile": "balanced",
       "_caps_canonical": true,
       "max_context": 1050000,
@@ -3737,115 +2843,6 @@
       "warmup": false,
       "coding_plan": "openrouter-credit"
     },
-    "openrouter/openai/gpt-5.6-terra-pro": {
-      "enabled": false,
-      "shortname": "gpt-5.6-terra-pro",
-      "display_name": "gpt-5.6-terra-pro",
-      "icon": "🧭",
-      "priority": 10,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "raw_formats": [
-        "image/*"
-      ],
-      "thinking_format": "reasoning_field",
-      "provider": "openrouter",
-      "base_model_id": "openai/gpt-5.6-terra-pro",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "max_context": 1050000,
-      "max_output": 128000,
-      "cost_input": 2.5,
-      "cost_output": 15,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 130.6,
-            "n": 4,
-            "ts": "2026-07-11T10:42:59Z",
-            "source": "internal"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 82.6,
-            "n": 5,
-            "ts": "2026-07-11T10:43:11Z",
-            "source": "internal"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 98,
-            "tps": 127.3,
-            "n": 3,
-            "ts": "2026-07-11T10:44:32Z",
-            "source": "internal"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 98,
-            "tps": 122.1,
-            "n": 3,
-            "ts": "2026-07-11T10:45:55Z",
-            "source": "internal"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 100,
-            "tps": 54.7,
-            "n": 3,
-            "ts": "2026-07-11T10:46:12Z",
-            "source": "internal"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 100,
-            "tps": 41.5,
-            "n": 3,
-            "ts": "2026-07-11T10:46:29Z",
-            "source": "internal"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 98,
-            "tps": 135.2,
-            "n": 3,
-            "ts": "2026-07-11T10:47:24Z",
-            "source": "internal"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 83,
-            "tps": 117.7,
-            "n": 3,
-            "ts": "2026-07-11T10:47:42Z",
-            "source": "internal"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 15.2,
-            "n": 4,
-            "ts": "2026-07-11T10:47:50Z",
-            "source": "internal"
-          }
-        }
-      },
-      "is_local": false,
-      "warmup": false,
-      "coding_plan": "openrouter-credit"
-    },
     "openrouter/openai/gpt-5.6-terra": {
       "enabled": true,
       "shortname": "gpt-5.6-terra",
@@ -3860,8 +2857,8 @@
         "image/*"
       ],
       "thinking_format": "reasoning_field",
-      "provider": "openrouter",
-      "base_model_id": "openai/gpt-5.6-terra",
+      "provider": "llm-router",
+      "base_model_id": "openrouter/openai/gpt-5.6-terra",
       "profile": "balanced",
       "_caps_canonical": true,
       "max_context": 1050000,
@@ -3971,115 +2968,6 @@
       "warmup": false,
       "coding_plan": "openrouter-credit"
     },
-    "openrouter/openai/gpt-5.6-sol-pro": {
-      "enabled": false,
-      "shortname": "gpt-5.6-sol-pro",
-      "display_name": "gpt-5.6-sol-pro",
-      "icon": "🧭",
-      "priority": 10,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "raw_formats": [
-        "image/*"
-      ],
-      "thinking_format": "reasoning_field",
-      "provider": "openrouter",
-      "base_model_id": "openai/gpt-5.6-sol-pro",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "max_context": 1050000,
-      "max_output": 128000,
-      "cost_input": 5,
-      "cost_output": 30,
-      "benchmark": {
-        "coding": {
-          "measured": {
-            "capability": 100,
-            "tps": 89.7,
-            "n": 4,
-            "ts": "2026-07-11T10:50:47Z",
-            "source": "internal"
-          }
-        },
-        "math": {
-          "measured": {
-            "capability": 80,
-            "tps": 40.8,
-            "n": 5,
-            "ts": "2026-07-11T10:51:03Z",
-            "source": "internal"
-          }
-        },
-        "research": {
-          "measured": {
-            "capability": 100,
-            "tps": 80.1,
-            "n": 3,
-            "ts": "2026-07-11T10:52:36Z",
-            "source": "internal"
-          }
-        },
-        "analysis": {
-          "measured": {
-            "capability": 100,
-            "tps": 63.1,
-            "n": 3,
-            "ts": "2026-07-11T10:55:02Z",
-            "source": "internal"
-          }
-        },
-        "reporting": {
-          "measured": {
-            "capability": 100,
-            "tps": 41.9,
-            "n": 3,
-            "ts": "2026-07-11T10:55:19Z",
-            "source": "internal"
-          }
-        },
-        "creative": {
-          "measured": {
-            "capability": 98,
-            "tps": 29.2,
-            "n": 3,
-            "ts": "2026-07-11T10:55:35Z",
-            "source": "internal"
-          }
-        },
-        "orchestration": {
-          "measured": {
-            "capability": 99,
-            "tps": 83.4,
-            "n": 3,
-            "ts": "2026-07-11T10:56:49Z",
-            "source": "internal"
-          }
-        },
-        "agentic": {
-          "measured": {
-            "capability": 93,
-            "tps": 75.4,
-            "n": 3,
-            "ts": "2026-07-11T10:57:08Z",
-            "source": "internal"
-          }
-        },
-        "fast": {
-          "measured": {
-            "capability": 100,
-            "tps": 12.4,
-            "n": 4,
-            "ts": "2026-07-11T10:57:19Z",
-            "source": "internal"
-          }
-        }
-      },
-      "is_local": false,
-      "warmup": false,
-      "coding_plan": "openrouter-credit"
-    },
     "openrouter/openai/gpt-5.6-sol": {
       "enabled": true,
       "shortname": "gpt-5.6-sol",
@@ -4094,8 +2982,8 @@
         "image/*"
       ],
       "thinking_format": "reasoning_field",
-      "provider": "openrouter",
-      "base_model_id": "openai/gpt-5.6-sol",
+      "provider": "llm-router",
+      "base_model_id": "openrouter/openai/gpt-5.6-sol",
       "profile": "balanced",
       "_caps_canonical": true,
       "max_context": 1050000,
@@ -4205,447 +3093,6 @@
       "warmup": false,
       "coding_plan": "openrouter-credit"
     },
-    "x-ai/grok-4.5": {
-      "enabled": false,
-      "shortname": "grok-4.5",
-      "display_name": "grok-4.5",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "~x-ai/grok-latest": {
-      "enabled": false,
-      "shortname": "grok-latest",
-      "display_name": "grok-latest",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/aion-labs/aion-3.0-mini": {
-      "enabled": false,
-      "shortname": "aion-3.0-mini",
-      "display_name": "aion-3.0-mini",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "aion-labs/aion-3.0-mini",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/aion-labs/aion-3.0": {
-      "enabled": false,
-      "shortname": "aion-3.0",
-      "display_name": "aion-3.0",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "aion-labs/aion-3.0",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/tencent/hy3:free": {
-      "enabled": false,
-      "shortname": "hy3:free",
-      "display_name": "hy3:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "tencent/hy3:free",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/tencent/hy3": {
-      "enabled": false,
-      "shortname": "hy3",
-      "display_name": "hy3",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "tencent/hy3",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/nex-agi/nex-n2-mini": {
-      "enabled": false,
-      "shortname": "nex-n2-mini",
-      "display_name": "nex-n2-mini",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "nex-agi/nex-n2-mini",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "sakana/fugu-ultra": {
-      "enabled": false,
-      "shortname": "fugu-ultra",
-      "display_name": "fugu-ultra",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "google/gemma-4-26b-a4b-it:free": {
-      "enabled": false,
-      "shortname": "gemma-4-26b-a4b-it:free",
-      "display_name": "gemma-4-26b-a4b-it:free",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 32768,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "google/gemma-4-31b-it:free": {
-      "enabled": false,
-      "shortname": "gemma-4-31b-it:free",
-      "display_name": "gemma-4-31b-it:free",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "reasoning_field",
-      "max_context": 32768,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "nvidia/nemotron-3-nano-30b-a3b:free": {
-      "enabled": false,
-      "shortname": "nemotron-3-nano-30b-a3b:free",
-      "display_name": "nemotron-3-nano-30b-a3b:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "nvidia/nemotron-nano-12b-v2-vl:free": {
-      "enabled": false,
-      "shortname": "nemotron-nano-12b-v2-vl:free",
-      "display_name": "nemotron-nano-12b-v2-vl:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "nvidia/nemotron-nano-9b-v2:free": {
-      "enabled": false,
-      "shortname": "nemotron-nano-9b-v2:free",
-      "display_name": "nemotron-nano-9b-v2:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openai/gpt-oss-20b:free": {
-      "enabled": false,
-      "shortname": "gpt-oss-20b:free",
-      "display_name": "gpt-oss-20b:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/cognitivecomputations/dolphin-mistral-24b-venice-edition": {
-      "enabled": false,
-      "shortname": "dolphin-mistral-24b-venice-edition",
-      "display_name": "dolphin-mistral-24b-venice-edition",
-      "icon": "🌬️",
-      "priority": 45,
-      "capabilities": [
-        "chat"
-      ],
-      "thinking_format": "none",
-      "max_context": 131072,
-      "max_output": 16384,
-      "inference": {
-        "temperature": 0.7
-      },
-      "raw_formats": [],
-      "provider": "openrouter",
-      "base_model_id": "cognitivecomputations/dolphin-mistral-24b-venice-edition",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "kwaipilot/kat-coder-air-v2.5": {
-      "enabled": false,
-      "shortname": "kat-coder-air-v2.5",
-      "display_name": "kat-coder-air-v2.5",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "kwaipilot/kat-coder-pro-v2.5": {
-      "enabled": false,
-      "shortname": "kat-coder-pro-v2.5",
-      "display_name": "kat-coder-pro-v2.5",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/kwaipilot/kat-coder-air-v2.5": {
-      "enabled": false,
-      "shortname": "kat-coder-air-v2.5",
-      "display_name": "kat-coder-air-v2.5",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "kwaipilot/kat-coder-air-v2.5",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/kwaipilot/kat-coder-pro-v2.5": {
-      "enabled": false,
-      "shortname": "kat-coder-pro-v2.5",
-      "display_name": "kat-coder-pro-v2.5",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "kwaipilot/kat-coder-pro-v2.5",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "GLM-OCR-8bit": {
-      "enabled": false,
-      "shortname": "GLM-OCR-8bit",
-      "display_name": "GLM-OCR-8bit",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Lokal",
-      "profile": "speed",
-      "_caps_canonical": true,
-      "is_local": true,
-      "warmup": false
-    },
-    "stealth/gpt-5.6-sol": {
-      "enabled": false,
-      "shortname": "gpt-5.6-sol",
-      "display_name": "gpt-5.6-sol",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "meta/muse-spark-1.1": {
-      "enabled": false,
-      "shortname": "muse-spark-1.1",
-      "display_name": "muse-spark-1.1",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "Kilo/x-ai/grok-4.5": {
-      "enabled": false,
-      "shortname": "grok-4.5",
-      "display_name": "grok-4.5",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "base_model_id": "x-ai/grok-4.5",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "Kilo/~x-ai/grok-latest": {
-      "enabled": false,
-      "shortname": "grok-latest",
-      "display_name": "grok-latest",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "base_model_id": "~x-ai/grok-latest",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
     "voxtral-mini-tts-mellon-greek-2606-solutions": {
       "enabled": false,
       "shortname": "voxtral-mini-tts-mellon-greek-2606-solutions",
@@ -4677,7 +3124,7 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "kimi-coding",
+      "provider": "llm-router",
       "profile": "balanced",
       "_caps_canonical": true,
       "benchmark": {
@@ -4764,24 +3211,8 @@
         }
       },
       "is_local": false,
-      "warmup": false
-    },
-    "kwaipilot/kat-coder-pro-v2.5:free": {
-      "enabled": false,
-      "shortname": "kat-coder-pro-v2.5:free",
-      "display_name": "kat-coder-pro-v2.5:free",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
+      "warmup": false,
+      "base_model_id": "k3"
     },
     "voxtral-mini-realtime-mellon-greek-2606-solutions": {
       "enabled": false,
@@ -4803,164 +3234,7 @@
       "is_local": false,
       "warmup": false
     },
-    "moonshotai/kimi-k3": {
-      "enabled": false,
-      "shortname": "kimi-k3",
-      "display_name": "kimi-k3",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/moonshotai/kimi-k3": {
-      "enabled": false,
-      "shortname": "kimi-k3",
-      "display_name": "kimi-k3",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "moonshotai/kimi-k3",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "openrouter/meta/muse-spark-1.1": {
-      "enabled": false,
-      "shortname": "muse-spark-1.1",
-      "display_name": "muse-spark-1.1",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "meta/muse-spark-1.1",
-      "profile": "balanced",
-      "_caps_canonical": true,
-      "is_local": false,
-      "warmup": false
-    },
-    "embeddinggemma-300m-bf16": {
-      "enabled": false,
-      "shortname": "embeddinggemma-300m-bf16",
-      "display_name": "embeddinggemma-300m-bf16",
-      "icon": "💎",
-      "priority": 35,
-      "capabilities": [
-        "chat",
-        "image"
-      ],
-      "thinking_format": "none",
-      "max_context": 32768,
-      "max_output": 8192,
-      "inference": {
-        "temperature": 0.7,
-        "top_p": 0.9
-      },
-      "raw_formats": [
-        "image/*"
-      ],
-      "provider": "Lokal",
-      "profile": "speed",
-      "_caps_canonical": true
-    },
-    "thinkingmachines/inkling": {
-      "enabled": false,
-      "shortname": "inkling",
-      "display_name": "inkling",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "inline_tags",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "openrouter/auto-beta": {
-      "enabled": false,
-      "shortname": "auto-beta",
-      "display_name": "auto-beta",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "Kilo",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "openrouter/thinkingmachines/inkling": {
-      "enabled": false,
-      "shortname": "inkling",
-      "display_name": "inkling",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "inline_tags",
-      "provider": "openrouter",
-      "base_model_id": "thinkingmachines/inkling",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "openrouter/openrouter/auto-beta": {
-      "enabled": false,
-      "shortname": "auto-beta",
-      "display_name": "auto-beta",
-      "icon": "🤖",
-      "priority": 10,
-      "capabilities": [
-        "chat"
-      ],
-      "raw_formats": [],
-      "thinking_format": "none",
-      "provider": "openrouter",
-      "base_model_id": "openrouter/auto-beta",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "mlx-community/whisper-large-v3-turbo": {
-      "enabled": false,
-      "shortname": "whisper-large-v3-turbo",
-      "display_name": "whisper-large-v3-turbo",
-      "icon": "🎤",
-      "priority": 30,
-      "capabilities": [
-        "audio_transcription"
-      ],
-      "thinking_format": "none",
-      "max_context": 0,
-      "max_output": 0,
-      "inference": {},
-      "raw_formats": [],
-      "provider": "local-mlx-whisper",
-      "profile": "speed",
-      "_caps_canonical": true
-    },
-    "llm-router/deepseek-v4-flash": {
+    "llm-router-local/deepseek-v4-flash": {
       "enabled": false,
       "shortname": "deepseek-v4-flash",
       "display_name": "deepseek-v4-flash",
@@ -4971,12 +3245,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "deepseek-v4-flash",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/deepseek-v4-pro": {
+    "llm-router-local/deepseek-v4-pro": {
       "enabled": false,
       "shortname": "deepseek-v4-pro",
       "display_name": "deepseek-v4-pro",
@@ -4987,23 +3261,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "reasoning_field",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "deepseek-v4-pro",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/gemma-4-12B-it-qat-oQ4-fp16": {
-      "provider": "llm-router",
-      "base_model_id": "gemma-4-12B-it-qat-oQ4-fp16",
-      "display_name": "Gemma-4 12B (Router-Test)",
-      "shortname": "gemma-router",
-      "enabled": true,
-      "max_context": 256000,
-      "max_output": 8192,
-      "thinking_format": "reasoning_field",
-      "is_local": false
-    },
-    "llm-router/glm-5.2": {
+    "llm-router-local/glm-5.2": {
       "enabled": false,
       "shortname": "glm-5.2",
       "display_name": "glm-5.2",
@@ -5014,12 +3277,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "glm-5.2",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/k3": {
+    "llm-router-local/k3": {
       "enabled": false,
       "shortname": "k3",
       "display_name": "k3",
@@ -5030,12 +3293,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "k3",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/kimi-k2.6": {
+    "llm-router-local/kimi-k2.6": {
       "enabled": false,
       "shortname": "kimi-k2.6",
       "display_name": "kimi-k2.6",
@@ -5046,12 +3309,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "kimi-k2.6",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/mistral-medium-3.5": {
+    "llm-router-local/mistral-medium-3.5": {
       "enabled": false,
       "shortname": "mistral-medium-3.5",
       "display_name": "mistral-medium-3.5",
@@ -5067,12 +3330,12 @@
         "temperature": 0.7
       },
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "mistral-medium-3.5",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/mistral-ocr-latest": {
+    "llm-router-local/mistral-ocr-latest": {
       "enabled": false,
       "shortname": "mistral-ocr-latest",
       "display_name": "mistral-ocr-latest",
@@ -5088,12 +3351,12 @@
         "temperature": 0.7
       },
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "mistral-ocr-latest",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/mistral-small-latest": {
+    "llm-router-local/mistral-small-latest": {
       "enabled": false,
       "shortname": "mistral-small-latest",
       "display_name": "mistral-small-latest",
@@ -5109,12 +3372,12 @@
         "temperature": 0.7
       },
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "mistral-small-latest",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/openai/gpt-5.6-luna": {
+    "llm-router-local/openai/gpt-5.6-luna": {
       "enabled": false,
       "shortname": "gpt-5.6-luna",
       "display_name": "gpt-5.6-luna",
@@ -5125,12 +3388,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "openai/gpt-5.6-luna",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/openai/gpt-5.6-sol": {
+    "llm-router-local/openai/gpt-5.6-sol": {
       "enabled": false,
       "shortname": "gpt-5.6-sol",
       "display_name": "gpt-5.6-sol",
@@ -5141,12 +3404,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "openai/gpt-5.6-sol",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/openai/gpt-5.6-terra": {
+    "llm-router-local/openai/gpt-5.6-terra": {
       "enabled": false,
       "shortname": "gpt-5.6-terra",
       "display_name": "gpt-5.6-terra",
@@ -5157,12 +3420,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "openai/gpt-5.6-terra",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/openrouter/openai/gpt-5.6-luna": {
+    "llm-router-local/openrouter/openai/gpt-5.6-luna": {
       "enabled": false,
       "shortname": "gpt-5.6-luna",
       "display_name": "gpt-5.6-luna",
@@ -5173,12 +3436,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "openrouter/openai/gpt-5.6-luna",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/openrouter/openai/gpt-5.6-sol": {
+    "llm-router-local/openrouter/openai/gpt-5.6-sol": {
       "enabled": false,
       "shortname": "gpt-5.6-sol",
       "display_name": "gpt-5.6-sol",
@@ -5189,12 +3452,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "openrouter/openai/gpt-5.6-sol",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/openrouter/openai/gpt-5.6-terra": {
+    "llm-router-local/openrouter/openai/gpt-5.6-terra": {
       "enabled": false,
       "shortname": "gpt-5.6-terra",
       "display_name": "gpt-5.6-terra",
@@ -5205,12 +3468,12 @@
       ],
       "raw_formats": [],
       "thinking_format": "none",
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "openrouter/openai/gpt-5.6-terra",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-mini-2602": {
+    "llm-router-local/voxtral-mini-2602": {
       "enabled": false,
       "shortname": "voxtral-mini-2602",
       "display_name": "voxtral-mini-2602",
@@ -5224,12 +3487,12 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-2602",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-mini-latest": {
+    "llm-router-local/voxtral-mini-latest": {
       "enabled": false,
       "shortname": "voxtral-mini-latest",
       "display_name": "voxtral-mini-latest",
@@ -5243,12 +3506,12 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-latest",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-mini-realtime-2602": {
+    "llm-router-local/voxtral-mini-realtime-2602": {
       "enabled": false,
       "shortname": "voxtral-mini-realtime-2602",
       "display_name": "voxtral-mini-realtime-2602",
@@ -5262,12 +3525,12 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-realtime-2602",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-mini-realtime-latest": {
+    "llm-router-local/voxtral-mini-realtime-latest": {
       "enabled": false,
       "shortname": "voxtral-mini-realtime-latest",
       "display_name": "voxtral-mini-realtime-latest",
@@ -5281,12 +3544,12 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-realtime-latest",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-mini-transcribe-realtime-2602": {
+    "llm-router-local/voxtral-mini-transcribe-realtime-2602": {
       "enabled": false,
       "shortname": "voxtral-mini-transcribe-realtime-2602",
       "display_name": "voxtral-mini-transcribe-realtime-2602",
@@ -5300,12 +3563,12 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-transcribe-realtime-2602",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-mini-tts-2603": {
+    "llm-router-local/voxtral-mini-tts-2603": {
       "enabled": false,
       "shortname": "voxtral-mini-tts-2603",
       "display_name": "voxtral-mini-tts-2603",
@@ -5319,12 +3582,12 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-tts-2603",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-mini-tts-latest": {
+    "llm-router-local/voxtral-mini-tts-latest": {
       "enabled": false,
       "shortname": "voxtral-mini-tts-latest",
       "display_name": "voxtral-mini-tts-latest",
@@ -5338,12 +3601,12 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-tts-latest",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-small-2507": {
+    "llm-router-local/voxtral-small-2507": {
       "enabled": false,
       "shortname": "voxtral-small-2507",
       "display_name": "voxtral-small-2507",
@@ -5357,12 +3620,12 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-small-2507",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     },
-    "llm-router/voxtral-small-latest": {
+    "llm-router-local/voxtral-small-latest": {
       "enabled": false,
       "shortname": "voxtral-small-latest",
       "display_name": "voxtral-small-latest",
@@ -5376,123 +3639,9 @@
       "max_output": 4096,
       "inference": {},
       "raw_formats": [],
-      "provider": "llm-router",
+      "provider": "llm-router-local",
       "base_model_id": "voxtral-small-latest",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "llm-router/whisper-base": {
-      "enabled": false,
-      "shortname": "whisper-base",
-      "display_name": "whisper-base",
-      "icon": "🎤",
-      "priority": 30,
-      "capabilities": [
-        "audio_transcription"
-      ],
-      "thinking_format": "none",
-      "max_context": 0,
-      "max_output": 0,
-      "inference": {},
-      "raw_formats": [],
-      "provider": "llm-router",
-      "base_model_id": "whisper-base",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "llm-router/whisper-large-v3": {
-      "enabled": false,
-      "shortname": "whisper-large-v3",
-      "display_name": "whisper-large-v3",
-      "icon": "🎤",
-      "priority": 30,
-      "capabilities": [
-        "audio_transcription"
-      ],
-      "thinking_format": "none",
-      "max_context": 0,
-      "max_output": 0,
-      "inference": {},
-      "raw_formats": [],
-      "provider": "llm-router",
-      "base_model_id": "whisper-large-v3",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "llm-router/whisper-large-v3-turbo": {
-      "enabled": false,
-      "shortname": "whisper-large-v3-turbo",
-      "display_name": "whisper-large-v3-turbo",
-      "icon": "🎤",
-      "priority": 30,
-      "capabilities": [
-        "audio_transcription"
-      ],
-      "thinking_format": "none",
-      "max_context": 0,
-      "max_output": 0,
-      "inference": {},
-      "raw_formats": [],
-      "provider": "llm-router",
-      "base_model_id": "whisper-large-v3-turbo",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "llm-router/whisper-medium": {
-      "enabled": false,
-      "shortname": "whisper-medium",
-      "display_name": "whisper-medium",
-      "icon": "🎤",
-      "priority": 30,
-      "capabilities": [
-        "audio_transcription"
-      ],
-      "thinking_format": "none",
-      "max_context": 0,
-      "max_output": 0,
-      "inference": {},
-      "raw_formats": [],
-      "provider": "llm-router",
-      "base_model_id": "whisper-medium",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "llm-router/whisper-small": {
-      "enabled": false,
-      "shortname": "whisper-small",
-      "display_name": "whisper-small",
-      "icon": "🎤",
-      "priority": 30,
-      "capabilities": [
-        "audio_transcription"
-      ],
-      "thinking_format": "none",
-      "max_context": 0,
-      "max_output": 0,
-      "inference": {},
-      "raw_formats": [],
-      "provider": "llm-router",
-      "base_model_id": "whisper-small",
-      "profile": "balanced",
-      "_caps_canonical": true
-    },
-    "llm-router/whisper-tiny": {
-      "enabled": false,
-      "shortname": "whisper-tiny",
-      "display_name": "whisper-tiny",
-      "icon": "🎤",
-      "priority": 30,
-      "capabilities": [
-        "audio_transcription"
-      ],
-      "thinking_format": "none",
-      "max_context": 0,
-      "max_output": 0,
-      "inference": {},
-      "raw_formats": [],
-      "provider": "llm-router",
-      "base_model_id": "whisper-tiny",
-      "profile": "balanced",
+      "profile": "speed",
       "_caps_canonical": true
     }
   },
@@ -5941,7 +4090,37 @@
     "~moonshotai/kimi-latest",
     "~openai/gpt-latest",
     "~openai/gpt-mini-latest",
-    "openai/gpt-4o"
+    "openai/gpt-4o",
+    "llm-router/deepseek-v4-flash",
+    "llm-router/deepseek-v4-pro",
+    "llm-router/gemma-4-12B-it-qat-oQ4-fp16",
+    "llm-router/glm-5.2",
+    "llm-router/k3",
+    "llm-router/kimi-k2.6",
+    "llm-router/mistral-medium-3.5",
+    "llm-router/mistral-ocr-latest",
+    "llm-router/mistral-small-latest",
+    "llm-router/openai/gpt-5.6-luna",
+    "llm-router/openai/gpt-5.6-sol",
+    "llm-router/openai/gpt-5.6-terra",
+    "llm-router/openrouter/openai/gpt-5.6-luna",
+    "llm-router/openrouter/openai/gpt-5.6-sol",
+    "llm-router/openrouter/openai/gpt-5.6-terra",
+    "llm-router/voxtral-mini-2602",
+    "llm-router/voxtral-mini-latest",
+    "llm-router/voxtral-mini-realtime-2602",
+    "llm-router/voxtral-mini-realtime-latest",
+    "llm-router/voxtral-mini-transcribe-realtime-2602",
+    "llm-router/voxtral-mini-tts-2603",
+    "llm-router/voxtral-mini-tts-latest",
+    "llm-router/voxtral-small-2507",
+    "llm-router/voxtral-small-latest",
+    "llm-router/whisper-base",
+    "llm-router/whisper-large-v3",
+    "llm-router/whisper-large-v3-turbo",
+    "llm-router/whisper-medium",
+    "llm-router/whisper-small",
+    "llm-router/whisper-tiny"
   ],
   "gdpr_scanner": {
     "enabled": false,
