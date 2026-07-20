@@ -1519,6 +1519,11 @@ preamble goes in first-user-message instead.
   (email/IBAN/date, no angle brackets) stream in several deltas, and
   emitting the fake prefix early was irreversible: table cells showed
   fakes live while the persisted reply was correct (chat 80494e34).
+  9.383.3: `metadata.text_rounds` (the per-round segments the reload
+  reconstruction PREFERS over content on multi-round turns) is now
+  de-anonymised at persist time too (`_deanonymize_text_rounds`) — it came
+  raw out of the loop result, so tables in tool-using turns kept showing
+  fakes even after a reload (same chat, third layer).
 - **Dispatch symmetry (9.336.0, L3)**: in anonymising sessions the tool
   boundary is now symmetric — the model thinks in pseudonyms, the tools work
   on raw data. (a) **Args-deanonymisation**: at tool dispatch

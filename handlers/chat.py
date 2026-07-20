@@ -1888,6 +1888,30 @@ def deliver_background_group(session_id: str, group_id: str, members: list) -> b
 # there is no scan output left to filter.
 
 
+def _deanonymize_text_rounds(rounds, mapping_id):
+    """De-anonymise the per-round segment texts (metadata.text_rounds) with
+    the turn's mapping. The segments come RAW out of the loop result
+    (text_segments) while the canonical reply content is restored before
+    persisting — without this, the reload reconstruction (which PREFERS
+    text_rounds over content for multi-round turns) shows the fakes forever
+    (chat 80494e34: the table cells). Mutates in place; no-op without a
+    live mapping. Best-effort — a failure keeps the raw segments (reply
+    content stays the restored source of truth)."""
+    if not rounds or not mapping_id:
+        return rounds
+    try:
+        m = pseudonymizer.get_mapping(mapping_id)
+        if m is None:
+            return rounds
+        for r in rounds:
+            t = r.get("text") or ""
+            if t:
+                r["text"], _ = pseudonymizer.deanonymize_text(t, mapping=m)
+    except Exception:
+        pass
+    return rounds
+
+
 def _latest_decisions_by_value(decisions):
     """Resolve the pii_decisions ledger PER VALUE (whitespace-collapsed,
     lowercased), newest row wins ACROSS rule_ids.
@@ -5338,11 +5362,14 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         try:
                             _segs = _result.get("text_segments") or []
                             if len(_segs) > 1:
-                                msg_metadata["text_rounds"] = [
-                                    {"round": int(s.get("round", 0) or 0),
-                                     "text": s.get("text", "") or ""}
-                                    for s in _segs if (s.get("text") or "").strip()
-                                ]
+                                msg_metadata["text_rounds"] = \
+                                    _deanonymize_text_rounds(
+                                        [{"round": int(s.get("round", 0) or 0),
+                                          "text": s.get("text", "") or ""}
+                                         for s in _segs
+                                         if (s.get("text") or "").strip()],
+                                        getattr(session, "_gdpr_mapping_id",
+                                                "") or "")
                         except Exception:
                             pass
                         # Leftover thinking deltas that never got a thinking_done (truncated

@@ -199,6 +199,35 @@ class TestStreamingDeanonymizer(unittest.TestCase):
         finally:
             ps.close_mapping(mapping.mapping_id)
 
+    def test_text_rounds_are_deanonymized(self):
+        """Chat 80494e34 (screenshot): metadata.text_rounds came RAW out of
+        the loop result while the reply content was restored — the reload
+        reconstruction PREFERS text_rounds for multi-round turns, so the
+        table showed fakes (incl. a naked opaque token) forever."""
+        mapping = ps.new_mapping()
+        mapping.forward["bonnie.stark@example.com"] = "maria.taylor@example.com"
+        mapping.reverse["maria.taylor@example.com"] = "bonnie.stark@example.com"
+        mapping.forward["943 476 5919"] = "<HEALTH_INSURANCE_CTX_1_7392>"
+        mapping.reverse["<HEALTH_INSURANCE_CTX_1_7392>"] = "943 476 5919"
+        try:
+            rounds = [
+                {"round": 1, "text": "Ich prüfe die Wissensbasis."},
+                {"round": 2, "text": "| E-Mail | maria.taylor@example.com |\n"
+                                     "| NHS | <HEALTH_INSURANCE_CTX_1_7392> |"},
+            ]
+            out = self.chat_mod._deanonymize_text_rounds(
+                rounds, mapping.mapping_id)
+            self.assertIn("bonnie.stark@example.com", out[1]["text"])
+            self.assertIn("943 476 5919", out[1]["text"])
+            self.assertNotIn("maria.taylor", out[1]["text"])
+            self.assertNotIn("<HEALTH_INSURANCE", out[1]["text"])
+            # No mapping / unknown id = strict no-op.
+            raw = [{"round": 1, "text": "x maria.taylor@example.com"}]
+            self.assertEqual(
+                self.chat_mod._deanonymize_text_rounds(raw, "nope"), raw)
+        finally:
+            ps.close_mapping(mapping.mapping_id)
+
     def test_final_text_returns_full_deanonymized(self):
         mapping = ps.new_mapping()
         mapping.forward["alice@example.com"] = "<EMAIL_1_aaaa>"

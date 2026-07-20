@@ -43,11 +43,12 @@ CURATED_CHANGELOG: list[dict] = [
                 "anonymisiertes Geburtsdatum wird in der Antwort jetzt auch "
                 "dann korrekt zurückübersetzt, wenn der Assistent es "
                 "umformatiert oder hervorhebt (z. B. fett gedruckt) — und "
-                "die LIVE mitlaufende Antwort zeigt Ihre echten Werte jetzt "
-                "auch in Tabellen sofort korrekt an (zuvor erschienen dort "
-                "bis zum Neuladen die Ersatzwerte).",
+                "die Antwort zeigt Ihre echten Werte jetzt auch in Tabellen "
+                "zuverlässig an: sowohl live während des Schreibens als "
+                "auch nach einem Neuladen (zuvor konnten in Antworten mit "
+                "Werkzeug-Schritten dauerhaft Ersatzwerte stehen bleiben).",
         "audience": "user",
-        "versions": ["9.383.0", "9.383.1", "9.383.2"],
+        "versions": ["9.383.0", "9.383.1", "9.383.2", "9.383.3"],
     },
     {
         "version": "9.382.0",
