@@ -837,6 +837,48 @@ def scan_text(text: str, *, lang: str = "de",
                 taken.append((ent.start_char, ent.end_char))
                 if len(findings) >= max_findings:
                     break
+
+    # ── German genitive expansion (9.383.9) ──────────────────────────────────
+    # spaCy tags "Thomas Webers" but drops "Bonnie Starks" — genitive recall is
+    # inconsistent (no lemmatizer; deliberately disabled at load). For each
+    # DETECTED name, add its genitive surface form ("<name>s") wherever it
+    # appears in the text and isn't already covered, tagged so the faker keeps
+    # the trailing 's' (name_gen → shape fake is the fake name + 's'; the exact
+    # nominative reverse then can't collide with the genitive). FP-safe: only
+    # extends spans already confirmed as names, word-bounded.
+    if findings and len(findings) < max_findings:
+        _name_finds = [f for f in findings if f["rule_id"] == "name"]
+        _covered = [(f["start"], f["end"]) for f in findings]
+        _extra: list[dict] = []
+        for f in _name_finds:
+            base = text[f["start"]:f["end"]]
+            if not base or base.endswith("s"):
+                continue
+            # German genitive of a proper name = name + 's' (whole span, and the
+            # given+surname-s form). Both point at the SAME person; the faker
+            # (rule_id 'name_gen') appends 's' to the fake so nominative and
+            # genitive get distinct, non-colliding fakes.
+            cands = {base + "s"}
+            toks = base.split()
+            if len(toks) >= 2 and not toks[-1].endswith("s"):
+                cands.add(" ".join(toks[:-1] + [toks[-1] + "s"]))
+            for cand in cands:
+                for m in _re.finditer(
+                        r"(?<!\w)" + _re.escape(cand) + r"(?!\w)", text):
+                    s, e = m.start(), m.end()
+                    if any(s < ce and e > cs for cs, ce in _covered):
+                        continue
+                    _covered.append((s, e))
+                    _extra.append({
+                        "rule_id": "name_gen",
+                        "label": _LABEL_DISPLAY["name"],
+                        "start": s, "end": e, "len": e - s,
+                        "category": PII_RULE_CATEGORIES.get("name", "contact"),
+                        "source": "ner_genitive",
+                    })
+                    if len(findings) + len(_extra) >= max_findings:
+                        break
+        findings.extend(_extra)
     return findings
 
 
@@ -920,6 +962,8 @@ PII_RULE_CATEGORIES: dict[str, str] = {
     # who want stricter handling flip the category to warn/block in Settings.
     # rule_ids minted in engine/pii_ner.py — keep in sync.
     "name": "contact",
+    # German genitive of a name (9.383.9) — same category/handling as `name`.
+    "name_gen": "contact",
     # address moves to 'personal' (warn) but only fires when person-name-gated
     # — see the address context gate in _pii_scan_text. organisation moves to
     # business_id (above). name stays contact/ignore (noisy sm-model PER tags).
@@ -1019,6 +1063,7 @@ PII_RULE_LABELS: dict[str, str] = {
     "health_insurance_ctx": "Krankenversicherungsnummer (wahrscheinlich)",
     # Server-only (spaCy NER, German)
     "name": "Name (spaCy NER, Deutsch)",
+    "name_gen": "Name (Genitiv, spaCy NER, Deutsch)",
     "address": "Adresse / Ort (spaCy NER, Deutsch)",
     "organisation": "Organisation (spaCy NER, Deutsch)",
     "bare_identifier": "Reiner numerischer Bezeichner",

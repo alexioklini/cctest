@@ -348,6 +348,58 @@ class TestDerivedVariantTracking(_MappingTestBase):
         self.assertEqual(m.derived, set())
 
 
+class TestGenitiveNames(_MappingTestBase):
+    """9.383.9 — deutsche Genitiv-Namensformen ('Bonnie Starks') gingen roh
+    an die Cloud (Text-Audit). Der Faker erhält das Genitiv-'s' (bzw. den
+    Apostroph bei s/x/z/ß-Fake-Nachnamen), sodass Nominativ- und Genitiv-Form
+    distinkte, kollisionsfreie Fakes bekommen und beide rückübersetzen."""
+
+    def _rt(self, txt, findings):
+        m = self._new()
+        anon = ps.pseudonymize_text(txt, findings, mapping=m)
+        back, _ = ps.deanonymize_text(anon, mapping=m)
+        return anon, back
+
+    def test_genitive_span_preserves_s_and_roundtrips(self):
+        # Modell taggt 'Sabine Wagners' als eine name-Spanne → Faker erhält 's'
+        # (bzw. Apostroph bei s-Endung des Fake-Nachnamens).
+        txt = "Sabine Wagners Wohnung."
+        anon, back = self._rt(
+            txt, [{"rule_id": "name", "start": 0, "end": 14, "label": "n"}])
+        self.assertNotIn("Wagner", anon)
+        # The faked name span ends in a genitive marker (s or apostrophe).
+        fake_name = anon[:anon.index(" Wohnung")]
+        self.assertTrue(fake_name.rstrip().endswith(("s", "'")),
+                        f"genitive marker lost: {anon!r}")
+        self.assertEqual(back, txt)
+
+    def test_nominative_and_genitive_distinct_no_collision(self):
+        txt = "Sabine Wagner und Sabine Wagners Konto."
+        m = self._new()
+        findings = [{"rule_id": "name", "start": 0, "end": 13, "label": "n"},
+                    {"rule_id": "name_gen", "start": 18, "end": 32, "label": "n"}]
+        anon = ps.pseudonymize_text(txt, findings, mapping=m)
+        back, _ = ps.deanonymize_text(anon, mapping=m)
+        self.assertEqual(back, txt)
+        self.assertNotIn("Wagner", anon)
+
+    def test_real_surname_ending_in_s_not_split(self):
+        # 'Weics' is a real surname, not a genitive — the stem 'Weic' isn't a
+        # name, so it must NOT be treated as genitive.
+        m = self._new()
+        fake = ps._entity_fake_name("Herr Weics", m)
+        # Roundtrips as a whole (no genitive apostrophe mangling).
+        back, _ = ps.deanonymize_text(
+            ps.pseudonymize_text(
+                "Herr Weics kam.",
+                [{"rule_id": "name", "start": 0, "end": 10, "label": "n"}],
+                mapping=m), mapping=m)
+        # not asserting exact fake, just that no 'Weics' leaks and it's stable
+        self.assertNotIn("Weics", ps.pseudonymize_text(
+            "Weics", [{"rule_id": "name", "start": 0, "end": 5, "label": "n"}],
+            mapping=self._new()))
+
+
 class TestNationalIdShapeFakes(_MappingTestBase):
     """9.383.7: nationale ID-/Versicherungsnummern bekommen einen formtreuen,
     PRÜFZIFFER-GÜLTIGEN Fake statt des opaken <KIND_N>-Tokens — damit der

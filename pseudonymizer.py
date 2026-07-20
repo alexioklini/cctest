@@ -95,6 +95,9 @@ SHAPE_PRESERVING: frozenset[str] = frozenset({
     "passport",
     "passport_ctx_loose",
     "mrz",
+    # German genitive of a name ('Bonnie Starks') — faked via the entity layer
+    # with the trailing 's' preserved (9.383.9).
+    "name_gen",
 })
 
 
@@ -776,6 +779,30 @@ def _register_entity_variants(mapping: Mapping, ent: dict) -> None:
 
 
 def _entity_fake_name(original: str, mapping: Mapping) -> str:
+    # German genitive the model itself tagged as one span ('Sabine Wagners'):
+    # render_variant drops the trailing 's' (it renders the nominative fake),
+    # so the reverse would restore the nominative and lose the genitive. Detect
+    # a genitive stem (span whose 's'-stripped form is a known/parseable name)
+    # and re-append the genitive marker to the fake (9.383.9).
+    o = original.rstrip()
+    if o.endswith("s") and len(o.split()) >= 2 and not o.endswith("ss"):
+        stem = o[:-1]
+        # Only treat as genitive when the STEM parses as a name (avoids eating a
+        # real surname that ends in 's' like 'Weics' → stem 'Weic').
+        try:
+            _sur, _giv = _identity.guess_structure(stem)
+        except Exception:
+            _sur = None
+        if _sur and _NAME_TOKEN_OK_RE.match(_sur):
+            fake_nom = _entity_fake_name(stem, mapping)
+            if fake_nom and fake_nom != stem:
+                gen = (fake_nom + "'"
+                       if fake_nom[-1:].lower() in ("s", "x", "z", "ß")
+                       else fake_nom + "s")
+                # Register the genitive pair so the reverse restores it exactly.
+                if o not in mapping.forward and gen not in mapping.reverse:
+                    mapping.record(o, gen, "name", count=False)
+                return gen
     ent = _entity_find(mapping, original)
     if ent is None:
         ent = _entity_create(mapping, original)
@@ -786,6 +813,26 @@ def _entity_fake_name(original: str, mapping: Mapping) -> str:
         ent["fake_sur"], ent["fake_givens"])
     _register_entity_variants(mapping, ent)
     return fake
+
+
+def _entity_fake_name_gen(original: str, mapping: Mapping) -> str | None:
+    """German genitive of a name ('Bonnie Starks'): fake the NOMINATIVE stem
+    via the entity layer, then re-append the genitive 's' so the fake is a
+    genitive too ('Riley Roberts' + 's'). Keeping the trailing 's' means the
+    nominative reverse key ('Riley Roberts') can't collide with the genitive
+    form (9.383.9). Returns None if the stem doesn't strip cleanly."""
+    o = original.rstrip()
+    if not o.endswith("s"):
+        return None
+    nom = o[:-1]  # drop the genitive 's' → nominative stem
+    fake_nom = _entity_fake_name(nom, mapping)
+    if not fake_nom or fake_nom == nom:
+        return None
+    # German proper-name genitive: '<name>s', but '<name>'' (apostrophe) when
+    # the name already ends in an s/x/z/ß sibilant.
+    if fake_nom[-1:].lower() in ("s", "x", "z", "ß"):
+        return fake_nom + "'"
+    return fake_nom + "s"
 
 
 # ---------------------------------------------------------------------------
@@ -987,6 +1034,19 @@ def _seed_entities_in_text_order(text: str, findings: list[dict],
             form = _mrz_name_form(val) if rid == "mrz" else val
             if not form:
                 continue
+            # Seed the NOMINATIVE stem of a genitive span ('Sabine Wagners' →
+            # 'Sabine Wagner'), so the entity is 'wagner' not 'wagners' and the
+            # genitive gets its 's'-preserving fake at render time (9.383.9).
+            # Only when the stem parses as a name (not a real -s surname).
+            if rid == "name" and form.endswith("s") and not form.endswith("ss") \
+                    and len(form.split()) >= 2:
+                _stem = form[:-1]
+                try:
+                    _su, _ = _identity.guess_structure(_stem)
+                except Exception:
+                    _su = None
+                if _su and _NAME_TOKEN_OK_RE.match(_su):
+                    form = _stem
             ent = _entity_find(mapping, form)
             if ent is None:
                 ent = _entity_create(mapping, form)
@@ -1363,6 +1423,7 @@ _ENTITY_GENERATORS: dict[str, Callable[[str, "Mapping"], str | None]] = {
     "mrz": _fake_mrz,
     "dob": _entity_fake_dob,
     "date": _entity_fake_dob,
+    "name_gen": _entity_fake_name_gen,
 }
 
 
