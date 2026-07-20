@@ -315,6 +315,60 @@ _ADDR_NOUN_SUFFIX = _re.compile(
     r"maßnahmen|konzept|konzepts|projekt|projekts|projektes)$", _re.IGNORECASE)
 
 
+# A PLZ immediately BEFORE the toponym ("50667 Köln", "8002 Zürich") — the city
+# is then the tail of a full postal address, not a bare mention. 4-5 digits + a
+# space right before the span. This is the one context where a bare city name IS
+# identifying address PII (chat 80494e34 leaked 'Köln'/'München'/'Stuttgart').
+_ADDR_PLZ_BEFORE = _re.compile(r"\b\d{4,5}\s*$")
+
+# A residence verb/keyword just before a bare toponym makes it an ADDRESS, not a
+# generic geo mention ("wohnt in München" = PII; "Konferenz in Berlin" = not).
+# Person-name proximity ("Peter Schulz … München") also qualifies — the city is
+# the person's location. Both keep 'Meeting in Köln' / 'expandieren nach Berlin'
+# free (no residence verb, no adjacent person). (9.383.8, user-chosen scope.)
+_ADDR_RESIDENCE_CTX = _re.compile(
+    r"\b(?:wohnt|wohnhaft|wohnen|lebt|leben|ansässig|Wohnsitz|Wohnort|"
+    r"Anschrift|Adresse|residiert|niedergelassen|domiciled|resides?|"
+    r"living|lives)\b[^.!?\n]{0,40}$", _re.IGNORECASE)
+# A capitalised Vorname+Nachname (optionally genitive 's) followed by a
+# LOCATIVE preposition and then the city: 'Frau Stark aus Köln', 'Sabine Wagner
+# in Stuttgart'. The 'aus/in/bei/zu' between person and city is what marks a
+# residence rather than a bare enumeration ('Kovachki, Bulgaria' — comma, no
+# preposition — must NOT qualify; that is an adverse-media toponym, the
+# test_english_person FP mode). Anchored so the city sits right after.
+_ADDR_PERSON_BEFORE = _re.compile(
+    r"[A-ZÄÖÜ][a-zäöüß]+(?:-[A-ZÄÖÜ][a-zäöüß]+)?\s+"
+    r"[A-ZÄÖÜ][a-zäöüß]+s?\b[^.!?\n]{0,40}?\b(?:aus|in|bei|zu)\s+$",
+    _re.IGNORECASE)
+# Movement/travel verbs turn 'Person … Stadt' into a trip, NOT a residence
+# ('Peter Schulz flog nach Berlin'). When one sits between the person and the
+# city, the person-proximity branch does NOT qualify the toponym (the residence
+# branch still can, via its own verb list — but 'flog' isn't in it).
+_ADDR_MOVEMENT_VERB = _re.compile(
+    r"\b(?:flog|fliegt|fliegen|reiste|reist|reisen|fuhr|fährt|fahren|"
+    r"ging|geht|kam|kommt|kommen|besuchte|besucht|besuchen|"
+    r"nach|von|über|Richtung|unterwegs|Reise|Flug|Urlaub|Termin|"
+    r"Konferenz|Meeting|Messe|Tagung)\b", _re.IGNORECASE)
+
+
+def _addr_has_postal_anchor(start: int, end: int, text: str) -> bool:
+    """A full-postal-address signal for a LOC span: a house number right after
+    the street name, or a PLZ immediately before/after (9.383.8). Used by the
+    person-proximity gate to admit a real postal address that has no person
+    name in the sentence ('Wohnhaft Musterstraße 12, 50667 Köln')."""
+    after = text[end:end + 30]
+    if _ADDR_HOUSE_NO.search(after):
+        return True
+    m = _ADDR_PLZ.search(after)
+    if m and not _ADDR_REF_NUM.search(after[max(0, m.start() - 6):m.end()]):
+        return True
+    before = text[max(0, start - 8):start]
+    if _ADDR_PLZ_BEFORE.search(before) \
+            and not _ADDR_REF_NUM.search(text[max(0, start - 14):start]):
+        return True
+    return False
+
+
 def _passes_address_precision_gate(value: str, text: str, start: int) -> bool:
     v = value.strip()
     # Reject a lone abstract noun mislabelled as a place (single token, no space).
@@ -329,6 +383,24 @@ def _passes_address_precision_gate(value: str, text: str, start: int) -> bool:
     # distinctive), but only if it isn't a reference number like "§ 25".
     m = _ADDR_PLZ.search(after)
     if m and not _ADDR_REF_NUM.search(after[max(0, m.start() - 6):m.end()]):
+        return True
+    # A PLZ immediately BEFORE the toponym ("…, 50667 Köln") makes the city the
+    # tail of a postal address → identifying (9.383.8). The number just before
+    # must not be a §/Nr. reference either.
+    before = text[max(0, start - 8):start]
+    if _ADDR_PLZ_BEFORE.search(before) \
+            and not _ADDR_REF_NUM.search(text[max(0, start - 14):start]):
+        return True
+    # A residence verb OR an adjacent person name before a bare toponym makes it
+    # an identifying address (9.383.8, user-chosen scope). Wider window; keeps
+    # generic geo mentions ('Konferenz in Berlin') free.
+    ctx = text[max(0, start - 80):start]
+    if _ADDR_RESIDENCE_CTX.search(ctx):
+        return True
+    # Person adjacency qualifies only WITHOUT a movement verb in between
+    # (residence, not a trip): 'Frau Stark aus Köln' yes, 'Schulz flog nach
+    # Berlin' no. The residence branch above already caught explicit 'wohnt/lebt'.
+    if _ADDR_PERSON_BEFORE.search(ctx) and not _ADDR_MOVEMENT_VERB.search(ctx):
         return True
     return False
 
@@ -1092,7 +1164,15 @@ def _pii_rules() -> list[dict]:
 
     def _phone_ok(m: str) -> bool:
         d = _digits(m)
-        return 8 <= len(d) <= 15
+        if not (8 <= len(d) <= 15):
+            return False
+        # A run of identical digits or a plain ascending/descending sequence is
+        # almost always an ID / example filler ('123456789', '00000000'), not a
+        # phone — the broadened national branch below would otherwise over-match
+        # such runs. A real number has some digit variety.
+        if len(set(d)) <= 2:
+            return False
+        return True
 
     def _mrz_line_ok(m: str) -> bool:
         # Structural validator (L2b): data line = number(9) chk nat(3)
@@ -1597,8 +1677,23 @@ def _pii_rules() -> list[dict]:
          "ok": _cc_ok},
 
         # ── Phone (after national IDs) ──
+        # Three branches (9.383.8 broadened the national coverage — the old
+        # two branches missed German national formats with '/', parens and
+        # 2-group forms: '0171/2345678', '(0171) 234 56 78', '030 12345678',
+        # '0201-1234567'). Separators now include slash + parens; `_phone_ok`
+        # (8-15 digits, ≥3 distinct) rejects ID/filler over-matches.
+        #   A: international '+…'  (unchanged)
+        #   B: 3-group national '030 12 34 56' style (unchanged shape, wider seps)
+        #   C: German national leading-0 area code + subscriber, one separator
+        #      run (space/slash/dash/parens): '0171/2345678', '030 12345678',
+        #      '0201-1234567', '(0171) 234 56 78'.
         {"id": "phone", "label": "Phone number",
-         "re": _re.compile(r"(?:(?<![\w.])\+\d{1,3}[\s().-]?(?:\d[\s().-]?){7,14}\d|(?<!\d)\d{3}[\s.-]\d{3,4}[\s.-]\d{3,4}(?!\d))"),
+         "re": _re.compile(
+             r"(?:"
+             r"(?<![\w.])\+\d{1,3}[\s()./-]?(?:\d[\s()./-]?){7,14}\d"
+             r"|(?<!\d)\d{3}[\s./-]\d{3,4}[\s./-]\d{3,4}(?!\d)"
+             r"|(?<![\w.])\(?0\d{2,5}\)?[\s./-]?\d{2,4}(?:[\s./-]?\d{2,4}){0,3}(?!\d)"
+             r")"),
          "ok": _phone_ok},
 
         # ── Machine-readable zone (ICAO 9303) — L2b. Whole OCR line of MRZ
@@ -2332,12 +2427,19 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     for f in findings:
         rid = f.get("rule_id")
         if rid == "address":
-            # Only a person-linked address is personal data. Record the gap to
-            # the nearest person name as a confidence signal (closer = stronger).
-            d = _name_distance(f["start"], f["end"], name_spans)
-            if d is None or d > _prox:
-                continue
-            f["_ctx_dist"] = d
+            # A FULL postal address (street + house no / PLZ adjacent to the
+            # span) is identifying on its own — no person name required
+            # (9.383.8: 'Wohnhaft Musterstraße 12, 50667 Köln' has no name in
+            # the sentence but is clearly an address). `_addr_has_postal_anchor`
+            # mirrors the precision gate's street/PLZ signals. Otherwise fall
+            # back to person-name proximity (a bare city needs a nearby person).
+            if _addr_has_postal_anchor(f["start"], f["end"], text):
+                f["_ctx_dist"] = 0
+            else:
+                d = _name_distance(f["start"], f["end"], name_spans)
+                if d is None or d > _prox:
+                    continue
+                f["_ctx_dist"] = d
         elif rid == "date":
             # A bare date is not PII; keep ONLY dates with a real birth/life-
             # event keyword nearby (geboren/Geburtstag/born/heirat/…). Person-

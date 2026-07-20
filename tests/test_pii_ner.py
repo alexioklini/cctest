@@ -765,5 +765,66 @@ class TestNERFalsePositiveHardening(unittest.TestCase):
                             f"real calibration name dropped: {name} → {pii}")
 
 
+class TestPhoneAndAddressRecall(unittest.TestCase):
+    """9.383.8 — reiner-Text-Audit: deutsche Telefonformate + Ortsnamen in
+    Adress-Kontext, die zuvor im Klartext an die Cloud gingen (Text-Audit
+    über den echten Scan-Pfad)."""
+
+    @classmethod
+    def setUpClass(cls):
+        pii_ner.load_models(("de", "en"))
+        import brain
+        cls.brain = brain
+
+    _CFG = {"enabled": True, "name_precision_gate": True,
+            "confidence_lower": 0.0, "confidence_upper": 1.0,
+            "rule_overrides": {"phone": "warn", "address": "warn",
+                               "name": "warn"},
+            "categories": {"contact": {"action": "warn"},
+                           "personal": {"action": "warn"},
+                           "business_id": {"action": "warn"}}}
+
+    def _rids(self, text, rid):
+        return {text[f["start"]:f["end"]] for f in
+                self.brain._pii_scan_text(text, cfg=self._CFG)
+                if f["rule_id"] == rid}
+
+    def test_german_phone_formats(self):
+        for num in ("0171/2345678", "(0171) 234 56 78", "030 12345678",
+                    "0201-1234567", "+49 171 2345678", "0800 1234567"):
+            got = self._rids(f"Erreichbar unter {num} bitte.", "phone")
+            self.assertTrue(any(num in g or g in num for g in got),
+                            f"phone format not detected: {num} → {got}")
+
+    def test_phone_not_id_or_reference(self):
+        # A run of one digit / a §-reference must NOT become a phone.
+        for neg in ("Rechnung 00000000", "§ 25 Abs. 3", "Los 11111111"):
+            self.assertEqual(self._rids(f"{neg} steht da.", "phone"), set(),
+                             f"false phone on: {neg}")
+
+    def test_city_after_plz_is_address(self):
+        got = self._rids(
+            "Wohnhaft Musterstraße 12, 50667 Köln.", "address")
+        self.assertIn("Köln", got)
+
+    def test_city_with_person_and_residence_is_address(self):
+        # A city is address PII when a PERSON name is nearby AND a residence
+        # signal ties them (user-chosen scope: person proximity + locative).
+        self.assertIn("München",
+                      self._rids("Peter Schulz lebt in München.", "address"))
+        self.assertIn("Köln",
+                      self._rids("Frau Stark aus Köln meldete sich.", "address"))
+
+    def test_bare_city_mention_not_address(self):
+        # Generic geo mentions stay free (the deliberate FP guard).
+        for txt in ("Die Konferenz fand in Berlin statt.",
+                    "Wir expandieren nach Hamburg.",
+                    "Peter Schulz flog nach Berlin.",
+                    "Adverse media on Hristo Atanasov Kovachki, Bulgaria."):
+            addrs = self._rids(txt, "address")
+            for city in ("Berlin", "Hamburg", "Bulgaria"):
+                self.assertNotIn(city, addrs, f"false address in {txt!r}: {city}")
+
+
 if __name__ == "__main__":
     unittest.main()
