@@ -571,7 +571,7 @@ class API {
   }
 
   // SSE Streaming Chat
-  static async streamChat(sessionId, message, callbacks, model, files, images, gdprAction) {
+  static async streamChat(sessionId, message, callbacks, model, files, images, gdprAction, piiDecisions) {
     if (this._abortController) this._abortController.abort();
     this._abortController = new AbortController();
 
@@ -605,6 +605,11 @@ class API {
     // GDPR modal so the chat worker can pseudonymise / model-swap / pass
     // through. Server validates; unknown values are treated as null.
     if (gdprAction) body.gdpr_action = gdprAction;
+    // Per-finding decision set from the pre-send dialog ([{rule_id, value,
+    // false_positive, action}]) — the worker applies exactly this confirmed
+    // set; on a FIRST send (no session_id when the dialog ran) it's the only
+    // channel the decisions reach the server at all.
+    if (piiDecisions && piiDecisions.length) body.pii_decisions = piiDecisions;
 
     // Deep Research toggle (composer 🔬): when on for this chat, the turn runs
     // the bounded research loop instead of a normal LLM answer and saves a

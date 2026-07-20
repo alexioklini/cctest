@@ -151,9 +151,20 @@ streaming call, per-USER history, fixed read-only tool set. See
     "thinking_level": "off|low|medium|high",
     "web_urls_to_fetch": [{"url": "...", "title": "..."}],  # Websuche basket
     "web_abstract_first": false,  # fetch each curated source as a ~1500-char abstract instead of the full page
-    "pinned_sources_to_read": [{"key": "...", "name": "..."}]  # Quellen-Pinning (project chats, v9.305.0)
+    "pinned_sources_to_read": [{"key": "...", "name": "..."}],  # Quellen-Pinning (project chats, v9.305.0)
+    "gdpr_action": "anonymise|local_model|continue",  # pre-send dialog verdict
+    "pii_decisions": [{"rule_id": "...", "value": "...", "false_positive": false, "action": "anonymise|send|local"}]  # 9.383.0
   }
   ```
+  `pii_decisions` (9.383.0) is this turn's per-finding decision set from the
+  pre-send dialog. The worker is DECISION-DRIVEN: it builds the
+  pseudonymisation mapping from the ledger (`pii_decisions` table) merged
+  with this inline set — it never re-detects. On a FIRST send (no session_id
+  when the dialog ran) the inline set is the only channel; the server also
+  persists it into the ledger. FP-marked values are purged from a reused
+  mapping and stay in the clear. An anonymise turn arriving with NO
+  decisions and an empty mapping triggers a fail-loud guard fallback scan
+  (never a silent cleartext egress).
   When `web_urls_to_fetch` is present, the worker pre-fetches each URL
   fresh at turn time and injects the markdown into a transient wire copy
   of the user message (never persisted). Unless `sessions.allow_further_web`
@@ -585,7 +596,7 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 
 ## GDPR / PII
 
-- `POST /v1/attachments/scan` — `{name, content(b64), media_type}` returns PII findings: aggregated `groups` (count/samples) + per-finding `findings_full` (value/confidence/band/disposition, deduped, cap 200/file + `findings_truncated`) + `worst_disposition` (9.197.0) + `classification` block
+- `POST /v1/attachments/scan` — `{name, content(b64), media_type}` returns PII findings: aggregated `groups` (count/samples) + per-finding `findings_full` (value/confidence/band/disposition, deduped, cap 200/file + `findings_truncated`) + `worst_disposition` (9.197.0) + `classification` block. Since 9.383.0 image/PDF attachments additionally get the checksum-validated MRZ pass (pages 1-3): a verified read emits `mrz_name`/`mrz_passport`/`mrz_dob` findings (real surface value, FP-markable like any finding; placed BEFORE the cap) — an MRZ hit upgrades an otherwise unscannable photo (`media`) to `scanned: true`
 - `POST /v1/gdpr/scan-text` — `{text, full?, raw_detection?, name_precision?}` returns findings; `full:true` adds per-finding `value`/`confidence`/`band`/`disposition` + `worst_disposition`. Server-ONLY PII detector for the typed message (browser scanner removed 9.200.0); the pre-send dialog calls it behind a cancellable progress overlay
 - `GET /v1/services/status` → `gdpr_scanner.catalog` (9.200.0) — `{rule_categories, category_labels, default_category_actions, rule_labels}`, the static PII catalog the client renders the Settings GDPR panel + chat-view labels from (was the deleted browser `PIIScanner` object)
 - `GET /v1/gdpr/ner-models` — admin: list spaCy NER model state

@@ -1882,38 +1882,40 @@ def deliver_background_group(session_id: str, group_id: str, members: list) -> b
             _bg_delivery_inflight.discard(session_id)
 
 
-def _filter_pii_false_positives(findings, text, session_id):
-    """Drop findings whose value the user marked as a FALSE POSITIVE in this
-    chat (pii_decisions). FP values must reach the model in the clear — the user
-    judged them not to be real PII. Match on the finding's substring value,
-    whitespace-collapsed + lowercased (same normalisation the decision used).
-    Fail-open: any error returns the findings unchanged (never lose anonymisation
-    on a lookup bug)."""
-    if not findings or not session_id:
-        return findings
-    try:
-        decided = ChatDB.get_session_pii_decisions(session_id) or {}
-        fp_values = {
-            (d.get("value") or "").strip().lower()
-            for d in decided.values() if d.get("false_positive")
-        }
-        fp_values.discard("")
-        if not fp_values:
-            return findings
-        out = []
-        for f in findings:
-            s, e = f.get("start", 0), f.get("end", 0)
-            val = _re_ws.sub(" ", text[s:e]).strip().lower() if 0 <= s < e <= len(text) else ""
-            if val and val in fp_values:
-                continue  # user said this is not PII — leave it in the clear
-            out.append(f)
-        return out
-    except Exception:
-        return findings
+# `_filter_pii_false_positives` was deleted with the decision-driven worker
+# (GDPR_ALL_CHECKS_PRE_DIALOG_PLAN): FP values simply never enter the mapping
+# (and are purged from a reused one via `pseudonymizer.purge_value`), so
+# there is no scan output left to filter.
 
 
-import re as _re_ws_mod
-_re_ws = _re_ws_mod.compile(r"\s+")
+def _latest_decisions_by_value(decisions):
+    """Resolve the pii_decisions ledger PER VALUE (whitespace-collapsed,
+    lowercased), newest row wins ACROSS rule_ids.
+
+    The ledger is keyed by value_hash = sha256(rule_id|value), so the same
+    VALUE can carry contradictory rows under different rule_ids — the dialog
+    records an FP under `mrz_name` while the turn-end bulk recorder wrote an
+    anonymise row under the mapping's own rule (`name`). Hash-level
+    latest-wins then lets the stale derived row out-vote the user's explicit
+    FP mark (the 912d9199 shadowing class, reproduced live). Per-value
+    recency resolves it: the newest decision for a value governs; an exact
+    timestamp tie prefers the non-FP anonymise row (safety wins — the
+    same-dialog "FP under one rule, confirmed under another" case)."""
+    out: dict[str, dict] = {}
+    for d in (decisions or {}).values():
+        v = (d.get("value") or "").strip()
+        if not d or not v:
+            continue
+        nn = " ".join(v.split()).lower()
+        prev = out.get(nn)
+        if prev is None:
+            out[nn] = d
+            continue
+        ca, pca = (d.get("created_at") or 0), (prev.get("created_at") or 0)
+        if ca > pca or (ca == pca and prev.get("false_positive")
+                        and not d.get("false_positive")):
+            out[nn] = d
+    return out
 
 
 def _apply_pii_decisions_to_wire(messages, decisions):
@@ -1938,11 +1940,14 @@ def _apply_pii_decisions_to_wire(messages, decisions):
     `session.messages` is NOT mutated — only the wire copy handed to the sidecar.
     Returns `(wire_messages, replaced_count, counts_by_rule)`.
     """
-    # Build the original→fake table from anonymise decisions only. Longest
-    # original first so a value that is a substring of another can't be
-    # partially shadowed (e.g. a phone inside an address-like string).
+    # Build the original→fake table from anonymise decisions only — resolved
+    # PER VALUE first (`_latest_decisions_by_value`), so a stale anonymise
+    # row under another rule_id can't out-vote a newer FP/accept decision of
+    # the same value. Longest original first so a value that is a substring
+    # of another can't be partially shadowed (e.g. a phone inside an
+    # address-like string).
     pairs = []
-    for d in (decisions or {}).values():
+    for d in _latest_decisions_by_value(decisions).values():
         if not d or d.get("false_positive"):
             continue
         if d.get("turn_action") != "anonymise":
@@ -3564,7 +3569,7 @@ def _run_deep_research_turn(session, sid, message, live, *, saved_paths=None,
     return {"reply": card, "error": None, "_dr_meta": meta, "_dr_files": _dr_files}
 
 
-def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False, pinned_sources=None, design_context=False):
+def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False, pinned_sources=None, design_context=False, pii_decisions=None):
     """Run one chat turn for `session`, end to end.
 
     Extracted verbatim from the former `_handle_chat.worker()` closure (it
@@ -3929,58 +3934,124 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     ]
                     _anon_ok = False
                     try:
-                        # L5b: MRZ entity seed BEFORE this turn's text scan —
-                        # attached ID-document photos are read structurally
-                        # (checksum-validated MRZ strip) and seed the entity
-                        # map, so the OCR preamble block (L5a), the typed
-                        # text and every later read render onto ONE
-                        # consistent fake identity incl. garble variants.
-                        _mrz_seeded = 0
-                        if saved_paths:
-                            _mrz_seeded = \
-                                engine._gdpr_seed_entities_from_attachments(
-                                    saved_paths, _mapping)
                         _scanner_cfg = engine._get_gdpr_scanner_config()
-                        # Scan ONLY the user-typed slice. The trailing
+                        # Rewrite ONLY the user-typed slice. The trailing
                         # attachment notice (`[User attached files saved to
                         # disk. IMPORTANT: …]\n  - /tmp/…/<filename>`) is
                         # Brain-generated boilerplate + literal disk paths
                         # the LLM needs verbatim to call read_document.
-                        # spaCy NER otherwise misclassifies "IMPORTANT" as
-                        # organisation and filenames as addresses; the
-                        # resulting fake path makes read_document fail with
-                        # "file not found". Splice the notice back onto the
-                        # pseudonymised typed text so the rest of the
-                        # pipeline sees the same shape it always did.
+                        # Splice the notice back onto the pseudonymised
+                        # typed text so the rest of the pipeline sees the
+                        # same shape it always did.
                         _typed, _notice = _split_attachment_notice(
                             nonlocal_message)
-                        _findings = engine._pii_scan_text(
-                            _typed, cfg=_scanner_cfg)
-                        # Honour false-positive decisions: a value the user
-                        # marked "falsch erkannt" in this chat must NOT be
-                        # anonymised. Filter those findings out before
-                        # pseudonymising (matched on the finding's value).
-                        _findings = _filter_pii_false_positives(
-                            _findings, _typed, session.id)
-                        if _findings:
-                            _pseudo = pseudonymizer.pseudonymize_text(
-                                _typed, _findings,
-                                mapping=_mapping, source="chat_text")
-                        else:
-                            _pseudo = _typed
-                        # L5: entity + known-values sweep over the typed
-                        # half (incl. the L5a OCR block) — the German NER
-                        # misses garbled ('PSUSASTARK<<BONNT DCMARTE'),
-                        # reordered ('Stark Bonnie …', the word-order gap)
-                        # and mixed-case forms the MRZ seed / entity
-                        # variants already know. Fuzzy window sweep first
-                        # (renders whole forms), then the word-bounded
-                        # exact sweep; the notice (paths) is out of reach.
-                        # Same complement the tool-result seam applies.
+                        # ── Decision-driven apply (GDPR_ALL_CHECKS_PRE_
+                        # DIALOG_PLAN §C): ALL detection ran pre-dialog
+                        # (scan-text + attachment scan incl. the MRZ pass);
+                        # the dialog is the ONLY place PII is decided. The
+                        # worker builds the mapping from the CONFIRMED
+                        # decision set — no _pii_scan_text here, no MRZ
+                        # seed. FP-marked values never enter the mapping
+                        # (and are purged from a reused one), so they reach
+                        # the model in the clear.
+                        _ledger = {}
+                        try:
+                            _ledger = dict(ChatDB.get_session_pii_decisions(
+                                session.id) or {})
+                        except Exception:
+                            _ledger = {}
+                        # Resolve PER VALUE, newest decision wins across
+                        # rule_ids (`_latest_decisions_by_value` — the ledger
+                        # is hash-keyed and can hold contradictory rows for
+                        # one value; found live). Then overlay this turn's
+                        # dialog outcome (send body): body rows are the
+                        # freshest decision for their value — synchronous, no
+                        # dependency on the client's ledger write having
+                        # landed. Within the same body, confirmed beats FP
+                        # for the same value (safety wins).
+                        _by_val = _latest_decisions_by_value(_ledger)
+                        for _bd in (pii_decisions or []):
+                            _v = (_bd.get("value") or "").strip()
+                            if not _v:
+                                continue
+                            _nn = " ".join(_v.split()).lower()
+                            _prev = _by_val.get(_nn)
+                            if (_prev is not None and _prev.get("_from_body")
+                                    and not _prev.get("false_positive")):
+                                continue  # same-dialog confirm beats FP
+                            _by_val[_nn] = {
+                                "rule_id": (_bd.get("rule_id") or "").strip(),
+                                "value": _v,
+                                "false_positive": bool(
+                                    _bd.get("false_positive")),
+                                "turn_action": (_bd.get("action")
+                                                or "anonymise"),
+                                "_from_body": True,
+                            }
+                        # Partition: mint set (non-FP anonymise decisions)
+                        # vs FP set (purged from a reused mapping below).
+                        _mint = []
+                        _fp_vals = []
+                        for _d in _by_val.values():
+                            _v = _d.get("value") or ""
+                            if _d.get("false_positive"):
+                                _fp_vals.append(_v)
+                            elif _d.get("turn_action") == "anonymise":
+                                _mint.append((_d.get("rule_id") or "", _v))
+                        # FP propagation to DERIVED values: the turn-end
+                        # recorder wrote every registered variant of an
+                        # entity (bare surname, reordered forms, dob surface
+                        # forms, check-digit twin) as its own anonymise row —
+                        # those must not re-mint a fresh entity for a subject
+                        # the user just FP-marked (found live: the variant
+                        # rows re-seeded the entity right after the purge and
+                        # the fuzzy sweep re-faked the FP'd name).
+                        if _fp_vals:
+                            _mint = [
+                                (_r, _v) for _r, _v in _mint
+                                if not any(
+                                    pseudonymizer.values_same_subject(_fv, _v)
+                                    for _fv in _fp_vals)]
+                        # FP enforcement on a REUSED mapping: a value minted
+                        # on an earlier turn and FP-marked since must stop
+                        # being rewritten (the 912d9199 failure — FP marks
+                        # had no effect on attachment/MRZ content).
+                        _fp_purged = 0
+                        for _v in _fp_vals:
+                            _fp_purged += pseudonymizer.purge_value(
+                                _mapping, _v)
+                        _decisions_applied = 0
+                        for _rid, _v in _mint:
+                            if pseudonymizer.seed_from_decision(
+                                    _mapping, _rid, _v):
+                                _decisions_applied += 1
+                        _guard_findings = []
+                        _pseudo0 = _typed
+                        if not _mint and not _mapping.forward:
+                            # Fail-loud guard (plan §Invariants) — NOT a
+                            # second detector in the normal flow: the user
+                            # chose anonymise but no decision reached us
+                            # (stale client / API caller that skipped the
+                            # pre-send scan). Never send silently in clear —
+                            # fall back to scan-everything anonymisation.
+                            print("[gdpr] anonymise turn without decision "
+                                  "set — guard fallback scan", flush=True)
+                            _guard_findings = engine._pii_scan_text(
+                                _typed, cfg=_scanner_cfg)
+                            if _guard_findings:
+                                _pseudo0 = pseudonymizer.pseudonymize_text(
+                                    _typed, _guard_findings,
+                                    mapping=_mapping, source="chat_text")
+                        # Rewrite the typed half (incl. the L5a OCR block)
+                        # from the mapping: fuzzy entity sweep first
+                        # (garble / reordered / mixed-case forms of the
+                        # confirmed names), then the word-bounded exact
+                        # sweep over ALL confirmed values (categories=None).
+                        # The notice (paths) is out of reach.
                         _pseudo, _fuzzy_n = pseudonymizer.apply_entity_variants(
-                            _pseudo, mapping=_mapping)
+                            _pseudo0, mapping=_mapping)
                         _pseudo, _swept_n = pseudonymizer.apply_known_values(
-                            _pseudo, mapping=_mapping)
+                            _pseudo, mapping=_mapping, categories=None)
                         _swept_n += _fuzzy_n
                         if _pseudo != _typed:
                             _anonymised = _pseudo + _notice
@@ -4032,13 +4103,16 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         engine.get_request_context()._gdpr_anonymising = True
                         _anon_done_result = {
                             "scope": "chat_text",
-                            "findings": len(_findings),
+                            "findings": (_decisions_applied
+                                         + len(_guard_findings)),
+                            "decisions_applied": _decisions_applied,
+                            "fp_purged": _fp_purged,
+                            "guard_scan": bool(_guard_findings),
                             "tokens_minted": len(_mapping.forward),
                             "categories": dict(_mapping.finding_counts),
                             "pending_on_read": _pending_attachments,
                             "mapping": "reused" if _mapping_reused else "new",
                             "mapping_id": _mapping.mapping_id,
-                            "mrz_seeded_docs": _mrz_seeded,
                             "known_values_swept": _swept_n,
                         }
                         # Stash the per-turn outcome so the worker can surface
@@ -4054,10 +4128,13 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         # it work?" about untouched history would be noise.
                         engine.get_request_context()._gdpr_turn_outcome = {
                             "mode": "anonymise",
-                            "findings": len(_findings),
+                            "findings": (_decisions_applied
+                                         + len(_guard_findings)),
                             "tokens_minted": len(_mapping.forward),
                             "mapping_reused": _mapping_reused,
-                            "active": bool(_findings) or bool(_pending_attachments),
+                            "active": (bool(_decisions_applied)
+                                       or bool(_guard_findings)
+                                       or bool(_pending_attachments)),
                         }
                         if _live_user_spans:
                             # Side-channel: the chat client pulls these
@@ -4080,7 +4157,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     agent=session.agent_id, session_id=sid,
                                     action_type="pii_anonymised",
                                     tool_name="gdpr_scanner",
-                                    args_summary=f"{len(_findings)} findings",
+                                    args_summary=(
+                                        f"{_decisions_applied} decisions "
+                                        f"applied, {_fp_purged} fp purged"
+                                        + (", guard scan"
+                                           if _guard_findings else "")),
                                     result_summary=(
                                         f"mapping_id={_mapping.mapping_id} "
                                         f"categories={list(_mapping.finding_counts)}"),
@@ -6115,11 +6196,31 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             # row per value_hash wins, so re-recording stable
                             # values across turns is harmless.
                             try:
+                                # FP preservation (GDPR_ALL_CHECKS_PRE_DIALOG
+                                # _PLAN §C): never let the turn-end bulk
+                                # recording overwrite a user's false-positive
+                                # mark with a false_positive=0 anonymise row
+                                # (the 912d9199 shadowing). FP values are
+                                # purged from the mapping upfront, so this is
+                                # belt-and-braces against any residual entry.
+                                try:
+                                    _fp_norms = {
+                                        " ".join((_d.get("value") or "")
+                                                 .split()).lower()
+                                        for _d in (
+                                            ChatDB.get_session_pii_decisions(
+                                                sid) or {}).values()
+                                        if _d.get("false_positive")}
+                                    _fp_norms.discard("")
+                                except Exception:
+                                    _fp_norms = set()
                                 _anon_decisions = [
                                     {"rule_id": _m_inmem.categories.get(_o, ""),
                                      "value": _o, "fake_value": _f,
                                      "disposition": "anonymise"}
                                     for _o, _f in _m_inmem.forward.items()
+                                    if " ".join(_o.split()).lower()
+                                    not in _fp_norms
                                 ]
                                 if _anon_decisions:
                                     _au = getattr(engine.get_request_context(),
@@ -7664,6 +7765,66 @@ class ChatHandlerMixin:
         #                    actually reach the client.
         #   "continue"     → user accepted warn-level findings; no-op.
         gdpr_action = (body.get("gdpr_action") or "").strip().lower()
+        # Per-finding decision set from the pre-send dialog (GDPR_ALL_CHECKS_
+        # PRE_DIALOG_PLAN §B): [{rule_id, value, false_positive, action}].
+        # Shipped inline so the worker has the dialog outcome SYNCHRONOUSLY —
+        # no dependency on the client's /v1/gdpr/decisions write having landed
+        # (and the only channel at all on a first send, where the client had
+        # no session_id yet when the dialog ran).
+        _body_pii_decisions = []
+        _raw_pd = body.get("pii_decisions")
+        if isinstance(_raw_pd, list):
+            for _d in _raw_pd[:500]:
+                if not isinstance(_d, dict):
+                    continue
+                _v = str(_d.get("value") or "").strip()
+                if not _v:
+                    continue
+                _body_pii_decisions.append({
+                    "rule_id": str(_d.get("rule_id") or "")[:64],
+                    "value": _v[:512],
+                    "false_positive": bool(_d.get("false_positive")),
+                    "action": str(_d.get("action") or "").strip().lower(),
+                })
+        # Persist fresh body decisions into the ledger server-side (covers the
+        # first-send case + a client whose awaited write failed). Skip rows
+        # whose latest ledger state already matches — append-only table, no
+        # duplicate noise for the normal awaited-write flow.
+        if _body_pii_decisions:
+            try:
+                import hashlib as _hl_pd
+                _existing = ChatDB.get_session_pii_decisions(sid) or {}
+                _by_action: dict = {}
+                for _d in _body_pii_decisions:
+                    _vh = _hl_pd.sha256(
+                        f"{_d['rule_id']}|{_d['value']}".encode(
+                            "utf-8")).hexdigest()
+                    _prev = _existing.get(_vh)
+                    _ta = _d["action"] or gdpr_action or "anonymise"
+                    _ta = {"continue": "send", "local_model": "local"}.get(
+                        _ta, _ta)
+                    if (_prev
+                            and bool(_prev.get("false_positive"))
+                            == _d["false_positive"]
+                            and (_prev.get("turn_action") or "") == _ta):
+                        continue
+                    _by_action.setdefault(_ta, []).append({
+                        "rule_id": _d["rule_id"], "value": _d["value"],
+                        "false_positive": _d["false_positive"],
+                        "source": "send_body",
+                    })
+                _uid_pd = ""
+                try:
+                    _u = getattr(self, "_auth_user", None)
+                    _uid_pd = (_u.get("user_id") or "") \
+                        if isinstance(_u, dict) else ""
+                except Exception:
+                    _uid_pd = ""
+                for _ta, _rows in _by_action.items():
+                    ChatDB.record_pii_decisions(sid, _uid_pd, "", _ta, _rows)
+            except Exception as _pe:
+                print(f"[gdpr] body decision persist failed: {_pe}",
+                      flush=True)
         # Session-sticky anonymise: once a session has anonymised once (mapping
         # row in pseudonym_maps OR sticky pref == 'anonymise'), every
         # subsequent turn re-enters the anonymise branch automatically — the
@@ -7797,6 +7958,20 @@ class ChatHandlerMixin:
                 _cfg = engine._get_gdpr_scanner_config()
                 if _cfg.get("enabled", True):
                     _findings = engine._pii_scan_text(message, cfg=_cfg, max_findings=100)
+                    # FP preservation: a value the user marked "falsch
+                    # erkannt" must keep its mark — recording it here with
+                    # false_positive=0 would shadow the FP row (latest-per-
+                    # value_hash wins) and re-colour it as accepted PII.
+                    _fp_norms = set()
+                    try:
+                        _fp_norms = {
+                            " ".join((_d.get("value") or "").split()).lower()
+                            for _d in (ChatDB.get_session_pii_decisions(sid)
+                                       or {}).values()
+                            if _d.get("false_positive")}
+                        _fp_norms.discard("")
+                    except Exception:
+                        _fp_norms = set()
                     _seen_vals = set()
                     _decisions = []
                     for _f in (_findings or []):
@@ -7804,6 +7979,8 @@ class ChatHandlerMixin:
                         _val = message[_s:_e] if 0 <= _s < _e <= len(message) else ""
                         _val = _re_pii.sub(r"\s+", " ", _val).strip()
                         if not _val:
+                            continue
+                        if _val.lower() in _fp_norms:
                             continue
                         _key = (_f.get("rule_id") or "", _val)
                         if _key in _seen_vals:
@@ -7935,6 +8112,9 @@ class ChatHandlerMixin:
             # Interactive clients (web chat + terminal chat) send this flag —
             # it gates the MoA delegate-plan review (headless callers: none).
             interactive=bool(body.get("interactive")),
+            # This turn's dialog decision set (sanitised above) — the worker's
+            # anonymise branch overlays it on the persisted ledger.
+            pii_decisions=_body_pii_decisions,
         )
 
         # Stream this turn's events to the originating connection. The worker is
@@ -8313,18 +8493,36 @@ class ChatHandlerMixin:
         def _worker():
             try:
                 text, kind = engine.extract_attachment_text(fpath)
-                if kind != "text":
-                    result_box["kind"] = kind
-                    return
-                cfg = engine._get_gdpr_scanner_config()
-                # Cap raw findings at 200 — enough for category accuracy on
-                # large spreadsheets without shipping thousands of records
-                # the modal would never render anyway.
-                findings = engine._pii_scan_text(text or "",
-                                                 cfg=cfg, max_findings=200)
-                result_box["kind"] = "text"
-                result_box["findings"] = findings
-                result_box["text"] = text or ""
+                result_box["kind"] = kind
+                if kind == "text":
+                    cfg = engine._get_gdpr_scanner_config()
+                    # Cap raw findings at 200 — enough for category accuracy on
+                    # large spreadsheets without shipping thousands of records
+                    # the modal would never render anyway.
+                    findings = engine._pii_scan_text(text or "",
+                                                     cfg=cfg, max_findings=200)
+                    result_box["findings"] = findings
+                    result_box["text"] = text or ""
+                # MRZ pass (GDPR_ALL_CHECKS_PRE_DIALOG_PLAN §A2): ID-document
+                # photos/scans get the char-whitelist MRZ read HERE, pre-dialog
+                # — checksum-verified fields become ordinary findings the user
+                # can FP-mark (mrz_name/mrz_passport/mrz_dob). Runs even when
+                # generic OCR yielded nothing (kind 'media'): a photographed
+                # passport whose full-page OCR fails is exactly the case the
+                # MRZ strip exists for. Detection only — no mapping mint.
+                if os.path.splitext(fpath)[1].lower() in engine._MRZ_SEED_EXTS:
+                    try:
+                        from engine.tools.doc_checks import (
+                            _ocr_mrz_strip, parse_mrz)
+                        strip = _ocr_mrz_strip(fpath)
+                        parsed = parse_mrz(strip) if strip.strip() else None
+                        mrz = (engine._mrz_findings_from_parse(parsed)
+                               if parsed else [])
+                        if mrz:
+                            result_box["mrz_findings"] = mrz
+                    except Exception as _me:
+                        print(f"[attachments/scan] mrz pass failed: {_me}",
+                              flush=True)
             except Exception as _e:
                 result_box["error"] = f"{type(_e).__name__}: {str(_e)[:200]}"
 
@@ -8350,7 +8548,12 @@ class ChatHandlerMixin:
             })
             return
         kind = result_box.get("kind", "unsupported")
-        if kind in ("archive", "media"):
+        mrz_findings = result_box.get("mrz_findings") or []
+        # An MRZ hit upgrades a scan-less kind to a scanned result: the
+        # checksum-verified findings MUST reach the dialog even when the
+        # generic extraction found nothing to scan (photographed passport
+        # whose full-page OCR fails → kind 'media', empty text).
+        if kind in ("archive", "media") and not mrz_findings:
             self._send_json({
                 "scanned": False,
                 "attachment_id": attachment_id,
@@ -8358,7 +8561,7 @@ class ChatHandlerMixin:
                 "reason": kind,
             })
             return
-        if kind == "unsupported":
+        if kind == "unsupported" and not mrz_findings:
             self._send_json({
                 "scanned": False,
                 "attachment_id": attachment_id,
@@ -8397,6 +8600,22 @@ class ChatHandlerMixin:
                 p = _preview(f)
                 if p and p not in g["samples"]:
                     g["samples"].append(p)
+        # MRZ findings carry their value directly (no span into full_text).
+        for f in mrz_findings:
+            rid = f.get("rule_id") or "unknown"
+            g = groups.get(rid)
+            if g is None:
+                g = {
+                    "rule_id": rid,
+                    "label": f.get("label") or rid,
+                    "count": 0,
+                    "samples": [],
+                }
+                groups[rid] = g
+            g["count"] += 1
+            p = (f.get("value") or "")[:24]
+            if p and p not in g["samples"] and len(g["samples"]) < SAMPLE_CAP:
+                g["samples"].append(p)
         # Category counts (rule_id -> count) — kept for backward compat
         # with the old client field; mirrors `groups[rid].count`.
         cats = {rid: g["count"] for rid, g in groups.items()}
@@ -8474,6 +8693,26 @@ class ChatHandlerMixin:
         findings_full = []
         seen_vals = set()
         FULL_CAP = 200
+        # MRZ findings FIRST — checksum-anchored, must never be dropped by
+        # the cap. They carry `value` directly (no span into full_text).
+        for f in mrz_findings:
+            val = _re_af.sub(r"\s+", " ", f.get("value") or "").strip()
+            if not val:
+                continue
+            key = (f.get("rule_id") or "") + "|" + val.lower()
+            if key in seen_vals:
+                continue
+            seen_vals.add(key)
+            findings_full.append({
+                "rule_id": f.get("rule_id") or "?",
+                "label": f.get("label") or f.get("rule_id") or "?",
+                "category": f.get("category", "personal"),
+                "action": f.get("action", "warn"),
+                "confidence": f.get("confidence"),
+                "band": engine._pii_band(f.get("confidence") or 0.5, cfg_af),
+                "disposition": engine._pii_resolve_disposition(f, cfg_af),
+                "value": val,
+            })
         for f in findings:
             s, e = int(f.get("start", 0)), int(f.get("end", 0))
             val = full_text[s:e] if 0 <= s < e <= len(full_text) else ""
@@ -8511,7 +8750,8 @@ class ChatHandlerMixin:
             "findings": [],
             "categories": cats,
             "finding_count": sum(g["count"] for g in groups_list),
-            "worst_disposition": engine._pii_worst_disposition(findings, cfg_af),
+            "worst_disposition": engine._pii_worst_disposition(
+                list(findings) + list(mrz_findings), cfg_af),
         }
         if classification_block is not None:
             resp["classification"] = classification_block

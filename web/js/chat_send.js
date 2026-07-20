@@ -188,6 +188,11 @@ async function sendMessage() {
   };
 
   let gdprAction = '';
+  // This turn's dialog decision set, shipped inline in the send body
+  // (pii_decisions) so the worker has the confirmed outcome synchronously —
+  // the ledger write below is awaited too, but on a FIRST send there is no
+  // session_id yet, so the body is the only channel then.
+  let piiDecisionsForSend = null;
   // Tracks whether the unified PII+classification modal has already
   // resolved this turn. Used by the classification fallback gate below
   // to avoid a second modal when the user just chose in the unified one.
@@ -350,7 +355,13 @@ async function sendMessage() {
         // FP flags) so this chat doesn't re-ask decided values, FP values skip
         // anonymisation, and the analysis is auditable / feeds global learning.
         // Also cache locally for the in-session 'already analysed' check.
-        if (Array.isArray(decisions) && decisions.length && chat.sessionId) {
+        if (Array.isArray(decisions) && decisions.length) {
+          // Ship the decision set inline in the send body — the worker
+          // applies exactly this confirmed set (no re-detection server-side).
+          piiDecisionsForSend = decisions.map(d => ({
+            rule_id: d.rule_id || '', value: d.value || '',
+            false_positive: !!d.false_positive, action: verdict,
+          }));
           chat._piiDecisions = chat._piiDecisions || {};
           for (const d of decisions) {
             // Stamp the turn-level verdict onto each cached decision so the
@@ -361,13 +372,18 @@ async function sendMessage() {
           }
           // Persist server-side so the cleartext/anonymised marks survive a
           // reload (the chat marks read these rows back via getPiiDecisions).
-          // Do NOT swallow the error silently — a dropped write means an
-          // ACCEPTED-in-clear PII value (e.g. the user chose "Trotzdem senden"
-          // / continue with the cloud model) never gets coloured on reload,
-          // which is exactly the bug reported for the email case. Surface it.
-          API.recordPiiDecisions(chat.sessionId, verdict, decisions)
-            .catch(e => console.error('[gdpr] recordPiiDecisions failed — '
-              + 'accepted PII will not be marked on reload:', e?.message || e));
+          // AWAITED (not fire-and-forget) so the ledger write lands BEFORE
+          // the send — the worker reads the ledger to build its mapping. A
+          // failure is surfaced but does not block the send: the body's
+          // pii_decisions carries the same set as fallback.
+          if (chat.sessionId) {
+            try {
+              await API.recordPiiDecisions(chat.sessionId, verdict, decisions);
+            } catch (e) {
+              console.error('[gdpr] recordPiiDecisions failed — '
+                + 'accepted PII will not be marked on reload:', e?.message || e);
+            }
+          }
         } else if (chat.sessionId && (verdict === 'send' || verdict === 'local')) {
           // No ratable rows were collected, yet the user actively ACCEPTED PII
           // in the clear (continue-with-cloud or local-model). This happens when
@@ -385,14 +401,21 @@ async function sendMessage() {
               false_positive: !!f._priorFp,
             }));
           if (fromScan.length) {
+            piiDecisionsForSend = fromScan.map(d => ({
+              rule_id: d.rule_id || '', value: d.value || '',
+              false_positive: !!d.false_positive, action: verdict,
+            }));
             chat._piiDecisions = chat._piiDecisions || {};
             for (const d of fromScan) {
               chat._piiDecisions[(d.rule_id || '') + '|' + (d.value || '')] =
                 Object.assign({ turn_action: verdict }, d);
             }
-            API.recordPiiDecisions(chat.sessionId, verdict, fromScan)
-              .catch(e => console.error('[gdpr] recordPiiDecisions (seen-fallback) '
-                + 'failed:', e?.message || e));
+            try {
+              await API.recordPiiDecisions(chat.sessionId, verdict, fromScan);
+            } catch (e) {
+              console.error('[gdpr] recordPiiDecisions (seen-fallback) '
+                + 'failed:', e?.message || e);
+            }
           }
         }
         // "Frag mich nachher wies gelaufen ist" — opt into the post-turn
@@ -426,9 +449,10 @@ async function sendMessage() {
       } else if (seenFindings.length) {
         // Only ALREADY-SEEN findings this turn (content unchanged / re-decided
         // values). No dialog — apply the prior decision: FP values stay clear
-        // (the server's _filter_pii_false_positives honours them), the rest
-        // follows the last chosen action (default anonymise if PII was ever
-        // anonymised here, else continue).
+        // (the worker builds its mapping from the persisted decision ledger,
+        // where they are marked false_positive), the rest follows the last
+        // chosen action (default anonymise if PII was ever anonymised here,
+        // else continue).
         const prior = (chat.gdprActionPref || '').trim();
         if (['anonymise', 'local_model', 'continue'].includes(prior)) {
           gdprAction = prior;
@@ -529,7 +553,7 @@ async function sendMessage() {
       return;
     }
 
-    await API.streamChat(chat.sessionId, text, buildStreamCallbacks(chat, isActive), chat.model, filesToSend, null, gdprAction);
+    await API.streamChat(chat.sessionId, text, buildStreamCallbacks(chat, isActive), chat.model, filesToSend, null, gdprAction, piiDecisionsForSend);
   } catch(e) {
     _onStreamCatch(e, chat, isActive, streamGen);
   }

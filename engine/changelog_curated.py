@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.383.0",
+        "date": "2026-07-20",
+        "title": "Datenschutz-Prüfung: alle Funde vor dem Dialog",
+        "body": "Die Datenschutz-Prüfung vor dem Senden erfasst jetzt "
+                "ALLE Funde vorab — auch Name, Passnummer und Geburtsdatum "
+                "aus der maschinenlesbaren Zone fotografierter "
+                "Ausweisdokumente erscheinen als eigene, markierbare "
+                "Einträge im Entscheidungs-Dialog. Ihre Auswahl wird exakt "
+                "angewendet: Was Sie als Falschtreffer markieren, bleibt "
+                "verlässlich im Klartext — auch in Anhängen, auch in "
+                "späteren Nachrichten desselben Chats.",
+        "audience": "user",
+        "versions": ["9.383.0"],
+    },
+    {
         "version": "9.382.0",
         "date": "2026-07-20",
         "title": "Texterkennung auf entfernten Rechner auslagerbar",

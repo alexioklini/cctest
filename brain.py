@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.382.0"
+VERSION = "9.383.0"
 VERSION_DATE = "2026-07-20"
 CHANGELOG = [
+    ("9.383.0", "2026-07-20", "feat(GDPR — ALLE PII-Checks VOR dem Entscheidungs-Dialog; Plan GDPR_ALL_CHECKS_PRE_DIALOG_PLAN.md, Anlass Chat 912d9199: 4 FP markiert, 3 trotzdem anonymisiert). ROOT CAUSE: PII wurde an VIER Stellen erkannt, nur der Upload-Scan lief vor dem Dialog — MRZ-Seed, Worker-Text-Rescan und der read_document-Frischscan liefen NACH der Nutzer-Entscheidung, weshalb FP-Marks auf Attachment-/MRZ-Werte wirkungslos blieben (_filter_pii_false_positives hing nur am Typed-Text-Pfad). NEU — Erkennung EINMAL, vor dem Dialog: (A) /v1/attachments/scan fährt für Bild-/PDF-Anhänge zusätzlich den checksummen-validierten MRZ-Pass (_ocr_mrz_strip+parse_mrz, Seiten 1-3) und emittiert Name/Passnummer/DOB als GEWÖHNLICHE, FP-markierbare Findings (neue synthetische rule_ids mrz_name/mrz_passport/mrz_dob, brain._mrz_findings_from_parse; Ehrlichkeits-Gates identisch zum Seed: Name braucht ≥2 verifizierende Prüfziffern; Kategorie personal/warn — contact/ignore hätte sie aus dem Dialog ferngehalten; Labels in engine/pii_ner.py). Ein MRZ-Treffer upgradet auch kind='media' (Foto ohne generisches OCR) zu scanned:true, findings_full trägt die MRZ-Findings VOR der 200er-Kappe. (B) Dialog entscheidet EINMAL, Entscheidung reist synchron: chat_send.js AWAITet recordPiiDecisions (Race bei den zwei Fire-and-forget-Callsites getötet) UND schickt das Decision-Set inline im POST /v1/chat-Body (pii_decisions: [{rule_id,value,false_positive,action}] — auf einem ERSTEN Send existiert client-seitig noch keine session_id, der Body ist dort der einzige Kanal überhaupt); _handle_chat sanitisiert (500er-Kappe, 512-Zeichen-Werte) und persistiert Body-Decisions ledger-seitig nach (Dedup gegen den Latest-Stand — kein Doppelrauschen im awaited Normalfall). (C) Worker ENTSCHEIDUNGSGETRIEBEN statt re-detektierend: MRZ-Seed-Callsite + _pii_scan_text + _filter_pii_false_positives im Anonymise-Block ERSETZT durch Ledger∪Body-Merge — aufgelöst PRO WERT nach Recency (_latest_decisions_by_value; get_session_pii_decisions liefert dafür jetzt created_at): der Ledger ist (rule_id|value)-hash-gekeyt und kann widersprüchliche Zeilen DESSELBEN Werts unter verschiedenen Regeln tragen (Dialog schreibt FP unter mrz_name, der Turn-End-Bulk-Recorder anonymise unter der Mapping-Regel 'name' — hash-level latest-wins ließ die abgeleitete Zeile das explizite FP-Mark überstimmen; LIVE REPRODUZIERT und gefixt, derselbe Fix auch im Wire-Rewrite-Pass _apply_pii_decisions_to_wire, wo das Loch VORBESTAND). Body-Zeilen sind die frischeste Entscheidung ihres Werts; innerhalb DESSELBEN Dialogs gewinnt bestätigt über FP (Sicherheit). Dann Partition mint/FP mit FP-PROPAGATION auf abgeleitete Werte (pseudonymizer.values_same_subject: entity_attach/Einzeltoken/Org-Stamm/Kalenderdatum/Prüfziffern-Zwilling — die Turn-End-Zeilen der Entitäts-VARIANTEN ('Bonnie Stark', 'STARK', DOB-Formen) sind eigene Ledger-Werte und minteten sonst direkt nach dem Purge eine FRISCHE Entität, deren Fuzzy-Sweep den FP-Wert wieder fakte; live gefunden, 3-Turn-Matrix-E2E verifiziert) → pseudonymizer.purge_value je FP-Wert (RETROAKTIV aufs wiederverwendete Mapping — der eigentliche 912d9199-Fix: entfernt exaktes Paar, Entität+ALLE Varianten über Fake-Token-Marker wortgegrenzt, jede Oberflächenform desselben Kalenderdatums, den 10er-Prüfziffern-Zwilling einer Passnummer) → pseudonymizer.seed_from_decision je bestätigtem Wert (mintet DIESELBEN Fakes wie der alte Scan-/Seed-Pfad: mrz_passport bare+10er-Form, mrz_dob alle _dob_surface_forms, mrz_name Entität+Varianten, generische Regeln via _build_replacement inkl. M4-Org-Stem-Guard; Token-Stabilität per Test gegen seed_identity_from_mrz auf gleichem Salt gepinnt) → Typed-Half-Rewrite rein aus dem Mapping (apply_entity_variants + apply_known_values mit NEU categories=None = ALLE Kategorien, Multi-Wort-Keys matchen jetzt \\s+-tolerant über Zeilenumbrüche). FAIL-LOUD-GUARD (kein zweiter Detektor im Normalfluss): Anonymise-Turn OHNE jede Decision und mit leerem Mapping (stale Client / API-Caller ohne Pre-Send-Scan) → Fallback-Vollscan statt stillem Klartext-Egress, als guard_scan im Synthetic-Row + Audit sichtbar. (D) brain._gdpr_anon_tool_text APPLY-ONLY: kein _pii_scan_text, kein Frisch-Mint — nur Entity-Sweep + known-values-Sweep (alle Kategorien) über Tool-Text; FP-Werte fehlen im Mapping und bleiben Klartext; Klassifikations-Gate + Review-Override unverändert davor. (E) FP-ERHALT an beiden Recorder-Seams: Turn-End-Bulk-Recording und der Cleartext-Accept-Rescan (continue/local) überspringen Werte, deren Latest-Ledger-Zeile false_positive=1 trägt — nie wieder ein FP-Mark durch eine false_positive=0-Zeile geshadowt. GELÖSCHT: _filter_pii_false_positives (einziger Caller weg; FP-Werte erreichen den Scan-Output nicht mehr, weil es keinen Worker-Scan mehr gibt). Bewusste Grenze (dokumentiert): Erkennung ist die des Pre-Send-Scans — ein API-Caller, der PII an einer Session mit vorhandenem Ledger vorbeischickt, wird nicht mehr vom Tool-Seam nachdetektiert (Interactive-Clients scannen server-seitig via scan-text/attachments-scan, Parität hält; Hintergrund-Seam gdpr_pick_model_for_background scannt unverändert selbst). Tests: tests/test_gdpr_decision_driven.py NEU (27 — Token-Stabilität bare/10er/DOB-Formen/Entity, purge inkl. Varianten/Datumsformen/Zwilling/Nachbar-Entität-überlebt, values_same_subject-Relationen + FP-überlebt-Varianten-Remint, categories=None + Linebreak-Match + Wortgrenzen-Regression, Apply-only-Seam: bekannter Wert ersetzt/unbekannte PII bleibt roh+Mapping stabil (Plan-Verifikation #4)/FP-purged bleibt klar, _mrz_findings_from_parse-Ehrlichkeits-Gates an der Golden-MRZ); GDPR-Familie 287 grün (discover über 17 Suiten). LIVE VERIFIZIERT (mistral-small, Test-Sessions gelöscht): synthetisches MRZ-Foto → /v1/attachments/scan liefert mrz_name/mrz_passport/mrz_dob mit Realwerten (high/ask); 3-Turn-Matrix: T1 Name+Pass fake + FP-DOB klar auf dem Wire, T2 nachträgliches FP-Mark → Name KLAR (fp_purged=14) + Pass behält denselben Fake, T3 ledger-only sticky → FP hält. js_gate GRÜN (eslint clean, net-globals 2097 unverändert, Smoke 5/5). py_compile OK. Kein Schema-/Prompt-Change → KV-Prefix unberührt. Server-Restart nötig. Skill 01-api/05-internals/06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.382.0", "2026-07-20", "feat(GLM-OCR-Remote-Endpoint in der Admin-GUI) + fix(OCR-Settings-Save wischte versteckte Sub-Block-Felder). Die Engine-Seite existierte bereits (745845f4, Windows-Parität: engine/mlx_ocr.py liest ocr.mlx_ocr_url/mlx_ocr_api_key und schickt das Bild an einen OpenAI-kompatiblen GLM-OCR-Endpoint statt in-process mlx-vlm) — es fehlte die GUI/Handler-Hälfte. NEU (handlers/admin_observability.py + web/js/settings_general_tabs.js): Remote-URL + Remote-API-Key-Felder im mlx_ocr-Block der Service-Modelle-Karte, per-key-gemergt persistiert; ein URL-Wechsel (remote↔in-process) ruft engine.mlx_ocr.unload() auf, damit der Umschalt ohne Neustart greift (gleiche Semantik wie die mlx_ocr_model-Eviction). FIX in saveServiceModels(): die OCR-Sub-Blöcke (cloud/mlx/local) sind nur display:none-versteckt — die Inputs bleiben im DOM, Element-Präsenz kann ein editiertes Feld nicht von einem versteckten leeren unterscheiden; vorher wurde IMMER der komplette ocr-Block gesendet und z.B. provider/model geleert, wenn engine=mlx_ocr aktiv war. Jetzt werden nur die Felder des AKTIVEN Engine-Sub-Blocks gesendet (Gate auf den engine-Wert, spiegelt _svcOcrEngineToggle exakt); fehlende Keys lässt der Server-Merge unangetastet. Verifiziert: py_compile grün, js_gate.sh PASS (ESLint + Smoke). Curated-Eintrag (admin): Remote-OCR + Save-Fix."),
     ("9.381.0", "2026-07-20", "fix(PDF-Tabellen → Excel; Anlass Chat f3b8dc2f: 'the table extraction did not really work well, data in excel is wrong'). BEFUND: mistral-large-3 transkribierte die 106-Zeilen-Wiener-Privatbank-Erträgnisaufstellung freihändig aus dem pymupdf4llm-Markdown in eine xlsx_create-Spec und rekonstruierte die Mehrzeilen-Records systematisch falsch — bei EUR-Titeln mit zwei gestapelten Steuerzeilen landete AT WHT in 'Tax in Sec. Curr' und Foreign WHT in 'Tax in EUR' (zwei verschiedene Steuern als Währungspaar verkleidet; Soll: Sec-Curr leer, EUR = Summe), Folgezeilen-Policy inkonsistent (Novartis bekam eine eigene Zeile, TotalEnergies nicht), Steuerart-Beschreibungen verloren, Tax-EUR-Spaltensumme −341.077,91 statt ~−306.655 (Kontrolle: Summary-Seite des PDFs selbst). Die Tabellenklasse (randlos, 2-zeiliger Header, 1 Transaktion = 2-4 visuelle Zeilen, Spaltenzahl driftet pro Seite 8/9/7) ist für ALLE Extraktoren tückisch: pdfplumber findet 0 Tabellen (keine Linien), fitz find_tables zerhackt Wörter — pymupdf4llm war bereits das Beste, textuell vollständig. ZWEI FIXES: (1) include_tables EHRLICH — der Parameter war auf dem Default-pymupdf4llm-Pfad seit dessen Einführung stillschweigend WIRKUNGSLOS (_do_extract returnt vor dem pdfplumber-Block; das Modell hatte ihn brav auf true gesetzt, Beschreibung versprach 'works well on financial reports'). Jetzt: bei include_tables=true läuft _render_pdf_tables (timeout-guarded via _run_with_timeout) auch nach pymupdf4llm-Erfolg, Tabellen als '### Table (page N, #x)'-Sektionen angehängt, Backend-Tag 'pymupdf4llm+tables:<n>' macht den Befund sichtbar — tables:0 sagt dem Modell explizit, dass das Inline-Markdown alles ist. Mining unberührt (include_tables dort immer False → Backend-String byte-stabil 'pymupdf4llm'). (2) TOOL-PROSA an beiden Enden des Fehlwegs: read_document bekommt PDF TABLE CAVEAT (Markdown spiegelt das VISUELLE Grid; Records vor XLSX/CSV-Konvertierung regruppieren, gestapelte Zeilen NIE auf verschiedene Spalten EINER Zeile mappen, Summen gegen Summary-Sektion prüfen) + include_tables-Beschreibung korrigiert (randlos → NICHTS, Backend-Tag lesen). xlsx_create sagt jetzt explizit 'source.file can NOT read PDFs' — der Chat zeigte den Fehlweg: das Modell folgte der CRITICAL-Prosa, übergab das PDF als source.file, bekam openpyxl-InvalidFileException, tool_search('pdf to excel') fand nichts Nützliches, und tippte DANN erst frei ab; neu: Records regruppieren + Spaltensummen via xlsx_query gegen Summary-Zahlen der Quelle prüfen, Abweichungen VOR der Antwort fixen. Kein curated-Eintrag (Tool-Prosa + Parameter-Verdrahtung, endnutzer-unsichtbar)."),
     ("9.380.0", "2026-07-19", "refactor(Bildgenerierung über den llm-router + Provider-/Modell-Aufräumung; User: 'image gen bitte umschreiben sodass die auch über den provider geht' + 'räume die alten modelle und provider auf'). engine/tools/image_gen.py sprach die Mistral-Agents-API DIREKT an (_MISTRAL_BASE hartkodiert auf api.mistral.ai + _mistral_api_key() scannte providers nach 'mistral.ai' in base_url) — der einzige Modell-/Tool-Pfad, der nach der Router-Umstellung (2026-07-19, siehe CLAUDE.md Architecture) noch am llm-router vorbeiging und wofür ein mistral-direct-Credential-Halter-Eintrag in providers verbleiben musste. NEU: _image_api() löst (base_url, api_key) über den DEFAULT_PROVIDER auf (= llm-router; base_url inkl. /v1) und alle drei Calls gehen relativ dazu: {base}/agents (Agent-Anlage, model bleibt bewusst die UPSTREAM-Mistral-ID 'mistral-medium-latest' — der Router reicht sie verbatim durch), {base}/conversations (Generierung), {base}/files/<id>/content (Download). Router-seitig existieren diese Pfade seit llm-router c144172/Folgecommit als modell-lose Spezial-Passthroughs (Provider via Setting voices_provider_id=mistral-direct im ROUTER). Der GDPR-Egress-Scan (M2/G7, unconditional) bleibt unverändert — der Prompt landet weiterhin bei Mistral in der Cloud, nur jetzt über den Router (Kommentar entsprechend präzisiert). mistral_image_agent_id-Cache unverändert gültig (gleiches Mistral-Konto upstream). AUFRÄUMUNG (Config, kein Code): der mistral-direct-Credential-Halter wurde aus brains providers ENTFERNT (Key lebt im Router) → providers = NUR noch llm-router + llm-router-local; alle disabled Alt-Modelle mit toten Provider-Referenzen (Kilo/zai-coding/kimi-coding/openrouter/Lokal/local-mlx-whisper/mistral-direct) wurden gelöscht + getombstoned. py_compile grün; E2E verifiziert: Bild über brain-Chat-Turn generiert, Router-Log zeigt agents/files-Zeilen. Kein kuratierter Eintrag (rein intern, Feature unverändert)."),
@@ -3290,27 +3291,32 @@ def gdpr_persist_mapping(mapping_id: str, session_id: str, turn_id: str = "") ->
 
 
 def _gdpr_anon_tool_text(text: str, source: str) -> str:
-    """Pseudonymise text returned from a read-style tool, if the active
-    session has a transparent-anonymisation mapping.
+    """APPLY the active transparent-anonymisation mapping to text returned
+    from a read-style tool — decision-driven, no fresh detection
+    (GDPR_ALL_CHECKS_PRE_DIALOG_PLAN §C).
 
-    Reads `get_request_context()._gdpr_mapping_id` (set by `tool_mcp._apply_context`
-    on every sidecar tool-dispatch from the per-turn `tool_context.gdpr_mapping_id`).
-    No-op when no mapping is active — returns text unchanged.
+    Reads `get_request_context()._gdpr_mapping_id` (set per-turn by the chat
+    worker / `_apply_bg_context`). No-op when no mapping is active — returns
+    text unchanged.
 
-    Scans for PII findings, adds them to the mapping, returns pseudonymised
-    text. The same mapping is also used by `StreamingDeanonymizer` on the
-    assistant reply, so any token minted here is reversed before the user
-    sees it.
+    Detection happened ONCE, pre-dialog (upload-time attachment scan incl.
+    the MRZ pass); the mapping holds exactly the values the user CONFIRMED.
+    This seam rewrites their occurrences in tool output: fuzzy entity sweep
+    (garble / reordered / mixed-case forms of confirmed names — registers
+    what it replaced so the args-deanon roundtrip closes) plus the
+    word-bounded exact sweep over ALL mapped values. An FP-marked value is
+    absent from the mapping and stays in the clear. The same mapping feeds
+    `StreamingDeanonymizer`, so every applied token is reversed before the
+    user sees the reply.
 
-    When findings are added, emits an `anonymise_read` synthetic tool-call
-    pair on the session's live stream so the chat history shows what
-    actually got pseudonymised mid-turn. Persisted with `synthetic=True`,
-    so reload picks them up.
+    When anything was applied, emits an `anonymise_read` synthetic tool-call
+    pair on the session's live stream so the chat history shows what got
+    pseudonymised mid-turn. Persisted with `synthetic=True`.
 
     Also runs the classification gate first — if content is classified
     above the per-level threshold AND the active model is non-local, the
-    tool read is refused with ClassificationBlockedError before PII
-    pseudonymisation runs.
+    tool read is refused with ClassificationBlockedError before the mapping
+    is applied.
     """
     if not text:
         return text
@@ -3356,31 +3362,20 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
             except Exception as _e:
                 print(f"[data_review] reuse merge failed: {_e}", flush=True)
             return _override
-        cfg = _get_gdpr_scanner_config()
-        findings = _pii_scan_text(text, cfg=cfg)
         _tokens_before = len(mapping.forward)
-        out = text
-        if findings:
-            out = _ps.pseudonymize_text(text, findings, mapping=mapping,
-                                        source=source or "tool_output")
-        # Entity + known-values sweep (L2 v9.337.0, fuzzy stage L5): forms
-        # the scanner pass missed — the German spaCy NER regularly skips
-        # English names in mempalace drawers / web results, and OCR garble /
-        # reordered forms are never exact-registered — are still replaced
-        # with their mapped fakes. Fuzzy window sweep first (conservative
-        # entity_attach, renders whole forms, registers what it replaced),
-        # then the word-bounded exact sweep.
-        out, _fuzzy = _ps.apply_entity_variants(out, mapping=mapping)
-        out, _swept = _ps.apply_known_values(out, mapping=mapping)
+        # Apply-only: fuzzy entity sweep first (conservative entity_attach,
+        # renders whole forms, registers what it replaced), then the
+        # word-bounded exact sweep over ALL mapped values (categories=None —
+        # a confirmed IBAN/ID in a re-read attachment must rewrite too, not
+        # just the entity-derived categories). No _pii_scan_text, no fresh
+        # detection mints.
+        out, _fuzzy = _ps.apply_entity_variants(text, mapping=mapping)
+        out, _swept = _ps.apply_known_values(out, mapping=mapping,
+                                             categories=None)
         _swept += _fuzzy
-        if not findings and not _swept:
+        if not _swept:
             return text
         _tokens_added = len(mapping.forward) - _tokens_before
-        # Per-rule_id breakdown for the chat-history row.
-        _cats: dict[str, int] = {}
-        for f in findings:
-            rid = f.get("rule_id") or "unknown"
-            _cats[rid] = _cats.get(rid, 0) + 1
         # Surface a synthetic anonymise_read row so the UI shows what
         # happened. Best-effort — never block the tool return.
         try:
@@ -3394,10 +3389,12 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
                     tool_use_id=_tuid,
                     args={"source": source or "tool_output"},
                     result={
-                        "findings": len(findings),
+                        # Apply-only seam: no fresh detection — `applied` is
+                        # the number of rewritten occurrences, tokens_minted
+                        # counts derived registrations (fuzzy variants).
+                        "applied": _swept,
                         "tokens_minted": _tokens_added,
                         "known_values_swept": _swept,
-                        "categories": _cats,
                         "source": source or "tool_output",
                         "mapping_id": mapping_id,
                     },
@@ -4507,6 +4504,52 @@ def _gdpr_seed_entities_from_attachments(paths: list[str], mapping) -> int:
             print(f"[mrz_seed] skipped {os.path.basename(p)}: {e}", flush=True)
             continue
     return seeded
+
+
+def _mrz_findings_from_parse(parsed: dict) -> list[dict]:
+    """Turn a checksum-plausible MRZ parse into ORDINARY, markable findings
+    for the pre-send dialog (GDPR_ALL_CHECKS_PRE_DIALOG_PLAN §A): synthetic
+    rule_ids `mrz_name` / `mrz_passport` / `mrz_dob` carrying the real
+    surface value, rendered in the dialog with an FP checkbox like any
+    scanner finding. Detection only — nothing is minted here; the worker
+    mints from the CONFIRMED decision set (`pseudonymizer.seed_from_decision`).
+
+    Per-field honesty gates mirror `seed_identity_from_mrz` exactly (name
+    needs ≥2 verifying checksums, number/DOB their own checksum) so the
+    dialog surfaces precisely what the seed would have trusted."""
+    if not parsed:
+        return []
+    checks = parsed.get("checks") or {}
+    n_verified = sum(1 for v in checks.values() if v)
+    if not n_verified:
+        return []
+    cfg = _get_gdpr_scanner_config()
+    out: list[dict] = []
+
+    def _mk(rule_id: str, value: str) -> dict:
+        return {
+            "rule_id": rule_id,
+            "label": PII_RULE_LABELS.get(rule_id, rule_id),
+            "category": PII_RULE_CATEGORIES.get(rule_id, "personal"),
+            "action": _pii_effective_action(rule_id, cfg),
+            # Checksum-verified machine read — always the high band.
+            "confidence": 0.95,
+            "value": value,
+        }
+
+    sur = (parsed.get("surname") or "").strip()
+    giv = (parsed.get("givens") or "").strip()
+    if sur and giv and n_verified >= 2:
+        form = " ".join(t.title() for t in f"{giv} {sur}".split())
+        out.append(_mk("mrz_name", form))
+    number = (parsed.get("document_number") or "").strip()
+    if number and checks.get("document_number"):
+        out.append(_mk("mrz_passport", number))
+    dob = parsed.get("dob")
+    import datetime as _dt_mod
+    if isinstance(dob, _dt_mod.date) and checks.get("dob"):
+        out.append(_mk("mrz_dob", dob.isoformat()))
+    return out
 
 
 def _route_to_node(tool_name: str, args: dict) -> str | None:

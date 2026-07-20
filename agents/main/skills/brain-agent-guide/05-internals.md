@@ -1479,6 +1479,36 @@ preamble goes in first-user-message instead.
 
 ## GDPR / PII scanner
 
+- **All checks BEFORE the decision dialog (9.383.0)**: detection runs ONCE,
+  server-side, before the pre-send dialog — the dialog is the ONLY place PII
+  is decided, and the chat worker APPLIES the confirmed decision set instead
+  of re-detecting. Three seams changed: (1) `/v1/attachments/scan` now also
+  runs the checksum-validated MRZ pass on image/PDF attachments and emits
+  the passport-holder name / document number / DOB as ordinary, FP-markable
+  findings (`mrz_name`/`mrz_passport`/`mrz_dob` — an MRZ hit even upgrades a
+  photo whose generic OCR failed to a scanned result). (2) The dialog's
+  per-finding decisions travel synchronously: the client awaits the ledger
+  write AND ships the set inline in the `POST /v1/chat` body
+  (`pii_decisions`); the worker merges ledger + body — resolved PER VALUE by
+  recency (`_latest_decisions_by_value`; the hash-keyed ledger can hold
+  contradictory rows for one value under different rule_ids, and the newest
+  decision must win — the wire-rewrite pass uses the same resolution),
+  PURGES false-positive values from a reused mapping
+  (`pseudonymizer.purge_value` — removes the pair, the entity + all
+  variants, every date surface form, the passport check-digit twin),
+  suppresses derived-variant rows of an FP'd subject from re-minting
+  (`pseudonymizer.values_same_subject`) and mints exactly the confirmed
+  values (`pseudonymizer.seed_from_decision` — same fakes as the old
+  scan/seed path, token-stable). The typed text is rewritten purely from
+  the mapping (entity sweep + all-categories known-values sweep). (3)
+  `_gdpr_anon_tool_text` (read_document/mempalace/web results) is
+  APPLY-ONLY: it rewrites known mapping values but never scans or mints
+  from fresh detection — an FP-marked value stays in the clear everywhere,
+  including attachments and later turns (the chat-912d9199 fix). Fail-loud
+  guard: an anonymise turn arriving with NO decisions and an empty mapping
+  (stale client / raw API caller) falls back to a full scan rather than
+  silently sending cleartext. Both decision recorders (turn-end bulk +
+  cleartext-accept) preserve existing FP marks instead of shadowing them.
 - **Dispatch symmetry (9.336.0, L3)**: in anonymising sessions the tool
   boundary is now symmetric — the model thinks in pseudonyms, the tools work
   on raw data. (a) **Args-deanonymisation**: at tool dispatch
@@ -1538,7 +1568,11 @@ preamble goes in first-user-message instead.
   plus the word-bounded exact sweep now also run on the user-message half.
   File PATHS in the attachment notice stay verbatim by design; image
   PIXELS sent to a multimodal cloud model remain out of scope (use a local
-  vision model for that).
+  vision model for that). NOTE (9.383.0): the send-path MRZ seed was
+  replaced by the pre-dialog MRZ findings + decision-driven mint (see the
+  9.383.0 bullet above) — the MRZ values now pass through the dialog like
+  any finding; `seed_identity_from_mrz` remains the reference the
+  decision mint is token-stability-pinned against.
 - **Report fidelity (9.340.0, L6)**: de-anonymisation now FAILS LOUD instead
   of lying silently. A reverse linter (`pseudonymizer.lint_residual_fakes`)
   runs on the final de-anonymised assistant reply AND on every file the

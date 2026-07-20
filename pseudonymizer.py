@@ -1280,6 +1280,216 @@ def seed_identity_from_mrz(mapping: Mapping, parsed: dict,
     return out
 
 
+def seed_from_decision(mapping: Mapping, rule_id: str, value: str) -> bool:
+    """Decision-driven mint (GDPR_ALL_CHECKS_PRE_DIALOG_PLAN): the chat worker
+    no longer re-detects — it mints exactly the values the pre-send dialog
+    confirmed. This helper produces the SAME fakes the scanner/seed path would
+    have produced for a finding of `rule_id` over `value` (same generators,
+    same entity layer, same derived registrations), so tokens stay stable
+    across the flow change and across turns of a reused mapping.
+
+    `mrz_name`/`mrz_passport`/`mrz_dob` are the synthetic rule_ids the
+    attachment-scan endpoint emits from a checksum-verified MRZ read — they
+    reproduce `seed_identity_from_mrz`'s per-field registrations (passport:
+    bare + 10-char check-digit form; dob: every expected surface form).
+    Returns True when anything was minted/seeded."""
+    value = (value or "").strip()
+    if not value or value in mapping.reverse:
+        return False  # empty, or already a fake in this mapping
+    if rule_id == "mrz_name":
+        try:
+            ent = _entity_find(mapping, value)
+            if ent is None:
+                ent = _entity_create(mapping, value)
+            else:
+                _entity_learn(mapping, ent, value)
+            _register_entity_variants(mapping, ent)
+            return True
+        except Exception:
+            return False
+    if rule_id == "mrz_passport":
+        try:
+            from engine.tools.doc_checks import mrz_check_digit
+            fake = _registered_id_fake(value, mapping, "passport")
+            if len(fake) == len(value):
+                # Same double registration as seed_identity_from_mrz — VIZ
+                # (bare) and MRZ (10-char check-digit form) must collapse
+                # onto ONE fake (plan §Open risk: token stability).
+                ten_real = value + str(mrz_check_digit((value + "<" * 9)[:9]))
+                ten_fake = fake + str(mrz_check_digit((fake + "<" * 9)[:9]))
+                if ten_real not in mapping.forward \
+                        and ten_fake not in mapping.reverse:
+                    mapping.record(ten_real, ten_fake, "passport", count=False)
+            return True
+        except Exception:
+            return False
+    if rule_id == "mrz_dob":
+        d = _parse_date_surface(value)
+        if d is None:
+            return False
+        seeded = False
+        for real in _dob_surface_forms(d):
+            fake = _fake_date(real, mapping.salt)
+            if fake == real or real in mapping.forward \
+                    or fake in mapping.reverse:
+                continue
+            mapping.record(real, fake, "dob", count=False)
+            seeded = True
+        return seeded
+    # Scanner rules — entity seeding first (mirrors
+    # _seed_entities_in_text_order), then the same generator dispatch
+    # pseudonymize_text uses for a span of this rule.
+    if rule_id in ("name", "mrz", "organisation"):
+        try:
+            if rule_id == "organisation":
+                stem, _lf = _identity.org_structure(value)
+                if not stem:
+                    # M4 scanner-FP guard (mirror of pseudonymize_text): the
+                    # org layer says "not a company name" → never fake it.
+                    return False
+                if _org_find(mapping, stem) is None:
+                    _org_create(mapping, value)
+                _register_org_variants(mapping, _org_find(mapping, stem))
+            else:
+                form = _mrz_name_form(value) if rule_id == "mrz" else value
+                if form:
+                    ent = _entity_find(mapping, form)
+                    if ent is None:
+                        ent = _entity_create(mapping, form)
+                    else:
+                        _entity_learn(mapping, ent, form)
+                    _register_entity_variants(mapping, ent)
+        except Exception:
+            pass
+    if value in mapping.forward:
+        return True  # stable: already minted (variant registration / reuse)
+    replacement = _build_replacement(value, rule_id, mapping)
+    mapping.record(value, replacement, rule_id)
+    return True
+
+
+def values_same_subject(fp_value: str, candidate: str) -> bool:
+    """Does `candidate` plausibly denote the SAME SUBJECT as the FP-marked
+    `fp_value`? Used to suppress DERIVED mints once their parent is FP-marked:
+    the turn-end recorder writes every registered variant ('Bonnie Stark',
+    'STARK, BONNIE MARIE', the bare surname, dob surface forms, the passport
+    check-digit twin) as its own ledger value — without this relation check
+    those rows re-mint a fresh entity right after the purge and the fuzzy
+    sweep re-fakes the FP'd value (found live). Conservative direction:
+    over-matching keeps a variant in the CLEAR (the user judged the subject
+    not-PII), never leaks an unrelated value."""
+    f = (fp_value or "").strip()
+    c = (candidate or "").strip()
+    if not f or not c:
+        return False
+    _n = lambda s: " ".join(s.split()).lower()  # noqa: E731
+    if _n(f) == _n(c):
+        return True
+    # Person: candidate attaches to the FP name's structure, or is a lone
+    # token of it (the registered bare-surname variant).
+    try:
+        sur, givens = _identity.guess_structure(f)
+        if sur:
+            if _identity.entity_attach(c, sur, givens):
+                return True
+            if " " not in c.strip() and len(c) >= 4 \
+                    and _n(c) in {sur} | set(givens):
+                return True
+    except Exception:
+        pass
+    # Organisation: same stem.
+    try:
+        stem_f, _ = _identity.org_structure(f)
+        stem_c, _ = _identity.org_structure(c)
+        if stem_f and stem_c and (stem_f == stem_c
+                                  or set(stem_f) <= set(stem_c)
+                                  or set(stem_c) <= set(stem_f)):
+            return True
+    except Exception:
+        pass
+    # Date: same calendar date in any surface form.
+    try:
+        d = _parse_date_surface(f)
+        if d is not None and _parse_date_surface(c) == d:
+            return True
+    except Exception:
+        pass
+    # ID check-digit twin (bare vs 10-char form).
+    if (c.startswith(f) or f.startswith(c)) and abs(len(c) - len(f)) == 1 \
+            and min(len(c), len(f)) >= 5 and c[:5].isalnum():
+        return True
+    return False
+
+
+def purge_value(mapping: Mapping, value: str) -> int:
+    """False-positive enforcement: remove every mapping trace of `value` so a
+    value the user marked "falsch erkannt" stays in the clear from now on —
+    including on REUSED mappings that minted it on an earlier turn (the chat
+    912d9199 failure: FP marks had no effect because the persisted mapping
+    still carried the value and every sweep re-applied it).
+
+    Drops: the exact forward/reverse pair (whitespace-collapsed compare), any
+    person/org ENTITY the value attaches to plus all forward pairs rendering
+    onto that entity's fake tokens (variants, swept garble forms, entity
+    emails), every date surface form of the same calendar date, and the
+    10-char check-digit twin of a bare document number. Returns entries
+    removed."""
+    norm = re.sub(r"\s+", " ", value or "").strip().lower()
+    if not norm:
+        return 0
+    removed = 0
+    # 1) Entity layer — collect the fake tokens of any entity this value
+    # attaches to, then drop the entity itself.
+    fake_markers: list[str] = []
+    for eid in list(mapping.entities.keys()):
+        ent = mapping.entities[eid]
+        try:
+            if _is_person_ent(ent):
+                if _identity.entity_attach(value, ent["sur"], ent["givens"]):
+                    fake_markers.append(ent["fake_sur"])
+                    fake_markers.extend(f for f in ent["fake_givens"] if f)
+                    del mapping.entities[eid]
+            else:
+                stem, _lf = _identity.org_structure(value)
+                if stem and ent.get("stem") == list(stem):
+                    fake_markers.extend(
+                        f for f in ent.get("fake_stem", []) if f)
+                    del mapping.entities[eid]
+        except Exception:
+            continue
+    marker_res = [re.compile(r"(?<!\w)" + re.escape(m) + r"(?!\w)",
+                             re.IGNORECASE) for m in fake_markers]
+    # 2) Same calendar date in any surface form (an FP'd DOB was seeded in
+    # 5+ formats); 3) 10-char check-digit twin of a bare document number.
+    _d_val = _parse_date_surface(value)
+    twin = ""
+    try:
+        bare = value.strip()
+        if bare and re.fullmatch(r"[A-Z0-9]{5,10}", bare):
+            from engine.tools.doc_checks import mrz_check_digit
+            twin = bare + str(mrz_check_digit((bare + "<" * 9)[:9]))
+    except Exception:
+        twin = ""
+    for orig in list(mapping.forward.keys()):
+        fake = mapping.forward[orig]
+        onorm = re.sub(r"\s+", " ", orig).strip().lower()
+        drop = (onorm == norm) or (twin and orig == twin)
+        if not drop and _d_val is not None:
+            try:
+                drop = _parse_date_surface(orig) == _d_val
+            except Exception:
+                drop = False
+        if not drop and marker_res:
+            drop = any(r.search(fake or "") for r in marker_res)
+        if drop:
+            mapping.forward.pop(orig, None)
+            if mapping.reverse.get(fake) == orig:
+                mapping.reverse.pop(fake, None)
+            mapping.categories.pop(orig, None)
+            removed += 1
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Mapping
 # ---------------------------------------------------------------------------
@@ -1562,8 +1772,9 @@ def deanonymize_text(text: str, *, mapping: Mapping) -> tuple[str, int]:
 
 
 def apply_known_values(text: str, *, mapping: Mapping,
-                       categories: tuple = ("name", "email", "organisation",
-                                            "passport", "dob")
+                       categories: tuple | None = ("name", "email",
+                                                   "organisation",
+                                                   "passport", "dob")
                        ) -> tuple[str, int]:
     """Replace REMAINING occurrences of already-mapped originals (default:
     entity-derived names/emails/ORGS plus the MRZ-seeded document numbers and
@@ -1584,21 +1795,31 @@ def apply_known_values(text: str, *, mapping: Mapping,
     value would otherwise reach the cloud raw (F5). Only values ≥4 chars;
     boundary check prevents mid-word hits ('Stark' never rewrites
     'Starkstrom'; `\\w` boundaries keep underscore-joined filename forms in
-    paths intact). Returns (text, n_replaced)."""
+    paths intact). `categories=None` = ALL categories — the decision-driven
+    apply path (GDPR_ALL_CHECKS_PRE_DIALOG_PLAN) rewrites every confirmed
+    value, not just the entity-derived ones. Multi-word keys match
+    whitespace-tolerantly (`\\s+` between tokens) so a dialog value that was
+    whitespace-collapsed still hits its line-broken occurrence in a PDF
+    extract. Returns (text, n_replaced)."""
     if not text or not mapping.forward:
         return text, 0
     keys = [k for k in mapping.forward
-            if len(k) >= 4 and mapping.categories.get(k) in categories]
+            if len(k) >= 4 and (categories is None
+                                or mapping.categories.get(k) in categories)]
     if not keys:
         return text, 0
     n = 0
     for k in sorted(keys, key=len, reverse=True):
-        if k not in text:
-            continue
         fake = mapping.forward[k]
         if not fake:
             continue
-        pat = re.compile(r"(?<!\w)" + re.escape(k) + r"(?!\w)")
+        if " " in k:
+            body = r"\s+".join(re.escape(p) for p in k.split())
+        else:
+            if k not in text:
+                continue
+            body = re.escape(k)
+        pat = re.compile(r"(?<!\w)" + body + r"(?!\w)")
         text, c = pat.subn(lambda _m, _f=fake: _f, text)
         n += c
     return text, n

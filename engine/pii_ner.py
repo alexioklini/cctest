@@ -780,6 +780,12 @@ PII_RULE_CATEGORIES: dict[str, str] = {
     # Biographical / personal-document identifiers
     "passport": "personal", "dob": "personal", "date": "personal",
     "mrz": "personal",
+    # Synthetic rules from the checksum-verified MRZ read of an attached ID
+    # document (upload-time attachment scan; GDPR_ALL_CHECKS_PRE_DIALOG_PLAN).
+    # Deliberately "personal", NOT "contact" like the NER name rule — the
+    # contact default action is ignore, which would hide a checksum-anchored
+    # passport-holder name from the pre-send dialog.
+    "mrz_name": "personal", "mrz_passport": "personal", "mrz_dob": "personal",
 
     # spaCy NER findings (Phase 1: German). Sit in the `contact` category
     # alongside email/phone — soft PII the user often includes deliberately
@@ -872,6 +878,9 @@ PII_RULE_LABELS: dict[str, str] = {
     "passport": "Reisepassnummer (heuristisch)", "dob": "Geburtsdatum",
     "date": "Datum (personenbezogen-gegated)",
     "mrz": "MRZ (maschinenlesbare Ausweiszone)",
+    "mrz_name": "Name (MRZ, Ausweisdokument)",
+    "mrz_passport": "Passnummer (MRZ, prüfziffern-validiert)",
+    "mrz_dob": "Geburtsdatum (MRZ, Ausweisdokument)",
     "svnr_ctx": "Sozialversicherungsnummer (wahrscheinlich)",
     "ssn_ctx_loose": "Sozialversicherungsnummer (wahrscheinlich)",
     "tax_id_ctx": "Steueridentifikationsnummer (wahrscheinlich)",

@@ -2515,13 +2515,27 @@ Anonymisierung vorbei — Name, Passnummer und Geburtsdatum eines
 fotografierten Ausweises konnten roh an das Cloud-Modell gehen. Jetzt wird
 er wie Ihr getippter Text anonymisiert. Zusätzlich liest Brain die
 maschinenlesbare Zone (MRZ) des Dokuments strukturiert und prüfziffern-
-validiert aus und legt die Ersatz-Identität schon **vor** der ersten Antwort
-an — dadurch werden auch schwer lesbare Schreibweisen aus schlechten Fotos
-und ungewöhnliche Namensfolgen konsistent ersetzt. Beachten Sie: die
-**Bild-Pixel selbst** sind nicht anonymisierbar — wenn ein bildfähiges
-Cloud-Modell aktiv ist, sieht es das Foto; nutzen Sie für Ausweisprüfungen
-im Zweifel ein lokales Modell oder die `doc_checks`-Werkzeuge (serverseitige
-Prüfung, es verlassen nur Prüf-Verdikte den Rechner).
+validiert aus. Seit v9.383.0 erscheinen Name, Passnummer und Geburtsdatum
+aus dieser Zone bereits **im Entscheidungs-Dialog vor dem Senden** als
+eigene Einträge („Name (MRZ, Ausweisdokument)" usw.) — Sie sehen also
+vorab vollständig, was erkannt wurde, und können jeden Eintrag einzeln als
+Falschtreffer markieren. Was Sie bestätigen, wird konsistent ersetzt (auch
+schwer lesbare Schreibweisen aus schlechten Fotos und ungewöhnliche
+Namensfolgen). Beachten Sie: die **Bild-Pixel selbst** sind nicht
+anonymisierbar — wenn ein bildfähiges Cloud-Modell aktiv ist, sieht es das
+Foto; nutzen Sie für Ausweisprüfungen im Zweifel ein lokales Modell oder
+die `doc_checks`-Werkzeuge (serverseitige Prüfung, es verlassen nur
+Prüf-Verdikte den Rechner).
+
+**F: Wird „als Falschtreffer markiert" wirklich überall beachtet?**
+A: Ja, seit v9.383.0 verlässlich. Die gesamte Erkennung läuft jetzt
+**einmal, vor dem Dialog** (getippter Text, Anhänge und Ausweis-MRZ), und
+der Chat wendet danach exakt Ihre Auswahl an, statt intern erneut zu
+scannen. Ein als Falschtreffer markierter Wert bleibt damit überall im
+Klartext — auch wenn er in einem Anhang steht, den der Assistent später im
+Gespräch erneut liest, und auch in Folgenachrichten desselben Chats. Zuvor
+konnte es passieren, dass ein markierter Wert trotzdem anonymisiert wurde,
+weil eine interne Nach-Erkennung die Markierung nicht kannte.
 
 **F: Was bedeutet „⚠️ N Werte konnten nicht zurückübersetzt werden"?**
 A: In anonymisierten Chats ersetzt Brain die Ersatzwerte in der Antwort und

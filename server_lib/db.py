@@ -3126,6 +3126,11 @@ class ChatDB:
                 "false_positive": bool(r[3]),
                 "disposition": r[4], "turn_action": r[5],
                 "fake_value": r[6] or "",
+                # Cross-RULE conflict resolution needs recency: the same
+                # VALUE can carry rows under different rule_ids (dialog rule
+                # vs the turn-end recorder's mapping rule), and the newest
+                # decision must win per value, not per hash (9.383.0).
+                "created_at": r[7],
             }
         return out
 
