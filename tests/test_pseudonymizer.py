@@ -448,5 +448,50 @@ def _iban_mod97_valid(iban: str) -> bool:
     return rem == 1
 
 
+class TestRegionPreserving(unittest.TestCase):
+    """9.384.1 — a faked phone keeps its E.164 country code (+49→+49, not
+    +99) and a known city is replaced by one from the SAME country (Köln→DE,
+    Wien→AT). Analysetauglich statt region-blind."""
+
+    _SALT = "abcd"
+
+    def test_phone_keeps_country_code(self):
+        for num, cc in [("+49 171 2345678", "+49"), ("+43 1 5350000", "+43"),
+                        ("+1 415 555 0123", "+1"), ("+44 20 7946 0958", "+44")]:
+            fake = ps._fake_phone(num, self._SALT)
+            self.assertTrue(fake.lstrip().startswith(cc),
+                            f"{num} → {fake} lost country code {cc}")
+            self.assertNotIn("+99", fake)
+            # national part actually changed
+            self.assertNotEqual(ps._digits_only(fake), ps._digits_only(num))
+
+    def test_phone_national_keeps_trunk(self):
+        for num in ("030 12345678", "0171/2345678"):
+            fake = ps._fake_phone(num, self._SALT)
+            self.assertTrue(fake.lstrip().startswith("0"), fake)
+            self.assertNotEqual(ps._digits_only(fake), ps._digits_only(num))
+
+    def test_city_stays_in_country(self):
+        from engine.geo_regions import country_of_city
+        for city in ("Köln", "Wien", "Zürich", "Paris", "Roma", "London"):
+            fake = ps._fake_city_regional(city, self._SALT)
+            self.assertNotEqual(fake.lower(), city.lower())
+            self.assertEqual(country_of_city(fake), country_of_city(city),
+                             f"{city} → {fake} left its country")
+
+    def test_unknown_city_falls_back(self):
+        # Not in the geo map → neutral pool, still a non-empty different name.
+        fake = ps._fake_city_regional("Kleinkleckersdorf", self._SALT)
+        self.assertTrue(fake and fake != "Kleinkleckersdorf")
+
+    def test_no_style_mix_in_pool(self):
+        # The canonical IT pool has 'Rom' (not both Rom+Roma) so a substitution
+        # can't flip spelling style.
+        from engine.geo_regions import COUNTRY_TO_CITIES
+        it = COUNTRY_TO_CITIES["IT"]
+        self.assertIn("Rom", it)
+        self.assertNotIn("Roma", it)
+
+
 if __name__ == "__main__":
     unittest.main()

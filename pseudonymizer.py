@@ -205,22 +205,58 @@ def _fake_iban(original: str, salt: str) -> str:
     return _re_inject_separators(original, check + bban)
 
 
+# Country calling codes worth keeping intact so a faked phone stays in the
+# SAME region as the original (user request: '+49 stays +49, not +99'). We
+# preserve the E.164 country code (the region signal) and fake only the
+# national number. Codes are 1-3 digits; this set covers the common ones so a
+# leading match is unambiguous. Order matters — longest prefix first.
+_PHONE_CC = (
+    "1",  # NANP (US/CA)
+    "20", "27", "30", "31", "32", "33", "34", "36", "39", "40", "41", "43",
+    "44", "45", "46", "47", "48", "49", "51", "52", "53", "54", "55", "56",
+    "57", "58", "60", "61", "62", "63", "64", "65", "66", "81", "82", "84",
+    "86", "90", "91", "92", "93", "94", "95", "98",
+    "212", "213", "216", "218", "220", "233", "234", "254", "351", "352",
+    "353", "354", "355", "356", "357", "358", "359", "370", "371", "372",
+    "380", "385", "386", "420", "421", "852", "886", "961", "962", "965",
+    "966", "971", "972", "973", "974", "977", "994",
+)
+_PHONE_CC_SORTED = tuple(sorted(_PHONE_CC, key=len, reverse=True))
+
+
 def _fake_phone(original: str, salt: str) -> str:
-    """Same-digit-count phone. Uses E.164-style with a fake country code 999
-    so the value is obviously synthetic (real ITU never assigns 999)."""
+    """Region-preserving phone fake (9.384.1): keep the digits that carry the
+    REGION — the E.164 country code after '+' (e.g. '+49' stays '+49'), or the
+    national trunk '0' + first area-code digit — and fake the rest. Same digit
+    count, same separators. Previously used a synthetic '999' country code,
+    which lost the origin region and made the number implausible for analysis."""
     digits = _digits_only(original)
     n = len(digits)
     if not 8 <= n <= 15:
         return _fake_opaque_digits(original, salt)
-    seed = _seed_int(original, salt, n=8)
-    body = str(seed).rjust(n - 3, "0")[: n - 3]
-    fake_digits = "999" + body
-    # Preserve leading '+' if present, plus internal separators.
     leading_plus = original.lstrip().startswith("+")
+    # How many LEADING digits to preserve (the region signal).
+    keep = 0
+    if leading_plus:
+        for cc in _PHONE_CC_SORTED:
+            if digits.startswith(cc) and n - len(cc) >= 5:
+                keep = len(cc)
+                break
+        if keep == 0:
+            keep = min(2, n - 5)  # unknown +CC → keep 2 as a best-effort region
+    elif digits.startswith("0"):
+        # National format '0<area>…' — keep the trunk 0 + up to 2 area digits so
+        # the area code TYPE (mobile vs landline, rough region) is preserved.
+        keep = min(3, n - 5)
+    prefix = digits[:keep]
+    seed = _seed_int(original, salt, n=8)
+    body = str(seed).rjust(n - keep, "0")[: n - keep]
+    # Never reproduce the original national part verbatim.
+    if body == digits[keep:]:
+        body = str(seed + 1).rjust(n - keep, "0")[: n - keep]
+    fake_digits = prefix + body
     out = _re_inject_separators(original, fake_digits)
     if leading_plus and not out.lstrip().startswith("+"):
-        # _re_inject_separators preserves non-digit chars; '+' is non-digit so
-        # this branch should be rare, but guard it anyway.
         out = "+" + out
     return out
 
@@ -337,13 +373,37 @@ _HOUSE_NUM_RE = re.compile(r"\b(\d{1,5}[A-Za-z]?)\b")
 _POSTAL_RE = re.compile(r"\b(\d{4,5})\b")
 
 
+def _fake_city_regional(city_original: str, salt: str) -> str:
+    """Region-preserving city fake (9.384.1): when the original is a KNOWN
+    city, draw a DIFFERENT city from the SAME country ('Köln'→another DE city,
+    'Wien'→another AT city). Unknown cities fall back to the neutral pool.
+    Deterministic from salt+value; never returns the original."""
+    try:
+        from engine.geo_regions import country_of_city, COUNTRY_TO_CITIES
+        cc = country_of_city(city_original)
+        if cc:
+            pool = COUNTRY_TO_CITIES.get(cc) or ()
+            # Drop the original (any spelling) so we never echo it back.
+            _ol = city_original.strip().lower()
+            pool = tuple(c for c in pool if c.lower() != _ol)
+            if pool:
+                return _pick(pool, city_original, salt, kind="city_region")
+    except Exception:
+        pass
+    # Unknown place → neutral pool (previous behaviour).
+    return _pick(_CITIES, city_original, salt, kind="city")
+
+
 def _fake_address(original: str, salt: str) -> str:
     """Generate a plausible address. Preserves the rough structure of the
     original — if the NER caught a multi-word LOC, we emit a street+number
     (and optional postal+city) similar in length; if it caught just a city
-    name, we emit just a city."""
+    name, we emit just a city. A known city keeps its COUNTRY (9.384.1)."""
     street_base = _pick(_STREET_BASES, original, salt, kind="street")
-    city = _pick(_CITIES, original, salt, kind="city")
+    # City part: region-preserving when the original span IS a known city
+    # (single-token LOC) or ends in one. For a multi-word street address the
+    # trailing token is the city — resolve it below via the postal branch.
+    city = _fake_city_regional(original, salt)
     # Single-token original is almost always a city/region name caught by NER.
     if len(original.split()) <= 1 and not any(c.isdigit() for c in original):
         return city
