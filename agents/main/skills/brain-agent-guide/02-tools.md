@@ -129,7 +129,12 @@ explicit invalidation is wired — a one-off latency cost on the first turn afte
   ```vba blocks — never executed), csv/tsv, eml/msg, epub/zip, images. Honors the
   `.md` companion in `<dir>/.brain-extracted/<name>.<ext>.md`. Returns content
   VERBATIM (no size cap — only the model context limits a big read). Use this for
-  any non-`.txt` attachment.
+  any non-`.txt` attachment. PDF `include_tables=true` (v9.381.0: now also live
+  on the default pymupdf4llm path) appends pdfplumber-reconstructed RULED tables
+  as `### Table (page N, #x)` sections; borderless tables yield nothing — the
+  backend tag (`pymupdf4llm+tables:<n>`) reports the count. NB: PDF markdown
+  mirrors the VISUAL grid — complex reports can spread one logical record over
+  several stacked rows; regroup before converting to XLSX/CSV.
 - `write_document(path, content, format, style?)` — produce docx/pdf/pptx/xlsx
   from markdown; embeds `![alt](file)` images (docx/pptx/pdf) → pair with
   render_diagram for reports/slides with diagrams. Formats: **.docx/.xlsx/.pptx/

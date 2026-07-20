@@ -23,7 +23,7 @@
   },
   "ocr": {
     "engine": "mlx_ocr",
-    "provider": "mistral-direct",
+    "provider": "llm-router",
     "model": "mistral-ocr-latest",
     "max_pages_per_cycle": 1000,
     "trigger_chars_per_page": 50,
@@ -2145,7 +2145,9 @@
       "provider": "llm-router-local",
       "base_model_id": "deepseek-v4-flash",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/deepseek-v4-pro": {
       "enabled": false,
@@ -2161,7 +2163,9 @@
       "provider": "llm-router-local",
       "base_model_id": "deepseek-v4-pro",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/glm-5.2": {
       "enabled": false,
@@ -2177,7 +2181,9 @@
       "provider": "llm-router-local",
       "base_model_id": "glm-5.2",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/k3": {
       "enabled": false,
@@ -2193,7 +2199,9 @@
       "provider": "llm-router-local",
       "base_model_id": "k3",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/kimi-k2.6": {
       "enabled": false,
@@ -2209,7 +2217,9 @@
       "provider": "llm-router-local",
       "base_model_id": "kimi-k2.6",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/mistral-medium-3.5": {
       "enabled": false,
@@ -2230,7 +2240,9 @@
       "provider": "llm-router-local",
       "base_model_id": "mistral-medium-3.5",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/mistral-ocr-latest": {
       "enabled": false,
@@ -2251,7 +2263,9 @@
       "provider": "llm-router-local",
       "base_model_id": "mistral-ocr-latest",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/mistral-small-latest": {
       "enabled": false,
@@ -2272,7 +2286,9 @@
       "provider": "llm-router-local",
       "base_model_id": "mistral-small-latest",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/openai/gpt-5.6-luna": {
       "enabled": false,
@@ -2288,7 +2304,9 @@
       "provider": "llm-router-local",
       "base_model_id": "openai/gpt-5.6-luna",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/openai/gpt-5.6-sol": {
       "enabled": false,
@@ -2304,7 +2322,9 @@
       "provider": "llm-router-local",
       "base_model_id": "openai/gpt-5.6-sol",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/openai/gpt-5.6-terra": {
       "enabled": false,
@@ -2320,7 +2340,9 @@
       "provider": "llm-router-local",
       "base_model_id": "openai/gpt-5.6-terra",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/openrouter/openai/gpt-5.6-luna": {
       "enabled": false,
@@ -2336,7 +2358,9 @@
       "provider": "llm-router-local",
       "base_model_id": "openrouter/openai/gpt-5.6-luna",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/openrouter/openai/gpt-5.6-sol": {
       "enabled": false,
@@ -2352,7 +2376,9 @@
       "provider": "llm-router-local",
       "base_model_id": "openrouter/openai/gpt-5.6-sol",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/openrouter/openai/gpt-5.6-terra": {
       "enabled": false,
@@ -2368,7 +2394,9 @@
       "provider": "llm-router-local",
       "base_model_id": "openrouter/openai/gpt-5.6-terra",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-mini-2602": {
       "enabled": false,
@@ -2382,12 +2410,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-2602",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-mini-latest": {
       "enabled": false,
@@ -2401,12 +2430,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-latest",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-mini-realtime-2602": {
       "enabled": false,
@@ -2420,12 +2450,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-realtime-2602",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-mini-realtime-latest": {
       "enabled": false,
@@ -2439,12 +2470,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-realtime-latest",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-mini-transcribe-realtime-2602": {
       "enabled": false,
@@ -2458,12 +2490,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-transcribe-realtime-2602",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-mini-tts-2603": {
       "enabled": false,
@@ -2477,12 +2510,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-tts-2603",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-mini-tts-latest": {
       "enabled": false,
@@ -2496,12 +2530,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-mini-tts-latest",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-small-2507": {
       "enabled": false,
@@ -2515,12 +2550,13 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-small-2507",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     },
     "llm-router-local/voxtral-small-latest": {
       "enabled": false,
@@ -2534,10 +2570,156 @@
       "thinking_format": "none",
       "max_context": 32768,
       "max_output": 4096,
-      "inference": {},
       "raw_formats": [],
       "provider": "llm-router-local",
       "base_model_id": "voxtral-small-latest",
+      "profile": "speed",
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
+    },
+    "mistral-large-3": {
+      "provider": "llm-router",
+      "base_model_id": "mistral-large-3",
+      "display_name": "Mistral Large 3",
+      "shortname": "mistral-large-3",
+      "enabled": true,
+      "max_context": 262144,
+      "max_output": 16384,
+      "cost_input": 0.5,
+      "cost_output": 1.5,
+      "cost_cache_read": 0.05,
+      "coding_plan": "mistral-vibe",
+      "thinking_format": "mistral_blocks",
+      "is_local": false,
+      "priority": 70,
+      "warmup": false,
+      "raw_formats": [],
+      "capabilities": [
+        "chat"
+      ],
+      "_caps_canonical": true,
+      "background_task_model": "llm-router-local/mistral-small-latest",
+      "benchmark": {
+        "coding": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 26,
+            "source": "artificialanalysis",
+            "raw": 20.1,
+            "official_name": "Mistral Large 3"
+          }
+        },
+        "math": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 39,
+            "source": "artificialanalysis",
+            "raw": 38.0,
+            "official_name": "Mistral Large 3"
+          }
+        },
+        "research": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 52,
+            "source": "artificialanalysis",
+            "raw": 15.9,
+            "official_name": "Mistral Large 3"
+          }
+        },
+        "analysis": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 52,
+            "source": "artificialanalysis",
+            "raw": 15.9,
+            "official_name": "Mistral Large 3"
+          }
+        },
+        "reporting": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 72,
+            "source": "lmarena",
+            "raw": 1403.86,
+            "official_name": "mistral-large-3"
+          }
+        },
+        "creative": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 68,
+            "source": "lmarena",
+            "raw": 1375.19,
+            "official_name": "mistral-large-3"
+          }
+        },
+        "orchestration": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 73,
+            "source": "lmarena",
+            "raw": 1420.07,
+            "official_name": "mistral-large-3"
+          }
+        },
+        "agentic": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 73,
+            "source": "lmarena",
+            "raw": 1420.07,
+            "official_name": "mistral-large-3"
+          }
+        },
+        "fast": {
+          "measured": {
+            "tps": 57.9,
+            "n": 1,
+            "ts": "2026-07-19T20:29:27Z",
+            "capability": 72,
+            "source": "lmarena",
+            "raw": 1416.11,
+            "official_name": "mistral-large-3"
+          }
+        }
+      }
+    },
+    "llm-router-local/mistral-large-3": {
+      "enabled": false,
+      "shortname": "mistral-large-3",
+      "display_name": "mistral-large-3",
+      "icon": "🌬️",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "none",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7
+      },
+      "raw_formats": [],
+      "provider": "llm-router-local",
+      "base_model_id": "mistral-large-3",
       "profile": "speed",
       "_caps_canonical": true
     }
@@ -3079,7 +3261,7 @@
     "block_unscannable_on_cloud": false,
     "confidence_lower": 0.5,
     "confidence_upper": 0.85,
-    "default_local_fallback_model": "gemma-4-12B-it-qat-4bit",
+    "default_local_fallback_model": "",
     "background_pii_action": "anonymise",
     "background_ask_action": "anonymise",
     "background_anonymise_fail_action": "swap_to_local",
@@ -3097,6 +3279,9 @@
       "financial": {
         "action": "block"
       },
+      "business_id": {
+        "action": "ignore"
+      },
       "contact": {
         "action": "ignore"
       },
@@ -3108,9 +3293,6 @@
       },
       "bare_id": {
         "action": "warn"
-      },
-      "business_id": {
-        "action": "ignore"
       }
     },
     "rule_overrides": {
@@ -3199,7 +3381,7 @@
       "bare_identifier": 1
     },
     "count_points": {
-      "pem_private_key": [
+      "anthropic_key": [
         1,
         2
       ],
@@ -3211,67 +3393,11 @@
         1,
         2
       ],
-      "github_app_token": [
-        1,
-        2
-      ],
-      "github_pat": [
-        1,
-        2
-      ],
-      "slack_token": [
-        1,
-        2
-      ],
-      "slack_webhook": [
-        1,
-        2
-      ],
-      "google_api_key": [
-        1,
-        2
-      ],
-      "google_oauth_client": [
-        1,
-        2
-      ],
-      "stripe_live": [
-        1,
-        2
-      ],
-      "stripe_test": [
-        1,
-        2
-      ],
-      "openai_key": [
-        1,
-        2
-      ],
-      "anthropic_key": [
-        1,
-        2
-      ],
-      "twilio_sid": [
-        1,
-        2
-      ],
-      "sendgrid_key": [
-        1,
-        2
-      ],
-      "mailgun_key": [
-        1,
-        2
-      ],
-      "jwt": [
+      "azure_account_key": [
         1,
         2
       ],
       "azure_storage_conn": [
-        1,
-        2
-      ],
-      "azure_account_key": [
         1,
         2
       ],
@@ -3283,43 +3409,83 @@
         2,
         3
       ],
-      "de_steuerid": [
+      "github_app_token": [
         1,
         2
       ],
-      "uk_nino": [
+      "github_pat": [
         1,
         2
       ],
-      "uk_nhs": [
-        3,
-        5
-      ],
-      "nl_bsn": [
+      "google_api_key": [
         1,
         2
+      ],
+      "google_oauth_client": [
+        1,
+        2
+      ],
+      "jwt": [
+        1,
+        2
+      ],
+      "mailgun_key": [
+        1,
+        2
+      ],
+      "openai_key": [
+        1,
+        2
+      ],
+      "pem_private_key": [
+        1,
+        2
+      ],
+      "sendgrid_key": [
+        1,
+        2
+      ],
+      "slack_token": [
+        1,
+        2
+      ],
+      "slack_webhook": [
+        1,
+        2
+      ],
+      "stripe_live": [
+        1,
+        2
+      ],
+      "stripe_test": [
+        1,
+        2
+      ],
+      "twilio_sid": [
+        1,
+        2
+      ],
+      "ar_dni": [
+        1,
+        2
+      ],
+      "at_svnr": [
+        2,
+        3
       ],
       "be_national": [
         3,
         5
       ],
-      "pl_pesel": [
+      "bg_egn": [
         3,
         5
       ],
-      "pt_nif": [
+      "br_cpf": [
         1,
         2
       ],
-      "se_personnummer": [
-        3,
-        5
-      ],
-      "dk_cpr": [
-        3,
-        5
-      ],
-      "no_fnr": [
+      "ca_sin": [
         3,
         5
       ],
@@ -3331,11 +3497,19 @@
         3,
         5
       ],
-      "ro_cnp": [
+      "de_steuerid": [
+        1,
+        2
+      ],
+      "dk_cpr": [
         3,
         5
       ],
-      "hu_taj": [
+      "es_dni_nie": [
+        3,
+        5
+      ],
+      "fr_insee": [
         1,
         2
       ],
@@ -3343,31 +3517,19 @@
         3,
         5
       ],
-      "bg_egn": [
-        3,
-        5
+      "hu_taj": [
+        1,
+        2
       ],
       "ie_pps": [
         1,
         2
       ],
-      "br_cpf": [
-        1,
-        2
-      ],
-      "ca_sin": [
-        3,
-        5
-      ],
-      "mx_curp": [
-        1,
-        2
-      ],
-      "ar_dni": [
-        1,
-        2
-      ],
       "in_aadhaar": [
+        1,
+        2
+      ],
+      "it_codicefiscale": [
         1,
         2
       ],
@@ -3379,6 +3541,34 @@
         1,
         2
       ],
+      "mx_curp": [
+        1,
+        2
+      ],
+      "nl_bsn": [
+        1,
+        2
+      ],
+      "no_fnr": [
+        3,
+        5
+      ],
+      "pl_pesel": [
+        3,
+        5
+      ],
+      "pt_nif": [
+        1,
+        2
+      ],
+      "ro_cnp": [
+        3,
+        5
+      ],
+      "se_personnummer": [
+        3,
+        5
+      ],
       "sg_nric": [
         1,
         2
@@ -3387,19 +3577,11 @@
         1,
         2
       ],
-      "at_svnr": [
-        2,
-        3
-      ],
-      "fr_insee": [
-        1,
-        2
-      ],
-      "es_dni_nie": [
+      "uk_nhs": [
         3,
         5
       ],
-      "it_codicefiscale": [
+      "uk_nino": [
         1,
         2
       ],
@@ -3411,27 +3593,7 @@
         1,
         2
       ],
-      "svnr_ctx": [
-        2,
-        3
-      ],
-      "ssn_ctx_loose": [
-        2,
-        3
-      ],
-      "insurance_number_ctx": [
-        2,
-        3
-      ],
-      "id_card_ctx": [
-        2,
-        3
-      ],
       "drivers_license_ctx": [
-        2,
-        3
-      ],
-      "passport_ctx_loose": [
         2,
         3
       ],
@@ -3439,11 +3601,23 @@
         2,
         3
       ],
-      "iban": [
-        1,
-        2
+      "id_card_ctx": [
+        2,
+        3
       ],
-      "credit_card": [
+      "insurance_number_ctx": [
+        2,
+        3
+      ],
+      "passport_ctx_loose": [
+        2,
+        3
+      ],
+      "ssn_ctx_loose": [
+        2,
+        3
+      ],
+      "svnr_ctx": [
         2,
         3
       ],
@@ -3451,11 +3625,15 @@
         2,
         3
       ],
-      "br_cnpj": [
+      "credit_card": [
+        2,
+        3
+      ],
+      "iban": [
         1,
         2
       ],
-      "tax_id_ctx": [
+      "br_cnpj": [
         1,
         2
       ],
@@ -3463,7 +3641,15 @@
         1,
         2
       ],
+      "tax_id_ctx": [
+        1,
+        2
+      ],
       "email": [
+        2,
+        3
+      ],
+      "name": [
         2,
         3
       ],
@@ -3479,11 +3665,7 @@
         1,
         2
       ],
-      "passport": [
-        1,
-        2
-      ],
-      "dob": [
+      "address": [
         2,
         3
       ],
@@ -3491,17 +3673,17 @@
         1,
         3
       ],
+      "dob": [
+        2,
+        3
+      ],
       "mrz": [
         1,
         2
       ],
-      "name": [
-        2,
-        3
-      ],
-      "address": [
-        2,
-        3
+      "passport": [
+        1,
+        2
       ],
       "bare_identifier": [
         1,
@@ -6094,7 +6276,7 @@
     "enabled": false,
     "server_block": false,
     "server_log": false,
-    "default_local_fallback_model": "gemma-4-12B-it-qat-4bit",
+    "default_local_fallback_model": "",
     "per_level_action": {
       "public": "ignore",
       "internal": "warn",

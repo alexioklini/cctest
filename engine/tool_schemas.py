@@ -1034,7 +1034,16 @@ TOOL_DEFINITIONS = [
             "For unknown extensions, falls back to plain text read. "
             "For XLSX/CSV ANALYSIS (filtering, joining, aggregating, building "
             "a new workbook) prefer xlsx_inspect + xlsx_query instead of "
-            "reading the raw rows into chat."
+            "reading the raw rows into chat. "
+            "PDF TABLE CAVEAT: the markdown mirrors the PDF's VISUAL grid — "
+            "complex reports (bank/financial statements) often spread ONE "
+            "logical record over SEVERAL stacked rows (multi-row headers, "
+            "continuation lines for taxes/fees) and the column count can "
+            "drift between pages. Before writing such data to XLSX/CSV, "
+            "regroup continuation rows into their parent record (never map "
+            "stacked lines onto different columns of one row), and afterwards "
+            "verify column sums against any totals/summary section of the "
+            "document."
         ),
         "input_schema": {
             "type": "object",
@@ -1043,7 +1052,7 @@ TOOL_DEFINITIONS = [
                 "sheet": {"type": "string", "description": "Sheet name for XLSX (default: all sheets)"},
                 "pages": {"type": "string", "description": "Page range for PDF, e.g. '1-5' or '1,3,7'"},
                 "slides": {"type": "string", "description": "Slide range for PPTX, e.g. '1-10' or '2,5'"},
-                "include_tables": {"type": "boolean", "description": "PDF only: extract tables via pdfplumber and inline as markdown. Works well on PDFs with ruled cell borders (forms, financial reports, invoices). Turn OFF for academic papers, whitespace-aligned tables, or scanned PDFs — pdfplumber produces noisy output in those cases. Default false; adds ~1-3s per page."},
+                "include_tables": {"type": "boolean", "description": "PDF only: ADDITIONALLY reconstruct ruled tables via pdfplumber, appended as '### Table (page N, #x)' sections (the main markdown already renders tables inline). Only works on PDFs with ruled cell borders; borderless/whitespace-aligned tables (most bank statements) yield NOTHING — the result's backend tag reports the count, e.g. 'pymupdf4llm+tables:0' means the inline markdown is all there is. Default false; adds ~1-3s per page."},
             },
             "required": ["path"],
         },
@@ -1220,6 +1229,13 @@ TOOL_DEFINITIONS = [
             "first; source.file also takes .csv/.json/.xml — e.g. turn a "
             "JSON export into a styled workbook in one call). Inline rows "
             "are ONLY for small, newly-authored tables. "
+            "source.file can NOT read PDFs — for a table that only exists in "
+            "a PDF, read_document it and transcribe inline rows, but FIRST "
+            "regroup stacked continuation rows into one record each (see "
+            "read_document's PDF TABLE CAVEAT: one logical record often spans "
+            "several visual rows), then cross-check column totals via "
+            "xlsx_query against any summary figures in the source document "
+            "and fix mismatches before answering. "
             "Never write openpyxl/pandas code for this. Spec: {sheets:[{name, "
             "columns?:[{name, format?: text|int|number|eur|percent|date, "
             "width?}], rows?:[[...]] | source:{file, sheet?, sql?} | "

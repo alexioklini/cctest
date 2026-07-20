@@ -2177,6 +2177,30 @@ def _do_extract(src: str, *, use_markitdown: bool = True,
         except _ExtractTimeout:
             _timed_out = True
         if not _timed_out and not p_err and p_text:
+            if include_tables:
+                # include_tables was silently INERT on this default path until
+                # v9.381.0 (pdfplumber only ran in the legacy _extract_pdf
+                # fallback, which this branch returns before). Append the
+                # pdfplumber reconstruction and surface the count in the
+                # backend tag so the model KNOWS whether anything was found —
+                # borderless/whitespace-aligned tables (e.g. bank statements)
+                # yield 0: pdfplumber needs ruled cell borders.
+                try:
+                    tables_by_page = _run_with_timeout(
+                        lambda: _render_pdf_tables(
+                            src, _parse_index_selection(pages)),
+                        _PDF_EXTRACT_TIMEOUT_SECS)
+                except _ExtractTimeout:
+                    tables_by_page = {}
+                n_tables = sum(len(v) for v in tables_by_page.values())
+                if n_tables:
+                    t_parts = [p_text.rstrip()]
+                    for pnum in sorted(tables_by_page):
+                        for j, md in enumerate(tables_by_page[pnum], 1):
+                            t_parts.append(
+                                f"### Table (page {pnum}, #{j})\n{md}")
+                    p_text = "\n\n".join(t_parts) + "\n"
+                return p_text, f"pymupdf4llm+tables:{n_tables}", None
             return p_text, "pymupdf4llm", None
         if p_err and not _timed_out:
             # Hard dep/error from pymupdf4llm (e.g. not installed) — let the
