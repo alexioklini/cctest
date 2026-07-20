@@ -5567,7 +5567,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         _research_active = bool(getattr(session, "_citation_discipline_active", False))
                         if _research_active and reply:
                             try:
-                                _val = engine.validate_citations_in_response(reply, session_id=sid)
+                                # Pass the ORIGINAL user text (not the faked
+                                # wire copy) so a quote of what the user typed
+                                # counts as grounded — the validator runs AFTER
+                                # reply de-anonymisation, so both are real
+                                # values (chat db9867f5).
+                                _val = engine.validate_citations_in_response(
+                                    reply, session_id=sid,
+                                    user_text=(message if isinstance(message, str)
+                                               else None))
                                 _cv_meta = {
                                     "verified": _val.get("verified", 0),
                                     "unverified_count": len(_val.get("unverified", []) or []),

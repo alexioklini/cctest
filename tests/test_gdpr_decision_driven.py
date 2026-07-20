@@ -457,6 +457,27 @@ class TestNationalIdShapeFakes(_MappingTestBase):
         fake = ps._fake_national_id("943 476 5919", m, "uk_nhs")
         self.assertNotEqual(fake, "943 476 5919")
 
+    def test_keyword_prefix_bare_number_reverses(self):
+        # Chat aa6cab7d: eine Kontext-ID mit Keyword-Präfix ('NHS-Nummer:
+        # 943 476 5919') — das Modell echot in einer Tabellenzelle nur die
+        # NACKTE Nummer. Beide Formen (voll + nackt) müssen reversen, sonst
+        # bleibt der Fake in der Zelle stehen.
+        m = self._new()
+        txt = "NHS-Nummer: 943 476 5919"
+        anon = ps.pseudonymize_text(
+            txt, [{"rule_id": "health_insurance_ctx",
+                   "start": 0, "end": len(txt), "label": "n"}], mapping=m)
+        self.assertNotIn("943 476 5919", anon)
+        # Das nackte Ziffern-Paar ist zusätzlich registriert.
+        self.assertIn("943 476 5919", m.forward)
+        fake_bare = m.forward["943 476 5919"]
+        back, _ = ps.deanonymize_text(
+            f"| UK-NHS-Nummer | {fake_bare} |", mapping=m)
+        self.assertIn("943 476 5919", back)
+        # Und die Voll-Form auch.
+        back2, _ = ps.deanonymize_text(anon, mapping=m)
+        self.assertEqual(back2, txt)
+
 
 class TestValuesSameSubject(unittest.TestCase):
     """FP-Propagation auf abgeleitete Werte — live gefundene Regression: die

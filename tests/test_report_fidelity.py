@@ -462,5 +462,58 @@ class TestClampReportFidelity(unittest.TestCase):
         self.assertIn(".html or .md", out)
 
 
+class TestFabricationStripKeepsQuote(unittest.TestCase):
+    """Chat db9867f5: mistral-small answered a birth-date question purely as
+    '[Quelle: user_message — "…geboren am 16.02.1947"]'. The fabrication strip
+    removed the WHOLE bracket → empty reply. It must keep the quoted text."""
+
+    def setUp(self):
+        import brain
+        self.brain = brain
+
+    def test_pure_citation_keeps_quote_text(self):
+        brain = self.brain
+        out, n = brain.strip_fabricated_citations(
+            '[Quelle: user_message — "Bonnie Marie Stark, geboren am 05.02.1947"]')
+        self.assertEqual(n, 1)
+        self.assertIn("geboren am 05.02.1947", out)
+        self.assertNotIn("[Quelle:", out)
+
+    def test_decorative_bracket_without_quote_removed(self):
+        out, n = self.brain.strip_fabricated_citations(
+            "Die Analyse ist fertig. [Quelle: report.pdf]")
+        self.assertEqual(out.strip(), "Die Analyse ist fertig.")
+
+    def test_claim_plus_citation_keeps_claim(self):
+        out, _ = self.brain.strip_fabricated_citations(
+            'Sie wurde am 05.02.1947 geboren. '
+            '[Quelle: user_message — "geboren am 05.02.1947"]')
+        self.assertIn("Sie wurde am 05.02.1947 geboren", out)
+
+
+class TestUserMessageCountsAsSource(unittest.TestCase):
+    """A quote of what the user typed is grounded — not fabricated
+    (chat db9867f5)."""
+
+    def setUp(self):
+        import brain
+        self.brain = brain
+
+    def test_user_message_quote_verified(self):
+        reply = ('Sie wurde am 05.02.1947 geboren. '
+                 '[Quelle: user_message — "geboren am 05.02.1947"]')
+        user = "Bonnie Marie Stark, geboren am 05.02.1947. Wann geboren?"
+        val = self.brain.validate_citations_in_response(
+            reply, session_id=None, user_text=user)
+        self.assertEqual(val["verified"], 1)
+        self.assertEqual(len(val["unverified"]), 0)
+
+    def test_without_user_text_unverified(self):
+        reply = ('Sie wurde am 05.02.1947 geboren. '
+                 '[Quelle: user_message — "geboren am 05.02.1947"]')
+        val = self.brain.validate_citations_in_response(reply, session_id=None)
+        self.assertEqual(val["verified"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

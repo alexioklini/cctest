@@ -1265,6 +1265,18 @@ def _fake_national_id(original: str, mapping: Mapping,
                     validators.append(ok2)
             except Exception:
                 pass
+    def _accept(full: str, cand: str) -> str:
+        # When the span carries a keyword prefix ('NHS-Nummer: 943…'), the fake
+        # keeps it ('NHS-Nummer: 316…'), but the model routinely echoes only the
+        # BARE number in a table cell — the full-span reverse key then misses.
+        # Register the bare value→cand pair too so the bare form reverses
+        # (chat aa6cab7d: the NHS number stayed faked in the table; same class
+        # as the dob prefix fix 9.383.1).
+        if full != cand and value not in mapping.forward \
+                and cand not in mapping.reverse:
+            mapping.record(value, cand, rule_id, count=False)
+        return full
+
     for nonce in range(_ID_RULE_MAX_TRIES):
         cand = _shape_fake_digits(value, mapping.salt, nonce)
         if cand == value:
@@ -1273,15 +1285,15 @@ def _fake_national_id(original: str, mapping: Mapping,
         if not validators:
             # No checksum anywhere — shape fidelity is the whole bar. Accept
             # the first non-identical candidate.
-            return full
+            return _accept(full, cand)
         try:
             # Validate against the rule's OWN checker (+ any opportunistic
             # ones). Feed both the full span and the bare value — context
             # rules accept the keyword-prefixed span, bare rules the value.
             if all(v(full) or v(cand) for v in validators):
-                return full
+                return _accept(full, cand)
         except Exception:
-            return full  # a validator blew up on the fake → shape fake is fine
+            return _accept(full, cand)  # validator blew up → shape fake is fine
     return None  # checksum rule, no valid fake found → opaque-token fallback
 
 
