@@ -1392,7 +1392,15 @@ def seed_from_decision(mapping: Mapping, rule_id: str, value: str) -> bool:
         except Exception:
             pass
     if value in mapping.forward:
-        return True  # stable: already minted (variant registration / reuse)
+        # The value was registered as a variant during entity seeding
+        # (standard_variant_pairs, count=False) BEFORE reaching here. But this
+        # IS the user-confirmed finding — promote it to a real find so the
+        # report/turn-detail don't filter the actual decided value as a
+        # derived variant (chat 80494e34). Idempotent.
+        mapping.derived.discard(value)
+        rid = mapping.categories.get(value, rule_id)
+        mapping.finding_counts[rid] = mapping.finding_counts.get(rid, 0) + 1
+        return True
     replacement = _build_replacement(value, rule_id, mapping)
     mapping.record(value, replacement, rule_id)
     return True
@@ -1571,6 +1579,14 @@ class Mapping:
     # args-deanon and the web-egress gate entity-aware with zero code there).
     # Legacy mappings without the field deserialise to {}.
     entities: dict[str, dict] = field(default_factory=dict)
+    # Originals registered as DERIVED entries (count=False): pre-registered
+    # entity/org surface variants, the bare/10-char passport twin, extra DOB
+    # surface forms. These are internal bookkeeping so the SAME subject stays
+    # token-stable — they were never in the user's text and carry no meaning
+    # for a human reading the privacy report. Tracked so the report + the
+    # per-turn privacy detail can show only REAL findings (chat 80494e34: 34
+    # of 49 rows were derived variants). Legacy mappings deserialise to set().
+    derived: set = field(default_factory=set)
 
     def next_token(self, rule_id: str) -> str:
         kind = _rule_id_to_kind(rule_id)
@@ -1606,6 +1622,12 @@ class Mapping:
             self.reverse[replacement] = original
         if count:
             self.finding_counts[rule_id] = self.finding_counts.get(rule_id, 0) + 1
+            self.derived.discard(original)  # a real find promotes a prior variant
+        elif original not in self.categories:
+            # Only mark as derived when this is the FIRST registration of the
+            # value — a real find recorded earlier (count=True) must not be
+            # demoted by a later prophylactic variant pass over the same value.
+            self.derived.add(original)
         self.categories[original] = rule_id
 
 
@@ -2302,6 +2324,7 @@ def _serialize_mapping(m: Mapping) -> dict:
         "finding_counts": m.finding_counts,
         "categories": m.categories,
         "entities": m.entities,
+        "derived": sorted(m.derived),  # set → list for JSON
     }
 
 
@@ -2315,6 +2338,8 @@ def _deserialize_mapping(d: dict) -> Mapping:
     m.categories = dict(d.get("categories") or {})
     # L2 entity layer — legacy rows (pre-9.337.0) have no field → {}.
     m.entities = dict(d.get("entities") or {})
+    # Derived-variant set (9.383.5) — legacy rows have no field → set().
+    m.derived = set(d.get("derived") or ())
     return m
 
 

@@ -1653,6 +1653,16 @@ preamble goes in first-user-message instead.
   'Deutsche Steuer-ID'→'Jordan Davis-ID' can't happen, chat 80494e34) and the
   span-language check now also drops an untrusted finding whose window is
   clearly the dominant/trusted language. Tests: `tests/test_pii_ner.py`.
+- **Derived-variant display filter (9.383.5)**: entity-consistent anonymisation
+  registers every expected surface form of a person/date (STARK<<BONNIE<MARIE,
+  B. Stark, DOB in 6 formats …) as internal `count=False` mapping entries for
+  token stability — never in the user's text. `Mapping.derived` tracks them
+  (persisted); the turn-end recorder writes `pii_decisions.is_derived`; the
+  privacy report (`pii-decisions-view`) and the per-turn detail show only REAL
+  findings (chat 80494e34: 34 of 49 rows were variants). The mapping + wire
+  rewrite + restart de-anonymisation still use every variant — only the DISPLAY
+  is filtered. The synthetic anonymise rows render categories via
+  `gdprRuleLabel` (German catalog labels, not raw rule_ids like `dob`).
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,

@@ -305,7 +305,10 @@ Also holds the de-anon index for a `data_reviews` anonymisation (session id
 decision_id PK, session_id, user_id, turn_id, created_at,
 rule_id, value_hash (sha256(rule|value), per-session dedupe), raw_value (capped 512),
 confidence REAL, band, disposition, turn_action, false_positive INTEGER, source,
-fake_value (9.201.0 — pseudonym for an anonymise decision, '' otherwise; capped 512)
+fake_value (9.201.0 — pseudonym for an anonymise decision, '' otherwise; capped 512),
+is_derived INTEGER (9.383.5 — 1 = a pre-registered entity/passport/DOB surface
+  VARIANT never in the user's text; the privacy report + turn-detail hide these,
+  showing only real findings)
 ```
 APPEND-ONLY ledger: one row per PII finding (latest row per value_hash wins).
 `fake_value` holds the original→pseudonym for `turn_action='anonymise'` rows,

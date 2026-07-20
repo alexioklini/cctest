@@ -1511,6 +1511,13 @@ class SessionsHandlerMixin:
             if not events:
                 continue
             latest = events[-1]            # newest decision = current status
+            # Skip DERIVED variants (pre-registered entity/passport/DOB surface
+            # forms never in the user's text): they are internal token-stability
+            # bookkeeping, meaningless to a human reading the report (chat
+            # 80494e34: 34 of 49 rows). A value that was EVER a real find (any
+            # non-derived event) is kept.
+            if all(e.get("is_derived") for e in events):
+                continue
             rid = latest.get("rule_id") or ""
             value = latest.get("value") or ""
             raw_src = latest.get("source") or ""

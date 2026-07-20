@@ -777,7 +777,10 @@ function renderSyntheticGdprCall(msg, idx) {
   let summary = '';
   if (kind === 'anonymise' && status === 'ok') {
     const n = result.findings ?? 0;
-    const cats = Object.keys(result.categories || {});
+    // Speaking German labels (Geburtsdatum, Krankenversicherungsnummer …)
+    // from the server catalog instead of the technical rule_ids (dob,
+    // health_insurance_ctx). gdprRuleLabel falls back to the id if unknown.
+    const cats = Object.keys(result.categories || {}).map(gdprRuleLabel);
     const catLabel = cats.length ? ' · ' + cats.join(', ') : '';
     const pending = Array.isArray(result.pending_on_read) ? result.pending_on_read : [];
     const pendNote = pending.length ? ` · ${pending.length} Datei${pending.length === 1 ? '' : 'en'} ausstehend` : '';
@@ -788,7 +791,7 @@ function renderSyntheticGdprCall(msg, idx) {
   } else if (kind === 'anonymise_read' && status === 'ok') {
     const n = result.findings ?? 0;
     const minted = result.tokens_minted ?? 0;
-    const cats = Object.keys(result.categories || {});
+    const cats = Object.keys(result.categories || {}).map(gdprRuleLabel);
     const catLabel = cats.length ? ' · ' + cats.join(', ') : '';
     summary = `${result.source || 'Tool-Ausgabe'}: ${n} Treffer · ${minted} neue${minted === 1 ? 's' : ''} Token${catLabel}`;
   } else if (kind === 'deanonymise_text') {

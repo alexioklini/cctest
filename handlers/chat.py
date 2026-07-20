@@ -6264,10 +6264,18 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     _fp_norms.discard("")
                                 except Exception:
                                     _fp_norms = set()
+                                # `is_derived` flags a pre-registered surface
+                                # variant (entity/passport/DOB form never in the
+                                # user's text) so the report + turn-detail can
+                                # show only REAL findings — the mapping tracks
+                                # them in `.derived` (chat 80494e34: 34/49 rows).
+                                _derived = getattr(_m_inmem, "derived", None) \
+                                    or set()
                                 _anon_decisions = [
                                     {"rule_id": _m_inmem.categories.get(_o, ""),
                                      "value": _o, "fake_value": _f,
-                                     "disposition": "anonymise"}
+                                     "disposition": "anonymise",
+                                     "is_derived": _o in _derived}
                                     for _o, _f in _m_inmem.forward.items()
                                     if " ".join(_o.split()).lower()
                                     not in _fp_norms

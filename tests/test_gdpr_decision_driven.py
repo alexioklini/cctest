@@ -299,6 +299,55 @@ class TestDobBareDateReverse(_MappingTestBase):
             f"Datums-Paare überlebten den Purge: {list(m.forward)}")
 
 
+class TestDerivedVariantTracking(_MappingTestBase):
+    """Die abgeleiteten Schreibweisen (STARK<<BONNIE<MARIE, B. Stark, DOB-
+    Formen) sind interne Token-Stabilitäts-Buchhaltung, standen nie im Text
+    und dürfen NICHT im Datenschutzbericht / Turn-Detail als eigene Zeilen
+    erscheinen (Chat 80494e34: 34 von 49). mapping.derived trackt sie."""
+
+    def test_stem_findings_are_real_variants_are_derived(self):
+        m = self._new()
+        ps.seed_from_decision(m, "name", "Bonnie Marie Stark")
+        ps.seed_from_decision(m, "dob", "geboren am 05.02.1947")
+        ps.seed_from_decision(m, "email", "bonnie.stark@example.com")
+        real = {v for v in m.forward if v not in m.derived}
+        # Genau die vier bestätigten Werte sind ECHT:
+        self.assertEqual(
+            real, {"Bonnie Marie Stark", "geboren am 05.02.1947",
+                   "bonnie.stark@example.com"})
+        # Varianten sind derived:
+        for variant in ("Bonnie Stark", "STARK", "B. Stark", "05.02.1947",
+                        "1947-02-05"):
+            self.assertIn(variant, m.derived, f"{variant} sollte derived sein")
+
+    def test_real_find_never_demoted_by_later_variant(self):
+        # Ein echter Fund, der später als Variante einer anderen Registrierung
+        # wiederkommt, bleibt echt.
+        m = self._new()
+        ps.seed_from_decision(m, "name", "Bonnie Marie Stark")
+        self.assertNotIn("Bonnie Marie Stark", m.derived)
+        # Erneute Registrierung (Reuse) demotet nicht:
+        ps.seed_from_decision(m, "name", "Bonnie Marie Stark")
+        self.assertNotIn("Bonnie Marie Stark", m.derived)
+
+    def test_derived_survives_serialization(self):
+        m = self._new()
+        ps.seed_from_decision(m, "name", "Bonnie Marie Stark")
+        d = ps._serialize_mapping(m)
+        self.assertIn("derived", d)
+        m2 = ps._deserialize_mapping(d)
+        self.assertEqual(m2.derived, m.derived)
+        self.assertIn("Bonnie Stark", m2.derived)
+        self.assertNotIn("Bonnie Marie Stark", m2.derived)
+
+    def test_legacy_mapping_without_derived_field(self):
+        # Alt-Mappings von der Platte haben kein derived-Feld → set().
+        m = ps._deserialize_mapping(
+            {"mapping_id": "old", "salt": "aaaa",
+             "forward": {"x": "y"}})
+        self.assertEqual(m.derived, set())
+
+
 class TestValuesSameSubject(unittest.TestCase):
     """FP-Propagation auf abgeleitete Werte — live gefundene Regression: die
     Turn-End-Zeilen der ENTITÄTS-VARIANTEN ('Bonnie Stark', 'STARK', DOB-

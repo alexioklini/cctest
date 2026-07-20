@@ -817,6 +817,17 @@ class ChatDB:
             # self-contained — the deterministic pre-send wire-history pass can
             # reuse original→fake without decrypting pseudonym_maps. '' for
             # accepted/false-positive/local decisions (the original is kept).
+            # Migration: is_derived flags a ledger row as internal bookkeeping
+            # (a pre-registered entity/passport/DOB surface VARIANT, never in
+            # the user's text) so the privacy report + the per-turn detail can
+            # show only REAL findings (chat 80494e34: 34 of 49 rows were
+            # derived). Default 0 = a real find (back-compat for old rows).
+            try:
+                conn.execute(
+                    "ALTER TABLE pii_decisions ADD COLUMN is_derived "
+                    "INTEGER NOT NULL DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             try:
                 conn.execute(
                     "ALTER TABLE pii_decisions ADD COLUMN fake_value "
@@ -3094,13 +3105,15 @@ class ChatDB:
                 str(d.get("disposition") or ""), str(turn_action or ""),
                 1 if d.get("false_positive") else 0, str(d.get("source") or ""),
                 str(d.get("fake_value") or "")[:512],
+                1 if d.get("is_derived") else 0,
             ))
         with _db_conn() as conn:
             conn.executemany(
                 "INSERT INTO pii_decisions (decision_id, session_id, user_id, "
                 "turn_id, created_at, rule_id, value_hash, raw_value, confidence, "
-                "band, disposition, turn_action, false_positive, source, fake_value) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+                "band, disposition, turn_action, false_positive, source, fake_value, "
+                "is_derived) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
             conn.commit()
         return len(rows)
 
@@ -3148,7 +3161,8 @@ class ChatDB:
         with _db_conn() as conn:
             rows = conn.execute(
                 "SELECT value_hash, rule_id, raw_value, false_positive, "
-                "disposition, turn_action, fake_value, user_id, created_at, source "
+                "disposition, turn_action, fake_value, user_id, created_at, source, "
+                "is_derived "
                 "FROM pii_decisions WHERE session_id = ? "
                 "ORDER BY created_at ASC", (session_id,)).fetchall()
         for r in rows:
@@ -3159,6 +3173,7 @@ class ChatDB:
                 "disposition": r[4], "turn_action": r[5],
                 "fake_value": r[6] or "", "user_id": r[7] or "",
                 "created_at": r[8], "source": r[9] or "",
+                "is_derived": bool(r[10]),
             }
             lst = out.setdefault(vh, [])
             # Collapse a repeat of the immediately-prior identical decision
