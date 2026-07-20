@@ -90,18 +90,21 @@ class TestStreamingDeanonymizer(unittest.TestCase):
         from handlers import chat as chat_mod
         self.chat_mod = chat_mod
 
-    def test_emits_simple_token_at_once(self):
-        """A single delta containing a full token should de-anonymise
-        immediately."""
+    def test_emits_simple_token_restored(self):
+        """A delta containing a full token de-anonymises; the tail may be
+        HELD BACK until flush (9.383.2 shape-fake holdback — a non-empty
+        mapping always reserves a trailing window in which a partially
+        streamed fake could still complete). The guarantee is the COMBINED
+        output, not immediate emission."""
         mapping = ps.new_mapping()
         mapping.forward["alice@example.com"] = "<EMAIL_1_aaaa>"
         mapping.reverse["<EMAIL_1_aaaa>"] = "alice@example.com"
         try:
             sd = self.chat_mod.StreamingDeanonymizer(mapping)
             out = sd.feed("Sent by <EMAIL_1_aaaa> at noon.")
-            self.assertEqual(out, "Sent by alice@example.com at noon.")
+            combined = out + sd.flush()
+            self.assertEqual(combined, "Sent by alice@example.com at noon.")
             self.assertEqual(sd.restored_count, 1)
-            self.assertEqual(sd.flush(), "")
         finally:
             ps.close_mapping(mapping.mapping_id)
 
@@ -140,6 +143,59 @@ class TestStreamingDeanonymizer(unittest.TestCase):
             # Second delta resolves it.
             self.assertEqual(sd.feed("5 and y > 3."), "< 5 and y > 3.")
             self.assertEqual(sd.flush(), "")
+        finally:
+            ps.close_mapping(mapping.mapping_id)
+
+    def test_shape_fake_split_across_deltas_never_leaks(self):
+        """Chat 80494e34: SHAPE fakes (email/IBAN/date — no angle brackets)
+        stream in several small deltas. Without the trailing holdback the
+        fake PREFIX was emitted before the value completed — irreversible,
+        the user saw the fake (and a fake/real chimera after the offsets
+        diverged) while the persisted reply was correct. The combined stream
+        must equal the restored text and no emitted chunk may leak fake
+        substance."""
+        mapping = ps.new_mapping()
+        mapping.forward["bonnie.stark@example.com"] = "hayden.scott@example.com"
+        mapping.reverse["hayden.scott@example.com"] = "bonnie.stark@example.com"
+        mapping.forward["05.02.1947"] = "13.02.1947"
+        mapping.reverse["13.02.1947"] = "05.02.1947"
+        try:
+            sd = self.chat_mod.StreamingDeanonymizer(mapping)
+            # Table-cell style, token-sized deltas — the live failure shape.
+            deltas = ["| **E-Mail** | ", "hayden", ".sc", "ott@", "example",
+                      ".com | ", "geboren ", "13", ".02", ".1947", " |"]
+            emitted = [sd.feed(c) for c in deltas]
+            emitted.append(sd.flush())
+            combined = "".join(emitted)
+            self.assertEqual(
+                combined,
+                "| **E-Mail** | bonnie.stark@example.com | "
+                "geboren 05.02.1947 |")
+            self.assertNotIn("hayden", combined)
+            self.assertNotIn("13.02.1947", combined)
+        finally:
+            ps.close_mapping(mapping.mapping_id)
+
+    def test_emission_is_append_only_prefix_stable(self):
+        """The client renders emitted chunks additively — an emitted prefix
+        can never be retracted. Assert the invariant directly: after every
+        feed, the previously emitted text must be a strict prefix of the
+        final combined output."""
+        mapping = ps.new_mapping()
+        mapping.forward["DE89 3704 0044 0532 0130 00"] = \
+            "DE19 8638 1288 4472 1512 23"
+        mapping.reverse["DE19 8638 1288 4472 1512 23"] = \
+            "DE89 3704 0044 0532 0130 00"
+        try:
+            sd = self.chat_mod.StreamingDeanonymizer(mapping)
+            text = "IBAN: DE19 8638 1288 4472 1512 23 (bitte prüfen)"
+            acc = ""
+            for ch in [text[i:i + 3] for i in range(0, len(text), 3)]:
+                acc += sd.feed(ch)
+            final = acc + sd.flush()
+            self.assertEqual(final,
+                             "IBAN: DE89 3704 0044 0532 0130 00 (bitte prüfen)")
+            self.assertTrue(final.startswith(acc))
         finally:
             ps.close_mapping(mapping.mapping_id)
 

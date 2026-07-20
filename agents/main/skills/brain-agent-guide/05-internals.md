@@ -1513,7 +1513,12 @@ preamble goes in first-user-message instead.
   surface form as its own forward/reverse pair (`_entity_fake_dob`) — the
   keyword span ('geboren am 05.02.1947') keeps its prefix in the fake, but
   the reply-side reverse no longer breaks when the model reformats or
-  bolds the date (live chat db0ef544).
+  bolds the date (live chat db0ef544). 9.383.2: the live-stream
+  de-anonymiser (`StreamingDeanonymizer`) additionally holds back a
+  trailing window the length of the longest registered fake — SHAPE fakes
+  (email/IBAN/date, no angle brackets) stream in several deltas, and
+  emitting the fake prefix early was irreversible: table cells showed
+  fakes live while the persisted reply was correct (chat 80494e34).
 - **Dispatch symmetry (9.336.0, L3)**: in anonymising sessions the tool
   boundary is now symmetric — the model thinks in pseudonyms, the tools work
   on raw data. (a) **Args-deanonymisation**: at tool dispatch

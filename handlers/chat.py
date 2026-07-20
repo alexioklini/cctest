@@ -2691,6 +2691,26 @@ class StreamingDeanonymizer:
         self._emitted_len = 0         # chars of de-anonymized text already emitted
         self.restored_count = 0       # accumulated for the final tool-call row
 
+    def _shape_holdback(self) -> int:
+        """Trailing window (chars) that must NOT be emitted yet: a SHAPE fake
+        (email/IBAN/date/name — no angle brackets) streams in several small
+        deltas, and a partially-streamed fake cannot be matched by the
+        reverse pass. Emitting it immediately is irreversible — the fake
+        prefix reaches the user and, once the value completes, the restored
+        buffer diverges from what was emitted (live chat 80494e34: table
+        cells showed fake email/IBAN/date while the persisted reply was
+        correct). Holding back the longest registered fake length guarantees
+        every fake is COMPLETE in the buffer before the region containing it
+        is emitted. The mapping grows mid-turn (anonymise_read) — recompute
+        per feed. Small margin absorbs length shifts from neighbouring
+        restorations; capped so one pathological long fake can't stall the
+        visible stream (final text/reload still correct in that case)."""
+        try:
+            h = max((len(f) for f in self.mapping.reverse.keys()), default=0)
+        except Exception:
+            h = 0
+        return min(h + 8, 384) if h else 0
+
     def feed(self, raw_delta: str) -> str:
         """Consume one raw delta. Returns the de-anonymized chunk to emit
         downstream (may be empty if everything is currently held back)."""
@@ -2711,6 +2731,9 @@ class StreamingDeanonymizer:
             safe_end = last_open
         else:
             safe_end = len(full_denon)
+        # Shape-fake boundary: additionally hold back the trailing window in
+        # which a partially-streamed shape fake could still complete.
+        safe_end = min(safe_end, len(full_denon) - self._shape_holdback())
         if safe_end <= self._emitted_len:
             return ""
         chunk = full_denon[self._emitted_len:safe_end]

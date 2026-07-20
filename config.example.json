@@ -3298,6 +3298,7 @@
     "rule_overrides": {
       "organisation": "ignore",
       "email": "block",
+      "name": "warn",
       "phone": "warn",
       "address": "block",
       "dob": "block"

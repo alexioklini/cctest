@@ -42,9 +42,12 @@ CURATED_CHANGELOG: list[dict] = [
                 "späteren Nachrichten desselben Chats. Zudem behoben: Ein "
                 "anonymisiertes Geburtsdatum wird in der Antwort jetzt auch "
                 "dann korrekt zurückübersetzt, wenn der Assistent es "
-                "umformatiert oder hervorhebt (z. B. fett gedruckt).",
+                "umformatiert oder hervorhebt (z. B. fett gedruckt) — und "
+                "die LIVE mitlaufende Antwort zeigt Ihre echten Werte jetzt "
+                "auch in Tabellen sofort korrekt an (zuvor erschienen dort "
+                "bis zum Neuladen die Ersatzwerte).",
         "audience": "user",
-        "versions": ["9.383.0", "9.383.1"],
+        "versions": ["9.383.0", "9.383.1", "9.383.2"],
     },
     {
         "version": "9.382.0",
