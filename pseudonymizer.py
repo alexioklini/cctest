@@ -1172,6 +1172,34 @@ def _fake_mrz(original: str, mapping: Mapping) -> str:
     return original  # unrecognised → opaque-token fallback
 
 
+def _entity_fake_dob(original: str, mapping: Mapping) -> str | None:
+    """dob/date spans keep their keyword prefix (same construction as
+    `_fake_dob`), but the BARE date additionally gets its own forward/reverse
+    pairs in every expected surface form. Without them the reply-side reverse
+    only knows the FULL span string — and the model routinely reformats it
+    ('geboren am **15.02.1947**': markdown bold splits the exact match; live
+    chat db0ef544) so the fake date stayed visible to the user. With the bare
+    pairs registered, the reverse pass restores the date itself regardless of
+    the surrounding prose/markup — the same registration
+    `seed_identity_from_mrz`/`seed_from_decision(mrz_dob)` always did."""
+    m = _DATE_SEARCH_RE.search(original)
+    if not m:
+        return None  # no date found → shape/opaque fallback
+    bare = m.group(0)
+    fake_bare = _fake_date(bare, mapping.salt)
+    if fake_bare == bare:
+        return None
+    d = _parse_date_surface(bare)
+    if d is not None:
+        for real in _dob_surface_forms(d):
+            fk = _fake_date(real, mapping.salt)
+            if fk == real or real in mapping.forward \
+                    or fk in mapping.reverse:
+                continue
+            mapping.record(real, fk, "dob", count=False)
+    return original[:m.start()] + fake_bare + original[m.end():]
+
+
 _ENTITY_GENERATORS: dict[str, Callable[[str, "Mapping"], str | None]] = {
     "name": _entity_fake_name,
     "email": _entity_fake_email,
@@ -1179,6 +1207,8 @@ _ENTITY_GENERATORS: dict[str, Callable[[str, "Mapping"], str | None]] = {
     "passport": _fake_passport,
     "passport_ctx_loose": _fake_passport,
     "mrz": _fake_mrz,
+    "dob": _entity_fake_dob,
+    "date": _entity_fake_dob,
 }
 
 
@@ -1407,10 +1437,19 @@ def values_same_subject(fp_value: str, candidate: str) -> bool:
             return True
     except Exception:
         pass
-    # Date: same calendar date in any surface form.
+    # Date: same calendar date in any surface form. dob spans carry a
+    # keyword prefix ('geboren am 05.02.1947') — extract the date part on
+    # BOTH sides so the bare surface-form ledger rows relate to the span.
     try:
-        d = _parse_date_surface(f)
-        if d is not None and _parse_date_surface(c) == d:
+        def _as_date(s):
+            d = _parse_date_surface(s)
+            if d is None:
+                m = _DATE_SEARCH_RE.search(s)
+                if m:
+                    d = _parse_date_surface(m.group(0))
+            return d
+        d = _as_date(f)
+        if d is not None and _as_date(c) == d:
             return True
     except Exception:
         pass
@@ -1461,7 +1500,14 @@ def purge_value(mapping: Mapping, value: str) -> int:
                              re.IGNORECASE) for m in fake_markers]
     # 2) Same calendar date in any surface form (an FP'd DOB was seeded in
     # 5+ formats); 3) 10-char check-digit twin of a bare document number.
+    # dob spans carry a keyword prefix ('geboren am 05.02.1947') — extract
+    # the date part like _fake_dob does, so the FP purge clears the bare
+    # surface-form pairs too.
     _d_val = _parse_date_surface(value)
+    if _d_val is None:
+        _m_d = _DATE_SEARCH_RE.search(value or "")
+        if _m_d:
+            _d_val = _parse_date_surface(_m_d.group(0))
     twin = ""
     try:
         bare = value.strip()

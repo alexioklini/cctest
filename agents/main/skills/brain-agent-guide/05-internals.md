@@ -1509,6 +1509,11 @@ preamble goes in first-user-message instead.
   (stale client / raw API caller) falls back to a full scan rather than
   silently sending cleartext. Both decision recorders (turn-end bulk +
   cleartext-accept) preserve existing FP marks instead of shadowing them.
+  9.383.1: a dob/date mint additionally registers the BARE date in every
+  surface form as its own forward/reverse pair (`_entity_fake_dob`) — the
+  keyword span ('geboren am 05.02.1947') keeps its prefix in the fake, but
+  the reply-side reverse no longer breaks when the model reformats or
+  bolds the date (live chat db0ef544).
 - **Dispatch symmetry (9.336.0, L3)**: in anonymising sessions the tool
   boundary is now symmetric — the model thinks in pseudonyms, the tools work
   on raw data. (a) **Args-deanonymisation**: at tool dispatch

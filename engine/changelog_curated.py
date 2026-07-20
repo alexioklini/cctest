@@ -39,9 +39,12 @@ CURATED_CHANGELOG: list[dict] = [
                 "Einträge im Entscheidungs-Dialog. Ihre Auswahl wird exakt "
                 "angewendet: Was Sie als Falschtreffer markieren, bleibt "
                 "verlässlich im Klartext — auch in Anhängen, auch in "
-                "späteren Nachrichten desselben Chats.",
+                "späteren Nachrichten desselben Chats. Zudem behoben: Ein "
+                "anonymisiertes Geburtsdatum wird in der Antwort jetzt auch "
+                "dann korrekt zurückübersetzt, wenn der Assistent es "
+                "umformatiert oder hervorhebt (z. B. fett gedruckt).",
         "audience": "user",
-        "versions": ["9.383.0"],
+        "versions": ["9.383.0", "9.383.1"],
     },
     {
         "version": "9.382.0",

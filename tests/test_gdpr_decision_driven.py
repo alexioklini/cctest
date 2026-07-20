@@ -247,6 +247,58 @@ class TestAnonToolTextApplyOnly(_MappingTestBase):
         self.assertEqual(out, "NHS 9434765919")
 
 
+class TestDobBareDateReverse(_MappingTestBase):
+    """Chat db0ef544: der dob-Span trägt den Keyword-Prefix ('geboren am
+    05.02.1947') und war NUR als Voll-Span-Paar registriert. Das Modell
+    formatierte in der Antwort um ('geboren am **15.02.1947**') — der exakte
+    Reverse-String war zerrissen und das nackte Fake-Datum blieb für den
+    Nutzer sichtbar. Fix: _entity_fake_dob registriert das nackte Datum in
+    allen Oberflächenformen mit (dieselbe Registrierung wie der MRZ-Seed)."""
+
+    def test_span_fake_keeps_keyword_prefix(self):
+        m = self._new()
+        ps.seed_from_decision(m, "dob", "geboren am 05.02.1947")
+        fake_full = m.forward["geboren am 05.02.1947"]
+        self.assertTrue(fake_full.startswith("geboren am "))
+        self.assertNotIn("05.02.1947", fake_full)
+
+    def test_bare_date_pairs_registered(self):
+        m = self._new()
+        ps.seed_from_decision(m, "dob", "geboren am 05.02.1947")
+        # EU-Punkt- und ISO-Form des nackten Datums sind eigene Paare.
+        self.assertIn("05.02.1947", m.forward)
+        self.assertIn("1947-02-05", m.forward)
+
+    def test_markdown_bold_reply_reverses(self):
+        # Der Live-Fall: Fett-Markup zerreißt den Voll-Span — das nackte
+        # Datum muss trotzdem rückübersetzen.
+        m = self._new()
+        ps.seed_from_decision(m, "dob", "geboren am 05.02.1947")
+        fake_bare = m.forward["05.02.1947"]
+        reply = f"Die Kundin ist geboren am **{fake_bare}** laut Akte."
+        out, n = ps.deanonymize_text(reply, mapping=m)
+        self.assertIn("**05.02.1947**", out)
+        self.assertNotIn(fake_bare, out)
+
+    def test_reformatted_iso_reply_reverses(self):
+        # Modell echot das Fake-Datum in ANDERER Oberflächenform (ISO).
+        m = self._new()
+        ps.seed_from_decision(m, "dob", "geboren am 05.02.1947")
+        iso_fake = m.forward["1947-02-05"]
+        out, _ = ps.deanonymize_text(f"DOB: {iso_fake}", mapping=m)
+        self.assertIn("1947-02-05", out)
+
+    def test_fp_purge_still_covers_all_forms(self):
+        # purge_value über das Kalenderdatum räumt auch die neuen
+        # bare-Paare + den Voll-Span ab (FP → alles Klartext).
+        m = self._new()
+        ps.seed_from_decision(m, "dob", "geboren am 05.02.1947")
+        ps.purge_value(m, "geboren am 05.02.1947")
+        self.assertEqual(
+            [k for k in m.forward if "1947" in k], [],
+            f"Datums-Paare überlebten den Purge: {list(m.forward)}")
+
+
 class TestValuesSameSubject(unittest.TestCase):
     """FP-Propagation auf abgeleitete Werte — live gefundene Regression: die
     Turn-End-Zeilen der ENTITÄTS-VARIANTEN ('Bonnie Stark', 'STARK', DOB-
