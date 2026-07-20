@@ -1646,7 +1646,13 @@ preamble goes in first-user-message instead.
   spaCy uses OntoNotes labels (PERSON/GPE), German uses WikiNER (PER/LOC), both
   mapped in `_LABEL_MAP`. en absence is non-fatal (de-only fallback). All three
   respect the per-rule/category action, so `contact: ignore` still silences
-  name findings. Tests: `tests/test_pii_ner.py`.
+  name findings. On a dominant-`de` document the `en` model is *untrusted*
+  (person-names only, strict span gate). 9.383.4: two guards keep the English
+  model from tagging German FIELD CAPTIONS as PERSON — `_is_field_label_span`
+  (a document-structural stop-list: steuer-id/reisepass/nr/kundennummer/…, so
+  'Deutsche Steuer-ID'→'Jordan Davis-ID' can't happen, chat 80494e34) and the
+  span-language check now also drops an untrusted finding whose window is
+  clearly the dominant/trusted language. Tests: `tests/test_pii_ner.py`.
 - **Web-Egress-Gate (9.334.0)**: in sessions with active transparent
   anonymisation (a live pseudonym mapping), the args of every web-reaching
   tool (`web_fetch`, `exa_search`, `searxng_search`, `science_search`,

@@ -127,6 +127,42 @@ def _lang_allows_label(trusted: bool, rule_id: str) -> bool:
     return rule_id in ("name", "organisation")
 
 
+# Form-/document-field labels the OntoNotes (English) model mis-tags as a
+# PERSON on German KYC/banking prose ("Deutsche Steuer-ID" → PERSON, "Reisepass
+# Nr" → PERSON): they are FIELD CAPTIONS, never a natural person's name. A span
+# containing any of these tokens is dropped from the name net. Kept narrow +
+# document-structural — every entry is a value-KIND caption, so it can never be
+# part of a real person's name (measured on chat 80494e34). Compared
+# case-insensitively, punctuation-stripped; a hyphenated caption is also split
+# ("steuer-id" → "steuer","id") so "Steuer-ID" matches on either half.
+_FIELD_LABEL_TOKENS = frozenset({
+    "steuer", "steuer-id", "steuerid", "steuernummer", "steueridentnr",
+    "reisepass", "pass", "passnummer", "ausweis", "personalausweis",
+    "ausweisnummer", "nr", "nummer", "no", "kundennummer", "kundennr",
+    "kunde", "kundin", "id", "tin", "iban", "bic", "konto", "kontonummer",
+    "vorname", "nachname", "name", "geburtsdatum", "geburtsort", "geburt",
+    "adresse", "anschrift", "wohnort", "strasse", "straße", "plz", "ort",
+    "telefon", "tel", "mobil", "handy", "email", "mail", "feld", "wert",
+    "status", "krankenversicherung", "versicherung", "versicherungsnummer",
+    "sozialversicherung", "kreditkarte", "karte", "bezeichnung", "angabe",
+    "datensatz", "datenfeld", "identifikationsnummer", "personenkennziffer",
+})
+
+
+def _is_field_label_span(toks: list[str]) -> bool:
+    """True when a name-net span is a document FIELD CAPTION, not a person —
+    any token (or hyphen-half) is a known field-label word. Kills the English
+    model's "Deutsche Steuer-ID"/"Reisepass Nr" PERSON false positives without
+    touching real names (no real surname is 'Steuer-ID' or 'Nr')."""
+    for t in toks:
+        parts = [t.lower().strip(".,:;")]
+        if "-" in parts[0]:
+            parts.extend(parts[0].split("-"))
+        if any(p in _FIELD_LABEL_TOKENS for p in parts if p):
+            return True
+    return False
+
+
 def _strict_name_span_ok(value: str, toks: list[str]) -> bool:
     """The narrow recall-net name gate, factored out: EVERY token capitalised
     (kills lowercase connectives like 'von'/'of'/'the'), ≥2 substantial tokens,
@@ -139,6 +175,8 @@ def _strict_name_span_ok(value: str, toks: list[str]) -> bool:
         return False  # need two substantial tokens ("M M" never)
     if any(t.lower().strip(".,") in _RECALL_STOP_TOKENS for t in toks):
         return False
+    if _is_field_label_span(toks):
+        return False  # document field caption, not a person (chat 80494e34)
     return True
 
 # Display labels surfaced in PII findings (mirrors the regex `label` field).
@@ -625,6 +663,19 @@ def scan_text(text: str, *, lang: str = "de",
         if not trusted:
             if not _strict_name_span_ok(value, value.split()):
                 continue
+            # Untrusted-model span-language check (v9.383.4): an untrusted
+            # finding whose local window is confidently the DOMINANT (trusted)
+            # language is an alien-model over-reach — the English model tagging
+            # a German field caption in German prose ("Deutsche Steuer-ID:
+            # 86…" → PERSON; chat 80494e34). Previously never applied to
+            # untrusted (the recall net wants foreign names in this language's
+            # prose), but that exemption also let German-prose FPs through.
+            # Scoped tight: only drops when the window is the OTHER, trusted
+            # language — a genuinely foreign name sits in foreign-language
+            # window and survives.
+            _wl = _window_lang(text, ent.start_char, ent.end_char)
+            if _wl and _wl != lang and _wl in _MAIN_MODEL_LANGS:
+                continue
             rule_id = "name"
         else:
             # v9.350.0 span-level language check: a TRUSTED-model finding whose
@@ -636,6 +687,10 @@ def scan_text(text: str, *, lang: str = "de",
             # language's prose).
             _wl = _window_lang(text, ent.start_char, ent.end_char)
             if _wl and _wl != lang:
+                continue
+            # Field-caption guard also on the trusted path — a real name is
+            # never 'Reisepass Nr' (defence in depth; chat 80494e34).
+            if rule_id == "name" and _is_field_label_span(value.split()):
                 continue
         if not _passes_shape_gate(value, rule_id):
             continue

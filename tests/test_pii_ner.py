@@ -624,6 +624,32 @@ class TestNERFalsePositiveHardening(unittest.TestCase):
                    "Finanzkriminalität"):
             self.assertNotIn(fp, pii, f"FP not suppressed: {fp}")
 
+    def test_field_labels_not_names(self):
+        # Chat 80494e34: the English model tags German form/field CAPTIONS in a
+        # German KYC record as PERSON ('Deutsche Steuer-ID' → 'Jordan Davis-ID',
+        # 'Reisepass Nr' → 'Tristan Baker'), and once confirmed the worker mints
+        # the caption + all its variants (49-row privacy report). Captions are
+        # field KINDS, never a person — must never surface as name.
+        text = ("Kundendatensatz:\nKundin: Bonnie Marie Stark\n"
+                "Deutsche Steuer-ID: 36574261809\n"
+                "Reisepass Nr.: 560683707\n"
+                "Kundennummer: 4711\nKrankenversicherung: NHS 943 476 5919")
+        names = self._names(text)
+        self.assertIn("Bonnie Marie Stark", names)  # real person still caught
+        for fp in ("Deutsche Steuer-ID", "Reisepass Nr", "Reisepass Nr.",
+                   "Kundennummer", "Krankenversicherung"):
+            self.assertNotIn(fp, names, f"field caption tagged as name: {fp}")
+
+    def test_field_label_span_unit(self):
+        # Direct unit coverage of the caption gate (both hyphen halves match).
+        self.assertTrue(pii_ner._is_field_label_span(["Deutsche", "Steuer-ID"]))
+        self.assertTrue(pii_ner._is_field_label_span(["Reisepass", "Nr"]))
+        self.assertTrue(pii_ner._is_field_label_span(["Vorname", "Wert"]))
+        # Real names must NOT match.
+        self.assertFalse(pii_ner._is_field_label_span(["Bonnie", "Stark"]))
+        self.assertFalse(pii_ner._is_field_label_span(["John", "Smith"]))
+        self.assertFalse(pii_ner._is_field_label_span(["Maria", "Weber"]))
+
     def test_english_topic_words_not_names(self):
         for text in ("The prosecutor opened a money laundering investigation.",
                      "Kovachki operates in Bulgaria in the Balkan energy sector.",
