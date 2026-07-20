@@ -1653,6 +1653,19 @@ preamble goes in first-user-message instead.
   'Deutsche Steuer-ID'→'Jordan Davis-ID' can't happen, chat 80494e34) and the
   span-language check now also drops an untrusted finding whose window is
   clearly the dominant/trusted language. Tests: `tests/test_pii_ner.py`.
+- **Shape-true national-ID fakes (9.383.7)**: national-ID / insurance-number
+  rules (`uk_nhs`, `de_steuerid`, `cz_rc`, `bg_egn`, the `*_ctx` insurance/ID
+  numbers — `_NATIONAL_ID_RULES`, derived from `PII_RULE_CATEGORIES`) no longer
+  fall back to the opaque `<KIND_N>` token — they get a SHAPE-TRUE fake
+  (`_fake_national_id`: keeps the keyword prefix, redraws digits, same length +
+  separators) that also PASSES the rule's own checksum validator (reused from
+  `engine.pii_ner._pii_rules()` via reject-sampling, budget 2000). Generic
+  context rules without a validator (`health_insurance_ctx`) get opportunistic
+  validation: if the original value validates under any catalog checker (an NHS
+  number is Mod-11-valid), the fake stays valid under that one too. So the LLM
+  and downstream tools read a well-formed number, not a placeholder — while the
+  reverse pass still restores the real value. Fallback to opaque token only if
+  no valid fake is found in the budget; NEVER the original.
 - **Derived-variant display filter (9.383.5)**: entity-consistent anonymisation
   registers every expected surface form of a person/date (STARK<<BONNIE<MARIE,
   B. Stark, DOB in 6 formats …) as internal `count=False` mapping entries for

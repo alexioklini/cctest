@@ -151,26 +151,49 @@ class TestShapeFakes(unittest.TestCase):
 class TestOpaqueTokens(unittest.TestCase):
     """Opaque tokens for non-shape-preserving categories."""
 
-    def test_steuerid_uses_opaque_token(self):
-        # 36574261809 — Finanzamt example value; passes Steuer-ID checksum but
-        # not PESEL (which is the only other 11-digit rule that would steal
-        # the span — see overlap-suppression in `_pii_scan_text`).
-        original = "Steuer-ID: 36574261809"
+    # 9.383.7: national-ID rules (Steuer-ID etc.) now get a SHAPE-TRUE,
+    # checksum-valid fake instead of an opaque token — see
+    # test_national_id_shape_valid. These opaque-token tests use a rule that
+    # is STILL opaque (a JWT secret has no shape faker).
+    _OPAQUE_TEXT = ('Authorization: Bearer '
+                    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.'
+                    'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U')
+
+    def test_jwt_uses_opaque_token(self):
+        original = self._OPAQUE_TEXT
         findings = _scan(original)
-        steuer = [f for f in findings if f["rule_id"] in ("de_steuerid", "tax_id_ctx")]
-        self.assertTrue(steuer, f"expected Steuer-ID finding, got {findings}")
+        self.assertTrue([f for f in findings if f["rule_id"] == "jwt"],
+                        f"expected jwt finding, got {findings}")
         mapping = ps.new_mapping()
         try:
             anonymised = ps.pseudonymize_text(original, findings, mapping=mapping)
-            # Some token of the form <KIND_N_SALT> should appear.
             self.assertRegex(anonymised, r"<[A-Z_]+_\d+_[a-z0-9]+>")
-            # Original digits gone.
-            self.assertNotIn("36574261809", anonymised)
+        finally:
+            ps.close_mapping(mapping.mapping_id)
+
+    def test_national_id_shape_valid(self):
+        # The behaviour that replaced the opaque token: a Steuer-ID becomes a
+        # shape-true, checksum-VALID fake (9.383.7).
+        import engine.pii_ner as _pn
+        _ok = {r["id"]: r.get("ok") for r in _pn._pii_rules()}["de_steuerid"]
+        original = "Steuer-ID: 36574261809"
+        findings = _scan(original)
+        mapping = ps.new_mapping()
+        try:
+            anon = ps.pseudonymize_text(original, findings, mapping=mapping)
+            self.assertNotIn("36574261809", anon)          # original gone
+            self.assertNotIn("<", anon)                     # NOT an opaque token
+            import re as _re
+            fake = _re.search(r"\d{11}", anon).group(0)
+            self.assertTrue(_ok(fake), f"fake {fake} fails Steuer-ID checksum")
+            # Roundtrip restores the original.
+            back, _ = ps.deanonymize_text(anon, mapping=mapping)
+            self.assertEqual(back, original)
         finally:
             ps.close_mapping(mapping.mapping_id)
 
     def test_token_format_structure(self):
-        text = "Steuer-ID: 36574261809"
+        text = self._OPAQUE_TEXT
         findings = _scan(text)
         mapping = ps.new_mapping()
         try:
@@ -187,7 +210,10 @@ class TestTolerantReverse(unittest.TestCase):
     """LLM may mangle the bracket spacing or case. Reverse must recover."""
 
     def _get_token_and_original(self):
-        original = "Steuer-ID: 36574261809"
+        # A JWT still produces an opaque token (9.383.7: national IDs no
+        # longer do — they get shape-true fakes).
+        original = ('Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.'
+                    'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U')
         findings = _scan(original)
         mapping = ps.new_mapping()
         anonymised = ps.pseudonymize_text(original, findings, mapping=mapping)

@@ -240,20 +240,25 @@ class TestF2MrzAndDates(unittest.TestCase):
         finally:
             ps.close_mapping(m.mapping_id)
 
-    def test_mrz_number_never_reuses_opaque_token(self):
-        """Wurde die bare Nummer vorher von einer Checksummen-Regel als
-        OPAKER Token beansprucht (cz_rc matcht 9-Steller), darf der Token
-        NICHT in die MRZ gespleißt werden."""
+    def test_mrz_number_reuses_shape_fake_from_other_rule(self):
+        """9.383.7: cz_rc mintet jetzt einen SHAPE-Fake (kein opaker Token)
+        für die 9-stellige Nummer. Der MRZ-Pfad übernimmt DENSELBEN Fake
+        konsistent (VIZ = MRZ), statt einen zweiten zu erzeugen — und die
+        MRZ bleibt strukturell gültig (die alte Invariante 'kein Token in
+        die MRZ' ist damit besser erfüllt: es gibt keinen Token mehr)."""
         m = ps.new_mapping()
         try:
-            tok = _anon(m, "560683707", rule="cz_rc")
-            self.assertTrue(tok.startswith("<"))
+            fake_cz = _anon(m, "560683707", rule="cz_rc")
+            self.assertFalse(fake_cz.startswith("<"), fake_cz)  # shape, not token
+            self.assertTrue(fake_cz.isalnum() and len(fake_cz) == 9)
             _, fl2, _ = self._fake_lines(m)
             self.assertEqual(len(fl2), 44)
+            # The '<' filler chars are legit MRZ padding — only the number
+            # field must be free of an opaque token.
             self.assertNotIn("<CZ", fl2)
             self.assertTrue(fl2[0:9].isalnum(), fl2)
+            self.assertEqual(fl2[0:9], fake_cz)  # SAME fake in the MRZ
             parsed = parse_mrz("P<USASTARK<<BONNIE<MARIE" + "<" * 20 + "\n" + fl2)
-            # Struktur bleibt parsebar, Nummern-Prüfziffer gültig.
             self.assertIs(parsed["checks"]["document_number"], True)
         finally:
             ps.close_mapping(m.mapping_id)

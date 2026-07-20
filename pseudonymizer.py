@@ -1071,6 +1071,160 @@ def _registered_id_fake(bare: str, mapping: Mapping, rule_id: str) -> str:
     return fake
 
 
+# The national-ID / insurance-number rule_ids that get the shape-true,
+# checksum-valid faker (9.383.7). Everything in the `national_id` /
+# `national_id_ctx` categories plus the bank-account context rule — EXCEPT the
+# rules that already have their own shape faker (iban / credit_card via
+# _SHAPE_GENERATORS, passport / passport_ctx_loose via _ENTITY_GENERATORS).
+# Derived from engine.pii_ner.PII_RULE_CATEGORIES at import so a new country
+# rule is covered automatically.
+def _national_id_rules() -> frozenset:
+    try:
+        import engine.pii_ner as _pn
+        cats = _pn.PII_RULE_CATEGORIES
+        already = {"iban", "credit_card", "passport", "passport_ctx_loose"}
+        return frozenset(
+            rid for rid, cat in cats.items()
+            if cat in ("national_id", "national_id_ctx")
+            and rid not in already
+        ) | {"bank_account_ctx"}
+    except Exception:
+        # Static fallback (mirrors the catalog at 9.383.7) if the import fails.
+        return frozenset({
+            "de_steuerid", "us_ssn", "us_ssn_ctx", "uk_nino", "uk_nhs",
+            "nl_bsn", "be_national", "pl_pesel", "pt_nif", "se_personnummer",
+            "dk_cpr", "no_fnr", "ch_ahv", "cz_rc", "ro_cnp", "hu_taj",
+            "gr_amka", "bg_egn", "ie_pps", "br_cpf", "ca_sin", "mx_curp",
+            "ar_dni", "in_aadhaar", "jp_mynumber", "kr_rrn", "sg_nric",
+            "tw_nid", "at_svnr", "fr_insee", "es_dni_nie", "it_codicefiscale",
+            "svnr_ctx", "ssn_ctx_loose", "insurance_number_ctx", "id_card_ctx",
+            "drivers_license_ctx", "health_insurance_ctx", "bank_account_ctx",
+        })
+
+
+_NATIONAL_ID_RULES = _national_id_rules()
+
+
+# National-ID / insurance-number faker (9.383.7). These rules (uk_nhs,
+# de_steuerid, cz_rc, bg_egn, the *_ctx insurance/id numbers, …) previously
+# fell back to the opaque <KIND_N> token — unrecognisable to the LLM as an ID,
+# which degrades analysis quality. We now emit a SHAPE-TRUE fake that also
+# PASSES the rule's own checksum validator, so a validator in the model or a
+# downstream tool reads it as a well-formed number (not "real, but correct" —
+# the F2 lesson MRZ/IBAN already apply). No re-implementation of ~40 country
+# algorithms: we reuse the EXISTING validators from engine.pii_ner._pii_rules()
+# and reject-sample shape-true candidates until one validates.
+
+# The core value token inside an ID span: the longest run of digits +
+# internal separators (space/dash/dot/slash). Keeps a keyword prefix
+# ('NHS-Nummer: ') and any trailing text out of the faked part.
+_ID_VALUE_RE = re.compile(r"[0-9][0-9 .\-/]{2,}[0-9]|[0-9]{2,}")
+
+# Rules whose spans include a keyword prefix — the value is faked, the
+# keyword kept verbatim (like _fake_passport). All the *_ctx rules plus the
+# keyword-anchored national IDs.
+# Reject-sampling budget for the checksum-valid faker. Some validators are
+# restrictive (de_steuerid: exactly one digit repeated 2-3× ≈ P0.007;
+# fr_insee) — 400 tries left a ~5% opaque-token fallback rate on those.
+# Candidate generation is pure digit arithmetic (~µs each), so a generous
+# budget is cheap: at 2000 tries P(no valid fake) < 1e-6 even for the
+# hardest rule (verified 9.383.8).
+_ID_RULE_MAX_TRIES = 2000
+
+
+def _rule_validator(rule_id: str):
+    """(regex, ok) for a rule_id from the shared pii_ner catalog, or (None,
+    None). Cached module-side after first build. ok may be None (no checksum —
+    shape fidelity alone is the bar)."""
+    global _RULE_CATALOG_CACHE
+    try:
+        cache = _RULE_CATALOG_CACHE
+    except NameError:
+        cache = None
+    if cache is None:
+        try:
+            import engine.pii_ner as _pn
+            cache = {r["id"]: (r.get("re"), r.get("ok"))
+                     for r in _pn._pii_rules()}
+        except Exception:
+            cache = {}
+        globals()["_RULE_CATALOG_CACHE"] = cache
+    return cache.get(rule_id, (None, None))
+
+
+def _shape_fake_digits(value: str, salt: str, nonce: int) -> str:
+    """Shape-true fake of the digit run in `value`: same length, same
+    separators, digits redrawn deterministically from salt+value+nonce."""
+    seed = hashlib.sha256(
+        f"{salt}:natid:{nonce}:{value}".encode("utf-8")).digest()
+    out, j = [], 0
+    for c in value:
+        if c.isdigit():
+            out.append(str(seed[j % len(seed)] % 10))
+            j += 1
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _fake_national_id(original: str, mapping: Mapping,
+                      rule_id: str) -> str | None:
+    """Shape-true, checksum-VALID fake for a national-ID / insurance-number
+    span. Keeps any keyword prefix, fakes only the value token, and — when the
+    rule has a checksum validator — reject-samples until the fake passes it, so
+    no model/tool validator flags the fake as malformed. Returns None when no
+    digit value is present or (checksum rule) no valid fake was found in the
+    try budget — caller then falls back to the opaque token (never the
+    original)."""
+    m = None
+    for m in _ID_VALUE_RE.finditer(original):
+        pass  # take the LAST value run (keyword/label sits before it)
+    if m is None:
+        return None
+    value = m.group(0)
+    if sum(ch.isdigit() for ch in value) < 3:
+        return None
+    _re_rule, ok = _rule_validator(rule_id)
+    # Opportunistic checksum: a generic context rule (health_insurance_ctx,
+    # insurance_number_ctx …) has no validator of its own, but the ORIGINAL
+    # value often IS a checksummed national number (an NHS number behind
+    # 'NHS-Nummer:' is Mod-11-valid). If any catalog validator accepts the
+    # original bare value, keep the fake valid under THAT validator too — so a
+    # tool re-checking the fake NHS number still sees a well-formed one.
+    validators = [ok] if ok is not None else []
+    if ok is None:
+        bare = value.strip()
+        for _rid2 in _NATIONAL_ID_RULES:
+            if _rid2 == rule_id:
+                continue
+            _re2, ok2 = _rule_validator(_rid2)
+            if ok2 is None:
+                continue
+            try:
+                if ok2(bare):
+                    validators.append(ok2)
+            except Exception:
+                pass
+    for nonce in range(_ID_RULE_MAX_TRIES):
+        cand = _shape_fake_digits(value, mapping.salt, nonce)
+        if cand == value:
+            continue  # never emit the original digits
+        full = original[:m.start()] + cand + original[m.end():]
+        if not validators:
+            # No checksum anywhere — shape fidelity is the whole bar. Accept
+            # the first non-identical candidate.
+            return full
+        try:
+            # Validate against the rule's OWN checker (+ any opportunistic
+            # ones). Feed both the full span and the bare value — context
+            # rules accept the keyword-prefixed span, bare rules the value.
+            if all(v(full) or v(cand) for v in validators):
+                return full
+        except Exception:
+            return full  # a validator blew up on the fake → shape fake is fine
+    return None  # checksum rule, no valid fake found → opaque-token fallback
+
+
 _PASSPORT_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{4,13}[A-Za-z0-9]")
 
 
@@ -1763,6 +1917,17 @@ def _build_replacement(original: str, rule_id: str, mapping: Mapping) -> str:
                     return out
             except Exception:
                 pass
+    # National-ID / insurance-number rules (9.383.7): shape-true, checksum-
+    # VALID fake instead of the opaque token, so the LLM/tool still reads a
+    # well-formed number. Runs for the whole ID class; returns None → opaque
+    # token fallback (never the original).
+    if rule_id in _NATIONAL_ID_RULES:
+        try:
+            out = _fake_national_id(original, mapping, rule_id)
+            if out and out != original:
+                return out
+        except Exception:
+            pass
     return mapping.next_token(rule_id)
 
 

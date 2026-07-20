@@ -348,6 +348,64 @@ class TestDerivedVariantTracking(_MappingTestBase):
         self.assertEqual(m.derived, set())
 
 
+class TestNationalIdShapeFakes(_MappingTestBase):
+    """9.383.7: nationale ID-/Versicherungsnummern bekommen einen formtreuen,
+    PRÜFZIFFER-GÜLTIGEN Fake statt des opaken <KIND_N>-Tokens — damit der
+    LLM/ein Tool sie weiter als wohlgeformte Nummer liest (Nutzer-Wunsch:
+    'näher am Original … nicht real aber korrekt')."""
+
+    def _rule_ok(self, rid):
+        import engine.pii_ner as pn
+        return {r["id"]: r.get("ok") for r in pn._pii_rules()}.get(rid)
+
+    def test_uk_nhs_fake_is_mod11_valid(self):
+        ok = self._rule_ok("uk_nhs")
+        m = self._new()
+        fake = ps._fake_national_id("943 476 5919", m, "uk_nhs")
+        self.assertIsNotNone(fake)
+        self.assertNotIn("943 476 5919", fake)
+        self.assertTrue(ok(fake), f"{fake} nicht Mod-11-gültig")
+        # Form erhalten: drei Gruppen, Leerzeichen.
+        import re as _re
+        self.assertRegex(fake, r"^\d{3} \d{3} \d{4}$")
+
+    def test_health_insurance_ctx_keeps_keyword_and_valid_nhs(self):
+        # Die NHS-Nummer wird als health_insurance_ctx erkannt (Keyword
+        # gewinnt); der Fake behält das Keyword UND ist NHS-Mod-11-gültig
+        # (opportunistische Validierung — chat 80494e34).
+        ok_nhs = self._rule_ok("uk_nhs")
+        m = self._new()
+        fake = ps._fake_national_id("NHS-Nummer: 943 476 5919", m,
+                                    "health_insurance_ctx")
+        self.assertTrue(fake.startswith("NHS-Nummer: "))
+        self.assertNotIn("943 476 5919", fake)
+        import re as _re
+        num = _re.search(r"\d{3} \d{3} \d{4}", fake).group(0)
+        self.assertTrue(ok_nhs(num), f"{num} nicht Mod-11-gültig")
+
+    def test_cz_rc_fake_valid(self):
+        ok = self._rule_ok("cz_rc")
+        m = self._new()
+        fake = ps._fake_national_id("560683707", m, "cz_rc")
+        self.assertTrue(ok(fake))
+        self.assertNotIn("560683707", fake)
+
+    def test_no_opaque_token_for_national_id(self):
+        # Der volle pseudonymize_text-Pfad: kein <KIND_N> mehr, Roundtrip ok.
+        m = self._new()
+        findings = [{"rule_id": "uk_nhs", "start": 0, "end": 12, "label": "n"}]
+        anon = ps.pseudonymize_text("943 476 5919", findings, mapping=m)
+        self.assertNotIn("<", anon)
+        back, _ = ps.deanonymize_text(anon, mapping=m)
+        self.assertEqual(back, "943 476 5919")
+
+    def test_never_leaks_original_digits(self):
+        # Fällt kein gültiger Fake an (unmöglicher Fall), NIE das Original.
+        m = self._new()
+        fake = ps._fake_national_id("943 476 5919", m, "uk_nhs")
+        self.assertNotEqual(fake, "943 476 5919")
+
+
 class TestValuesSameSubject(unittest.TestCase):
     """FP-Propagation auf abgeleitete Werte — live gefundene Regression: die
     Turn-End-Zeilen der ENTITÄTS-VARIANTEN ('Bonnie Stark', 'STARK', DOB-
