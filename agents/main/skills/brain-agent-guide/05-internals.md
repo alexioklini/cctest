@@ -683,9 +683,17 @@ never shrinks. (Before 9.277.2 the classifier was skipped entirely on frozen
 turns, so a session opened with "hi" stayed locked to the greeting toolset — web
 tools never declared — and turns 2+ carried no `auto_route` metadata, hiding the
 classification inspector icon.)
-Non-cache-priced models are unchanged: re-classify every Auto turn. The realized
-saving is visible — `cache_read_tokens` flows into the live usage event + turn
-metadata, rendered as a `⚡ N cached` badge in the status bar and per-turn stats.
+Since 9.385.0 the **monotone union applies to EVERY model**, not only
+cache-priced ones: `handlers/chat.py` keeps a per-session, per-model tool-group
+memory (`_remember_tool_groups`) and each turn's classified groups are unioned
+into it — within a session a model's tool surface only grows, never shrinks.
+(Trigger: chat aa6cab7d — an image-search turn kept `[web]`, the correction
+follow-up "ich meinte Lara pulver" was classified `[context, memory]`, the fresh
+per-turn trim dropped `web`, and the model hallucinated dead image URLs instead
+of searching.) Non-cache models still re-classify every turn — the
+classification can only ADD groups now. The realized cache saving is visible —
+`cache_read_tokens` flows into the live usage event + turn metadata, rendered as
+a `⚡ N cached` badge in the status bar and per-turn stats.
 
 **Per-turn classification modal**: a turn with a classification persists its
 decision on the assistant turn's `metadata.auto_route` (analysis + chosen model +

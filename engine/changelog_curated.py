@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.385.0",
+        "date": "2026-07-20",
+        "title": "Folgefragen behalten alle Fähigkeiten",
+        "body": "Innerhalb einer Unterhaltung kommen Werkzeuge jetzt nur noch "
+                "hinzu und werden nie mehr entzogen. Bisher konnte eine kurze "
+                "Folgefrage (etwa eine Namens-Korrektur nach einer Websuche) "
+                "als einfache Aufgabe eingestuft werden — der Assistent verlor "
+                "dann den Internetzugriff und erfand im schlimmsten Fall "
+                "Ergebnisse, statt erneut zu suchen. Jetzt bleibt alles, was "
+                "die Unterhaltung einmal gebraucht hat, bis zum Ende verfügbar.",
+        "audience": "user",
+        "versions": ["9.385.0"],
+    },
+    {
         "version": "9.383.0",
         "date": "2026-07-20",
         "title": "Datenschutz-Prüfung: alle Funde vor dem Dialog",
