@@ -1803,15 +1803,33 @@ def deanonymize_text(text: str, *, mapping: Mapping) -> tuple[str, int]:
     # iterations so a self-referential mapping can't infinite-loop.
     sorted_keys = sorted(mapping.reverse.keys(), key=len, reverse=True)
     max_passes = len(sorted_keys) + 1
+    # A purely-alphabetic key (a fake name token like 'Stark'/'Cameron') must
+    # replace WORD-BOUNDED — a bare substring replace rewrites 'Cameronstrasse'
+    # → 'Bonniestrasse' (9.383.6, the standalone-given regression). Keys with
+    # any non-alnum char (opaque tokens '<NAME_1_xx>', multi-word/shape fakes
+    # 'Maria Taylor', IBAN/date fakes with spaces/dots) keep the substring
+    # replace — they can't collide mid-word and the tolerant token forms need
+    # the loose match. Compiled once per key.
+    _alpha_re = {
+        k: re.compile(r"(?<!\w)" + re.escape(k) + r"(?!\w)")
+        for k in sorted_keys if k.isalpha()
+    }
     for _ in range(max_passes):
         changed = False
         for token in sorted_keys:
-            if token in out:
+            if token not in out:
+                continue
+            _pat = _alpha_re.get(token)
+            if _pat is not None:
+                out, count = _pat.subn(
+                    lambda _m, _r=mapping.reverse[token]: _r, out)
+            else:
                 count = out.count(token)
                 if count:
                     out = out.replace(token, mapping.reverse[token])
-                    restored += count
-                    changed = True
+            if count:
+                restored += count
+                changed = True
         if not changed:
             break
 
@@ -2220,6 +2238,18 @@ def lint_residual_fakes(text: str, *, mapping: Mapping) -> list[dict]:
             m = re.search(r"(?<![\w.])" + pat + r"(?![\w.])", text)
             if m:
                 _add("name", m.group(0), "name_initials")
+        # Lone fake GIVEN name that survived (9.383.6): a table splits the
+        # name into cells and the standalone given cell wasn't reversed —
+        # e.g. a SHORT fake given ('Sam'/'Pat') deliberately not registered
+        # as a variant to avoid word collisions. Flag it loud so the user
+        # sees the miss. Only when the given is NOT already a reverse key
+        # (a ≥4-char given IS registered now → reversed → not here) and is
+        # word-bounded (never mid-word). Skips givens <3 chars (initials).
+        for fg in fgivens:
+            if len(fg) < 3 or fg in mapping.reverse:
+                continue
+            if re.search(r"(?<!\w)" + re.escape(fg) + r"(?!\w)", text):
+                _add("name", fg, "name_given_lone")
 
     return findings
 

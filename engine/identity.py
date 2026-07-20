@@ -368,6 +368,18 @@ def standard_variant_pairs(sur: str, givens: list[str],
     # sweep, so the exact pair must exist; word-bounded sweep keeps
     # 'STARKSTROM' safe like the Title-case pair.
     _add(sur.upper(), fake_sur.upper())
+    # Standalone GIVEN names (9.383.6): a table splits a name into cells
+    # ("Vorname | Maria", "Nachname | Sam Taylor"), so the lone fake given
+    # name must reverse too — otherwise the fake first name stays visible
+    # (chat 80494e34). CAUTIOUS: only for a DISTINCTIVE fake given (≥4 chars),
+    # never a short pool token ('Sam'/'Pat') that could collide with an
+    # unrelated word. The reverse pass word-bounds these alphabetic keys
+    # (deanonymize_text), so 'Cameron' never rewrites 'Cameronstrasse'.
+    # Registered Title + ALLCAPS to match cell casing.
+    for _g_real, _g_fake in giv_full:
+        if len(_g_fake) >= 4:
+            _add(_g_real.title(), _g_fake.title())
+            _add(_g_real.upper(), _g_fake.upper())
     return pairs
 
 

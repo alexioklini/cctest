@@ -397,6 +397,59 @@ class TestValuesSameSubject(unittest.TestCase):
             ps.close_mapping(m.mapping_id)
 
 
+class TestLoneGivenNamePairsAndLinter(_MappingTestBase):
+    """Tabellen splitten den Namen in Zellen ('Vorname | Maria',
+    'Nachname | Sam Taylor'); der einzelne Fake-Vorname blieb bisher
+    unrestauriert (Chat 80494e34). (a) DISTINKTIVE Vornamen (≥4) werden als
+    eigene Paare registriert → rückübersetzt; (b) kurze (<4, Kollisionsrisiko)
+    bewusst NICHT — dafür fängt sie der Linter (name_given_lone)."""
+
+    def test_distinctive_given_reverses_alone(self):
+        # Deterministische Entität mit ≥4-Fake-Vornamen (Pool-Zug variiert je
+        # Salt; hier fix, um den ≥4-Pfad gezielt zu prüfen).
+        m = self._new()
+        ent = {"kind": "person", "sur": "stark", "givens": ["bonnie"],
+               "fake_sur": "Taylor", "fake_givens": ["Cameron"]}  # ≥4
+        m.entities["e1"] = ent
+        ps._register_entity_variants(m, ent)
+        self.assertIn("Cameron", m.reverse)  # distinktiver Vorname gepaart
+        out, _ = ps.deanonymize_text("Vorname: Cameron", mapping=m)
+        self.assertIn("bonnie", out.lower())
+        self.assertNotIn("Cameron", out)
+
+    def test_short_given_not_paired_but_linted(self):
+        m = self._new()
+        ent = {"kind": "person", "sur": "mueller", "givens": ["hans"],
+               "fake_sur": "Weber", "fake_givens": ["Sam"]}  # 3 chars
+        m.entities["e1"] = ent
+        ps._register_entity_variants(m, ent)
+        self.assertNotIn("Sam", m.reverse)  # nie gepaart (Kollisionsschutz)
+        lint = ps.lint_residual_fakes("Vorname: Sam", mapping=m)
+        self.assertTrue(any(f["value"] == "Sam"
+                            and f["reason"] == "name_given_lone" for f in lint))
+
+    def test_linter_no_fp_on_plain_text(self):
+        m = self._new()
+        ps.seed_from_decision(m, "name", "Bonnie Marie Stark")
+        self.assertEqual(
+            ps.lint_residual_fakes("Der Bericht wurde gestern erstellt.",
+                                   mapping=m), [])
+
+    def test_given_pairs_do_not_collide_with_real_word(self):
+        # Der Reverse word-boundet rein-alphabetische Keys (Fake-Namen), sonst
+        # zerschriebe 'Cameron' das Wort 'Cameronstrasse' (9.383.6-Regression).
+        m = self._new()
+        ent = {"kind": "person", "sur": "stark", "givens": ["bonnie"],
+               "fake_sur": "Taylor", "fake_givens": ["Cameron"]}
+        m.entities["e1"] = ent
+        ps._register_entity_variants(m, ent)
+        out, _ = ps.deanonymize_text("Cameronstrasse 5", mapping=m)
+        self.assertIn("Cameronstrasse", out)
+        # Nachname genauso geschützt (Stark → Starkstrom-Klasse).
+        out2, _ = ps.deanonymize_text("Taylorstrom AG", mapping=m)
+        self.assertIn("Taylorstrom", out2)
+
+
 class TestMrzFindingsFromParse(unittest.TestCase):
     """brain._mrz_findings_from_parse — Ehrlichkeits-Gates wie der Seed."""
 
