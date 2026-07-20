@@ -657,7 +657,12 @@ Codebasen, Forschungspapiere, …).
      Brain-Prozess** auf der eigenen GPU läuft (mlx-vlm), Standardmodell
      `mlx-community/GLM-OCR-8bit` (0,9 Mrd. Parameter, 1,6 GB).
      Nichts verlässt den Rechner. Läuft **nicht** über oMLX — das bleibt den
-     Chat-Modellen vorbehalten.
+     Chat-Modellen vorbehalten. **Remote-Variante:** Ist im OCR-Block eine
+     **Remote-URL** (+ optional API-Key) gesetzt (`ocr.mlx_ocr_url`), wird das
+     Bild stattdessen an diesen OpenAI-kompatiblen GLM-OCR-Endpoint geschickt
+     (z. B. den Mac mini M4) — gleiches Modell, nur per HTTP statt in-process.
+     Nötig auf Maschinen ohne MLX (etwa Windows); ein Wechsel greift ohne
+     Neustart (die in-process-Gewichte werden beim Umschalten entladen).
    - **`mistral_ocr`** — Cloud-OCR-Endpunkt (schnell, aber die Datei geht zum
      Anbieter).
    - **`local_vision`** — ein allgemeines Chat-Vision-Modell über oMLX.

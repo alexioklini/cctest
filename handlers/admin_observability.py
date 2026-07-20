@@ -1088,6 +1088,8 @@ class AdminObservabilityHandlers:
             "local_vision_model": ocr.get("local_vision_model", "") or "",
             "mlx_ocr_model": ocr.get("mlx_ocr_model", "") or "",
             "mlx_ocr_max_tokens": int(ocr.get("mlx_ocr_max_tokens", 4096)),
+            "mlx_ocr_url": ocr.get("mlx_ocr_url", "") or "",
+            "mlx_ocr_api_key": ocr.get("mlx_ocr_api_key", "") or "",
         }
         return cfg, values, ocr_block
 
@@ -1308,6 +1310,20 @@ class AdminObservabilityHandlers:
                             256, min(32768, int(o["mlx_ocr_max_tokens"])))
                     except (TypeError, ValueError):
                         pass
+                if "mlx_ocr_url" in o:
+                    new_url = str(o["mlx_ocr_url"] or "").strip()
+                    if new_url != (ocr.get("mlx_ocr_url") or ""):
+                        # Toggling remote↔in-process changes where OCR runs; drop
+                        # any in-process weights so a switch takes effect without
+                        # a restart (same reason as the mlx_ocr_model eviction).
+                        try:
+                            from engine import mlx_ocr as _mlx
+                            _mlx.unload()
+                        except Exception:
+                            pass
+                    ocr["mlx_ocr_url"] = new_url
+                if "mlx_ocr_api_key" in o:
+                    ocr["mlx_ocr_api_key"] = str(o["mlx_ocr_api_key"] or "").strip()
 
             # Conversion matrix: which extensions are markitdown-first, + the
             # tool-result budget knobs. Validated against the formats that have

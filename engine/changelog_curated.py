@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.382.0",
+        "date": "2026-07-20",
+        "title": "Texterkennung auf entfernten Rechner auslagerbar",
+        "body": "Die lokale Texterkennung (GLM-OCR) kann jetzt in den "
+                "Einstellungen unter Service-Modelle → OCR auf einen anderen "
+                "Rechner im Netzwerk zeigen (Remote-URL + optionaler "
+                "API-Key) — nützlich für Maschinen ohne eigene GPU-Umgebung, "
+                "etwa unter Windows. Ein Umschalten greift sofort, ohne "
+                "Neustart. Außerdem behoben: Beim Speichern der "
+                "OCR-Einstellungen wurden zuvor Felder anderer, gerade nicht "
+                "sichtbarer OCR-Varianten geleert.",
+        "audience": "admin",
+        "versions": ["9.382.0"],
+    },
+    {
         "version": "9.379.0",
         "date": "2026-07-19",
         "title": "Wiki: komfortabler suchen und bearbeiten",

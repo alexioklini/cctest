@@ -2832,8 +2832,19 @@ async function _genTab_service_models(C) {
           <label style="font-size:12px;color:var(--text-300)">Max. Tokens</label>
           <input type="number" class="form-input" id="svc-ocr-mlx-max-tokens" value="${esc(String(ocr.mlx_ocr_max_tokens || 4096))}" min="256" max="32768"${dis}>
         </div>
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+          <label style="font-size:12px;color:var(--text-300)">Remote-URL (optional)</label>
+          <input type="text" class="form-input" id="svc-ocr-mlx-url" value="${esc(ocr.mlx_ocr_url || '')}" placeholder="z.B. http://192.168.1.214:8000"${dis}>
+        </div>
+        <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+          <label style="font-size:12px;color:var(--text-300)">Remote-API-Key</label>
+          <input type="text" class="form-input" id="svc-ocr-mlx-api-key" value="${esc(ocr.mlx_ocr_api_key || '')}" placeholder="nur wenn Remote-URL gesetzt"${dis}>
+        </div>
         <div style="font-size:11px;color:var(--text-400);margin-left:210px;margin-top:-4px">
-          Spezialisiertes OCR-Modell, <b>direkt im Brain-Prozess</b> (mlx-vlm) — nicht über oMLX.
+          Spezialisiertes OCR-Modell (mlx-vlm). Ist die <b>Remote-URL</b> leer, läuft es
+          <b>direkt im Brain-Prozess</b> auf der eigenen GPU; ist sie gesetzt, wird das Bild an
+          diesen OpenAI-kompatiblen GLM-OCR-Endpoint geschickt (z.&nbsp;B. der Mac&nbsp;mini / M4) —
+          gleiches Modell, nur HTTP statt in-process (nötig auf Maschinen ohne MLX, etwa Windows).
           Empfohlen: <code>mlx-community/GLM-OCR-4bit</code> (0,9B · 1,25&nbsp;GB · ~1&nbsp;s/Bild).
           Das Modell wird beim ersten Gebrauch von HuggingFace geladen und dann im Speicher gehalten.
           Alternativen: <code>mlx-community/GLM-OCR-8bit</code>, <code>mlx-community/dots.ocr-4bit</code>,
@@ -3010,14 +3021,33 @@ async function saveServiceModels() {
     const el = document.getElementById('svc-' + k);
     if (el) body[k] = el.value || '';
   });
-  body.ocr = {
-    engine: document.getElementById('svc-ocr-engine')?.value || 'none',
-    provider: document.getElementById('svc-ocr-provider')?.value || '',
-    model: document.getElementById('svc-ocr-model')?.value || '',
-    local_vision_model: document.getElementById('svc-ocr-local-vision-model')?.value || '',
-    mlx_ocr_model: document.getElementById('svc-ocr-mlx-model')?.value || '',
-    mlx_ocr_max_tokens: parseInt(document.getElementById('svc-ocr-mlx-max-tokens')?.value, 10) || 4096,
+  // Only send OCR fields belonging to the ACTIVE engine's sub-block. The blocks
+  // (cloud / mlx / local) are only display:none-hidden — the inputs stay in the
+  // DOM — so element-presence can't tell an edited field from a hidden empty
+  // one. Gate on the engine value instead, mirroring _svcOcrEngineToggle's
+  // show-conditions exactly. Omitting a key makes the server's per-key merge
+  // leave the stored value untouched, instead of blanking it (which e.g. wiped
+  // provider/model when engine=mlx_ocr).
+  const _ocrEngine = document.getElementById('svc-ocr-engine')?.value || 'none';
+  body.ocr = { engine: _ocrEngine };
+  const _ocrText = (key, id) => {
+    const el = document.getElementById(id);
+    if (el) body.ocr[key] = el.value || '';
   };
+  if (_ocrEngine === 'mistral_ocr' || _ocrEngine === 'auto') {   // svc-ocr-cloud
+    _ocrText('provider', 'svc-ocr-provider');
+    _ocrText('model', 'svc-ocr-model');
+  }
+  if (_ocrEngine === 'local_vision' || _ocrEngine === 'auto') {  // svc-ocr-local
+    _ocrText('local_vision_model', 'svc-ocr-local-vision-model');
+  }
+  if (_ocrEngine === 'mlx_ocr') {                                // svc-ocr-mlx
+    _ocrText('mlx_ocr_model', 'svc-ocr-mlx-model');
+    _ocrText('mlx_ocr_url', 'svc-ocr-mlx-url');
+    _ocrText('mlx_ocr_api_key', 'svc-ocr-mlx-api-key');
+    const _mlxTok = document.getElementById('svc-ocr-mlx-max-tokens');
+    if (_mlxTok) body.ocr.mlx_ocr_max_tokens = parseInt(_mlxTok.value, 10) || 4096;
+  }
   // Conversion matrix: which extensions are markitdown-first + the budget knobs.
   const mdExts = Array.from(document.querySelectorAll('.svc-conv-md:checked'))
     .map(cb => cb.dataset.ext);
