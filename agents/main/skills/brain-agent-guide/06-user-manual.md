@@ -2743,11 +2743,15 @@ A: Das Modal vor dem Senden bietet zwei Wege plus Abbrechen:
 - **Unverändert senden an lokales Modell** — sendet ohne Änderung an ein
   lokales Modell; die Daten verlassen das Gerät nicht. Auch für streng
   vertrauliche Dokumente verfügbar.
-- **Abbrechen** — nichts wird gesendet, Sie bearbeiten die Nachricht selbst.
+- **Abbrechen** — nichts wird gesendet; **Ihre eingegebene Nachricht bleibt
+  erhalten** und Sie können sie im Eingabefeld weiter bearbeiten.
 
-Einzelne Funde können Sie im Dialog (oder in der Datenschutz-Übersicht über das
-Schild-Symbol) als **Falschtreffer** markieren — solche Werte bleiben im
-Klartext und werden nie anonymisiert.
+In der Spalte **Nachrichtentext** wird jeder Fund mit etwas **umgebendem Text**
+angezeigt und der eigentliche Wert **farblich hervorgehoben** — so sehen Sie
+sofort, an welcher Stelle Ihrer Nachricht er steht (der volle Kontext erscheint
+als Tooltip beim Überfahren). Einzelne Funde können Sie im Dialog (oder in der
+Datenschutz-Übersicht über das Schild-Symbol) als **Falschtreffer** markieren —
+solche Werte bleiben im Klartext und werden nie anonymisiert.
 
 **F: Kann ich nachträglich prüfen, ob die GDPR-Aktion funktioniert hat?**
 A: Ja — im Modal vor dem Senden (Cloud-Modell / lokales Modell) gibt

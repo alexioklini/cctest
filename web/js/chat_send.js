@@ -15,6 +15,23 @@ async function sendMessage() {
   let text = input?.value?.trim();
   if (!text && !state._pendingImages.length && !state._pendingFiles.length) return;
 
+  // Abort helper: put the typed prompt BACK into the composer and return.
+  // The composer may already have been cleared before we reach an abort point
+  // — most notably the project-detail send path calls newChat() (which wipes
+  // the input) BEFORE the GDPR/PII dialog runs. So if the user then clicks
+  // "Abbrechen" in that dialog (or any pre-send gate aborts), the input would
+  // otherwise be left empty and the prompt lost. Restore it so Cancel means
+  // "back to editing", never "lose what I typed". Only restores when the input
+  // is empty (never clobbers text the user re-typed meanwhile).
+  const _abortRestore = () => {
+    if (input && text && !input.value) {
+      input.value = text;
+      try { autoResizeInput(input); } catch (e) {}
+      try { input.focus(); } catch (e) {}
+      try { updateSendButton(); } catch (e) {}
+    }
+  };
+
   // If a turn is already streaming on the active chat, don't start a second
   // one — QUEUE this message instead (it auto-sends as a normal turn when the
   // current one finishes). The composer send button already reads as "Queue"
@@ -269,13 +286,13 @@ async function sendMessage() {
         try {
           srv = await runCancellableGdprScan(text, state._pendingFiles || []);
         } catch (e) {
-          if (e && e._cancelled) return;   // user cancelled → abort the send
+          if (e && e._cancelled) { _abortRestore(); return; }   // user cancelled → abort the send
           console.warn('[gdpr-scan] scan failed:', e?.message || e);
           srv = null;
         }
         // A file the server rejected structurally (too large / unsupported)
         // can't be safely sent — surface it and abort (now known post-scan).
-        if (_blockingFileToast()) { renderFilePreviews(); return; }
+        if (_blockingFileToast()) { renderFilePreviews(); _abortRestore(); return; }
       }
       // Attachments: read the per-finding records the server just produced
       // (findings_full now populated by the send-time scan above).
@@ -302,6 +319,10 @@ async function sendMessage() {
             action: f.action || 'warn',
             confidence: f.confidence, band: f.band, disposition: f.disposition,
             value: f.value, _source: 'message',
+            // Surrounding context for the dialog's "Nachrichtentext" column
+            // (server-provided, whitespace-collapsed). Message-text findings
+            // only — attachment findings carry no offsets.
+            context_before: f.context_before || '', context_after: f.context_after || '',
           })));
           if (srv.worst_disposition) scan.worstDisposition = srv.worst_disposition;
         }
@@ -350,7 +371,7 @@ async function sendMessage() {
         const localActive = isModelLocal(chat.model || '');
         unifiedModalRan = true;
         const { verdict, askAfter, decisions } = await gdprActionModal(scan, chat, localActive, classifiedFiles);
-        if (verdict === 'cancel') return;
+        if (verdict === 'cancel') { _abortRestore(); return; }
         // Persist the per-finding decisions (value, confidence, disposition, and
         // FP flags) so this chat doesn't re-ask decided values, FP values skip
         // anonymisation, and the analysis is auditable / feeds global learning.
@@ -485,7 +506,7 @@ async function sendMessage() {
         curLocal,
         blockedOrLocalOnly,
       );
-      if (verdict.verdict === 'cancel') return;
+      if (verdict.verdict === 'cancel') { _abortRestore(); return; }
       if (verdict.verdict === 'local') {
         try { piiEnsureLocalModel(); } catch (e) {}
       }

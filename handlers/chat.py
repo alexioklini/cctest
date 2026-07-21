@@ -8680,7 +8680,7 @@ class ChatHandlerMixin:
             if g is None:
                 g = {
                     "rule_id": rid,
-                    "label": f.get("label") or rid,
+                    "label": engine.PII_RULE_LABELS.get(rid) or f.get("label") or rid,
                     "count": 0,
                     "samples": [],
                 }
@@ -8697,7 +8697,7 @@ class ChatHandlerMixin:
             if g is None:
                 g = {
                     "rule_id": rid,
-                    "label": f.get("label") or rid,
+                    "label": engine.PII_RULE_LABELS.get(rid) or f.get("label") or rid,
                     "count": 0,
                     "samples": [],
                 }
@@ -8795,7 +8795,9 @@ class ChatHandlerMixin:
             seen_vals.add(key)
             findings_full.append({
                 "rule_id": f.get("rule_id") or "?",
-                "label": f.get("label") or f.get("rule_id") or "?",
+                # German display label from PII_RULE_LABELS (the finding's own
+                # `label` is the internal ENGLISH rule name).
+                "label": engine.PII_RULE_LABELS.get(f.get("rule_id") or "") or f.get("label") or f.get("rule_id") or "?",
                 "category": f.get("category", "personal"),
                 "action": f.get("action", "warn"),
                 "confidence": f.get("confidence"),
@@ -8815,7 +8817,9 @@ class ChatHandlerMixin:
             seen_vals.add(key)
             findings_full.append({
                 "rule_id": f.get("rule_id") or "?",
-                "label": f.get("label") or f.get("rule_id") or "?",
+                # German display label from PII_RULE_LABELS (the finding's own
+                # `label` is the internal ENGLISH rule name).
+                "label": engine.PII_RULE_LABELS.get(f.get("rule_id") or "") or f.get("label") or f.get("rule_id") or "?",
                 "category": f.get("category", "personal"),
                 "action": f.get("action", "warn"),
                 "confidence": f.get("confidence"),
@@ -8950,18 +8954,36 @@ class ChatHandlerMixin:
         if body.get("full"):
             import re as _re_full
             items = []
+            # Surrounding-context window (chars) shown either side of the match
+            # in the dialog's "Nachrichtentext" column so the user sees WHERE in
+            # the message the value sits — kept SHORT so the row stays on one
+            # line and doesn't bloat the table (user: "just enough to know where
+            # it's coming from"). Whitespace-collapsed like `value` so a
+            # multi-line paste stays one readable line.
+            _CTX = 20
+            _collapse = lambda s: _re_full.sub(r"\s+", " ", s).strip()
             for f in findings:
                 start, end = f.get("start", 0), f.get("end", 0)
-                val = text[start:end] if 0 <= start < end <= len(text) else ""
-                val = _re_full.sub(r"\s+", " ", val).strip()  # collapse PDF line-breaks
+                ok = 0 <= start < end <= len(text)
+                val = _collapse(text[start:end]) if ok else ""  # collapse line-breaks
+                ctx_before = _collapse(text[max(0, start - _CTX):start]) if ok else ""
+                ctx_after = _collapse(text[end:end + _CTX]) if ok else ""
+                _rid = f.get("rule_id") or "?"
                 items.append({
-                    "rule_id": f.get("rule_id") or "?",
+                    # Ship the GERMAN label from PII_RULE_LABELS (NOT the finding's
+                    # own `label`, which is the internal ENGLISH rule name, e.g.
+                    # "Date of birth"/"Email address") so the dialog shows German
+                    # and never falls back to the raw rule_id when the client
+                    # catalog hasn't loaded yet.
+                    "rule_id": _rid,
+                    "label": engine.PII_RULE_LABELS.get(_rid) or f.get("label") or _rid,
                     "category": f.get("category", "personal"),
                     "action": f.get("action", "warn"),
                     "confidence": f.get("confidence"),
                     "band": engine._pii_band(f.get("confidence") or 0.5, cfg),
                     "disposition": engine._pii_resolve_disposition(f, cfg),
                     "start": start, "end": end, "value": val,
+                    "context_before": ctx_before, "context_after": ctx_after,
                 })
             self._send_json({
                 "findings": items, "finding_count": len(items),
@@ -8977,7 +8999,7 @@ class ChatHandlerMixin:
             rid = f.get("rule_id") or "?"
             entry = groups.setdefault(rid, {
                 "rule_id": rid,
-                "label": f.get("label", rid),
+                "label": engine.PII_RULE_LABELS.get(rid) or f.get("label") or rid,
                 "category": f.get("category", "personal"),
                 "action": f.get("action", "warn"),
                 "count": 0,

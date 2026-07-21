@@ -307,8 +307,29 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
         .pii-finding-label { flex:none; font-weight:500; color:var(--text-100); min-width:130px; }
         .pii-finding-cat { flex:none; font-size:10px; text-transform:uppercase; letter-spacing:.04em; color:var(--text-400); }
         .pii-finding-val {
-          flex:1 1 auto; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+          flex:1 1 auto; min-width:0; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
           color:var(--text-300); word-break:break-all; font-size:11.5px;
+        }
+        /* Context around the matched value in the Nachrichtentext column.
+           NEVER wraps and the PII hit is ALWAYS fully visible: the cell is a
+           one-line flex row; the highlighted hit is flex:none (never clipped),
+           the surrounding context shrinks and truncates instead — the BEFORE
+           part clips from its start (fade/ellipsis on the left), the AFTER part
+           from its end. So even a very long line keeps the value on screen. */
+        .pii-finding-val.pii-has-ctx {
+          display:flex; align-items:baseline; gap:0; white-space:nowrap;
+          overflow:hidden; word-break:normal;
+        }
+        .pii-finding-val.pii-has-ctx mark.pii-finding-hit { flex:0 0 auto; }
+        .pii-finding-ctx {
+          color:var(--text-400); overflow:hidden; text-overflow:ellipsis;
+          white-space:nowrap; min-width:0;
+        }
+        .pii-finding-ctx.pii-ctx-before { flex:0 1 auto; direction:rtl; text-align:right; }
+        .pii-finding-ctx.pii-ctx-before > bdi { direction:ltr; }
+        .pii-finding-ctx.pii-ctx-after { flex:0 1 auto; }
+        .pii-finding-val mark.pii-finding-hit {
+          background:#fde68a; color:#78350f; padding:0 2px; border-radius:3px;
         }
         .pii-finding-loc { flex:none; font-size:10px; color:var(--text-400); white-space:nowrap; }
         .pii-finding-conf {
@@ -449,10 +470,34 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
         // seen → fixed: show the prior decision, no editable control
         : ('<span class="pii-finding-fp pii-finding-fixed" title="Entscheidung vom ersten Sehen — nicht mehr änderbar">' +
              (f._priorFp ? 'als falsch markiert' : (fake ? 'anonymisiert' : 'bestätigt')) + '</span>');
-      // Value cell — show the pseudonym for anonymised seen findings.
-      const valHtml = fake
-        ? esc(f.value || '') + ' <span style="color:var(--text-400)">→</span> <span style="color:#047857">' + esc(fake) + '</span>'
-        : esc(f.value || '');
+      // Value cell. The matched PII value is colour-highlighted; when the
+      // server shipped surrounding context (message-text findings only), the
+      // text BEFORE and AFTER the match is shown dimmed around it, so the user
+      // sees WHERE in the message the value sits. Anonymised seen findings show
+      // the value → pseudonym instead (no context needed there).
+      const _piiMark = '<mark class="pii-finding-hit">' + esc(f.value || '') + '</mark>';
+      let valHtml, valCls = 'pii-finding-val', valTitle = '';
+      if (fake) {
+        valHtml = esc(f.value || '') + ' <span style="color:var(--text-400)">→</span> '
+          + '<span style="color:#047857">' + esc(fake) + '</span>';
+      } else if (f.context_before || f.context_after) {
+        // BEFORE part: RTL container clips its far (leftmost) end with the
+        // ellipsis, keeping the text ADJACENT to the value visible; <bdi> keeps
+        // the words themselves readable left-to-right. AFTER part clips normally
+        // on the right. The value (_piiMark) sits between and is never clipped.
+        const pre = f.context_before
+          ? '<span class="pii-finding-ctx pii-ctx-before"><bdi>' + esc(f.context_before) + '</bdi></span>'
+          : '';
+        const post = f.context_after
+          ? '<span class="pii-finding-ctx pii-ctx-after">' + esc(f.context_after) + '</span>'
+          : '';
+        valHtml = pre + _piiMark + post;
+        valCls += ' pii-has-ctx';   // one-line flex, hit never clipped
+        // Full context on hover so nothing truncated is lost.
+        valTitle = (f.context_before || '') + (f.value || '') + (f.context_after || '');
+      } else {
+        valHtml = _piiMark;
+      }
       // Seen findings get a "Verlauf" toggle showing the SAME who/what/when
       // trail as the history modal (lazily loaded on first expand).
       const trailBtn = ratable ? ''
@@ -465,8 +510,10 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           'data-pii-source="' + esc(f._source || '') + '" ' +
           'data-pii-seen="' + (ratable ? '0' : '1') + '"' + checked + '>' +
         '<span class="pii-finding-sev' + sevClass(f.action || 'warn') + '" title="' + esc(f.action || 'warn') + '"></span>' +
-        '<span class="pii-finding-label">' + esc(f.label || f.rule_id) + '</span>' +
-        '<span class="pii-finding-val" style="font-family:var(--font-mono,monospace)">' + valHtml + '</span>' +
+        '<span class="pii-finding-label" title="' + esc(f.rule_id || '') + '">' +
+          esc(f.label || (typeof gdprRuleLabel === 'function' ? gdprRuleLabel(f.rule_id) : f.rule_id)) + '</span>' +
+        '<span class="' + valCls + '" style="font-family:var(--font-mono,monospace)"' +
+          (valTitle ? ' title="' + esc(valTitle) + '"' : '') + '>' + valHtml + '</span>' +
         '<span class="pii-finding-conf" title="Konfidenz ' + conf.toFixed(2) + '">' + conf.toFixed(2) + ' · ' + bandLabel(f.band) + '</span>' +
         fpCell + trailBtn +
       '</div>';

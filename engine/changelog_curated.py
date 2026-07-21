@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.389.0",
+        "date": "2026-07-21",
+        "title": "Datenschutz-Dialog: Kontext, Labels, kein Textverlust",
+        "body": "Drei Verbesserungen am Hinweis vor dem Senden: Klicken Sie auf "
+                "„Abbrechen“, bleibt Ihre eingegebene Nachricht jetzt erhalten "
+                "(vorher ging sie in manchen Fällen verloren). Jeder erkannte "
+                "Wert wird mit etwas umgebendem Text angezeigt und farblich "
+                "hervorgehoben, damit Sie sofort sehen, an welcher Stelle Ihrer "
+                "Nachricht er steht. Und die Bezeichnungen der Funde sind "
+                "durchgängig auf Deutsch, statt technischer Kürzel.",
+        "audience": "user",
+        "versions": ["9.389.0"],
+    },
+    {
         "version": "9.388.0",
         "date": "2026-07-21",
         "title": "Datenschutz-Dialog: zwei klare Sende-Wege",
