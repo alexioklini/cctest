@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.393.3",
+        "date": "2026-07-21",
+        "title": "Weniger Fehlalarme bei Fachbegriffen — Liste selbst pflegbar",
+        "body": "Englische Organisations- und Fachbegriffe wie „Corporate "
+                "Governance\", „Risk Management\" oder „Compliance Officer\" "
+                "wurden in Dokumenten fälschlich als Personennamen erkannt und "
+                "zur Anonymisierung vorgeschlagen. Das passiert nicht mehr: Steht "
+                "eine Mehrwort-Phrase komplett aus Fachbegriffen, gilt sie als "
+                "Sachbegriff, nicht als Name — echte Namen bleiben unberührt. "
+                "Administratoren pflegen diese Begriffsliste jetzt selbst unter "
+                "Einstellungen → DSGVO mit Suche und Hinzufügen/Entfernen, ohne "
+                "Programmänderung.",
+        "audience": "admin",
+        "versions": ["9.393.2", "9.393.3"],
+    },
+    {
         "version": "9.393.0",
         "date": "2026-07-21",
         "title": "Anonymisiert wird nur, was Sie entschieden haben",

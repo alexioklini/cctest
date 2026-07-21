@@ -44,6 +44,7 @@ const state = {
   // only (Settings panel + chat-view labels), never used to detect PII.
   gdprCatalog: { ruleCategories: {}, categoryLabels: {}, defaultCategoryActions: {}, ruleLabels: {} },
   gdprPolicy: { enabled: true, categories: null, ruleOverrides: {}, emailAllowlist: [] },
+  gdprGenericTerms: [],
   _pendingImages: [],
   _pendingFiles: [],
 

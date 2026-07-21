@@ -1989,10 +1989,10 @@ async function _genTab_gdpr(C) {
         <textarea id="gdpr-email-allowlist" rows="5" style="width:100%;font-family:var(--font-mono);font-size:12px;padding:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000);color:var(--text-100);resize:vertical" placeholder="alexander@me.com&#10;@trusted-company.com">${esc(allowlistText)}</textarea>
 
         ${SEC('Allgemeinbegriffe (keine Namen)')}
-        <div style="font-size:11px;color:var(--text-400);margin-bottom:6px">
-          Ein Begriff pro Zeile, jeweils EIN Wort. Erkennt die Namensprüfung eine Mehrwort-Phrase, deren Wörter ALLE Fachbegriffe sind (Standardliste plus diese), gilt sie als Organisations-/Sachbegriff und wird NICHT als personenbezogen markiert. Beispiel: <code>Governance</code>, <code>Compliance</code>, <code>Management</code> ⇒ „Corporate Governance", „Risk Management" werden nicht mehr fälschlich als Name erkannt. Ein echter Name-Bestandteil in der Phrase (z. B. „Julius") schützt sie davor.
+        <div style="font-size:11px;color:var(--text-400);margin-bottom:8px">
+          Erkennt die Namensprüfung eine Mehrwort-Phrase, deren Wörter <strong>alle</strong> in dieser Liste stehen, gilt sie als Organisations-/Sachbegriff und wird <strong>nicht</strong> als personenbezogen markiert. Beispiel: <code>governance</code> + <code>corporate</code> ⇒ „Corporate Governance" wird nicht mehr fälschlich als Name erkannt. Ein echter Namensbestandteil in der Phrase (z. B. „Julius") schützt sie davor. Jeweils <strong>ein Wort</strong> pro Eintrag. Leere Liste = Filter aus.
         </div>
-        <textarea id="gdpr-name-generic-terms" rows="4" style="width:100%;font-family:var(--font-mono);font-size:12px;padding:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000);color:var(--text-100);resize:vertical" placeholder="Governance&#10;Compliance&#10;Vorstand">${esc((gs.name_generic_terms || []).join('\n'))}</textarea>
+        <div id="gdpr-generic-terms-mgr" data-init="0"></div>
 
         ${SEC('Kategorieaktionen')}
         <div style="font-size:11px;color:var(--text-400);margin-bottom:6px">
@@ -2008,9 +2008,83 @@ async function _genTab_gdpr(C) {
       // Populate the NER pill (separate request — pill lives on its own
       // endpoint so it can be refreshed independently of saveGdprConfig).
       refreshGdprNerPill();
+      // Chip manager for the generic-terms list (search + add/remove).
+      renderGdprGenericTermsManager();
     } catch(e) {
       C.innerHTML = P(`<div style="color:var(--error)">DSGVO-Einstellungen konnten nicht geladen werden: ${esc(e.message||e)}</div>`);
     }
+}
+
+// ── Generic-terms chip manager (9.393.3) ────────────────────────────────────
+// Search + add/remove editor for state.gdprGenericTerms (the config-driven
+// name-phrase filter list). Renders into #gdpr-generic-terms-mgr. The list gets
+// long, so a filter box narrows the visible chips; add is single-word +
+// lowercase + deduped (mirrors the server validation); remove is per-chip.
+// saveGdprConfig() reads state.gdprGenericTerms, so no hidden field to sync.
+let _gdprTermsFilter = '';
+
+function renderGdprGenericTermsManager() {
+  const host = document.getElementById('gdpr-generic-terms-mgr');
+  if (!host) return;
+  if (!Array.isArray(state.gdprGenericTerms)) state.gdprGenericTerms = [];
+  const terms = state.gdprGenericTerms;
+  const f = _gdprTermsFilter.trim().toLowerCase();
+  const shown = f ? terms.filter(t => t.includes(f)) : terms;
+  const chips = shown.length
+    ? shown.slice().sort().map(t => `
+        <span style="display:inline-flex;align-items:center;gap:4px;background:var(--bg-200);border:1px solid var(--border-100);border-radius:12px;padding:2px 6px 2px 10px;font-size:12px;font-family:var(--font-mono)">
+          ${esc(t)}
+          <button title="Entfernen" onclick="gdprTermRemove('${esc(t)}')" style="border:none;background:none;cursor:pointer;color:var(--text-400);font-size:14px;line-height:1;padding:0 2px">×</button>
+        </span>`).join('')
+    : `<span style="font-size:12px;color:var(--text-400)">${terms.length ? 'Keine Treffer für den Filter.' : 'Liste leer — die Namensprüfung droppt keine Phrasen (Filter aus).'}</span>`;
+  host.innerHTML = `
+    <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+      <input id="gdpr-term-search" type="text" placeholder="Filtern…" value="${esc(_gdprTermsFilter)}"
+        oninput="gdprTermFilter(this.value)"
+        style="flex:0 0 160px;font-size:12px;padding:6px 8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000);color:var(--text-100)">
+      <input id="gdpr-term-add" type="text" placeholder="Begriff hinzufügen (ein Wort)…"
+        onkeydown="if(event.key==='Enter'){event.preventDefault();gdprTermAdd();}"
+        style="flex:1 1 200px;font-size:12px;padding:6px 8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000);color:var(--text-100)">
+      <button class="btn-secondary" onclick="gdprTermAdd()" style="font-size:12px;padding:6px 12px">+ Hinzufügen</button>
+      <span style="font-size:11px;color:var(--text-400);margin-left:auto">${shown.length}${f ? ' / ' + terms.length : ''} Begriffe</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;max-height:220px;overflow-y:auto;padding:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000)">
+      ${chips}
+    </div>`;
+}
+
+function gdprTermFilter(v) {
+  _gdprTermsFilter = v || '';
+  renderGdprGenericTermsManager();
+  // Keep focus + caret in the filter box across the re-render.
+  const el = document.getElementById('gdpr-term-search');
+  if (el) { el.focus(); const n = el.value.length; try { el.setSelectionRange(n, n); } catch (e) {} }
+}
+
+function gdprTermAdd() {
+  const el = document.getElementById('gdpr-term-add');
+  if (!el) return;
+  // Split on whitespace/commas so a pasted phrase becomes individual words
+  // (the filter matches per token — a multi-word entry could never match).
+  const raw = (el.value || '').trim().toLowerCase();
+  const words = raw.split(/[\s,]+/).map(w => w.trim()).filter(Boolean);
+  if (!words.length) return;
+  if (!Array.isArray(state.gdprGenericTerms)) state.gdprGenericTerms = [];
+  let added = 0;
+  for (const w of words) {
+    if (!state.gdprGenericTerms.includes(w)) { state.gdprGenericTerms.push(w); added++; }
+  }
+  el.value = '';
+  if (added) state.gdprGenericTerms.sort();
+  renderGdprGenericTermsManager();
+  const a = document.getElementById('gdpr-term-add');
+  if (a) a.focus();
+}
+
+function gdprTermRemove(term) {
+  if (!Array.isArray(state.gdprGenericTerms)) return;
+  state.gdprGenericTerms = state.gdprGenericTerms.filter(t => t !== term);
+  renderGdprGenericTermsManager();
 }
 
 async function _genTab_feedback(C) {

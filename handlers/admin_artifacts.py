@@ -677,6 +677,10 @@ class AdminArtifactsHandlers:
                         for rid in engine.PII_RULE_CATEGORIES
                     },
                     "email_allowlist": server_config.get("gdpr_scanner", {}).get("email_allowlist") or [],
+                    # Generic org/concept terms (9.393.2) — the admin-editable
+                    # extension list for the NER name-phrase filter. Surfaced so
+                    # the Settings → GDPR textarea shows the saved terms.
+                    "name_generic_terms": server_config.get("gdpr_scanner", {}).get("name_generic_terms") or [],
                     # Static PII catalog (rule→category map, category labels,
                     # default actions, rule labels). Single source of truth for
                     # the Settings → GDPR panel + chat-view labels. Moved here

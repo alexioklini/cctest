@@ -705,10 +705,12 @@ function collectGdprFormConfig() {
   const allowlistRaw = document.getElementById('gdpr-email-allowlist')?.value || '';
   const email_allowlist = allowlistRaw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
-  // Generic org/concept terms (9.393.2) — one word per line; the server drops
-  // multi-word entries (the filter is per capitalised token).
-  const genericRaw = document.getElementById('gdpr-name-generic-terms')?.value || '';
-  const name_generic_terms = genericRaw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  // Generic org/concept terms (9.393.3) — edited via the chip manager, held on
+  // state.gdprGenericTerms. Single-word, lowercase, deduped (the server drops
+  // multi-word entries; the filter is per capitalised token).
+  const name_generic_terms = Array.isArray(state.gdprGenericTerms)
+    ? [...new Set(state.gdprGenericTerms.map(t => String(t).trim().toLowerCase()).filter(Boolean))]
+    : [];
 
   const webEgress = document.getElementById('gdpr-web-egress')?.value || 'refuse';
 
@@ -961,6 +963,11 @@ function applyGdprConfigToScanner(gs) {
     ruleOverrides: gs.rule_overrides || {},
     emailAllowlist: Array.isArray(gs.email_allowlist) ? gs.email_allowlist : [],
   };
+  // Generic org/concept terms — held on state as the edit buffer for the
+  // chip-manager widget (search + add/remove). Sorted, lowercased, deduped.
+  state.gdprGenericTerms = Array.isArray(gs.name_generic_terms)
+    ? [...new Set(gs.name_generic_terms.map(t => String(t).trim().toLowerCase()).filter(Boolean))].sort()
+    : [];
   // Drop any cached per-chat history scans — action changes invalidate them.
   for (const c of (state.chats || [])) {
     if (c) c._piiHistoryScanLen = -1;

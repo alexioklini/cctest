@@ -448,7 +448,14 @@ _NAME_HARD_NOISE_TOKENS = frozenset({
 # ALL-generic: a span with even ONE non-generic token ("Baer", "Berger",
 # "Zehenter") keeps a personal-name anchor and is NOT dropped, so real names —
 # and mixed forms like "Julius Baer Whistleblowing" — survive.
-_GENERIC_PHRASE_NOUNS = frozenset({
+#
+# SEED ONLY (v9.393.3): this is NOT the runtime list. It seeds
+# `gdpr_scanner.name_generic_terms` in config.json ONCE (on first load when the
+# key is absent) — thereafter the config is the SINGLE source of truth, fully
+# admin-editable in Settings → GDPR. The runtime filter reads
+# `_GENERIC_PHRASE_TERMS` (installed from config per scan), never this seed, so
+# removing a term in the GUI actually disables it (nothing is hardcoded-on).
+_GENERIC_PHRASE_SEED = frozenset({
     "management", "governance", "compliance", "officer", "manager", "director",
     "resources", "human", "capital", "markets", "market", "banking", "bank",
     "finance", "financial", "services", "service", "business", "corporate",
@@ -476,38 +483,39 @@ _GENERIC_PHRASE_NOUNS = frozenset({
 })
 
 
-# Admin-supplied EXTRA generic terms (gdpr_scanner.name_generic_terms), unioned
-# with the built-in base at scan time. Set by `_pii_scan_text` from the config
-# before each NER pass; empty by default so the base list stands alone.
-_GENERIC_PHRASE_EXTRA: frozenset = frozenset()
+# Runtime generic-term set — the SINGLE source of truth for the phrase filter.
+# Installed from `gdpr_scanner.name_generic_terms` by `_pii_scan_text` before
+# each NER pass (v9.393.3). Empty until config is loaded: the config migration
+# seeds it from `_GENERIC_PHRASE_SEED` on first run, so a fresh deploy is never
+# unprotected, but nothing is hardcoded-on — a term removed in the GUI is gone.
+_GENERIC_PHRASE_TERMS: frozenset = frozenset()
 
 
-def _set_generic_phrase_extra(terms) -> None:
-    """Install the admin-configured extra generic terms (lowercased). Called
-    once per scan from `_pii_scan_text`. Idempotent; tolerant of junk."""
-    global _GENERIC_PHRASE_EXTRA
+def _set_generic_phrase_terms(terms) -> None:
+    """Install the admin-configured generic terms (lowercased) as the runtime
+    filter list. Called once per scan from `_pii_scan_text`. Tolerant of junk."""
+    global _GENERIC_PHRASE_TERMS
     try:
-        _GENERIC_PHRASE_EXTRA = frozenset(
+        _GENERIC_PHRASE_TERMS = frozenset(
             str(t).strip().lower() for t in (terms or []) if str(t).strip())
     except TypeError:
-        _GENERIC_PHRASE_EXTRA = frozenset()
+        _GENERIC_PHRASE_TERMS = frozenset()
 
 
 def _is_generic_org_phrase(value: str) -> bool:
     """True when a name-net span is a generic org/concept phrase (every
-    capitalised token is a generic business noun) rather than a personal
-    name. Requires ≥2 capitalised core tokens — a lone token is handled by
-    the shape gate. Matches against the built-in base list plus any
-    admin-configured extra terms (`gdpr_scanner.name_generic_terms`). See
-    `_GENERIC_PHRASE_NOUNS`."""
+    capitalised token is a configured generic business noun) rather than a
+    personal name. Requires ≥2 capitalised core tokens — a lone token is
+    handled by the shape gate. Matches ONLY against the config-driven
+    `_GENERIC_PHRASE_TERMS` (`gdpr_scanner.name_generic_terms`); an empty list
+    disables the filter entirely (no hardcoded fallback)."""
+    if not _GENERIC_PHRASE_TERMS:
+        return False
     core = [t for t in _re.split(r"[\s,]+", value.strip())
             if t and t[:1].isupper() and t[:1].isalpha() and len(t) >= 2]
     if len(core) < 2:
         return False
-    return all(
-        (t.lower().strip(".") in _GENERIC_PHRASE_NOUNS
-         or t.lower().strip(".") in _GENERIC_PHRASE_EXTRA)
-        for t in core)
+    return all(t.lower().strip(".") in _GENERIC_PHRASE_TERMS for t in core)
 
 
 def _looks_like_name_noise(toks: list) -> bool:
@@ -2521,9 +2529,9 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     # Smith of Acme Corp" as ONE name). Deterministic stopword counting — no
     # dependency, no model call.
     _doc_lang = _dominant_lang(text)
-    # Admin-configured extra generic org/concept terms for the phrase filter
-    # (base list + these). Set once before the NER passes.
-    _set_generic_phrase_extra((cfg or {}).get("name_generic_terms") or [])
+    # Config-driven generic org/concept terms for the phrase filter (single
+    # source of truth — no hardcoded base). Set once before the NER passes.
+    _set_generic_phrase_terms((cfg or {}).get("name_generic_terms") or [])
     for _ner_lang in ("de", "en"):
         try:
             if not is_available(_ner_lang):

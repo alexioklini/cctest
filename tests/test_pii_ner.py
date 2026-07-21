@@ -831,7 +831,28 @@ class TestGenericOrgPhraseFilter(unittest.TestCase):
     spans whose every capitalised token is a generic business/org noun
     ("Corporate Governance", "Risk Management") — an org/concept label the
     model mistagged as PERSON. A pure function, no spaCy model needed. The
-    invariant: it NEVER drops a span carrying a real personal-name token."""
+    invariant: it NEVER drops a span carrying a real personal-name token.
+
+    v9.393.3: the term list is config-driven (no hardcoded base), so each test
+    installs the seed list first via `_set_generic_phrase_terms`."""
+
+    def setUp(self):
+        pii_ner._set_generic_phrase_terms(pii_ner._GENERIC_PHRASE_SEED)
+
+    def tearDown(self):
+        pii_ner._set_generic_phrase_terms([])
+
+    def test_empty_config_disables_filter(self):
+        # No configured terms → filter is off, nothing is dropped (the
+        # v9.393.3 config-only invariant: nothing hardcoded-on).
+        pii_ner._set_generic_phrase_terms([])
+        self.assertFalse(pii_ner._is_generic_org_phrase("Corporate Governance"))
+
+    def test_configured_terms_drive_the_filter(self):
+        pii_ner._set_generic_phrase_terms(["corporate", "governance"])
+        self.assertTrue(pii_ner._is_generic_org_phrase("Corporate Governance"))
+        # A term NOT in the (reduced) config list keeps the phrase.
+        self.assertFalse(pii_ner._is_generic_org_phrase("Risk Management"))
 
     def test_drops_pure_org_phrases(self):
         for v in ("Corporate Governance", "Risk Management", "Human Resources",
