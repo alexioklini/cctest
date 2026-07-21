@@ -2009,6 +2009,25 @@ preamble goes in first-user-message instead.
     no real-PII recall loss. PDF line-breaks inside an NER span
     (`Alexander\n\nKlinsky`) are collapsed to one space. NER-only — regex/checksum
     rules untouched. (Full eval: `eval/pii_eval/`.)
+  - **Generic org/concept-phrase drop (9.393.2, `_is_generic_org_phrase`, always
+    on)**: separate from the opt-in precision gate above. A multi-word `name`
+    span whose EVERY capitalised token is a generic business/org/department/
+    report noun (built-in `_GENERIC_PHRASE_NOUNS`, ~130 terms) is an
+    organisation/concept label the model mistagged as PERSON — dropped. Applied
+    on BOTH emission paths (the main trusted pass AND the untrusted recall-net
+    append, which otherwise re-introduced e.g. "Risk Management" in the German
+    recall pass on an English doc). The v9.349 strict span gate was
+    untrusted-only, so on an ENGLISH document (where EN is the *trusted* model)
+    nothing caught these — the failure in chat 3ba2cfa5 ("Corporate Governance",
+    "Risk Management", "Human Resources", "Compliance Officer", "Tax Compliance"
+    surfaced as `name`). Invariant: ONE non-generic token (a real name part —
+    "Baer", "Berger", "Julius") keeps the span, so real names and mixed forms
+    ("Julius Baer Whistleblowing", "BAER GROUP") survive. Eval on the 4 CoC/
+    governance attachments: 15 org-phrase FPs removed, 0 of 17 real person names
+    lost. Admin-extensible per domain via `gdpr_scanner.name_generic_terms`
+    (list of single lowercase words, default `[]`, unioned with the base list;
+    Settings → GDPR "Allgemeinbegriffe (keine Namen)"; validated like
+    `email_allowlist`, multi-word entries rejected).
   - **Confidence-threshold bands (9.195.0)**: PII enforcement runs off the
     confidence score, not the removed `server_block`. Two global edges
     (`gdpr_scanner.confidence_lower` 0.50 / `confidence_upper` 0.85) split every

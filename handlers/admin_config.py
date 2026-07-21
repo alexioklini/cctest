@@ -1218,6 +1218,28 @@ class AdminConfigHandlers:
                     cleaned.append(s)
                 gs["email_allowlist"] = cleaned
 
+            # Generic org/concept terms (9.393.2) — extra lowercase words for
+            # the NER name-phrase filter. Single-token words only (the filter
+            # matches per capitalised token); strip/lowercase/dedupe.
+            if "name_generic_terms" in gs_in:
+                gt_in = gs_in["name_generic_terms"] or []
+                if not isinstance(gt_in, list):
+                    self._send_json({"error": "gdpr_scanner.name_generic_terms must be a list"}, 400)
+                    return
+                gt_clean: list[str] = []
+                gt_seen = set()
+                for t in gt_in:
+                    if not isinstance(t, str):
+                        continue
+                    s = t.strip().lower()
+                    if not s or " " in s or "\t" in s:
+                        continue  # per-token filter — no multi-word entries
+                    if s in gt_seen:
+                        continue
+                    gt_seen.add(s)
+                    gt_clean.append(s)
+                gs["name_generic_terms"] = gt_clean
+
             engine._invalidate_gdpr_cache()
             try:
                 config = {}

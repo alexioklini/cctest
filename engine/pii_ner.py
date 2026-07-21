@@ -436,6 +436,80 @@ _NAME_HARD_NOISE_TOKENS = frozenset({
 })
 
 
+# Generic business / organisation / department / report nouns that the NER
+# (esp. en_core_web_md on a Title-Case-heavy governance/CoC document) mistags
+# as PERSON: "Corporate Governance", "Risk Management", "Human Resources",
+# "Capital Markets", "Tax Compliance", "Best Practices". A multi-token span
+# whose EVERY substantial (capitalised) token is one of these is an
+# org/concept label — never a natural person — so it is dropped BEFORE it can
+# become a `name` finding. This runs on BOTH the trusted and untrusted NER
+# paths (chat 3ba2cfa5: EN is the trusted model on an English document, so the
+# untrusted-only strict span gate never saw these). It is intentionally
+# ALL-generic: a span with even ONE non-generic token ("Baer", "Berger",
+# "Zehenter") keeps a personal-name anchor and is NOT dropped, so real names —
+# and mixed forms like "Julius Baer Whistleblowing" — survive.
+_GENERIC_PHRASE_NOUNS = frozenset({
+    "management", "governance", "compliance", "officer", "manager", "director",
+    "resources", "human", "capital", "markets", "market", "banking", "bank",
+    "finance", "financial", "services", "service", "business", "corporate",
+    "private", "risk", "audit", "committee", "board", "department", "division",
+    "group", "holding", "operations", "administration", "controlling",
+    "accounting", "treasury", "legal", "sustainable", "sustainability", "tax",
+    "investor", "relations", "secretary", "practices", "practice", "policy",
+    "policies", "standards", "standard", "ethics", "conduct", "code", "report",
+    "guidelines", "guideline", "framework", "strategy", "whistleblowing",
+    "stakeholders", "stakeholder", "supervisory", "executive", "chief", "head",
+    "deputy", "senior", "junior", "associate", "analyst", "advisor", "line",
+    "contact", "telephone", "phone", "email", "address", "office", "customer",
+    "client", "know", "your", "best", "general", "global", "international",
+    "national", "regional", "local", "central", "internal", "external",
+    "annual", "consolidated", "statement", "statements", "overview", "summary",
+    "introduction", "regulation", "regulations", "regulatory", "supervision",
+    "protection", "control", "quality", "security", "information", "technology",
+    "data", "digital", "project", "process", "system", "systems", "product",
+    "products", "solution", "solutions", "environment", "environmental",
+    "social", "diversity", "inclusion", "training", "development", "performance",
+    "review", "assessment", "evaluation", "monitoring", "prevention",
+    "detection", "reporting", "disclosure", "transparency", "integrity",
+    "responsibility", "accountability", "effectiveness", "efficiency",
+    "excellence",
+})
+
+
+# Admin-supplied EXTRA generic terms (gdpr_scanner.name_generic_terms), unioned
+# with the built-in base at scan time. Set by `_pii_scan_text` from the config
+# before each NER pass; empty by default so the base list stands alone.
+_GENERIC_PHRASE_EXTRA: frozenset = frozenset()
+
+
+def _set_generic_phrase_extra(terms) -> None:
+    """Install the admin-configured extra generic terms (lowercased). Called
+    once per scan from `_pii_scan_text`. Idempotent; tolerant of junk."""
+    global _GENERIC_PHRASE_EXTRA
+    try:
+        _GENERIC_PHRASE_EXTRA = frozenset(
+            str(t).strip().lower() for t in (terms or []) if str(t).strip())
+    except TypeError:
+        _GENERIC_PHRASE_EXTRA = frozenset()
+
+
+def _is_generic_org_phrase(value: str) -> bool:
+    """True when a name-net span is a generic org/concept phrase (every
+    capitalised token is a generic business noun) rather than a personal
+    name. Requires ≥2 capitalised core tokens — a lone token is handled by
+    the shape gate. Matches against the built-in base list plus any
+    admin-configured extra terms (`gdpr_scanner.name_generic_terms`). See
+    `_GENERIC_PHRASE_NOUNS`."""
+    core = [t for t in _re.split(r"[\s,]+", value.strip())
+            if t and t[:1].isupper() and t[:1].isalpha() and len(t) >= 2]
+    if len(core) < 2:
+        return False
+    return all(
+        (t.lower().strip(".") in _GENERIC_PHRASE_NOUNS
+         or t.lower().strip(".") in _GENERIC_PHRASE_EXTRA)
+        for t in core)
+
+
 def _looks_like_name_noise(toks: list) -> bool:
     """True if a token list is a form-label / legal-doc / OCR-noise span rather
     than a real person name. `toks` = the span's tokens in original order."""
@@ -766,6 +840,16 @@ def scan_text(text: str, *, lang: str = "de",
                 continue
         if not _passes_shape_gate(value, rule_id):
             continue
+        # Generic org/concept-phrase drop (v9.393.2, chat 3ba2cfa5): a `name`
+        # span whose every capitalised token is a generic business noun
+        # ("Corporate Governance", "Risk Management", "Human Resources") is an
+        # organisation/concept label the NER mistagged as PERSON — not personal
+        # data. Runs on BOTH paths (the strict span gate is untrusted-only, so
+        # on an English document — where EN is the TRUSTED model — nothing
+        # caught these). NOT opt-in: it targets a pure-FP shape and can never
+        # drop a real name (any personal-name token makes the span non-generic).
+        if rule_id == "name" and _is_generic_org_phrase(value):
+            continue
         # Opt-in NER-precision gate: tighten `name` (German-common-noun FP mode)
         # and `organisation` (legal-abbrev / concept-prefix FP mode). Caller
         # passes name_precision from cfg (gdpr_scanner.name_precision_gate).
@@ -821,6 +905,13 @@ def scan_text(text: str, *, lang: str = "de",
                 if not _strict_name_span_ok(value, value.split()):
                     continue  # <2 caps / connective / stop-word → prose, not a name
                 if not _passes_shape_gate(value, "name"):
+                    continue
+                # Same generic org/concept-phrase drop as the main pass
+                # (v9.393.2) — the recall net has its own append and would
+                # otherwise re-introduce "Risk Management" etc. that the main
+                # (trusted) pass already dropped (chat 3ba2cfa5: on an English
+                # doc the German recall net re-tagged them).
+                if _is_generic_org_phrase(value):
                     continue
                 if name_precision and not _passes_name_precision_gate(
                         value, text, ent.start_char):
@@ -2430,6 +2521,9 @@ def _pii_scan_text(text: str, max_findings: int = 100,
     # Smith of Acme Corp" as ONE name). Deterministic stopword counting — no
     # dependency, no model call.
     _doc_lang = _dominant_lang(text)
+    # Admin-configured extra generic org/concept terms for the phrase filter
+    # (base list + these). Set once before the NER passes.
+    _set_generic_phrase_extra((cfg or {}).get("name_generic_terms") or [])
     for _ner_lang in ("de", "en"):
         try:
             if not is_available(_ner_lang):

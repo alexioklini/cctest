@@ -826,5 +826,46 @@ class TestPhoneAndAddressRecall(unittest.TestCase):
                 self.assertNotIn(city, addrs, f"false address in {txt!r}: {city}")
 
 
+class TestGenericOrgPhraseFilter(unittest.TestCase):
+    """v9.393.2 (chat 3ba2cfa5): `_is_generic_org_phrase` drops NER `name`
+    spans whose every capitalised token is a generic business/org noun
+    ("Corporate Governance", "Risk Management") — an org/concept label the
+    model mistagged as PERSON. A pure function, no spaCy model needed. The
+    invariant: it NEVER drops a span carrying a real personal-name token."""
+
+    def test_drops_pure_org_phrases(self):
+        for v in ("Corporate Governance", "Risk Management", "Human Resources",
+                  "Capital Markets", "Private Banking", "Sustainable Finance",
+                  "Business Services", "Tax Compliance", "Compliance Officer",
+                  "Line Manager", "Contact Risk Management", "Best Practices",
+                  "Know Your Customer"):
+            self.assertTrue(pii_ner._is_generic_org_phrase(v),
+                            f"should drop generic phrase: {v!r}")
+
+    def test_keeps_real_person_names(self):
+        for v in ("Julius Baer", "Robert Löw", "Andrea Orcel", "Noel Quinn",
+                  "Stefan Bollinger", "Christian Nemeth", "Gerd Scheider",
+                  "Eduard Berger", "Gottwald Kranebitter", "Johann Kowar",
+                  "Jay Johnston", "Heinz Meidlinger", "Wolfgang Zehenter",
+                  "Christian Briker"):
+            self.assertFalse(pii_ner._is_generic_org_phrase(v),
+                             f"must NOT drop real name: {v!r}")
+
+    def test_keeps_mixed_phrases_with_name_anchor(self):
+        # A single non-generic (name) token keeps the span — mixed forms like
+        # "Julius Baer Whistleblowing" carry a real-name anchor and survive
+        # (the entity 'Julius Baer' pulls them anyway).
+        for v in ("Julius Baer Whistleblowing", "BAER GROUP",
+                  "Switzerland Telephone", "Immobilien AG"):
+            self.assertFalse(pii_ner._is_generic_org_phrase(v),
+                             f"mixed phrase kept: {v!r}")
+
+    def test_lone_token_not_dropped(self):
+        # ≥2 capitalised tokens required — a lone generic word is left to the
+        # shape gate (a bare 'Management' is not this filter's job).
+        self.assertFalse(pii_ner._is_generic_org_phrase("Management"))
+        self.assertFalse(pii_ner._is_generic_org_phrase("Governance"))
+
+
 if __name__ == "__main__":
     unittest.main()

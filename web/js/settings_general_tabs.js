@@ -1988,6 +1988,12 @@ async function _genTab_gdpr(C) {
         </div>
         <textarea id="gdpr-email-allowlist" rows="5" style="width:100%;font-family:var(--font-mono);font-size:12px;padding:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000);color:var(--text-100);resize:vertical" placeholder="alexander@me.com&#10;@trusted-company.com">${esc(allowlistText)}</textarea>
 
+        ${SEC('Allgemeinbegriffe (keine Namen)')}
+        <div style="font-size:11px;color:var(--text-400);margin-bottom:6px">
+          Ein Begriff pro Zeile, jeweils EIN Wort. Erkennt die Namensprüfung eine Mehrwort-Phrase, deren Wörter ALLE Fachbegriffe sind (Standardliste plus diese), gilt sie als Organisations-/Sachbegriff und wird NICHT als personenbezogen markiert. Beispiel: <code>Governance</code>, <code>Compliance</code>, <code>Management</code> ⇒ „Corporate Governance", „Risk Management" werden nicht mehr fälschlich als Name erkannt. Ein echter Name-Bestandteil in der Phrase (z. B. „Julius") schützt sie davor.
+        </div>
+        <textarea id="gdpr-name-generic-terms" rows="4" style="width:100%;font-family:var(--font-mono);font-size:12px;padding:8px;border:1px solid var(--border-100);border-radius:6px;background:var(--bg-000);color:var(--text-100);resize:vertical" placeholder="Governance&#10;Compliance&#10;Vorstand">${esc((gs.name_generic_terms || []).join('\n'))}</textarea>
+
         ${SEC('Kategorieaktionen')}
         <div style="font-size:11px;color:var(--text-400);margin-bottom:6px">
           Wählen Sie eine Aktion pro Kategorie. Aufklappen, um einzelne Regeln zu überschreiben. Die Schwere auf Kategorieebene ist der Standard; gesetzte Regel-Überschreibungen haben Vorrang.
