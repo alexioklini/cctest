@@ -715,17 +715,30 @@ def _looks_like_error_dict(obj) -> bool:
     return isinstance(obj, dict) and "error" in obj and len(obj) <= 4
 
 
-def _gdpr_deanon_result_for_display(result_str: str):
+def _gdpr_deanon_result_for_display(tool_name: str, result_str: str):
     """Return a DE-anonymised (fake→real) copy of a tool result for UI display,
-    or None when no mapping is active / nothing changed / it's too big.
+    or None when it must not / can not de-anonymise.
 
-    The result the model receives is re-anonymised (L3b) so the model stays in
-    fake-space; this copy is DISPLAY-ONLY (the activity-panel result box), so the
-    user — who is local and owns the data — sees real values consistent with the
-    de-anonymised query header. Never raises; caps the input so a huge result
-    doesn't stall the turn. Model-facing text is never affected.
+    ONLY for LOCAL tools whose ARGS were also de-anonymised
+    (`GDPR_ARGS_DEANON_TOOLS`): those genuinely ran on real data, so showing the
+    real result is truthful and consistent with the de-anonymised query header.
+
+    NEVER for web/egress tools (searxng/exa/web_fetch/…): their args are NOT
+    de-anonymised (the FAKE is what actually went to the search engine — L4), so
+    the args display the fake. De-anonymising their RESULT would then contradict
+    the args ("searched Logan → result shows Bonnie") AND misrepresent what was
+    sent to the internet. Their result stays fake, matching their fake args.
+
+    The result the model receives is re-anonymised (L3b) regardless; this copy is
+    DISPLAY-ONLY. Never raises; caps input size. Model-facing text is untouched.
     """
     if not result_str or not isinstance(result_str, str):
+        return None
+    # Truthfulness gate: only tools whose args were de-anonymised (local tools).
+    try:
+        if tool_name not in engine.GDPR_ARGS_DEANON_TOOLS:
+            return None
+    except Exception:
         return None
     # Bound the work — a multi-hundred-KB tool result is not worth reversing for
     # a display convenience (the panel truncates anyway).
@@ -1410,7 +1423,7 @@ def run_loop(
             # Compute a de-anonymised COPY of the result (fake→real) so the UI can
             # show what the tool really returned. The model's `result_str` (and
             # thus the wire) is UNTOUCHED — this ships as a separate field.
-            _deanon_result = _gdpr_deanon_result_for_display(result_str)
+            _deanon_result = _gdpr_deanon_result_for_display(tu["name"], result_str)
             emit("tool_result", {
                 "name": tu["name"], "tool_use_id": tu["id"],
                 "result": result_str,

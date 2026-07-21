@@ -243,5 +243,42 @@ class TestLedgerNoticeSplit(unittest.TestCase):
         self.assertIn("107625.jpg", out)
 
 
+class TestDisplayResultDeanonTruthfulness(_SymmetryTestBase):
+    """The DISPLAY-only result de-anon (activity-panel / chat result box) must be
+    per-tool truthful: LOCAL tools (args were de-anonymised → ran on real data)
+    show a real result; WEB/egress tools (args stay fake → the FAKE went to the
+    search engine) must NOT de-anon their result, else the display would both
+    contradict its own fake args and misrepresent what was sent to the internet.
+    """
+
+    def _display(self, tool, result_str, mapping):
+        from engine.llm_loop import _gdpr_deanon_result_for_display
+        with request_context():
+            get_request_context()._gdpr_mapping_id = mapping.mapping_id
+            return _gdpr_deanon_result_for_display(tool, result_str)
+
+    def test_local_tool_result_is_deanonymised(self):
+        m = self._mapping(("Bonnie Stark", "Logan Carter", "name"))
+        out = self._display("mempalace_query",
+                            '{"query":"Logan Carter","text":"Logan Carter"}', m)
+        self.assertEqual(out, '{"query":"Bonnie Stark","text":"Bonnie Stark"}')
+
+    def test_web_tools_result_never_deanonymised(self):
+        m = self._mapping(("Bonnie Stark", "Logan Carter", "name"))
+        fake = '{"query":"Logan Carter","content":"Logan Carter ..."}'
+        for tool in brain.WEB_SEARCH_TOOLS:
+            self.assertIsNone(
+                self._display(tool, fake, m),
+                f"{tool}: web-tool result was de-anonymised — the display would "
+                "show a real name the search engine never received.")
+
+    def test_no_mapping_returns_none(self):
+        from engine.llm_loop import _gdpr_deanon_result_for_display
+        with request_context():
+            get_request_context()._gdpr_mapping_id = ""
+            self.assertIsNone(_gdpr_deanon_result_for_display(
+                "mempalace_query", '{"x":"Logan Carter"}'))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

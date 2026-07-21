@@ -1671,7 +1671,15 @@ preamble goes in first-user-message instead.
   (`_gdpr_deanon_result_for_display`, tool_result emit) ships a fake→real copy
   of the result string (only under an active mapping, when it changed, ≤200KB);
   `buildToolResultBlock` renders it in the result box so it matches the
-  de-anonymised query header (the user is local and owns the data). BOTH are
+  de-anonymised query header (the user is local and owns the data).
+  **Truthfulness gate (9.390.1)**: `deanon_args`/`deanon_result` are computed
+  ONLY for tools in `GDPR_ARGS_DEANON_TOOLS` (local tools that genuinely ran on
+  real data). WEB/egress tools (searxng/exa/web_fetch) are NEVER de-anonymised
+  in the display — their args show the FAKE because the fake is what actually
+  went to the search engine (L4), so de-anonymising their result would both
+  contradict their fake args and misrepresent what left the machine. So a web
+  search correctly displays fake args + fake result + NO badge; a local search
+  displays real args + real result + badge. BOTH are
   threaded through live (`chat_send.js`), reload (`sessions.js` + `metadata.tools[]`),
   and the two render paths (`renderToolCall` in `chat_tools.js`, `_toolEntryCard`
   in `panels_background.js`). The model NEVER sees real values — `args`/`result`
