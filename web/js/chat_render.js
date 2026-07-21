@@ -589,36 +589,59 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   // where they happened. GDPR/privacy rows are kept in their existing grouped
   // 'Aktivität' collapsible (with counters + the state.showGdprDetails toggle),
   // emitted once at the position of the first privacy row.
-  const privacyEntries = bodyItems.filter(e => e.kind === 'privacy');
-  let privacyEmitted = false;
-  const privacyBlockHtml = () => {
-    // Build the (kept-as-is) GDPR collapsible. Counts only privacy ops now —
-    // tools render inline. Returns '' if nothing to show.
+  // Datenschutz-Blöcke werden INLINE an ihrer chronologischen Position
+  // gerendert — pro Lauf AUFEINANDERFOLGENDER privacy-Ops EIN Block (ein echter
+  // Tool-Call/Text dazwischen beginnt den nächsten). So erscheint die
+  // Anonymisierung dort, wo sie stattfand, und in der echten Reihenfolge
+  // (anonymise → tool → deanonymise), statt in einem an-die-erste-Row
+  // gepinnten Sammelblock (Nutzer-Report: falsche Reihenfolge + falsche
+  // Position). trailingNotes ("keine Anonymisierung nötig") hängen an den
+  // LETZTEN emittierten Block.
+  let privacyBlockSeq = 0;
+  // Render EINE Gruppe konsekutiver privacy-Entries als eigenen Block. Zähler
+  // (Anon / De-Anon) werden aus GENAU dieser Gruppe berechnet, nicht global.
+  // `withNotes` hängt die trailingNotes an (nur am letzten Block).
+  const privacyBlockHtml = (entries, withNotes) => {
+    if (!entries.length && !(withNotes && trailingNotes.length)) return '';
+    const key = `${turnNum}-p${privacyBlockSeq++}`;
+    let gAnon = 0, gDeanon = 0;
+    for (const e of entries) {
+      const k = e.item.m.kind || e.item.m.name || '';
+      if (isAnonKind(k)) gAnon++;
+      else if (isDeanonKind(k)) gDeanon++;
+    }
     let pBody = '';
     if (state.showGdprDetails) {
-      for (const e of privacyEntries) {
+      for (const e of entries) {
         pBody += `<div class="activity-item activity-privacy">${renderMessage(e.item.m, e.item.idx)}</div>`;
       }
-      pBody += trailingNotes.join('');
+      if (withNotes) pBody += trailingNotes.join('');
     }
     const parts = [];
-    if (anonReal > 0) parts.push(anonReal === 1 ? '1 Anon' : `${anonReal} Anon`);
-    if (deanonReal > 0) parts.push(deanonReal === 1 ? '1 De-Anon' : `${deanonReal} De-Anon`);
-    if (!parts.length && anonAttempted === 0 && deanonAttempted === 0) return '';
+    if (gAnon > 0) parts.push(gAnon === 1 ? '1 Anon' : `${gAnon} Anon`);
+    if (gDeanon > 0) parts.push(gDeanon === 1 ? '1 De-Anon' : `${gDeanon} De-Anon`);
+    if (!parts.length && !(withNotes && trailingNotes.length)) return '';
     const countHtml = parts.length ? `<span class="activity-summary-count">${esc(parts.join(' · '))}</span>` : '';
     if (!pBody.trim()) {
       return `<div class="activity-summary-header-static"><span>Datenschutz</span>${countHtml}</div>`;
     }
-    const headerEl = `<div class="activity-summary-header" onclick="toggleActivitySummary(${turnNum})">
+    const headerEl = `<div class="activity-summary-header" onclick="toggleActivitySummary('${key}')">
         <svg class="activity-chevron" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         <span>Datenschutz</span>${countHtml}
       </div>`;
-    return `<div class="activity-summary" data-activity-turn="${turnNum}">
+    return `<div class="activity-summary" data-activity-turn="${key}">
       ${headerEl}
       <div class="activity-summary-body"><div class="activity-summary-body-inner">${pBody}</div></div>
     </div>`;
   };
 
+  // Wie viele privacy-Läufe gibt es? Der LETZTE trägt die trailingNotes.
+  let privacyRunCount = 0;
+  for (let i = 0; i < bodyItems.length; i++) {
+    if (bodyItems[i].kind === 'privacy'
+        && (i === 0 || bodyItems[i - 1].kind !== 'privacy')) privacyRunCount++;
+  }
+  let privacyRunsEmitted = 0;
   let bodyHtml = '';
   for (let ei = 0; ei < bodyItems.length; ei++) {
     const entry = bodyItems[ei];
@@ -641,13 +664,24 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
       // Inter-round answer-text segment — render as an assistant bubble inline.
       bodyHtml += renderAssistantSegment(entry.item.m.content || '');
     } else if (entry.kind === 'privacy') {
-      // Emit the whole privacy block once, at the first privacy row's position.
-      if (!privacyEmitted) { bodyHtml += privacyBlockHtml(); privacyEmitted = true; }
+      // Coalesce a RUN of consecutive privacy ops into ONE block at their
+      // chronological position (the aa6cab7d/0e103e99 fix: anonymise → tool →
+      // deanonymise now shows as separate blocks at their real spots, in order).
+      const group = [];
+      while (ei < bodyItems.length && bodyItems[ei].kind === 'privacy') {
+        group.push(bodyItems[ei]);
+        ei++;
+      }
+      ei--; // for-loop ++ back to the first non-privacy entry
+      privacyRunsEmitted++;
+      bodyHtml += privacyBlockHtml(group, privacyRunsEmitted === privacyRunCount);
     }
   }
-  // If there were privacy attempts but no row reached the loop's emit point
-  // (e.g. all filtered), still surface the block.
-  if (!privacyEmitted && privacyEntries.length) bodyHtml += privacyBlockHtml();
+  // Attempts existed but nothing reached the loop (all filtered): surface the
+  // notes-only block once.
+  if (!privacyRunsEmitted && trailingNotes.length) {
+    bodyHtml += privacyBlockHtml([], true);
+  }
 
   // Everything from lastResponseMemberPos onwards = assistant reply.
   let responseHtml = '';
@@ -1553,6 +1587,35 @@ const GDPR_CATEGORY_LABELS = {
   date_of_birth: 'Geburtsdatum',
   unknown: 'Personenbezogener Wert',
 };
+// Character ranges in raw markdown where a GDPR sentinel must NOT be injected
+// because it would break the construct: link/image URL targets `](url)`, image
+// ALT text `![alt]`, and naked http(s) URLs. Returns [[start,end], …] over the
+// raw text. Deliberately covers only what actually breaks (URLs + image alt) —
+// visible link TEXT `[text]` still highlights fine (marked keeps the anchor).
+function _gdprMarkdownProtectedRanges(text) {
+  const ranges = [];
+  // ![alt](url) and [text](url): protect the ALT text (image only) + the URL
+  // target for both. One regex, decide per-match whether it's an image (`!`).
+  const linkRe = /(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+[^)]*)?\)/g;
+  let m;
+  while ((m = linkRe.exec(text)) !== null) {
+    const isImage = m[1] === '!';
+    const bracketOpen = m.index + m[1].length + 1;       // just after `[`
+    const altText = m[2] || '';
+    if (isImage && altText) {
+      ranges.push([bracketOpen, bracketOpen + altText.length]);
+    }
+    // URL target: after `](`
+    const urlStart = m.index + m[0].indexOf('](') + 2;
+    ranges.push([urlStart, urlStart + (m[3] || '').length]);
+  }
+  // Naked URLs not already inside a markdown link.
+  const urlRe = /https?:\/\/[^\s)]+/g;
+  while ((m = urlRe.exec(text)) !== null) {
+    ranges.push([m.index, m.index + m[0].length]);
+  }
+  return ranges;
+}
 function renderMarkdownWithGdprHighlights(text, spans) {
   // Pre-inject sentinels around each restored span in the raw text, then run
   // the normal markdown pipeline, then swap sentinels for <mark> tags after.
@@ -1568,6 +1631,19 @@ function renderMarkdownWithGdprHighlights(text, spans) {
   // first-match-wins discipline the server uses, just re-anchored here.
   // Longest-first so a longer value claims its span before any shorter
   // substring of it gets a chance (mirrors `find_restored_spans`).
+  // Ranges where a value occurrence must NOT be highlighted: markdown
+  // link/image URL targets `](…)`, naked URLs, and image ALT text `![…]`.
+  // Injecting a sentinel there breaks the construct — a short span like
+  // "Lara" matches INSIDE an image URL (`…/ee/Lara_Pulver_in_Fleming.jpg`),
+  // and the sentinels land in the src, which marked URL-encodes into a
+  // broken URL → the image never loads. (This is the "images vanish when the
+  // anonymisation toggle is on" bug: toggle off runs plain renderMarkdown,
+  // toggle on runs this path.) The highlight is a VIEW nicety; skipping it
+  // inside markdown machinery is always safe — the value still renders, just
+  // without the amber <mark>.
+  const protectedRanges = _gdprMarkdownProtectedRanges(text);
+  const inProtected = (s, e) =>
+    protectedRanges.some(([ps, pe]) => s < pe && e > ps);
   const byLen = spans.slice().sort((a, b) => (b.original || '').length - (a.original || '').length);
   const claimed = []; // [start, end]
   const overlaps = (s, e) => claimed.some(([cs, ce]) => s < ce && e > cs);
@@ -1580,7 +1656,7 @@ function renderMarkdownWithGdprHighlights(text, spans) {
       const i = text.indexOf(orig, from);
       if (i < 0) break;
       const j = i + orig.length;
-      if (!overlaps(i, j)) {
+      if (!overlaps(i, j) && !inProtected(i, j)) {
         located.push({ start: i, end: j, original: orig, fake: sp.fake || '', category: sp.category || 'unknown' });
         claimed.push([i, j]);
       }

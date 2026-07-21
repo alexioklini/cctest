@@ -1061,11 +1061,13 @@ PII_RULE_LABELS: dict[str, str] = {
     "passport_ctx_loose": "Reisepassnummer (wahrscheinlich)",
     "bank_account_ctx": "Bankkontonummer (wahrscheinlich)",
     "health_insurance_ctx": "Krankenversicherungsnummer (wahrscheinlich)",
-    # Server-only (spaCy NER, German)
-    "name": "Name (spaCy NER, Deutsch)",
-    "name_gen": "Name (Genitiv, spaCy NER, Deutsch)",
-    "address": "Adresse / Ort (spaCy NER, Deutsch)",
-    "organisation": "Organisation (spaCy NER, Deutsch)",
+    # Server-only (spaCy NER, German) — labels kept user-friendly: "spaCy NER"
+    # is an implementation detail no user parses, so the visible label is just
+    # "… (Deutsch)".
+    "name": "Name (Deutsch)",
+    "name_gen": "Name (Genitiv, Deutsch)",
+    "address": "Adresse / Ort (Deutsch)",
+    "organisation": "Organisation (Deutsch)",
     "bare_identifier": "Reiner numerischer Bezeichner",
 }
 

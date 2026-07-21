@@ -475,6 +475,41 @@ async function openSession(sessionId, agentId) {
     if (!data.streaming) {
       for (const tm of pendingThinking) expanded.push(tm);
     }
+    // Reload sort-key fix for DE-anonymisation rows: a deanonymise_* op acts on
+    // the FINAL reply, so it must sort AFTER the turn's tools. But its DB id is
+    // smaller than the reconstructed tool keys (`assistant.id - 1 + frac`), so
+    // on reload it wrongly sorted BEFORE the tools (chat 0e103e99: the web
+    // search rendered after the de-anonymisation → one privacy block instead of
+    // two, in the wrong order). Give each deanonymise row a _seq just AFTER the
+    // owning assistant's tool band (assistant.id + 0.5): after every tool of the
+    // turn, before the assistant content. anonymise/anonymise_read run BEFORE
+    // the tools and keep their native-id ordering (already correct). Live rows
+    // already carry a real _seq and are skipped.
+    for (let i = 0; i < expanded.length; i++) {
+      const r = expanded[i];
+      const k = r && (r.kind || r.name) || '';
+      const isDeanon = r && r.synthetic && r.role === 'tool_call'
+        && (k === 'deanonymise_text' || k === 'deanonymise_file');
+      if (!isDeanon || r._seq !== undefined) continue;
+      // Find the next assistant row (the reply this deanon belongs to).
+      let aId = null;
+      for (let j = i + 1; j < expanded.length; j++) {
+        if (expanded[j] && expanded[j].role === 'assistant') {
+          aId = Number(expanded[j].id) || null; break;
+        }
+      }
+      if (aId !== null) {
+        r._seq = aId + 0.5;
+        r._ts = r._seq;
+        // Pair the matching tool_result right after it.
+        const res = expanded[i + 1];
+        if (res && res.synthetic && res.role === 'tool_result'
+            && res.tool_use_id === r.tool_use_id && res._seq === undefined) {
+          res._seq = aId + 0.5001;
+          res._ts = res._seq;
+        }
+      }
+    }
     // Server-side live estimate takes priority over stale per-message metadata
     if (data.total_tokens) chat.totalTokens = data.total_tokens;
     chat.messages = expanded;

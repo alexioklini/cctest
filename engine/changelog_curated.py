@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.386.1",
+        "date": "2026-07-21",
+        "title": "Datenschutz-Ansicht im Chat verbessert",
+        "body": "Bilder in Antworten werden jetzt auch dann angezeigt, wenn die "
+                "Hervorhebung anonymisierter Werte eingeschaltet ist. Zudem "
+                "erscheint die Datenschutz-Aktivität eines Chats jetzt an der "
+                "Stelle und in der Reihenfolge, in der sie tatsächlich "
+                "stattgefunden hat (erst anonymisiert, dann — nach einer "
+                "etwaigen Websuche — wieder entschlüsselt), und die "
+                "Bezeichnungen der erkannten Werte sind einfacher formuliert.",
+        "audience": "user",
+        "versions": ["9.386.1"],
+    },
+    {
         "version": "9.386.0",
         "date": "2026-07-21",
         "title": "Websuche in geschützten Chats: zwei klare Modi",
