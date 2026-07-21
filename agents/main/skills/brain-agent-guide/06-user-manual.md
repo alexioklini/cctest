@@ -2648,7 +2648,13 @@ Werkzeug-Aufrufen farblich markiert** — in der Aufruf-Zeile im Chat ebenso wie
 im Aktivitäts-Panel (Titel, Parameter-Tabelle und Ergebnis-Box), genau wie in
 Ihrer Frage und der Antwort. Der Tooltip an jeder Markierung nennt, welcher
 Wert durch welches Pseudonym ersetzt wurde (bzw. dass ein Wert bewusst im
-Klartext blieb).
+Klartext blieb). Seit v9.395.0 zeigt jeder Werkzeug-Aufruf zusätzlich ein
+kleines **Zähl-Abzeichen** `🔓 a<N>/r<N>` (im Chat und im Aktivitäts-Panel):
+`a<N>` = wie viele Werte in den **Aufruf-Parametern** de-anonymisiert wurden,
+`r<N>` = wie viele im **Ergebnis** zurückübersetzt wurden. So sehen Sie auf einen
+Blick, wie viel Schutz pro Schritt gewirkt hat. Das Abzeichen erscheint **nur**
+bei eingeschalteten Datenschutz-Details (und nicht bei lokalem Modell, weil dann
+nichts die Maschine verlässt); Null-Werte werden ausgeblendet.
 
 **F: Ein erzeugter Report hat einen Pseudonym-Namen im Dateinamen — obwohl der
 Inhalt echt ist. Kann man das beheben?**

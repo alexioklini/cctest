@@ -91,6 +91,7 @@
     "_buddySpeciesOpts": "writable",
     "_buildCitationLegend": "writable",
     "_buildCitationWarnBadge": "writable",
+    "_buildGdprCountBadge": "writable",
     "_cellAt": "writable",
     "_changelogCache": "writable",
     "_chatAudioBtn": "writable",

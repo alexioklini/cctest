@@ -3276,6 +3276,9 @@ def build_chat_event_callback(session, live, sid):
             # the fakes; this is display-only so the chat view can show what the
             # local tool really executed. See engine/llm_loop.py tool_call emit.
             deanon_args = data.get("deanon_args")
+            # GDPR transparency badge: how many pseudonym→real value-occurrences
+            # the args-deanon swapped for this call (0 when nothing was swapped).
+            deanon_args_count = data.get("deanon_args_count") or 0
             tr = data.get("tool_round")
             tuid = data.get("tool_use_id", "")
             # Update existing entry if re-emitted with full args, else append.
@@ -3287,6 +3290,8 @@ def build_chat_event_callback(session, live, sid):
                 _partial_tools[-1]["args"] = args
                 if deanon_args:
                     _partial_tools[-1]["deanon_args"] = deanon_args
+                if deanon_args_count:
+                    _partial_tools[-1]["deanon_args_count"] = deanon_args_count
                 if tr is not None:
                     _partial_tools[-1]["tool_round"] = tr
                 if tuid and not _partial_tools[-1].get("tool_use_id"):
@@ -3295,6 +3300,8 @@ def build_chat_event_callback(session, live, sid):
                 entry = {"name": name, "args": args}
                 if deanon_args:
                     entry["deanon_args"] = deanon_args
+                if deanon_args_count:
+                    entry["deanon_args_count"] = deanon_args_count
                 if tr is not None:
                     entry["tool_round"] = tr
                 if tuid:
@@ -3318,6 +3325,9 @@ def build_chat_event_callback(session, live, sid):
             # result stays fake). Present only under an active mapping + when it
             # differed. See engine/llm_loop.py tool_result emit.
             deanon_result = data.get("deanon_result")
+            # GDPR transparency badge: how many pseudonyms in the result were
+            # restored (fake→real) for display (0 when none).
+            deanon_result_count = data.get("deanon_result_count") or 0
             if tool_name in ("read_document", "read_file",
                              "read_path", "read_path_original"):
                 cap = 50000
@@ -3345,6 +3355,8 @@ def build_chat_event_callback(session, live, sid):
                 t["result"] = capped
                 if deanon_result:
                     t["deanon_result"] = str(deanon_result)[:cap]
+                if deanon_result_count:
+                    t["deanon_result_count"] = deanon_result_count
                 if refs:
                     t["references"] = refs
                 # Real execution duration: wall-time from the tool_call event to

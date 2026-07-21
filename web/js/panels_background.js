@@ -481,13 +481,13 @@ function _syncToolEntries() {
       || (m.kind || m.name) === 'moa_plan_review');
     if (m.synthetic && !isMoaRef) continue;
     // Pair with its result (match by tool_use_id, else name; don't cross turns).
-    let result = null, resTs = null, deanonResult = null;
+    let result = null, resTs = null, deanonResult = null, deanonResultCount = 0;
     for (let j = i + 1; j < msgs.length; j++) {
       const n = msgs[j];
       if (n.role === 'tool_result') {
         const idMatch = m.tool_use_id && n.tool_use_id && m.tool_use_id === n.tool_use_id;
         const nameMatch = !m.tool_use_id && n.name === m.name;
-        if (idMatch || nameMatch) { result = n.result; resTs = n._ts; deanonResult = n.deanon_result || null; break; }
+        if (idMatch || nameMatch) { result = n.result; resTs = n._ts; deanonResult = n.deanon_result || null; deanonResultCount = n.deanon_result_count || 0; break; }
       }
       if (n.role === 'assistant' || n.role === 'user') break;
     }
@@ -516,9 +516,11 @@ function _syncToolEntries() {
       // activity card shows the same real values + 🔓 badge as the inline chat
       // line (not the model's pseudonyms). See _toolEntryCard.
       deanon_args: m.deanon_args || null,
+      deanon_args_count: m.deanon_args_count || 0,   // GDPR badge (see _toolEntryCard)
       status: result != null ? 'done' : 'running',
       result: result,
       deanon_result: deanonResult,   // de-anonymised result for display (see _toolEntryCard)
+      deanon_result_count: deanonResultCount,   // GDPR badge
       ts: m._ts || 0,
       seq: m._seq || 0,
       isBackground: false,
@@ -551,9 +553,11 @@ function _toolEntriesFromMetadata() {
         type: t.name || 'tool',
         args: t.args || {},
         deanon_args: t.deanon_args || null,   // GDPR: real args (see _toolEntryCard)
+        deanon_args_count: t.deanon_args_count || 0,   // GDPR badge
         status: 'done',
         result: typeof t.result === 'string' ? t.result : (t.result != null ? JSON.stringify(t.result) : null),
         deanon_result: (typeof t.deanon_result === 'string' && t.deanon_result) ? t.deanon_result : null,
+        deanon_result_count: t.deanon_result_count || 0,   // GDPR badge
         ts: (m.metadata && m.metadata.ts) || seq,  // metadata has no per-tool ts; keep turn order
         seq: seq++,
         isBackground: false,
@@ -735,6 +739,14 @@ function _toolEntryCard(e) {
         : toolDescribe(e.type, _args))
     : escapeHtml(e.type);
   const st = e.status === 'running' ? _BG_STATUS.running : _BG_STATUS.done;
+  // GDPR de-anonymisation count badge, gated on the Datenschutz-Details toggle
+  // (+ non-local model) — same helper the inline chat tool-line uses, so the
+  // two surfaces stay identical. Reads e.deanon_args_count / e.deanon_result_count.
+  const gdprBadge = (typeof _buildGdprCountBadge === 'function')
+    ? _buildGdprCountBadge(
+        { deanon_args_count: e.deanon_args_count || 0 },
+        { deanon_result_count: e.deanon_result_count || 0 })
+    : '';
   const argsTable = (typeof renderToolArgsTable === 'function')
     ? renderToolArgsTable(e.type === 'python_exec'
         ? Object.fromEntries(Object.entries(_args).filter(([k]) => k !== 'code'))
@@ -762,6 +774,7 @@ function _toolEntryCard(e) {
       <summary class="bgtask-summary">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">${desc}</span>
+        ${gdprBadge}
         ${cancelBtn}
         ${hasBody ? '<svg class="bggroup-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
       </summary>

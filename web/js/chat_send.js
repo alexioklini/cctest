@@ -742,7 +742,7 @@ function buildStreamCallbacks(chat, isActive) {
           // only forwards user/assistant); the final joined reply remains the
           // canonical assistant message for history.
           _commitStreamingSegment(chat);
-          chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, deanon_args: d.deanon_args || null, tool_use_id: d.tool_use_id || null, tool_round: d.tool_round ?? null, _ts: Date.now(), _seq: _nextSeq(chat) });
+          chat.messages.push({ role: 'tool_call', name: d.name, args: d.args || {}, deanon_args: d.deanon_args || null, deanon_args_count: d.deanon_args_count || 0, tool_use_id: d.tool_use_id || null, tool_round: d.tool_round ?? null, _ts: Date.now(), _seq: _nextSeq(chat) });
           _activityAutoUpdate(chat, currentTurnNum(chat), 'add');
           // Surface the activity pill as soon as the first tool runs (live),
           // and refresh the panel if it's open on the activity tab.
@@ -803,6 +803,7 @@ function buildStreamCallbacks(chat, isActive) {
         // extractReferencesFromToolResult reads from it directly (no re-parsing).
         const toolMsg = { role: 'tool_result', name: d.name, result: d.result,
                           deanon_result: d.deanon_result || null,
+                          deanon_result_count: d.deanon_result_count || 0,
                           tool_use_id: d.tool_use_id || null,
                           references: d.references || undefined, _ts: Date.now(), _seq: _nextSeq(chat) };
         chat.messages.push(toolMsg);

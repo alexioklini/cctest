@@ -716,8 +716,9 @@ def _looks_like_error_dict(obj) -> bool:
 
 
 def _gdpr_deanon_result_for_display(result_str: str):
-    """Return a DE-anonymised (fake→real) copy of a tool result for UI display,
-    or None when no mapping / nothing changed / too big.
+    """Return `(deanon_copy, count)` — a DE-anonymised (fake→real) copy of a tool
+    result for UI display plus the number of value-occurrences restored, or
+    `(None, 0)` when no mapping / nothing changed / too big.
 
     The CALLER decides WHEN this applies: it is invoked only for tools that
     actually ran on real values (their args were de-anonymised — local tools
@@ -726,28 +727,63 @@ def _gdpr_deanon_result_for_display(result_str: str):
 
     The result the model receives is re-anonymised (L3b) regardless; this copy is
     DISPLAY-ONLY. Never raises; caps input size. Model-facing text is untouched.
+    The count is the transparency signal shown as a badge (how many pseudonyms
+    the result carried that were restored for the human).
     """
     if not result_str or not isinstance(result_str, str):
-        return None
+        return None, 0
     # Bound the work — a multi-hundred-KB tool result is not worth reversing for
     # a display convenience (the panel truncates anyway).
     if len(result_str) > 200_000:
-        return None
+        return None, 0
     try:
         mapping_id = engine.get_request_context()._gdpr_mapping_id or ""
     except Exception:
         mapping_id = ""
     if not mapping_id:
-        return None
+        return None, 0
     try:
         import pseudonymizer as _ps
         mapping = _ps.get_mapping(mapping_id)
         if mapping is None or not getattr(mapping, "reverse", None):
-            return None
+            return None, 0
         out, n = _ps.deanonymize_text(result_str, mapping=mapping)
-        return out if n else None
+        return (out, n) if n else (None, 0)
     except Exception:
-        return None
+        return None, 0
+
+
+def _gdpr_deanon_args_count(model_args, deanon_args) -> int:
+    """Count how many pseudonym→real value-occurrences the args-deanon swapped
+    between the model-facing args and the de-anonymised args actually dispatched.
+
+    Display-only transparency signal (the tool-call badge). Counts occurrences
+    (not distinct values) so it matches the result-side count, which
+    `deanonymize_text` also reports per-occurrence. Never raises → 0 on any
+    problem; `deanon_args` is None when nothing was swapped, so this is 0 then.
+    """
+    if not isinstance(deanon_args, dict) or not isinstance(model_args, dict):
+        return 0
+    try:
+        mapping_id = engine.get_request_context()._gdpr_mapping_id or ""
+    except Exception:
+        mapping_id = ""
+    if not mapping_id:
+        return 0
+    try:
+        import pseudonymizer as _ps
+        mapping = _ps.get_mapping(mapping_id)
+        if mapping is None or not getattr(mapping, "reverse", None):
+            return 0
+        # The swap already happened; recount by de-anonymising the MODEL args and
+        # reading the occurrence count deanonymize_text reports. Serialise the
+        # string values so one pass covers every field.
+        import json as _json
+        blob = _json.dumps(model_args, ensure_ascii=False)
+        _out, n = _ps.deanonymize_text(blob, mapping=mapping)
+        return int(n)
+    except Exception:
+        return 0
 
 
 def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
@@ -1373,15 +1409,18 @@ def run_loop(
             # `tu_args`/`tu["input"]` are UNTOUCHED (dispatch re-derives its own,
             # web-gate-ordered copy — this is display-only).
             _deanon_args = None
+            _deanon_args_count = 0
             try:
                 _da = engine._gdpr_deanon_tool_args(tu["name"], tu_args)
                 if _da is not tu_args and _da != tu_args:
                     _deanon_args = _da
+                    _deanon_args_count = _gdpr_deanon_args_count(tu_args, _da)
             except Exception:
                 _deanon_args = None
             emit("tool_call", {
                 "name": tu["name"], "args": tu_args,
                 "deanon_args": _deanon_args,
+                "deanon_args_count": _deanon_args_count,
                 "tool_round": round_no, "tool_use_id": tu["id"],
             })
             _report_progress(round=round_no, phase="tool_call",
@@ -1449,13 +1488,16 @@ def run_loop(
             # values (i.e. whose args were de-anonymised, local OR a web tool
             # translated to originals under allow mode: `_deanon_args` is set).
             # The model's `result_str`/wire is UNTOUCHED — separate field.
-            _deanon_result = (
-                _gdpr_deanon_result_for_display(result_str)
-                if _deanon_args is not None else None)
+            _deanon_result = None
+            _deanon_result_count = 0
+            if _deanon_args is not None:
+                _deanon_result, _deanon_result_count = \
+                    _gdpr_deanon_result_for_display(result_str)
             emit("tool_result", {
                 "name": tu["name"], "tool_use_id": tu["id"],
                 "result": result_str,
                 "deanon_result": _deanon_result,
+                "deanon_result_count": _deanon_result_count,
                 "tool_round": round_no,
                 "elapsed_ms": int(elapsed * 1000), "is_error": is_error,
             })
@@ -1467,7 +1509,9 @@ def run_loop(
             tool_events.append({
                 "round": round_no, "name": tu["name"], "args": tu_args,
                 "deanon_args": _deanon_args,
+                "deanon_args_count": _deanon_args_count,
                 "deanon_result": _deanon_result,
+                "deanon_result_count": _deanon_result_count,
                 "elapsed_ms": int(elapsed * 1000),
                 "result_chars": len(result_str), "is_error": is_error,
                 "result_text": (result_str or "")[:100000],

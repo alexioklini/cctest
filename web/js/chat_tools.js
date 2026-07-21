@@ -641,6 +641,27 @@ function fallbackCopy(text, cb) {
   try { document.execCommand('copy'); cb && cb(); } catch(e) {}
   document.body.removeChild(ta);
 }
+// GDPR de-anonymisation count badge for a tool line. `callMsg` is the
+// tool_call row (carries deanon_args_count), `resultMsg` the paired tool_result
+// row (carries deanon_result_count) or null when the tool is still running.
+// Returns '' unless the Datenschutz-Details toggle is on AND the model is not
+// local (same gate as every other GDPR mark) AND at least one count is > 0.
+// Shows 🔓 aN/rN: aN = values de-anonymised in the args the tool ran on, rN =
+// pseudonyms restored in the result for display.
+function _buildGdprCountBadge(callMsg, resultMsg) {
+  if (typeof _gdprMarksVisible === 'function' && !_gdprMarksVisible()) return '';
+  const aN = (callMsg && Number(callMsg.deanon_args_count)) || 0;
+  const rN = (resultMsg && Number(resultMsg.deanon_result_count)) || 0;
+  if (!aN && !rN) return '';
+  const parts = [];
+  if (aN) parts.push(`a${aN}`);
+  if (rN) parts.push(`r${rN}`);
+  const title = `Datenschutz: ${aN} Wert(e) in den Aufruf-Parametern de-anonymisiert`
+    + (rN ? `, ${rN} im Ergebnis` : '')
+    + ' (Tool lief lokal auf den echten Daten; das Modell sah Pseudonyme).';
+  return `<span class="tool-badge-gdpr" title="${esc(title)}">`
+    + `<span class="tool-badge-gdpr-ico">&#128275;</span>${esc(parts.join('/'))}</span>`;
+}
 function renderToolCall(msg, idx) {
   // Transparent-anonymisation synthetic rows render distinctly — they're not
   // LLM tool calls, they're server-side privacy operations the user should
@@ -755,9 +776,14 @@ function renderToolCall(msg, idx) {
     m => m.role === 'tool_call' && m.tool_round === toolRound
   ).length > 1;
   const parallelBadge = isParallel ? '<span class="tool-badge-parallel" title="Parallel ausgeführt">Parallel</span>' : '';
-  // (The former "🔓 deanonymisiert" badge was removed on user request in
-  // 9.391.2 — the de-anonymised values themselves still show via deanonArgs,
-  // and the PII <mark>s carry the per-value tooltips.)
+  // GDPR transparency badge: how many PII values were de-anonymised (fake→real)
+  // for THIS tool — the call's args (`aN`) and its result (`rN`). The tool ran
+  // on real data locally; these counts make that visible. Gated on the same
+  // Datenschutz-Details toggle (+ non-local model) as every other GDPR mark
+  // (_gdprMarksVisible), per the user request "only when gdpr is displayed via
+  // toggle". Server-computed occurrence counts (deanon_*_count), so they survive
+  // reload. Zero counts render nothing.
+  const gdprBadge = _buildGdprCountBadge(msg, resultMsg);
 
   // One flat line per tool call: icon + title + badges + timing. Click opens the
   // Aktivitäts-Panel (full args + result + copy/download live there).
@@ -788,7 +814,7 @@ function renderToolCall(msg, idx) {
          onclick="openActivityEntry('${esc(actId)}')">
       ${icon}
       <span class="tool-name">${gdprHighlightPlain(desc)}</span>
-      ${workerBadge}${parallelBadge}${backendBadge}
+      ${workerBadge}${parallelBadge}${backendBadge}${gdprBadge}
       ${timing}
       ${progressHtml}
       ${preview}

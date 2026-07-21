@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.395.0",
+        "date": "2026-07-21",
+        "title": "Tool-Aufrufe zeigen an, wie viel de-anonymisiert wurde",
+        "body": "Werkzeuge (z. B. Dokumente lesen oder durchsuchen) arbeiten lokal "
+                "auf Ihren echten Daten, während das Cloud-Modell nur Platzhalter "
+                "sieht. Ist die Datenschutz-Ansicht eingeschaltet, sehen Sie jetzt "
+                "an jedem Tool-Aufruf — im Chat und im Aktivitäts-Bereich — ein "
+                "kleines Abzeichen, das zählt, wie viele Werte für den Aufruf "
+                "(a) und im Ergebnis (r) wieder in Klartext übersetzt wurden. So "
+                "ist auf einen Blick nachvollziehbar, wie viel Schutz bei jedem "
+                "Schritt gewirkt hat. Ohne die Datenschutz-Ansicht bleibt das "
+                "Abzeichen ausgeblendet.",
+        "audience": "user",
+        "versions": ["9.395.0"],
+    },
+    {
         "version": "9.394.0",
         "date": "2026-07-21",
         "title": "Anhänge behalten ihren echten Dateinamen",

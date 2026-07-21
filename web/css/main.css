@@ -2891,9 +2891,17 @@ mark.gdpr-cleartext:hover {
 .tool-line .tool-badge-worker { background: #0891b2; }
 .tool-line .tool-badge-parallel { background: #7c3aed; }
 .tool-line .tool-badge-backend { background: #475569; }
-/* (The "🔓 deanonymisiert" badge was removed in 9.391.2 — de-anonymised
-   values still show directly in title/args/result, marked via the GDPR
-   <mark> highlights when Datenschutz-Details are on.) */
+/* GDPR de-anonymisation count badge (🔓 aN/rN) — shown only while the
+   Datenschutz-Details toggle is on. Amber, matching the toggle button + the
+   PII <mark> highlights. Used on the inline tool-line AND the activity card. */
+.tool-badge-gdpr { font-size: 9px; font-weight: 600; color: #fff;
+  background: var(--warning, #d97706); padding: 1px 5px; border-radius: 3px;
+  letter-spacing: 0.5px; flex: 0 0 auto; display: inline-flex; align-items: center;
+  gap: 2px; white-space: nowrap; }
+.tool-badge-gdpr .tool-badge-gdpr-ico { font-size: 10px; line-height: 1; }
+.bgtask-summary .tool-badge-gdpr { margin-left: 4px; }
+/* (The "🔓 deanonymisiert" on/off badge was removed in 9.391.2; this is the
+   later COUNT badge — how many values were de-anonymised for the call/result.) */
 .tool-line-preview { color: var(--text-400); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
 /* Live tool progress (report_tool_progress) — phase label + optional % bar,
