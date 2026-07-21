@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.388.0",
+        "date": "2026-07-21",
+        "title": "Datenschutz-Dialog: zwei klare Sende-Wege",
+        "body": "Der Hinweis vor dem Senden hat jetzt zwei eindeutige "
+                "Schaltflächen statt drei: „Senden an Cloud-Modell“ "
+                "anonymisiert die erkannten Werte, die Sie nicht als "
+                "Falschtreffer markiert haben, und sendet — markieren Sie alle "
+                "als Falschtreffer, geht die Nachricht unverändert an die "
+                "Cloud. „Unverändert senden an lokales Modell“ lässt die Daten "
+                "auf dem Gerät. Bei streng vertraulichen Inhalten ist der "
+                "Cloud-Weg gesperrt; der lokale Weg steht dann weiterhin zur "
+                "Verfügung.",
+        "audience": "user",
+        "versions": ["9.388.0"],
+    },
+    {
         "version": "9.387.0",
         "date": "2026-07-21",
         "title": "Datenschutz-Dialog & Werkzeug-Ansicht klarer",

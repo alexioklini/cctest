@@ -176,36 +176,50 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
       if (c.mismatch) clsHasMismatch = true;
     }
     const clsActive = classifiedFiles.length > 0 && clsWorstAction !== 'ignore';
-    // Strict-level "block" is the ARL §1.11 hard veto: even a local model
-    // does not get to see the document. Only Cancel survives.
-    const clsHardVeto = clsActive && clsWorstLevel === 'strict'
-                        && clsWorstAction === 'block';
-    // force_local (or non-strict block) from classification: cloud send is
-    // forbidden, but a local model is still on the table.
-    const clsForcesLocal = clsActive && !clsHardVeto
-                           && (clsWorstAction === 'force_local'
-                               || clsWorstAction === 'block')
+    // Cloud egress forbidden by document classification — strict ("Streng
+    // vertraulich", ARL §1.11) OR force_local / non-strict block. In ALL these
+    // cases a LOCAL model is still allowed (the server-side gate is a no-op for
+    // local models — see engine/classification.py: "Already on a local model —
+    // nothing to reroute"), so the ONLY consequence here is that the cloud
+    // button is locked. (This deliberately relaxes the old client-only
+    // strict→cancel-only behaviour to strict→local-allowed, per user decision;
+    // the server already permitted local for strict content.)
+    const cloudForbidden = clsActive
+                           && (clsWorstAction === 'block'
+                               || clsWorstAction === 'force_local')
                            && !localActive;
+    const strictVeto = clsActive && clsWorstLevel === 'strict'
+                       && clsWorstAction === 'block';
 
-    const isBlock = scan.worstAction === 'block' || clsHardVeto || clsForcesLocal;
-    // "Trotzdem senden" — the button is always OFFERED unless cloud is
-    // categorically forbidden (strict hard veto / classification force-local):
-    // the subtitle explicitly promises the option ("oder bewusst trotzdem
-    // senden"), so hiding it contradicts the header. But on a high-band PII
-    // BLOCK to a cloud model it is shown DISABLED with an explanatory tooltip,
-    // so conscious send stays visible without letting highly-sensitive data
-    // leave by a single click.
-    const canSend = !clsHardVeto && !clsForcesLocal;
-    // Disabled (but visible) when the PII gate blocks on a non-local model.
-    const sendBlocked = scan.worstAction === 'block' && !localActive;
-    // "Anonymisieren & senden" — auto-anon-deanon. Only meaningful if
-    // there's PII to strip; a classification veto still kills it (we
-    // can't anonymise a document's classification away).
+    // Red header tint = "serious": a PII block, a cloud-forbidden classification,
+    // or a strict document (serious even when already on a local model).
+    const isBlock = scan.worstAction === 'block' || cloudForbidden || strictVeto;
     const hasPiiFindings = (scan.findings && scan.findings.length > 0);
-    const canAnonymise = hasPiiFindings && !clsHardVeto && !clsForcesLocal;
-    // "Lokales Modell verwenden" — always available except under the
-    // strict hard veto.
-    const canLocal = !clsHardVeto;
+    // ─── Two-button model (user decision, replaces the old three) ───
+    //   "Senden an Cloud-Modell" (primary, verdict 'anonymise'): anonymises the
+    //      NON-false-positive findings and sends to the cloud model. If the user
+    //      marks EVERY finding as a false positive the mapping is empty → the
+    //      message goes UNCHANGED to the cloud (FP values never enter the
+    //      mapping, verified server-side). One button covers both "anonymise
+    //      some" and "all-FP → cleartext"; the old separate 'send'/Trotzdem-
+    //      senden verdict is gone. Disabled (visible, with tooltip) when
+    //      classification forbids cloud egress — that can't be marked away.
+    //   "Unverändert senden an lokales Modell" (secondary, verdict 'local'):
+    //      unchanged send to a local model. Always available (local is safe
+    //      even for strict content).
+    const cloudDisabled = cloudForbidden;
+    const canCloud = true;   // always shown; `cloudDisabled` gates the click
+    const canLocal = true;   // local send always available
+    // Model-honest labels: `chat.model` is where the send actually goes — the
+    // anonymise verdict does NOT switch to cloud, it just anonymises. So when
+    // the selected model is ALREADY local, "an Cloud-Modell" would be a lie;
+    // the choice there is anonymise-first vs unchanged, both staying local.
+    const cloudBtnLabel = localActive
+      ? 'Anonymisiert senden'            // already on a local model
+      : 'Senden an Cloud-Modell';
+    const localBtnLabel = localActive
+      ? 'Unverändert senden'
+      : 'Unverändert senden an lokales Modell';
     // Inject the PII modal's one-off styles once per page lifetime.
     if (!document.getElementById('pii-modal-styles-v3')) {
       document.getElementById('pii-modal-styles')?.remove();
@@ -382,12 +396,6 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           color:var(--text-100);
         }
         .pii-btn-secondary:hover:not([disabled]) { background:var(--bg-200); }
-        .pii-btn-warn {
-          background:transparent;
-          border-color:#fbbf24;
-          color:#92400e;
-        }
-        .pii-btn-warn:hover:not([disabled]) { background:#fef3c7; }
         .pii-btn-primary {
           background:#047857; color:#fff;
           border-color:#047857;
@@ -566,24 +574,25 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     const total = scan.findings.length;
     const blockCls = isBlock ? ' is-block' : '';
     // Title + subtitle now reflect PII + classification jointly.
-    // Priority order: strict-hard-veto > classification force_local >
+    // Priority order: strict veto > classification force_local >
     // PII hard block > PII warn.
     let title, subtitle;
-    if (clsHardVeto) {
-      title = 'Streng vertraulicher Inhalt erkannt — Versand blockiert';
-      subtitle = 'Streng vertrauliche Dokumente dürfen das System nicht an ein Modell verlassen. Bitte den Turn abbrechen und den Anhang entfernen.';
-    } else if (clsForcesLocal) {
+    if (strictVeto) {
+      title = 'Streng vertraulicher Inhalt erkannt';
+      subtitle = 'Streng vertrauliche Dokumente dürfen ein Cloud-Modell nicht erreichen. '
+        + 'Versand nur an ein lokales Modell möglich (die Daten verlassen das System nicht).';
+    } else if (cloudForbidden) {
       title = 'Klassifizierter Inhalt erkannt';
       subtitle = 'Klassifizierter Anhang' + (hasPiiFindings ? ' + personenbezogene Daten' : '') +
         ' — Versand nur an ein lokales Modell möglich.';
     } else if (scan.worstAction === 'block') {
       title = 'Hochsensible personenbezogene Daten erkannt';
-      // Subtitle reflects the ACTUALLY selected model — localActive, not canSend
-      // (canSend is also true for a local model, but here we describe where the
+      // Subtitle reflects the ACTUALLY selected model — localActive (where the
       // data would go). With a cloud model selected, say so honestly.
       subtitle = localActive
         ? 'Hochsensible Daten erkannt — das gewählte Modell ist lokal, die Daten verlassen das System nicht.'
-        : 'Hochsensible Daten erkannt — das gewählte Modell ist ein Cloud-Modell. Bitte je Treffer prüfen und anonymisieren, ein lokales Modell wählen, oder bewusst trotzdem senden.';
+        : 'Hochsensible Daten erkannt. Beim Senden an das Cloud-Modell werden die nicht als '
+          + 'Falschtreffer markierten Werte anonymisiert; alternativ unverändert an ein lokales Modell.';
     } else if (clsActive && !hasPiiFindings) {
       // Find the worst file's marker_level for an honest subtitle —
       // never call something "Unmarkiert" classified.
@@ -623,23 +632,22 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     // Shield SVG (same vocabulary as the inline composer badge)
     const shieldSvg = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="0.6" fill="currentColor"/></svg>';
 
-    // Footer action hierarchy:
-    //   left:  Abbrechen (text-button) + "Trotzdem senden" (warn outline, only if allowed)
-    //   right: Lokales Modell (secondary, only if allowed) + Anonymisieren & senden (primary, only if PII)
-    // The four canonical verdicts are: continue / local / anonymise / cancel.
-    // The strict hard veto reduces this to {cancel} only.
-    const sendBtn = canSend
-      ? '<button class="pii-btn pii-btn-warn" id="pii-send-btn"' +
-          (sendBlocked
-            ? ' disabled title="Deaktiviert weil hochsensible Informationen erkannt wurden — bitte anonymisieren, ein lokales Modell verwenden, oder die Treffer als falsch markieren."'
-            : '') +
-          '>Trotzdem senden</button>'
-      : '';
+    // Footer action hierarchy (TWO buttons, user decision):
+    //   left:  Abbrechen (text-button)
+    //   right: Unverändert an lokales Modell (secondary, verdict 'local') +
+    //          Senden an Cloud-Modell (primary, verdict 'anonymise')
+    // Canonical verdicts here: anonymise / local / cancel. ('send'/Trotzdem-
+    // senden is gone — anonymise with all-FP already yields cleartext-to-cloud.)
     const localBtn = canLocal
-      ? '<button class="pii-btn pii-btn-secondary" id="pii-local-btn">Lokales Modell verwenden</button>'
+      ? '<button class="pii-btn pii-btn-secondary" id="pii-local-btn">' + esc(localBtnLabel) + '</button>'
       : '';
-    const anonBtn = canAnonymise
-      ? '<button class="pii-btn pii-btn-primary" id="pii-anon-btn">Anonymisieren &amp; senden</button>'
+    const cloudBtn = canCloud
+      ? '<button class="pii-btn pii-btn-primary" id="pii-cloud-btn"' +
+          (cloudDisabled
+            ? ' disabled title="Gesperrt: klassifizierter Inhalt darf ein Cloud-Modell nicht erreichen. '
+              + 'Bitte an ein lokales Modell senden."'
+            : '') +
+          '>' + esc(cloudBtnLabel) + '</button>'
       : '';
     const modalId = 'pii-warning-modal';
     document.getElementById(modalId)?.remove();
@@ -658,10 +666,9 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           '<div class="pii-footer">' +
             '<div class="pii-actions">' +
               '<button class="pii-btn pii-btn-text" id="pii-cancel-btn">Abbrechen</button>' +
-              sendBtn +
               '<div class="pii-actions-spacer"></div>' +
               localBtn +
-              anonBtn +
+              cloudBtn +
             '</div>' +
             // Opt-in: ask the user afterwards whether the chosen method worked.
             // Off by default — only when ticked does the post-turn GDPR feedback
@@ -707,33 +714,15 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
     document.addEventListener('keydown', onKey);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('cancel'); });
-    // "Trotzdem senden" starts disabled when a high-band PII block reaches a
-    // cloud model (sendBlocked). But if the user marks EVERY block-level finding
-    // as a false positive, nothing highly-sensitive would actually be sent in
-    // clear text — so re-enable the button dynamically. Re-run after every FP
-    // toggle (single + bulk). classification vetoes are out of scope here: they
-    // set canSend=false and the button isn't rendered at all.
-    const _sendBtn = document.getElementById('pii-send-btn');
-    const _reevalSend = () => {
-      if (!_sendBtn || !sendBlocked) return;  // only relevant while start-blocked
-      let liveBlock = false;
-      for (const sev of overlay.querySelectorAll('.pii-finding-sev.is-block')) {
-        const row = sev.closest('.pii-finding-row');
-        if (row && !row.classList.contains('pii-is-fp')) { liveBlock = true; break; }
-      }
-      _sendBtn.disabled = liveBlock;
-      if (liveBlock) {
-        _sendBtn.title = 'Deaktiviert weil hochsensible Informationen erkannt wurden — '
-          + 'bitte anonymisieren, ein lokales Modell verwenden, oder die Treffer als falsch markieren.';
-      } else {
-        _sendBtn.removeAttribute('title');
-      }
-    };
     // FP checkbox: strike through the row so the user sees what they excluded.
+    // No button re-evaluation needed — "Senden an Cloud-Modell" (anonymise)
+    // stays enabled regardless: unmarked findings get anonymised, and marking
+    // everything as FP simply yields an empty mapping → cleartext to cloud. The
+    // cloud button is only ever locked by classification (cloudDisabled), which
+    // FP marking cannot affect.
     for (const cb of overlay.querySelectorAll('.pii-fp-check')) {
       cb.addEventListener('change', (e) => {
         e.target.closest('.pii-finding-row')?.classList.toggle('pii-is-fp', e.target.checked);
-        _reevalSend();
       });
     }
     // "Verlauf" toggle on SEEN rows — same who/what/when trail as the history
@@ -789,19 +778,20 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           cb.checked = e.target.checked;
           cb.closest('.pii-finding-row')?.classList.toggle('pii-is-fp', e.target.checked);
         }
-        _reevalSend();
       });
     }
     document.getElementById('pii-cancel-btn').onclick = () => cleanup('cancel');
     document.getElementById('pii-local-btn')?.addEventListener('click', () => cleanup('local'));
-    document.getElementById('pii-anon-btn')?.addEventListener('click', () => cleanup('anonymise'));
-    document.getElementById('pii-send-btn')?.addEventListener('click', () => cleanup('send'));
-    // Default focus: anonymise when available, else local, else cancel.
-    // Strict hard veto collapses to cancel-only.
+    // "Senden an Cloud-Modell" = anonymise verdict (see the two-button note).
+    document.getElementById('pii-cloud-btn')?.addEventListener('click', () => cleanup('anonymise'));
+    // Default focus: the cloud (anonymise) button when it's enabled, else the
+    // local button (the safe path when cloud is classification-locked), else
+    // cancel.
     setTimeout(() => {
-      const pref = document.getElementById('pii-anon-btn')
-                || document.getElementById('pii-local-btn')
-                || document.getElementById('pii-cancel-btn');
+      const _cloud = document.getElementById('pii-cloud-btn');
+      const pref = (_cloud && !_cloud.disabled) ? _cloud
+                : (document.getElementById('pii-local-btn')
+                || document.getElementById('pii-cancel-btn'));
       pref?.focus();
     }, 50);
   });

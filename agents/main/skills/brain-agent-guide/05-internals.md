@@ -1775,8 +1775,9 @@ preamble goes in first-user-message instead.
   posture is governed by ONE central rule set (Settings → GDPR): the RULE
   decides when it fires (rule/category actions + confidence bands — identical
   in every chat, project or not), the ACTION decides what the user may do
-  (`warn` → ignore/proceed allowed; `block` → only anonymise / local model /
-  cancel, NO cleartext send). Everything the presets bundled remains reachable
+  (`warn` → ignore/proceed allowed; `block` → the pre-send modal offers the
+  cloud send only via the anonymise path — see the two-button note below).
+  Everything the presets bundled remains reachable
   globally: `rule_overrides.name` / `rule_overrides.organisation` (the org
   entity layer M4 + web auto-release M5 hang on the RULE and the CATEGORY, not
   on any preset — raise `organisation` as a rule_override, not a category
@@ -1786,6 +1787,25 @@ preamble goes in first-user-message instead.
   The session-sticky anonymise flow (one modal consent → the session keeps
   anonymising) replaces the preset's turn-1 standing consent. A legacy
   `gdpr_preset` field in project.json is ignored and stripped on save.
+- **Pre-send modal — TWO buttons (9.388.0, user decision)**: `gdprActionModal`
+  (`panels_gdpr.js`) now offers exactly **"Senden an Cloud-Modell"** (verdict
+  `anonymise`) + **"Unverändert senden an lokales Modell"** (verdict `local`)
+  plus Abbrechen. The old three-button set (Trotzdem senden / Lokales Modell /
+  Anonymisieren & senden) and the separate `send`/continue verdict are GONE:
+  the cloud button anonymises the non-FP findings and, when EVERY finding is
+  marked FP, ships an empty mapping → cleartext to cloud (FP values never enter
+  the mapping, server-verified) — so one button covers "anonymise some" AND
+  "all-FP cleartext". The cloud button is always shown, **disabled** (visible +
+  tooltip) only when classification forbids cloud egress (`cloudForbidden` =
+  block/force_local on a non-local model). **Strict "Streng vertraulich" now
+  allows a LOCAL send** (was client-only cancel-only): this is purely a client
+  relaxation — the server-side strict-always-block (§1.11) is a no-op for local
+  models already (`engine/classification.py`: "Already on a local model —
+  nothing to reroute"), so the client was stricter than the server; no server
+  change. Labels are model-honest: on an already-local session the primary
+  reads "Anonymisiert senden" / secondary "Unverändert senden" (no false
+  "Cloud" framing). No dynamic button re-enable needed anymore (the cloud
+  button never depends on FP state; classification lock can't be FP'd away).
 - **Ad-hoc egress protection without a project (9.344.0, M10b)**: the egress
   gate used to be inert without an active mapping — but the MAJORITY of real
   KYC/DD/compliance chats ran project-less (no preset → no turn-1

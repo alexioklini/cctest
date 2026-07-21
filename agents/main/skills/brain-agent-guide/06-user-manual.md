@@ -2733,15 +2733,24 @@ ihn unter Chats mit deinem Namen als Eigentümer. Für Workflows, Projekte,
 geplante Aufgaben, Artifacts — dasselbe Teilen-Menü überall.
 
 **F: Wie erhole ich mich von „PII erkannt — Aktion wählen"?**
-A: Das Modal vor dem Senden bietet:
-- **Bleiben** (blockieren, selbst bearbeiten)
-- **Lokal fortfahren** (an ein lokales Modell; Daten bleiben auf dem Gerät)
-- **Pseudonymisiert fortfahren** (PII durch Tokens ersetzt; eine
-  Admin-Decrypt-Map wird für späteres Audit gespeichert)
-- **Whitelist** — einmaliges Erlauben (z. B. die eigene E-Mail-Adresse)
+A: Das Modal vor dem Senden bietet zwei Wege plus Abbrechen:
+- **Senden an Cloud-Modell** — anonymisiert die erkannten Werte, die Sie NICHT
+  als Falschtreffer markiert haben, und sendet dann an das gewählte Cloud-Modell
+  (PII durch Tokens ersetzt; eine Decrypt-Map bleibt für das Audit erhalten).
+  Markieren Sie **alle** Funde als Falschtreffer, wird nichts ersetzt und die
+  Nachricht geht unverändert an die Cloud. Bei **streng vertraulichem** oder
+  klassifiziertem Inhalt ist dieser Knopf gesperrt (Cloud-Versand verboten).
+- **Unverändert senden an lokales Modell** — sendet ohne Änderung an ein
+  lokales Modell; die Daten verlassen das Gerät nicht. Auch für streng
+  vertrauliche Dokumente verfügbar.
+- **Abbrechen** — nichts wird gesendet, Sie bearbeiten die Nachricht selbst.
+
+Einzelne Funde können Sie im Dialog (oder in der Datenschutz-Übersicht über das
+Schild-Symbol) als **Falschtreffer** markieren — solche Werte bleiben im
+Klartext und werden nie anonymisiert.
 
 **F: Kann ich nachträglich prüfen, ob die GDPR-Aktion funktioniert hat?**
-A: Ja — im Modal vor dem Senden (anonymisieren / lokales Modell / weiter) gibt
+A: Ja — im Modal vor dem Senden (Cloud-Modell / lokales Modell) gibt
 es die Option **„Frag mich nachher wies gelaufen ist"**. Ist sie angehakt,
 erscheint nach jeder Anfrage mit Datenschutz-Aktion ein **Rückmeldungs-Dialog**
 („Hat es gepasst?"). Dort kannst du:
