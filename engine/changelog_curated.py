@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.394.0",
+        "date": "2026-07-21",
+        "title": "Anhänge behalten ihren echten Dateinamen",
+        "body": "Enthält ein Dateiname einen Namen (z. B. „Müller_KYC_2026.pdf\"), "
+                "wird künftig nur noch dieser Namensteil auf dem Weg zur "
+                "Cloud unkenntlich gemacht — genau wie bei Text in der Nachricht. "
+                "Die Datei selbst liegt weiterhin unter ihrem echten Namen vor, "
+                "und in Ihren Antworten sehen Sie ebenfalls den echten Namen. "
+                "Bisher wurden Anhänge intern in „att_01.pdf\" umbenannt; das "
+                "entfällt. Der Schutz bleibt vollständig erhalten: gegenüber dem "
+                "Cloud-Modell erscheint der Dateiname anonymisiert.",
+        "audience": "user",
+        "versions": ["9.394.0"],
+    },
+    {
         "version": "9.393.3",
         "date": "2026-07-21",
         "title": "Weniger Fehlalarme bei Fachbegriffen — Liste selbst pflegbar",

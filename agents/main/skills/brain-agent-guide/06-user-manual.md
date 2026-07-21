@@ -1386,11 +1386,13 @@ Bisher wirkte der Schutz nur im Chat-Turn selbst. Jetzt auch dort:
   einen Cloud-Dienst — auch wenn dein Chat auf einem lokalen Modell läuft.
   Personenbezogene Prompts werden dort abgelehnt. Für Diagramme mit echten Namen
   nimm **Diagramm rendern** (läuft lokal, bekommt die echten Werte).
-- **Anhänge werden neutral benannt.** Lädst du `KYC_Musterfrau_Ausweis.pdf` hoch,
-  liegt die Datei als `att_01.pdf` auf der Platte — der sprechende Dateiname
-  verrät sonst schon alles, egal wie gut der Inhalt geschützt ist. Der
-  Originalname geht durch die Prüfung wie jeder andere Text; der Agent kann die
-  Datei ganz normal lesen.
+- **Anhang-Dateinamen werden anonymisiert wie jeder andere Text** (seit v9.394.0).
+  Lädst du `KYC_Musterfrau_Ausweis.pdf` hoch, behält die Datei ihren echten Namen
+  auf der Platte, aber gegenüber dem Cloud-Modell wird nur der Namensteil im
+  Dateinamen unkenntlich gemacht — genau wie Text in der Nachricht. In deinen
+  Antworten siehst du wieder den echten Namen, und der Agent kann die Datei ganz
+  normal lesen. (Früher wurde die Datei intern in `att_01.pdf` umbenannt; das
+  entfällt, weil der Originalname trotzdem über eine Begleitzeile mitging.)
 - **E-Mail-Anhänge sind in anonymisierten Sitzungen gesperrt.** Die Datei auf der
   Platte enthält die echten Werte — sie zu versenden wäre ein Klartext-Leck an der
   Prüfung vorbei. Verschicke sie bewusst selbst, wenn du das willst.

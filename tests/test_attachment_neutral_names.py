@@ -1,146 +1,171 @@
-"""M11 (G14) — neutral attachment filenames.
+"""Attachment filenames are pseudonymised like any other PII — not disk-renamed.
 
-The attachment PATH is exempt from PII scanning (see chat._split_attachment_notice)
-because pseudonymising it would hand the model a fake path and break read_document.
-The L-catalog therefore filed "the clear name is in the path" as an unavoidable
-residual leak. It is not unavoidable: that framing assumes the file on disk must
-carry the user's filename. Brain writes that file itself — the name is ours.
+History: M11 (G14) originally neutralised the name AT THE SOURCE by writing the
+file to disk as `att_01.pdf`. That protected the PATH but left the original name
+riding into the wire verbatim through the `name_block` preamble
+(`att_01.pdf = CF_-_STARK_Bonnie_…`) — so the rename bought almost nothing while
+still forcing a fake path on disk. Replaced (this change) with the obvious
+symmetric design: the file keeps its REAL name on disk, and the filename is
+pseudonymised in the wire exactly like body text —
 
-So the name is neutralised AT THE SOURCE (`att_01.pdf`) and the original is emitted
-as scanned CONTENT in the typed half, where the scanner and the pii_decisions ledger
-see it. The path stays REAL, so read_document is byte-for-byte unaffected — there is
-no fake path, and nothing can break.
+  * detected: the basename is emitted into the SCANNED typed half (name_block),
+    so its name spans are found, decided in the dialog, and minted;
+  * anonymised: `pseudonymizer.pseudonymize_filename` rewrites the basename with
+    the mapping's OPAQUE tokens (path-safe — substring-restorable through the
+    underscores that the body sweeps deliberately skip);
+  * restored: the read_document args-deanon seam (read_document ∈
+    GDPR_ARGS_DEANON_TOOLS) turns the token back into the real stem before
+    dispatch, and the reply-deanon shows the human the real name.
+
+So: real name on disk (read_document byte-for-byte unaffected), fake name toward
+the cloud, real name back to the human — the same contract as body-text PII.
 
 Why it matters, from the corpus:
-  * risikoanalysen — every session's filename names subject AND purpose
-    (`Geldwäsche Risikoanalyse M&P AM_2025.xlsx`): the analysis subject was de-facto
-    de-anonymised to the cloud provider no matter how well the content was protected.
+  * risikoanalysen — `Geldwäsche Risikoanalyse M&P AM_2025.xlsx`: the analysis
+    subject was de-facto de-anonymised to the cloud provider via the path.
   * ko-kunden      — `CF_-_…_STARK_Bonnie_M_Mrs._107625_…`: every list_directory
     effectively shipped the customer list as paths.
-  * `Alcuatmisi02026!.txt` (4a6b889aee66) — an attachment whose NAME is a password,
-    riding into the wire unscanned via the exemption.
 
 Bare test interpreter — no server, no network.
 """
 
 import os
-import re
 import unittest
-from unittest import mock
+
+import pseudonymizer as ps
 
 
-class TestNeutralNaming(unittest.TestCase):
-    """The naming rule itself: deterministic, extension-preserving, gated on the
-    SCANNER (not on an active mapping — the file is written at upload time, before
-    the mapping is minted; gating on the mapping would be a chicken-and-egg race)."""
+class TestPseudonymizeFilename(unittest.TestCase):
+    """The load-bearing new primitive: pseudonymize_filename must be path-safe
+    (opaque tokens, extension + non-PII tokens preserved) and round-trip exactly
+    through deanonymize_text (the mechanism the read_document args-deanon uses)."""
 
-    @staticmethod
-    def _neutralise(disk_files, scanner_enabled):
-        """Mirrors the logic in handlers/chat.py (the naming rule under test)."""
-        name_map, saved = {}, []
-        for i, f in enumerate(disk_files, start=1):
-            fname = f.get("name", "file")
-            safe = fname.replace("/", "_").replace("\\", "_")
-            if scanner_enabled:
-                ext = os.path.splitext(safe)[1].lower()
-                if not re.fullmatch(r"\.[a-z0-9]{1,8}", ext or ""):
-                    ext = ""
-                neutral = f"att_{i:02d}{ext}"
-                name_map[neutral] = fname
-                safe = neutral
-            saved.append(safe)
-        return saved, name_map
+    def _seed_person(self, decision="Bonnie Stark"):
+        m = ps.new_mapping()
+        ps.seed_from_decision(m, "name", decision)
+        return m
 
-    def test_clear_name_never_reaches_the_path(self):
-        files = [{"name": "CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf"},
-                 {"name": "Geldwäsche Risikoanalyse M&P AM_2025.xlsx"}]
-        saved, nmap = self._neutralise(files, scanner_enabled=True)
-        self.assertEqual(saved, ["att_01.pdf", "att_02.xlsx"])
-        for p in saved:
-            self.assertNotIn("STARK", p)
-            self.assertNotIn("Bonnie", p)
-            self.assertNotIn("Risikoanalyse", p)
-        # …and the original is retained for the (scanned) content block.
-        self.assertEqual(nmap["att_01.pdf"],
-                         "CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf")
+    def test_underscore_joined_name_is_tokenised_both_parts(self):
+        m = self._seed_person()
+        fake = ps.pseudonymize_filename(
+            "CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf", mapping=m)
+        # Surname AND given (whose shape-fake is short, so NOT registered as a
+        # standalone body token) must both be gone — the entity layer, not the
+        # forward table, is the source of eligible tokens.
+        self.assertNotIn("STARK", fake)
+        self.assertNotIn("Bonnie", fake)
+        # Opaque tokens, path-safe.
+        self.assertIn("<NAME_", fake)
+        # Extension + non-PII tokens preserved.
+        self.assertTrue(fake.endswith(".pdf"))
+        self.assertIn("107625", fake)
+        self.assertIn("Scan", fake)
+        self.assertIn("CF", fake)
 
-    def test_password_in_filename_is_neutralised(self):
-        """`Alcuatmisi02026!.txt` — the filename IS a secret (4a6b889aee66)."""
-        saved, nmap = self._neutralise(
-            [{"name": "Alcuatmisi02026!.txt"}], scanner_enabled=True)
-        self.assertEqual(saved, ["att_01.txt"])
-        self.assertNotIn("Alcuatmisi", saved[0])
-        # The secret still goes through the SCANNER (as content), not around it.
-        self.assertEqual(nmap["att_01.txt"], "Alcuatmisi02026!.txt")
+    def test_roundtrip_restores_the_exact_path(self):
+        """This is the read_document contract: a wire path with the fake
+        basename must deanonymise back byte-for-byte to the real path."""
+        m = self._seed_person()
+        base = "STARK_Bonnie_M.pdf"
+        fake = ps.pseudonymize_filename(base, mapping=m)
+        wire = f"/tmp/brain-attachments/s1/{fake}"
+        restored, n = ps.deanonymize_text(wire, mapping=m)
+        self.assertEqual(restored, f"/tmp/brain-attachments/s1/{base}")
+        self.assertEqual(n, 2)
 
-    def test_extension_is_preserved_so_read_document_still_dispatches(self):
-        """read_document routes on the extension — the whole point of keeping a
-        REAL path is that nothing downstream changes."""
-        cases = [("Akte.pdf", ".pdf"), ("liste.XLSX", ".xlsx"),
-                 ("scan.JPG", ".jpg"), ("notiz.docx", ".docx"),
-                 ("daten.csv", ".csv")]
-        for fname, ext in cases:
-            saved, _ = self._neutralise([{"name": fname}], scanner_enabled=True)
-            self.assertTrue(saved[0].endswith(ext),
-                            f"{fname} → {saved[0]} lost its extension")
+    def test_casing_is_preserved_per_surface(self):
+        m = self._seed_person()
+        # Two files, different casing of the same name → each restores to its own.
+        f_upper = ps.pseudonymize_filename("STARK_report.pdf", mapping=m)
+        f_title = ps.pseudonymize_filename("Stark_report.pdf", mapping=m)
+        self.assertEqual(ps.deanonymize_text(f_upper, mapping=m)[0], "STARK_report.pdf")
+        self.assertEqual(ps.deanonymize_text(f_title, mapping=m)[0], "Stark_report.pdf")
 
-    def test_extensionless_file_still_works(self):
-        saved, nmap = self._neutralise([{"name": "README"}], scanner_enabled=True)
-        self.assertEqual(saved, ["att_01"])
-        self.assertEqual(nmap["att_01"], "README")
+    def test_non_pii_filename_passes_through_verbatim(self):
+        m = self._seed_person()
+        for plain in ("JuliusBaer_Code-of-Ethics.pdf", "Quartalsbericht_2024.pdf",
+                      "README", "notes.txt"):
+            self.assertEqual(ps.pseudonymize_filename(plain, mapping=m), plain)
 
-    def test_names_are_unique_per_turn(self):
-        """Two files with the SAME original name must not collide on disk."""
-        saved, _ = self._neutralise(
-            [{"name": "pass.jpg"}, {"name": "pass.jpg"}], scanner_enabled=True)
-        self.assertEqual(len(set(saved)), 2, "neutral names collided")
+    def test_no_entities_is_a_noop(self):
+        m = ps.new_mapping()
+        self.assertEqual(
+            ps.pseudonymize_filename("STARK_Bonnie.pdf", mapping=m),
+            "STARK_Bonnie.pdf")
 
-    def test_scanner_off_keeps_the_old_behaviour_exactly(self):
-        files = [{"name": "CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf"}]
-        saved, nmap = self._neutralise(files, scanner_enabled=False)
-        self.assertEqual(saved, ["CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf"])
-        self.assertEqual(nmap, {}, "no mapping block when the scanner is off")
+    def test_body_text_rendering_is_untouched(self):
+        """The filename pass must NOT overwrite forward[] — body text must keep
+        rendering the nice shape-fake, never the opaque filename token."""
+        m = self._seed_person()
+        ps.pseudonymize_filename("STARK_Bonnie.pdf", mapping=m)  # mint filename tokens
+        body, _ = ps.apply_known_values(
+            "Frau Bonnie Stark. STARK ist der Nachname.", mapping=m,
+            categories=None)
+        self.assertNotIn("<NAME_", body)          # opaque token did not bleed in
+        self.assertNotIn("Bonnie", body)          # name still anonymised
+        self.assertNotIn("Stark", body)
 
-    def test_path_separators_are_still_stripped(self):
-        """The original safety property (no traversal) must survive."""
-        saved, _ = self._neutralise(
-            [{"name": "../../etc/passwd"}], scanner_enabled=True)
-        self.assertEqual(saved, ["att_01"])
-        self.assertNotIn("/", saved[0])
-        self.assertNotIn("..", saved[0])
+    def test_idempotent_stable_tokens(self):
+        m = self._seed_person()
+        a = ps.pseudonymize_filename("STARK_Bonnie_M.pdf", mapping=m)
+        b = ps.pseudonymize_filename("STARK_Bonnie_M.pdf", mapping=m)
+        self.assertEqual(a, b)
+
+    def test_alias_key_never_leaks_into_output(self):
+        m = self._seed_person()
+        fake = ps.pseudonymize_filename("STARK_Bonnie.pdf", mapping=m)
+        self.assertNotIn("\x00file:", fake)
+
+    def test_organisation_filename(self):
+        m = ps.new_mapping()
+        ps.seed_from_decision(m, "organisation", "Wiener Privatbank SE")
+        fake = ps.pseudonymize_filename("Wiener_Privatbank_Bericht_2026.pdf", mapping=m)
+        self.assertNotIn("Wiener", fake)
+        self.assertNotIn("Privatbank", fake)
+        self.assertEqual(
+            ps.deanonymize_text(f"/x/{fake}", mapping=m)[0],
+            "/x/Wiener_Privatbank_Bericht_2026.pdf")
+
+    def test_password_as_filename(self):
+        """`Alcuatmisi02026!.txt` (4a6b889aee66) — the filename IS a secret, and
+        it is not a name entity, so it is caught by the substring pass over
+        non-name confirmed values (OPAQUE fake → path-safe roundtrip)."""
+        m = ps.new_mapping()
+        m.record("Alcuatmisi02026", m.next_token("password"), "password")
+        fake = ps.pseudonymize_filename("Alcuatmisi02026!.txt", mapping=m)
+        self.assertNotIn("Alcuatmisi02026", fake)
+        self.assertTrue(fake.endswith(".txt"))
+        self.assertEqual(
+            ps.deanonymize_text(f"/x/{fake}", mapping=m)[0],
+            "/x/Alcuatmisi02026!.txt")
 
 
-class TestOriginalNameIsScannedNotExempt(unittest.TestCase):
-    """The other half of M11: the original name must land in the SCANNED (typed)
-    half, not in the exempt notice half — otherwise we've only moved the leak."""
+class TestNameBlockLandsInScannedHalf(unittest.TestCase):
+    """The filename must land in the SCANNED (typed) half so the scanner detects
+    its name spans — not in the exempt path notice, which would only move the leak.
+    """
 
-    def test_name_block_lands_in_the_typed_half(self):
-        from handlers.chat import _split_attachment_notice
+    def test_name_block_is_split_into_the_typed_half(self):
+        from handlers.chat import _split_attachment_notice, _NAME_BLOCK_MARKER
 
         typed_in = "Prüfe die Akte."
-        name_block = ("\n\n[Originaldateinamen der Anhänge "
-                      "(Datei auf der Platte = Originalname):]\n"
-                      "  att_01.pdf = CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf")
+        name_block = (_NAME_BLOCK_MARKER + "\n"
+                      "  CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf")
         notice = ("\n\n[User attached files saved to disk:]\n"
-                  "  - /tmp/brain-attachments/s1/att_01.pdf")
+                  "  - /tmp/brain-attachments/s1/CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf")
 
         typed, notice_half = _split_attachment_notice(typed_in + name_block + notice)
 
-        # The original name is in the SCANNED half…
+        # The filename is in the SCANNED half — this is what makes the scanner
+        # detect + decide the name so the worker can mint its fake.
         self.assertIn("STARK_Bonnie", typed)
-        # …and NOT in the exempt half.
-        self.assertNotIn("STARK_Bonnie", notice_half)
-        # The exempt half still carries the (now PII-free) path.
-        self.assertIn("att_01.pdf", notice_half)
-
-    def test_the_exempt_notice_is_now_pii_free(self):
-        from handlers.chat import _split_attachment_notice
-        notice = ("\n\n[User attached files saved to disk:]\n"
-                  "  - /tmp/brain-attachments/s1/att_01.pdf")
-        _typed, notice_half = _split_attachment_notice("Prüfe." + notice)
-        # Whatever the exemption now protects, it is no longer a person's name.
-        for token in ("STARK", "Bonnie", "107625", "Risikoanalyse"):
-            self.assertNotIn(token, notice_half)
+        # The notice half is the exempt PATH region. It still carries the real
+        # basename at THIS stage (split ≠ pseudonymise); the worker rewrites
+        # those path lines with pseudonymize_filename right after, and the
+        # args-deanon restores them before read_document. What matters here is
+        # only that the split put the name_block on the scannable side.
+        self.assertIn("[User attached files saved to disk", notice_half)
+        self.assertNotIn("[Dateinamen der Anhänge", notice_half)
 
 
 if __name__ == "__main__":
