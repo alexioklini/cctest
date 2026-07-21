@@ -735,9 +735,6 @@ function _toolEntryCard(e) {
         : toolDescribe(e.type, _args))
     : escapeHtml(e.type);
   const st = e.status === 'running' ? _BG_STATUS.running : _BG_STATUS.done;
-  const deanonBadge = _deanon
-    ? '<span class="tool-badge-deanon" title="Lokal ausgeführt auf echten Daten — das Modell sah nur Pseudonyme. Anonymisierung schützt nur den Weg zum Modell.">🔓 deanonymisiert</span>'
-    : '';
   const argsTable = (typeof renderToolArgsTable === 'function')
     ? renderToolArgsTable(e.type === 'python_exec'
         ? Object.fromEntries(Object.entries(_args).filter(([k]) => k !== 'code'))
@@ -765,7 +762,6 @@ function _toolEntryCard(e) {
       <summary class="bgtask-summary">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">${desc}</span>
-        ${deanonBadge}
         ${cancelBtn}
         ${hasBody ? '<svg class="bggroup-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
       </summary>

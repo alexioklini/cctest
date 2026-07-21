@@ -755,12 +755,9 @@ function renderToolCall(msg, idx) {
     m => m.role === 'tool_call' && m.tool_round === toolRound
   ).length > 1;
   const parallelBadge = isParallel ? '<span class="tool-badge-parallel" title="Parallel ausgeführt">Parallel</span>' : '';
-  // GDPR: this local tool ran on real (de-anonymised) data — the model only
-  // ever saw the pseudonyms. Badge makes the split visible so a de-anonymised
-  // call no longer reads as "the tool got fakes".
-  const deanonBadge = deanonArgs
-    ? '<span class="tool-badge-deanon" title="Lokal ausgeführt auf echten Daten — das Modell sah nur Pseudonyme. Anonymisierung schützt nur den Weg zum Modell.">🔓 deanonymisiert</span>'
-    : '';
+  // (The former "🔓 deanonymisiert" badge was removed on user request in
+  // 9.391.2 — the de-anonymised values themselves still show via deanonArgs,
+  // and the PII <mark>s carry the per-value tooltips.)
 
   // One flat line per tool call: icon + title + badges + timing. Click opens the
   // Aktivitäts-Panel (full args + result + copy/download live there).
@@ -791,7 +788,7 @@ function renderToolCall(msg, idx) {
          onclick="openActivityEntry('${esc(actId)}')">
       ${icon}
       <span class="tool-name">${gdprHighlightPlain(desc)}</span>
-      ${workerBadge}${parallelBadge}${backendBadge}${deanonBadge}
+      ${workerBadge}${parallelBadge}${backendBadge}
       ${timing}
       ${progressHtml}
       ${preview}

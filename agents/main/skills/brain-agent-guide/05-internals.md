@@ -1667,7 +1667,9 @@ preamble goes in first-user-message instead.
   WITHOUT touching the wire/model-facing text: **`deanon_args`** — the loop
   (`engine/llm_loop.py` tool_call emit) computes the same L3a de-anon and ships
   it alongside the fake `args`; the renderer prefers it for the label + args
-  table and shows a `🔓 deanonymisiert` badge. **`deanon_result`** — the loop
+  table (the `🔓 deanonymisiert` badge was removed in 9.391.2 on user request —
+  the per-value GDPR `<mark>` tooltips carry that information since 9.391.0).
+  **`deanon_result`** — the loop
   (`_gdpr_deanon_result_for_display`, tool_result emit) ships a fake→real copy
   of the result string (only under an active mapping, when it changed, ≤200KB);
   `buildToolResultBlock` renders it in the result box so it matches the
@@ -1679,9 +1681,9 @@ preamble goes in first-user-message instead.
   fake→original) and the local args-deanon; the loop reads it back for
   `deanon_args` + a re-emitted `tool_call`, and computes `deanon_result` ONLY
   when `deanon_args` is set (i.e. the tool genuinely ran on real values). So:
-  local tools → real args+result+badge (always); a WEB tool under
+  local tools → real args+result (always); a WEB tool under
   `web_egress='allow'` → its query was translated to the ORIGINAL for the
-  outgoing request, so it too shows real args+result+badge (identical to local
+  outgoing request, so it too shows real args+result (identical to local
   — the search really ran on the real name); a web tool under `web_egress='refuse'`
   is BLOCKED (the protected value never leaves), so nothing ran on real → the
   display keeps the fake, correctly. The truthfulness holds because the display

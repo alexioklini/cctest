@@ -42,7 +42,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "Dateinamen, obwohl die Datei bereits umbenannt war, zeigen "
                 "Text und Link nun direkt auf die echte Datei.",
         "audience": "user",
-        "versions": ["9.391.0", "9.391.1"],
+        "versions": ["9.391.0", "9.391.1", "9.391.2"],
     },
     {
         "version": "9.390.0",
