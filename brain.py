@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.385.0"
-VERSION_DATE = "2026-07-20"
+VERSION = "9.386.0"
+VERSION_DATE = "2026-07-21"
 CHANGELOG = [
+    ("9.386.0", "2026-07-21", "fix+refactor(Web-Egress: 'Websuche erlaubt' funktioniert jetzt wirklich, ZWEI Modi statt vier — Chat faa124e1 + Nutzer-Modell 'suchen=Fake durch Original ersetzen, blocken=nichts raus'). SYMPTOM: anonymisierender Chat, web_egress='allow', 'suche Bilder von <Person>' → das Modell kannte nur den Fake 'Blake Young', der Egress-Gate REFUSTE Personen-Fakes in JEDEM Modus (M5-Invariante 'Fake-Suche trifft echte Fremde') → das Modell verweigerte bzw. halluzinierte tote Bild-URLs. ROOT CAUSE: der 'allow'-Modus liess Original-KLARWERTE durch (Recherche gewollt), aber ein VORHER pseudonymisierter Wert blieb ein Fake → schlechter gestellt als ein ungefakter, obwohl 'allow' den Egress generell freigibt. FIX A (der eigentliche Bug): im 'allow'-Modus wird ein bekannter Fake für REINE RETRIEVAL-Tools (WEB_SEARCH_TOOLS: web_fetch/exa/searxng/science/dev/image/news) ins ORIGINAL hin-übersetzt (translate_pairs, wie der M5-Org-Auto-Release) — NICHT der Fake geht raus, sondern der echte Wert, den 'allow' ohnehin zulässt; das Modell sieht das Original nie (Dispatch-Kopie der Args), Treffer kommen re-anonymisiert durch den L3b-Seam. email_send/email_reply/generate_image/MCP bleiben ausgenommen (Kontaktaufnahme MIT der Person / Abfluss an Dritte, kein Retrieval) — ihre Fakes UND Originale refusen auch unter 'allow'. NEBENBEFUND dabei behoben: der alte 'if orig_kinds and mode != \"allow\"'-Durchlass liess Original-Klarwerte pauschal für ALLE Egress-Tools durch → email_send mit echtem Empfänger ging unter 'allow' raus (test_gdpr_egress_gate war auf der Live-config 'allow' vorbestehend ROT); jetzt tool-abhängig (_allow_orig = mode=='allow' and tool in WEB_SEARCH_TOOLS). FIX B (sauberer Schnitt, Nutzer-Call 'toten Code raus'): die vier Modi (refuse/ask/block_group/allow) auf ZWEI reduziert (refuse=Blockieren, allow=Suchen). 'ask' (Consent-Dialog pro Wert, 9.338.0) hing am 9.348 ENTFERNTEN kyc-Preset und hatte keinen Aktivierungsweg mehr; 'block_group' war eine refuse-Variante. Entfernt: _web_consent_ask (~110 Zeilen), _web_release_hash, die Consent-Konstanten, released_sets/denied_sets/_consent_status/_want_consent/consent-Maschinerie im Gate, denied_kinds, die reason='denied'/'no_consent'-Zweige in _web_gate_refusal; _WEB_EGRESS_MODES=('refuse','allow'); Legacy 'ask'/'block_group' in der config.json normalisieren beim Laden auf 'refuse'. GUI (settings_general_tabs.js): Dropdown auf 'Suchen'/'Blockieren'. panels_gdpr.js: die ask-SCHREIB-Seite (Web-Freigabe/-Widerruf im Verlaufs-Modal, mkWebDec, release_web/deny_web-Persist) entfernt; die LESE-Seite (Status-Badges/Filter für historische Ledger-Zeilen) BEHALTEN, damit alte Chats lesbar bleiben. get_session_web_releases (db.py) bleibt als Reader für Altdaten. Auch der tote _gdpr_web_block-Zweig in handlers/chat.py (versteckte die Web-Gruppe bei web_egress='block_group') entfernt — der Modus existiert nicht mehr. TESTS: test_web_egress_gate (ask-Consent-Klassen entfernt, allow-Fake→Original-Fälle + Legacy-Fallback-Test), test_web_auto_release (_MODES=(refuse,allow); Personen-Fake refust nur unter refuse, wird unter allow übersetzt), test_gdpr_egress_gate (beide Mail-Tests grün — einer war vorbestehend rot), test_gdpr_mapping_every_turn + test_dispatch_symmetry (Modus explizit auf 'refuse' fixiert statt Live-config-abhängig). NEU tests/test_gdpr_web_matrix.py (11 — die 6 End-to-End-Fälle PII-Entscheidung × Web-Egress × lokal/cloud: LLM-Sicht via Mapping-Rückschreiben, Suchmaschinen-Sicht via echtem Egress-Gate, Rück-Anon via L3b-Seam; anonymise/FP/send/local/lokal). GDPR-Familie (265+ Tests) grün. py_compile + brain-Import OK; node --check beider JS-Dateien grün. Skill 01-api/05-internals/06-user-manual aktualisiert. Server-Restart nötig. KURATIERTER Eintrag (user)."),
     ("9.385.0", "2026-07-20", "fix(Tool-Gating — Toolset wächst jetzt in JEDER Session monoton, nie schrumpfen; Chat aa6cab7d + Nutzer-Vorschlag 'in weiteren Turns nur Tools hinzugeben statt wegnehmen'). SYMPTOM: Turn 2 'suche im internet nach Bildern zu Lisa Pulver' → Klassifikator [web], image_search lief, echte Treffer; Korrektur-Turn 3 'ich meinte Lara pulver' → Klassifikator [context,memory] (Follow-up-Kontext nicht erkannt), FRISCHER Trim warf web weg → deepseek-v4-flash konnte nicht suchen und halluzinierte 5 tote Bild-URLs (Getty 400, IMDb 404, Guardian 401 mit sichtbar synthetischem Hash, Shutterstock 422) — die Chat-View rendert Markdown-Bilder korrekt (marked-Default, kein Sanitizer/CSP), es gab schlicht nichts zu laden. ROOT CAUSE: die 9.277.2-Monotonie-Union (_cache_freeze_groups: pro Turn klassifizierte Gruppen in die eingefrorene Menge unionen, nie schrumpfen) galt NUR für cache-priced Modelle (cost_cache_read gesetzt); deepseek-v4-flash ist nicht cache-priced → jeder Turn klassifizierte von Null, kept_groups sprang [context,memory]→[web]→[context,memory]. FIX (handlers/chat.py, Choke-Point-Helper): NEU _remember_tool_groups(session, model, groups) — pro-Session/pro-MODELL-Merkliste (weiter im _cache_freeze_tool_groups-Dict, Name bleibt wegen des Cache-Honor-Branches), uniont die klassifizierten Gruppen jedes Turns hinein und gibt die Merge-Liste zurück; leere Liste [] bleibt am ERSTEN Auftritt ein echter Trim-to-Floor, kann später aber nichts mehr löschen. BEIDE Branches umgestellt: (1) Concrete-Model-Branch — _seen_this_model ohne _cp-Gate (jedes gemerkte Modell pre-seedet seine akkumulierte Menge, steht auch bei Klassifikator-Fehler = fail-open auf bekannt-gute Union statt frischem Lean-Trim), _run_classifier zum uniformen Ausdruck kollabiert (_opt_on and (should_optimize or _cp) — für gemerkte Modelle identisch, da ein Eintrag das Gate schon passiert hat); (2) Auto-Fresh-Route — Union+Store für ALLE gerouteten Modelle (Re-Route zurück auf ein Session-Modell trimmt nicht mehr frisch), der redundante Cache-Freeze-Group-Store entfällt (None-Store == absent == volle Menge). Frozen-Auto-Honor-Branch UNVERÄNDERT (macht die Union seit 9.277.2 selbst, mit eigenem Nie-untrimmed-Shrinken-Guard). KV/CACHE-EFFEKT: strikt besser — vorher flippte der Prefix bei Nicht-Cache-Modellen mit jeder Klassifikations-Änderung, jetzt ändert er sich nur auf Wachstums-Turns. Warmup-geschützte Modelle unberührt (Klassifikator läuft dort nie → nie ein Eintrag). Grenze (dokumentiert): Merkliste ist in-memory pro Session-Objekt — Server-Restart/Reload beginnt die Akkumulation neu (wie der bestehende Cache-Freeze). Tests: NEU tests/test_session_tool_group_memory.py (7 — aa6cab7d-Sequenz endet mit web, No-Growth stabil, []-Semantik, Per-Modell-Keying, absent=None=voll); test_websearch_escalation_gating 17/17 + test_tool_optimize_gate 8/8 grün. py_compile OK. Skill 05-internals aktualisiert. Server-Restart nötig. KURATIERTER Eintrag (user)."),
     ("9.384.1", "2026-07-20", "feat(GDPR — region-treue Fakes für Telefon + Orte; Nutzer: 'aus +49 wird nicht +99, Köln wird nicht Burlington — gleiche Region wie das Original'). GENERISCH für alle Länder. (A) TELEFON (_fake_phone): statt des synthetischen '999'-Ländercodes bleibt jetzt die REGION erhalten — bei '+<CC>' der E.164-Ländercode (Präfix-Match gegen ~90 gängige Codes, längster zuerst: +49→+49, +43→+43, +1→+1, +44→+44), bei nationalem '0<Vorwahl>' die Trunk-0 + bis zu 2 Vorwahl-Ziffern (Mobil-/Festnetz-Typ erhalten); nur der Rest wird formtreu gefakt, nie das Original verbatim. (B) ORTE (NEU engine/geo_regions.py + _fake_city_regional): ein bekannter Ort wird durch einen aus DEMSELBEN LAND ersetzt (Köln→andere DE-Stadt, Wien→andere AT-Stadt, Zürich→CH, Paris→FR, Roma→IT). Kuratierte Städte→Land-Karte (170 Städte, 12 Länder: DE/AT/CH ausführlich — AT-Wunsch —, dazu FR/IT/GB/US/NL/BE/ES/PL/CZ; dt.+landessprachliche Schreibweisen als Match-Keys); die Ersatz-Auswahl nutzt einen KANONISCHEN dublettenfreien Pool (nur EINE Form pro Stadt — 'Rom' nicht 'Rom'+'Roma'), sodass kein Schreibweisen-Stil-Mix entsteht; unbekannter Ort → neutraler Pool (Alt-Verhalten). Verdrahtet in _fake_address (die City-Komponente); Reverse unverändert (formtreue Fakes sind eigene forward/reverse-Paare). GEMESSEN: '+49 171 2345678'→'+49 153 6312177', '+43 1 5350000'→'+43 1 5820043', 'Köln'→'Karlsruhe' (DE), 'Wien'→'Villach' (AT), live über den Wire bestätigt. Bewusste Abwägung dokumentiert: der '999'-Code war 'offensichtlich synthetisch' — die region-treue Nummer sieht echt aus, ist aber analysetauglich (Nutzer-Wahl). Tests: test_pseudonymizer TestRegionPreserving (5 — Ländercode-Erhalt +49/+43/+1/+44, National-Trunk, Ort bleibt im Land für 6 Länder, Unbekannt-Fallback, kein Stil-Mix im Pool). py_compile OK. Kein Schema/Prompt → KV-Prefix unberührt. Server-Restart nötig."),
     ("9.384.0", "2026-07-20", "fix(GDPR — zwei Deanonymisierungs-/Citation-Bugs am simplen Kundendatensatz; Chats db9867f5 + aa6cab7d). (A) db9867f5: mistral-small verweigerte 'wann wurde Frau Stark geboren' mit 'nicht gefunden in den Quellen', OBWOHL das Datum im Chat-Text steht — aber NUR bei Anonymisierung (ohne Anon korrekt). URSACHE: bei aktivem Mapping formuliert das kleine Modell die Antwort MANCHMAL als reine Quellen-Klammer '[Quelle: user_message — \"…geboren am 16.02.1947\"]'; der Fabrication-Strip (strip_fabricated_citations, entfernt erfundene [Quelle:…]-Deko wenn nichts abgerufen wurde) löschte die GANZE Klammer inkl. des zitierten Datums → leere Antwort. ZWEITEILIG (Nutzer-Wahl 'beides kombinieren'): (1) strip_fabricated_citations ERHÄLT den zitierten Text — aus '[Quelle: X — \"Y\"]' wird 'Y' (das Zitat ist die Substanz), eine klammer-OHNE-Zitat ('[Quelle: report.pdf]') wird weiter ganz entfernt; (2) validate_citations_in_response nimmt user_text: ein Zitat, dessen Quelle die Nutzer-Nachricht ist ('user_message'/'Nutzer'/'Chat'/…) ODER dessen Text wörtlich in der getippten Nachricht steht, gilt als VERIFIZIERT (das Gespräch ist eine legitime Quelle) → der Strip greift gar nicht erst; der Aufrufer reicht das ORIGINAL-message durch (Validator läuft nach der Reply-Deanon, beide Realwerte). (B) aa6cab7d: die UK-NHS-Nummer blieb in der Ergebnis-Tabelle als FAKE stehen (nicht rück-übersetzt), obwohl in der Query anonymisiert. URSACHE (Klasse wie der dob-Prefix-Bug 9.383.1): health_insurance_ctx trägt das Keyword ('NHS-Nummer: 943 476 5919'), der Fake behält es ('NHS-Nummer: 316…'), aber das Modell echot in der Tabellenzelle nur die NACKTE Nummer '316…' — der Voll-Span-Reverse-Key verfehlt sie. FIX: _fake_national_id registriert bei Keyword-Präfix-Spans zusätzlich das NACKTE Ziffern-Paar (value→cand), sodass beide Formen (voll + nackt) reversen — deckt die ganze Kontext-ID-Klasse (health_insurance_ctx/insurance_number_ctx/…). Tests: test_report_fidelity +5 (Strip erhält Zitat / Deko ohne Zitat weg / Claim+Zitat / user_message verifiziert / ohne user_text unverified); test_gdpr_decision_driven +1 (NHS voll+nackt reverse). GDPR-Familie grün. py_compile OK. Kein Schema/Prompt → KV-Prefix unberührt. Server-Restart nötig."),
@@ -3445,7 +3446,16 @@ _PII_WEB_TOKEN_RE = re.compile(r"<\s*\w+_\d+_\w+\s*>")
 # the queries in the reference chat (58e3c521438a) were technical.
 _WEB_GATE_PASS_CATEGORIES = {"business_id", "network"}
 
-_WEB_EGRESS_MODES = ("refuse", "ask", "block_group", "allow")
+# Zwei Modi (v9.386.0 — sauberer Schnitt, ask/block_group entfernt):
+#   refuse — geschützte Werte gehen NICHT an eine Suchmaschine (Blockieren).
+#   allow  — für Retrieval-Tools (WEB_SEARCH_TOOLS) wird der echte Wert für die
+#            Anfrage eingesetzt (Fake→Original hin-übersetzt); das Modell sieht
+#            das Original nie, die Treffer kommen re-anonymisiert zurück (Suchen).
+# 'ask' (Consent-Dialog pro Wert) + 'block_group' (Web-Tools ausblenden) waren
+# Extra-Komplexität aus der L1-L7-KYC-Serie; 'ask' hing am 9.348 ENTFERNTEN
+# kyc-Preset. Legacy-Config-Werte werden bei _validate_gdpr_scanner_config auf
+# 'refuse' bzw. 'allow' normalisiert.
+_WEB_EGRESS_MODES = ("refuse", "allow")
 
 
 def _web_gate_strings(obj, out=None) -> list:
@@ -3486,36 +3496,15 @@ def _web_gate_value_variants(value: str) -> set:
     return out
 
 
-def _web_gate_refusal(blocked_kinds: list, *, fakes: bool,
-                      reason: str = "") -> str:
+def _web_gate_refusal(blocked_kinds: list, *, fakes: bool) -> str:
     """Structured, handlungsleitender Tool-Error. Contains value KINDS only —
-    the error string goes back to the model, never the values themselves.
-    `reason` (ask mode, L4 Phase 2): 'denied' = the user refused/revoked the
-    release for at least one value; 'no_consent' = consent was impossible
-    (non-interactive turn, timeout, cancel)."""
+    the error string goes back to the model, never the values themselves."""
     if fakes:
         hint = (
             "Die Query enthält pseudonymisierte Werte (Platzhalter/Shape-Fakes). "
             "Eine Websuche damit wäre semantisch leer oder träfe echte FREMDE "
             "Personen (Fake-Namen sind reale Namen) — deren Daten würden die "
             "Analyse vergiften. Suche NIE mit diesen Werten. Optionen: "
-            "(1) Die Prüfung im Bericht als 'nicht prüfbar (Datenschutz)' "
-            "ausweisen — NIE als 'keine Treffer'. "
-            "(2) Die Query ohne den geschützten Wert umformulieren, falls "
-            "sinnvoll. Wiederhole den Call NICHT unverändert.")
-    elif reason == "denied":
-        hint = (
-            "Der Nutzer hat die Web-Freigabe für mindestens einen dieser Werte "
-            "verweigert oder widerrufen. Respektiere die Entscheidung: "
-            "(1) Die Prüfung im Bericht als 'nicht prüfbar (Datenschutz — "
-            "Freigabe verweigert)' ausweisen — NIE als 'keine Treffer'. "
-            "(2) Die Query ohne den geschützten Wert umformulieren, falls "
-            "sinnvoll. Frage NICHT erneut nach einer Freigabe und wiederhole "
-            "den Call NICHT unverändert.")
-    elif reason == "no_consent":
-        hint = (
-            "Geschützter Wert in Web-Query; eine Nutzer-Freigabe war nicht "
-            "möglich (keine Antwort oder nicht-interaktiver Lauf). Optionen: "
             "(1) Die Prüfung im Bericht als 'nicht prüfbar (Datenschutz)' "
             "ausweisen — NIE als 'keine Treffer'. "
             "(2) Die Query ohne den geschützten Wert umformulieren, falls "
@@ -3537,135 +3526,6 @@ def _web_gate_refusal(blocked_kinds: list, *, fakes: bool,
         "blocked": blocked,
         "hint": hint,
     }, ensure_ascii=False)
-
-
-def _web_release_hash(value: str) -> str:
-    """Namespaced value_hash for web-egress consent ledger rows (L4 Phase 2).
-    sha256('web|' + normalized value) — value-only (no rule_id: the same value
-    re-detected under a different rule must hit the same consent) and
-    NAMESPACED so a consent row can never shadow the value's 'anonymise' row
-    in get_session_pii_decisions (latest-per-hash wins there, and the wire
-    rewrite depends on that row's fake_value)."""
-    import hashlib
-    norm = re.sub(r"\s+", " ", (value or "").strip().lower())
-    return hashlib.sha256(f"web|{norm}".encode("utf-8")).hexdigest()
-
-
-_WEB_CONSENT_TIMEOUT_S = 300
-_WEB_CONSENT_OPT_YES = "Freigeben (für diese Sitzung)"
-_WEB_CONSENT_OPT_NO = "Nicht freigeben"
-
-
-def _web_consent_ask(candidates: dict) -> tuple[set, set, str]:
-    """Blocking per-VALUE consent dialog (L4 Phase 2, step (a)).
-
-    ONE AskUserQuestion-style batch covers every protected value of this call —
-    consent is per value and session-sticky, so the reference chat's ~15 person
-    queries would cost ONE dialog, not fifteen. `candidates` is
-    norm(value) → {value, rule_id, fakes}. Returns (granted_norms,
-    denied_norms, failure): failure '' when the dialog was decided, else
-    'no_consent' (non-interactive turn, timeout, cancel, or already asked
-    unanswered this turn). Grants/denials are persisted as
-    release_web/deny_web ledger rows (visible + revocable in the GDPR history
-    modal); on failure nothing is recorded, so a later turn asks again.
-
-    Uses the ask_user blocking machinery (_ask_user_register + Event, answer
-    via POST /v1/chat/answer). Safe here: dispatch runs single-threaded on the
-    worker thread, so no ask_user slot can be pending concurrently — and the
-    event only reaches the client because run_turn installs
-    make_artifact_event_callback (the v9.101.12 failure mode otherwise).
-    """
-    ctx = get_request_context()
-    sid = ctx.current_session_id or ""
-    cb = ctx.event_callback
-    if not sid or cb is None or ctx.current_bg_task:
-        return set(), set(), "no_consent"
-    # One unanswered dialog per turn: the model typically retries a refused
-    # call immediately — values that already timed out this turn refuse
-    # directly instead of re-opening the modal.
-    asked = ctx._dynamic.setdefault("_web_consent_asked", set())
-    fresh = {k: v for k, v in candidates.items() if k not in asked}
-    if not fresh:
-        return set(), set(), "no_consent"
-
-    label_map = {}   # question text → candidate key
-    questions = []
-    for key, slot in sorted(fresh.items()):
-        label = PII_RULE_LABELS.get(slot["rule_id"]) or slot["rule_id"] or "Wert"
-        q = f"„{slot['value']}“ ({label}) für die Web-Recherche freigeben?"
-        if q in label_map:  # question text is the answer key — must be unique
-            q = f"{q} ({len(label_map) + 1})"
-        label_map[q] = key
-        questions.append({"question": q,
-                          "options": [_WEB_CONSENT_OPT_YES, _WEB_CONSENT_OPT_NO]})
-    payload = {
-        "session_id": sid,
-        "questions": questions,
-        "context_summary": (
-            "Datenschutz: Die Web-Recherche möchte geschützte Werte dieser "
-            "Sitzung verwenden. Freigaben gelten nur für diese Sitzung, werden "
-            "protokolliert und sind im Datenschutz-Verlauf (Schild-Symbol) "
-            "widerrufbar. Nicht freigegebene Werte verlassen den Rechner "
-            "nicht — die Prüfung wird dann als 'nicht prüfbar (Datenschutz)' "
-            "ausgewiesen."),
-        "timeout_seconds": _WEB_CONSENT_TIMEOUT_S,
-    }
-    if len(questions) == 1:
-        payload["question"] = questions[0]["question"]
-        payload["options"] = questions[0]["options"]
-
-    event = _ask_user_register(sid)
-    answers = {}
-    try:
-        try:
-            cb("user_input_needed", payload)
-        except Exception:
-            return set(), set(), "no_consent"
-        from engine.tools.ask_tools import _wait_answer_or_cancel
-        got, cancelled = _wait_answer_or_cancel(event, _WEB_CONSENT_TIMEOUT_S)
-        if not got:
-            if not cancelled:
-                asked.update(fresh.keys())
-            return set(), set(), "no_consent"
-        with _ask_user_lock:
-            slot = _ask_user_pending.get(sid) or {}
-            got_answers = slot.get("answers")
-            single = slot.get("answer")
-        if isinstance(got_answers, dict):
-            answers.update(got_answers)
-        if single is not None and len(questions) == 1:
-            answers.setdefault(questions[0]["question"], single)
-    finally:
-        _ask_user_clear(sid)
-
-    granted, denied = set(), set()
-    for q, key in label_map.items():
-        ans = str(answers.get(q, "") or "").strip().lower()
-        if not ans:
-            continue  # unanswered → neither grant nor sticky denial
-        if ans.startswith("freigeben") or ans in ("ja", "yes", "y"):
-            granted.add(key)
-        else:
-            denied.add(key)
-    try:
-        cb("user_input_received", {"session_id": sid, "answers": answers})
-    except Exception:
-        pass
-    # Persist session-sticky consent. A failed write is logged, not fatal:
-    # the user's click still governs THIS call; the next turn just asks again.
-    try:
-        from server_lib.db import ChatDB
-        for action, keys in (("release_web", granted), ("deny_web", denied)):
-            if keys:
-                ChatDB.record_pii_decisions(
-                    sid, ctx.current_user_id or "", "", action,
-                    [{"rule_id": fresh[k]["rule_id"], "value": fresh[k]["value"],
-                      "value_hash": _web_release_hash(fresh[k]["value"]),
-                      "source": "web_egress_gate",
-                      "disposition": "web-consent"} for k in keys])
-    except Exception as e:
-        print(f"[web_egress_gate] consent ledger write failed: {e}", flush=True)
-    return granted, denied, ""
 
 
 def _web_release_translate_args(args, pairs: list):
@@ -3747,17 +3607,16 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
     gate-own category policy catches third-person PII never minted before.
 
     Modes (config.json → gdpr_scanner.web_egress, default 'refuse'):
-      refuse / block_group — block originals + fakes (block_group additionally
-        hides the web group via exclude_tools at turn setup; this dispatch-side
-        refusal stays as defense in depth for paths that skip the worker).
-      ask — L4 Phase 2: per-VALUE consent. Released values pass (fakes of
-        released originals are translated for the outgoing request); denied
-        values refuse without a new dialog; unknown values open ONE consent
-        dialog per call (session-sticky outcome in the release_web/deny_web
-        ledger, revocable in the GDPR history modal). Non-interactive turns
-        (background/scheduler) can't ask → refuse.
-      allow — originals pass (audited), fakes are STILL refused (a fake search
-        is never useful — it poisons evidence with strangers' data).
+      refuse — block originals + fakes: no protected value reaches a search
+        engine (Blockieren).
+      allow — for RETRIEVAL tools (WEB_SEARCH_TOOLS) the real value is put on
+        the outgoing request (fake→original translated in a dispatch-only copy
+        of the args); the model never sees the original, results come back
+        re-anonymised through the L3b seam (Suchen). Non-retrieval egress tools
+        (email_send/email_reply/generate_image/MCP) still refuse protected
+        values even in allow — those would CONTACT the protected person / ship
+        the real value to a third party, not merely retrieve.
+    (v9.386.0 — 'ask'/'block_group' entfernt; siehe _WEB_EGRESS_MODES.)
     """
     try:
         # M2 (G7): every EGRESS tool, not just the web ones — email_send/reply,
@@ -3835,54 +3694,11 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         except Exception:
             pass  # mapping-only coverage is still correct
 
-        # ── Web-release consent state (ask mode, L4 Phase 2) ─────────────
-        released_sets: list = []   # variant-sets of released values
-        denied_sets: list = []
-        if mode == "ask" and sid:
-            try:
-                from server_lib.db import ChatDB
-                for rec in (ChatDB.get_session_web_releases(sid) or {}).values():
-                    vset = _web_gate_value_variants(rec.get("value") or "")
-                    if not vset:
-                        continue
-                    (released_sets if rec.get("status") == "released"
-                     else denied_sets).append(vset)
-            except Exception:
-                pass  # no consent state → everything unreleased (conservative)
-
-        def _consent_status(value):
-            """'released'/'denied'/None via variant intersection — released
-            'Bonnie M Stark' also covers the registered variant 'Bonnie Stark'
-            (both contain the first+last slug 'bonnie-stark'). Deny wins when
-            two DIFFERENT consents overlap (conservative); for the SAME value
-            latest-row-wins already resolved it in the ledger."""
-            vset = _web_gate_value_variants(value)
-            if not vset:
-                return None
-            for dset in denied_sets:
-                if vset & dset:
-                    return "denied"
-            for rset in released_sets:
-                if vset & rset:
-                    return "released"
-            return None
-
-        consent: dict = {}   # norm(value) → {value, rule_id, fakes:set}
-
-        def _want_consent(value, rid, fake=None):
-            key = re.sub(r"\s+", " ", value.strip().lower())
-            slot = consent.setdefault(
-                key, {"value": value, "rule_id": rid, "fakes": set()})
-            if fake:
-                slot["fakes"].add(fake)
-
         # ── 1) Fakes / opaque tokens ──────────────────────────────────────
-        # Default: ALWAYS refuse, every mode (a fake search is semantically
-        # empty or hits real strangers). Ask-mode exception (Phase 2, step c):
-        # a fake whose ORIGINAL the user released is translated back for the
-        # outgoing request instead.
+        # Default: refuse (a fake search is semantically empty or hits real
+        # strangers). allow-mode exception below: a fake whose ORIGINAL is
+        # known is translated back for the outgoing request instead.
         fake_kinds: list = []
-        denied_kinds: list = []
         released_kinds: list = []
         policy_released_kinds: list = []
         translate_pairs: list = []   # (fake, original) — released only
@@ -3910,25 +3726,39 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
             # ihr ohnehin zugesteht. PERSONEN-Fakes sind unberührt: ihre
             # Kategorie (contact/personal) steht nicht in den Pass-Kategorien,
             # sie refusen weiter in jedem Modus (Regressionstest hält das fest).
-            # Der Auto-Release gilt in JEDEM Modus (auch `ask`): die Policy hat
-            # für diese Kategorie bereits generell zugestimmt — die Nutzerin
-            # jeden Firmennamen einzeln freiklicken zu lassen, wäre eine
-            # Rückfrage ohne Entscheidungsgehalt.
+            # Der Auto-Release gilt in JEDEM Modus: die Policy hat für diese
+            # Kategorie bereits generell zugestimmt.
             if (orig
                     and PII_RULE_CATEGORIES.get(rid) in _WEB_GATE_PASS_CATEGORIES):
                 translate_pairs.append((fake, orig))
                 policy_released_kinds.append(rid)
                 continue
-            if mode == "ask" and orig:
-                st = _consent_status(orig)
-                if st == "released":
-                    translate_pairs.append((fake, orig))
-                    released_kinds.append(rid)
-                    continue
-                if st == "denied":
-                    denied_kinds.append(rid)
-                    continue
-                _want_consent(orig, rid, fake=fake)
+            # ── allow-Modus: bekannter Fake → Original hin-übersetzen ────────
+            # `allow` bedeutet: der Admin hat den Egress von Klarwerten dieser
+            # Session generell freigegeben (Originale passieren in §2/§3 ohne
+            # Refusal). Ein Wert, der VORHER pseudonymisiert wurde, darf dadurch
+            # nicht schlechter stehen als ein ungefakter — sonst kippt jede
+            # Personen-Recherche in einer anonymisierenden Session (Chat
+            # faa124e1: 'suche Bilder von <Person>' → das Modell kennt nur den
+            # Fake 'Blake Young', der Gate refuste ihn, das Modell verweigerte).
+            # Der Sinn einer Fake-Suche-Refusal (sie träfe echte FREMDE
+            # Personen) entfällt hier gerade: NICHT der Fake geht raus, sondern
+            # das ORIGINAL — genau das, was `allow` für Klarwerte ohnehin
+            # zulässt. Das Modell sieht das Original NIE (Übersetzung nur in der
+            # Dispatch-Kopie der Args), Ergebnisse kommen re-anonymisiert durch
+            # den L3b-Seam zurück. In `refuse` bleibt die Personen-Fake-Refusal
+            # unberührt (dort ist Egress NICHT freigegeben).
+            #
+            # NUR für REINE RETRIEVAL-Tools (WEB_SEARCH_TOOLS): eine Suche/ein
+            # Fetch HOLT Daten, die geschützte Person wird nicht kontaktiert.
+            # email_send/email_reply (Kontaktaufnahme MIT der echten Person!) und
+            # generate_image (echter Name → Mistral) bleiben ausgenommen — dort
+            # wäre die Hin-Übersetzung kein Recherche-Egress, sondern eine
+            # Aktion GEGEN die geschützte Person; ihre Fakes refusen weiter
+            # (test_gdpr_egress_gate hält das fest).
+            if mode == "allow" and orig and tool_name in WEB_SEARCH_TOOLS:
+                translate_pairs.append((fake, orig))
+                released_kinds.append(rid)
                 continue
             fake_kinds.append(rid)
         # Opaque tokens not covered above (foreign mapping / LLM-mangled) can
@@ -3953,16 +3783,7 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
             if PII_RULE_CATEGORIES.get(rid) in _WEB_GATE_PASS_CATEGORIES:
                 policy_released_kinds.append(rid)
                 continue
-            if mode == "ask":
-                st = _consent_status(orig)
-                if st == "released":
-                    released_kinds.append(rid)
-                elif st == "denied":
-                    denied_kinds.append(rid)
-                else:
-                    _want_consent(orig, rid)
-            else:
-                orig_kinds.append(rid)
+            orig_kinds.append(rid)
 
         # ── 3) Fresh PII (third persons, never-minted values) ────────────
         # Gate-own category policy: "what IS PII", ignoring the session's
@@ -3972,12 +3793,11 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         #
         # BEKANNTE FAKES WERDEN VORHER MASKIERT (M5): Fakes sind shape-
         # preserving und sehen aus wie echte Werte — der Frisch-Scan
-        # klassifiziert sie sonst als FRISCHE PII und schickt sie in den
-        # Consent-Dialog. Gemessen: der Org-Fake 'Marbach Textil' wurde als
-        # PERSONEN-Name (rule=name, category=contact) wiedererkannt und der
-        # Auto-Release damit im ask-Modus wieder zunichte gemacht. Über die
-        # Fakes ist in §1 bereits entschieden; sie hier erneut zu bewerten wäre
-        # eine Doppel-Bewertung mit der falschen Kategorie. Maskiert wird
+        # klassifiziert sie sonst als FRISCHE PII. Gemessen: der Org-Fake
+        # 'Marbach Textil' wurde als PERSONEN-Name (rule=name, category=contact)
+        # wiedererkannt und der Auto-Release damit wieder zunichte gemacht. Über
+        # die Fakes ist in §1 bereits entschieden; sie hier erneut zu bewerten
+        # wäre eine Doppel-Bewertung mit der falschen Kategorie. Maskiert wird
         # LÄNGENTREU, damit die Offsets des Scans gültig bleiben.
         scan_text_in = raw_haystack
         try:
@@ -4002,66 +3822,27 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
                 if matched and matched in fp_norms:
                     continue  # user-declared false positive
                 rid = f.get("rule_id") or "unknown"
-                if mode == "ask" and matched_raw:
-                    st = _consent_status(matched_raw)
-                    if st == "released":
-                        released_kinds.append(rid)
-                    elif st == "denied":
-                        denied_kinds.append(rid)
-                    else:
-                        _want_consent(matched_raw, rid)
-                else:
-                    orig_kinds.append(rid)
+                orig_kinds.append(rid)
         except Exception:
             pass
 
-        # ── ask mode (L4 Phase 2): consent → translate → execute ─────────
-        if mode == "ask":
-            if denied_kinds:
-                _web_gate_audit(tool_name, denied_kinds, mode, kind="denied")
-                return _web_gate_refusal(
-                    denied_kinds, fakes=False, reason="denied"), args
-            if consent:
-                granted, denied, failure = _web_consent_ask(consent)
-                if failure:
-                    kinds = [c["rule_id"] for c in consent.values()]
-                    _web_gate_audit(tool_name, kinds, mode, kind="original")
-                    return _web_gate_refusal(
-                        kinds, fakes=False, reason=failure), args
-                if denied:
-                    kinds = [consent[k]["rule_id"] for k in denied]
-                    _web_gate_audit(tool_name, kinds, mode, kind="denied")
-                    return _web_gate_refusal(
-                        kinds, fakes=False, reason="denied"), args
-                leftover = set(consent) - granted
-                if leftover:  # unanswered questions → not released
-                    kinds = [consent[k]["rule_id"] for k in leftover]
-                    _web_gate_audit(tool_name, kinds, mode, kind="original")
-                    return _web_gate_refusal(
-                        kinds, fakes=False, reason="no_consent"), args
-                for k in granted:
-                    slot = consent[k]
-                    released_kinds.append(slot["rule_id"])
-                    for fake in slot["fakes"]:
-                        translate_pairs.append((fake, slot["value"]))
-            if translate_pairs:
-                args = _web_release_translate_args(args, translate_pairs)
-            if released_kinds:
-                _web_gate_audit(tool_name, released_kinds, mode,
-                                kind="released")
-            if policy_released_kinds:
-                _web_gate_audit(tool_name, policy_released_kinds, mode,
-                                kind="policy_released")
-            return None, args
-
-        # ── non-ask modes (Phase-1 semantics) ────────────────────────────
+        # ── refuse / allow: translate → execute ──────────────────────────
         # M5: der Auto-Release gilt in JEDEM Modus — die Hin-Übersetzung muss
-        # daher auch hier laufen (vorher hing sie im ask-only-Zweig fest).
+        # daher auch hier laufen.
         # WICHTIG: nur auf den DURCHLASS-Pfaden übersetzen. Ein Refusal darf
         # die übersetzten (= echten) Args NICHT zurückgeben — der Aufrufer
         # verwirft sie zwar, aber ein Security-Gate reicht Klarwerte nicht auf
         # einem Pfad heraus, auf dem es gerade "nein" sagt.
-        if orig_kinds and mode != "allow":
+        # `allow` lässt Original-Klarwerte NUR für reine Retrieval-Tools durch
+        # (WEB_SEARCH_TOOLS). Für email_send/email_reply/generate_image/MCP
+        # bleibt der Klarwert-Egress AUCH im allow-Modus refused: ein echter
+        # Empfänger einer E-Mail = Kontaktaufnahme MIT der geschützten Person,
+        # ein echter Name an Mistral/einen MCP-Server = irreversibler Abfluss.
+        # (Vorbestehendes Leck: `mode != "allow"` ließ diese Werte pauschal
+        # durch — test_gdpr_egress_gate erwartete Refusal und war auf der
+        # Live-config 'allow' rot. Jetzt tool-abhängig statt modus-pauschal.)
+        _allow_orig = (mode == "allow" and tool_name in WEB_SEARCH_TOOLS)
+        if orig_kinds and not _allow_orig:
             _web_gate_audit(tool_name, orig_kinds, mode, kind="original")
             return _web_gate_refusal(orig_kinds, fakes=False), args
         if translate_pairs:
@@ -4069,7 +3850,12 @@ def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
         if policy_released_kinds:
             _web_gate_audit(tool_name, policy_released_kinds, mode,
                             kind="policy_released")
-        if orig_kinds:   # mode == "allow"
+        # allow-Modus: übersetzte Fakes (Original geht raus) als Egress
+        # auditieren — Audit-Ehrlichkeit, wie policy_released. Nur hier befüllt
+        # (der ask-Zweig kehrt oben schon zurück), also mode == "allow".
+        if released_kinds:
+            _web_gate_audit(tool_name, released_kinds, mode, kind="released")
+        if orig_kinds:   # allow-Durchlass für Retrieval-Tools
             _web_gate_audit(tool_name, orig_kinds, mode, kind="allowed")
         return None, args
     except Exception as e:
@@ -4160,11 +3946,10 @@ def _gdpr_scan_cloud_egress(text: str, *, tool_name: str) -> str | None:
 
 def _web_gate_audit(tool_name: str, kinds: list, mode: str, *, kind: str) -> None:
     """Audit row per gate decision — kinds only, never values.
-    kind: fake/original (refused) · denied (user refused/revoked the release)
-    · allowed (allow mode) · released (ask mode, user-released values left the
-    machine — possibly translated fake→original) · policy_released (M5: the
-    category is one the policy passes anyway — auto-translated fake→original
-    for the outgoing request, no dialog)."""
+    kind: fake/original (refused) · allowed (allow mode, original left the
+    machine) · released (allow mode, a known fake was translated fake→original
+    for the outgoing request) · policy_released (M5: the category is one the
+    policy passes anyway — auto-translated fake→original, no dialog)."""
     # L7b: tally the decision on the request context so the worker can surface
     # a per-turn "Datenschutz"-strip (metadata.gdpr_degradation) explaining
     # WHY the output differs. Counts only, never values.
@@ -12185,11 +11970,11 @@ def _get_gdpr_scanner_config() -> dict:
                                          # there's no user to prompt (background calls).
        "background_anonymise_fail_action": str,  # swap_to_local | abort
        "block_unscannable_on_cloud": bool,  # audio/etc → local fallback (default False)
-       "web_egress": str,                # refuse | ask | block_group | allow —
-                                         # web-tool args gate in anonymising
-                                         # sessions (L4). 'ask' = per-value
-                                         # consent dialog → release_web/deny_web
-                                         # ledger (Phase 2, v9.338.0)
+       "web_egress": str,                # refuse | allow — web-tool args gate in
+                                         # anonymising sessions. refuse=block,
+                                         # allow=fake→original for retrieval
+                                         # tools. Legacy 'ask'/'block_group' are
+                                         # normalised to refuse on load (v9.386.0).
        "categories": {<cat>: {"action": "ignore|warn|block"}},  # governs HIGH band only
        "rule_overrides": {<rule_id>: "ignore|warn|block"},
        "email_allowlist": [str, ...],    # full addresses or "@domain" patterns
@@ -12257,8 +12042,14 @@ def _get_gdpr_scanner_config() -> dict:
             cfg["background_ask_action"] = loaded["background_ask_action"]
         if loaded.get("background_anonymise_fail_action") in ("swap_to_local", "abort"):
             cfg["background_anonymise_fail_action"] = loaded["background_anonymise_fail_action"]
-        if loaded.get("web_egress") in _WEB_EGRESS_MODES:
-            cfg["web_egress"] = loaded["web_egress"]
+        # Legacy 'ask'/'block_group' → 'refuse' (v9.386.0: two modes only). Both
+        # were block-by-default variants for the non-interactive/no-consent case,
+        # so refuse is the faithful fallback.
+        _we = loaded.get("web_egress")
+        if _we in ("ask", "block_group"):
+            _we = "refuse"
+        if _we in _WEB_EGRESS_MODES:
+            cfg["web_egress"] = _we
         cats_in = loaded.get("categories") or {}
         if isinstance(cats_in, dict):
             for cat, entry in cats_in.items():

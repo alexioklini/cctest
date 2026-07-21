@@ -1428,14 +1428,10 @@ function _piiHistRowHtml(it) {
   const sevClass = it.action === 'block' ? ' is-block' : '';
   const trailBtn = '<button class="pii-hist-trailbtn" data-idx="' + it.idx + '">' +
     (it.expanded ? '▾' : '▸') + ' Verlauf' + (hasTrail ? ' (' + it.history.length + ')' : '') + '</button>';
-  // Web-Egress-Consent-Zeilen (L4 Phase 2): eigene Umschalt-Aktion statt der
-  // Bulk-Aktionen (fp/Klartext/Reset passen nicht auf eine Web-Freigabe).
+  // Historische Web-Egress-Consent-Zeilen (Ledger aus dem entfernten
+  // ask-Modus): reine Anzeige — die Bulk-Aktionen (fp/Klartext/Reset)
+  // passen nicht auf eine Web-Freigabe, daher von der Auswahl ausgenommen.
   const isWeb = it.baseStatus === 'web_released' || it.baseStatus === 'web_denied';
-  const webBtn = isWeb
-    ? '<button class="pii-btn pii-btn-secondary pii-hist-webtoggle" data-idx="' + it.idx +
-      '" style="font-size:11px;padding:2px 8px">' +
-      (st === 'web_released' ? 'Widerrufen' : 'Freigeben') + '</button>'
-    : '';
   const selBox = isWeb
     ? '<span style="display:inline-block;width:13px"></span>'
     : '<input type="checkbox" class="pii-hist-row-sel" data-idx="' + it.idx + '"' + (it.sel ? ' checked' : '') + '>';
@@ -1445,7 +1441,6 @@ function _piiHistRowHtml(it) {
     '<span class="pii-finding-label">' + esc(it.label) + '</span>' +
     '<span class="pii-finding-val">' + esc(shownVal) + fakeBit + '</span>' +
     '<span class="pii-hist-status" style="background:' + meta.bg + ';color:' + meta.color + '">' + esc(meta.label) + (changed ? ' *' : '') + '</span>' +
-    webBtn +
     trailBtn +
   '</div>';
   if (it.expanded) {
@@ -1482,18 +1477,6 @@ function _piiHistWireRows(bodyEl, forceOpen) {
       e.stopPropagation();
       const it = S.items[+btn.dataset.idx];
       if (it) { it.expanded = !it.expanded; _piiHistRender(); }
-    };
-  }
-  for (const btn of bodyEl.querySelectorAll('.pii-hist-webtoggle')) {
-    btn.onclick = (e) => {
-      e.stopPropagation();
-      const it = S.items[+btn.dataset.idx];
-      if (!it) return;
-      const st = _piiHistEffectiveStatus(it);
-      it.pending = (st === 'web_released') ? 'web_denied' : 'web_released';
-      if (it.pending === it.baseStatus) it.pending = null;
-      _piiHistRender();
-      _piiHistUpdateFooter();
     };
   }
   for (const more of bodyEl.querySelectorAll('.pii-hist-more')) {
@@ -1564,17 +1547,10 @@ async function _piiHistSave() {
   if (!changed.length) return;
   const saveBtn = S.overlay.querySelector('.pii-hist-save');
   saveBtn.disabled = true; saveBtn.textContent = 'Wird gespeichert…';
-  // Web-Consent-Zeilen (L4 Phase 2) werden als eigene release_web/deny_web-
-  // Ledger-Zeilen persistiert (turn_action ist call-weit → eigene Calls);
-  // der value_hash der bestehenden Zeile bleibt erhalten (namespaced Hash
-  // aus dem Gate), damit latest-row-wins den Widerruf greifen lässt.
-  const webChanged = changed.filter((it) =>
-    it.pending === 'web_released' || it.pending === 'web_denied');
-  const normal = changed.filter((it) => webChanged.indexOf(it) === -1);
   // Map modal status → persisted turn_action/false_positive. 'reset' (→ open)
   // records a neutral 'continue' row with FP cleared so latest-row-wins drops
   // the prior verdict. Persisted by value_hash (no cleartext for undecided).
-  const decisions = normal.map((it) => {
+  const decisions = changed.map((it) => {
     const st = it.pending;
     const fp = st === 'fp';
     const turn_action = (st === 'accepted') ? 'send' : 'continue';
@@ -1588,32 +1564,14 @@ async function _piiHistSave() {
       turn_action,
     };
   });
-  const mkWebDec = (it) => ({
-    rule_id: it.rule_id,
-    value: (it.decision && it.decision.value) || '',
-    value_hash: it.value_hash,
-    source: 'web_egress_gate',
-    disposition: 'history-modal',
-  });
   try {
     if (decisions.length) await API.recordPiiDecisions(S.sid, 'history_edit', decisions);
-    const rel = webChanged.filter((it) => it.pending === 'web_released');
-    const den = webChanged.filter((it) => it.pending === 'web_denied');
-    if (rel.length) await API.recordPiiDecisions(S.sid, 'release_web', rel.map(mkWebDec));
-    if (den.length) await API.recordPiiDecisions(S.sid, 'deny_web', den.map(mkWebDec));
-    for (const it of normal) {
+    for (const it of changed) {
       it.baseStatus = it.pending;
       it.pending = null;
       it.decision = Object.assign({}, it.decision || {}, {
         false_positive: it.baseStatus === 'fp',
         turn_action: it.baseStatus === 'accepted' ? 'send' : 'continue',
-      });
-    }
-    for (const it of webChanged) {
-      it.baseStatus = it.pending;
-      it.pending = null;
-      it.decision = Object.assign({}, it.decision || {}, {
-        turn_action: it.baseStatus === 'web_released' ? 'release_web' : 'deny_web',
       });
     }
     if (S.chat) S.chat._piiDecisions = null;

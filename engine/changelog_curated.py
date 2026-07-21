@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.386.0",
+        "date": "2026-07-21",
+        "title": "Websuche in geschützten Chats: zwei klare Modi",
+        "body": "In Chats mit aktiver Anonymisierung können Sie jetzt gezielt "
+                "nach einer Person oder Firma im Web suchen: Im Modus „Suchen“ "
+                "setzt Brain den echten Namen für die Anfrage an die "
+                "Suchmaschine ein und anonymisiert die Treffer wieder, bevor "
+                "das Sprachmodell sie sieht — so liefert eine gewollte "
+                "Bildersuche oder KYC-Recherche endlich echte Ergebnisse statt "
+                "einer Fehlanzeige. Wer nichts nach außen geben will, wählt "
+                "„Blockieren“. Die Einstellung ist auf diese zwei "
+                "verständlichen Optionen reduziert; E-Mail-Versand und "
+                "Bildgenerierung senden geschützte Werte auch im Modus „Suchen“ "
+                "grundsätzlich nie.",
+        "audience": "admin",
+        "versions": ["9.386.0"],
+    },
+    {
         "version": "9.385.0",
         "date": "2026-07-20",
         "title": "Folgefragen behalten alle Fähigkeiten",

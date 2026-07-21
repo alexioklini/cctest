@@ -1918,13 +1918,11 @@ async function _genTab_gdpr(C) {
           <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
             <span style="font-size:12px;color:var(--text-300);min-width:200px">Websuche in anonymisierten Chats</span>
             <select class="form-select" id="gdpr-web-egress" style="flex:1">
-              <option value="refuse" ${(gs.web_egress||'refuse')==='refuse'?'selected':''}>Verweigern — Suchen mit geschützten Werten werden abgelehnt</option>
-              <option value="ask" ${gs.web_egress==='ask'?'selected':''}>Nachfragen — Freigabe pro Wert (empfohlen für KYC-Analysen)</option>
-              <option value="block_group" ${gs.web_egress==='block_group'?'selected':''}>Web-Tools ausblenden — das Modell plant ohne Websuche</option>
-              <option value="allow" ${gs.web_egress==='allow'?'selected':''}>Durchlassen — Originale gehen auditiert raus (Fakes bleiben blockiert)</option>
+              <option value="allow" ${(gs.web_egress||'refuse')==='allow'?'selected':''}>Suchen — der echte Name geht an die Suchmaschine, Ergebnisse kommen re-anonymisiert zurück</option>
+              <option value="refuse" ${(gs.web_egress||'refuse')!=='allow'?'selected':''}>Blockieren — Suchen mit geschützten Werten werden abgelehnt</option>
             </select>
           </div>
-          <div style="font-size:11px;color:var(--text-400);margin-top:2px">Gilt nur für Chats mit aktiver Anonymisierung: entscheidet, was passiert, wenn das Modell einen geschützten Wert (Name, Geburtsdatum, …) an eine Suchmaschine schicken will. Freigaben aus dem „Nachfragen“-Modus gelten pro Chat und sind im Datenschutz-Verlauf widerrufbar.</div>
+          <div style="font-size:11px;color:var(--text-400);margin-top:2px">Gilt nur für Chats mit aktiver Anonymisierung: entscheidet, ob ein geschützter Wert (Name, Geburtsdatum, …) an eine Suchmaschine gehen darf. <b>Suchen</b> setzt den echten Wert für die Anfrage ein (das Modell selbst sieht ihn nie, die Treffer werden vor der Anzeige wieder anonymisiert) — für gewollte Personen-/Firmen-Recherche. <b>Blockieren</b> lässt nichts raus. Diese Übersetzung gilt nur für Web-Suche/-Abruf; E-Mail-Versand und Bildgenerierung senden geschützte Werte nie.</div>
         </div>
 
         ${SEC('NER-Modelle (Named Entity Recognition)')}

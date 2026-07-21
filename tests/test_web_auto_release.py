@@ -78,7 +78,7 @@ class _Base(unittest.TestCase):
             return brain._gdpr_guard_web_args(tool, args)
 
 
-_MODES = ("refuse", "ask", "allow", "block_group")
+_MODES = ("refuse", "allow")   # v9.386.0: 'ask'/'block_group' entfernt
 
 
 class TestOrgAutoRelease(_Base):
@@ -133,30 +133,37 @@ class TestOrgAutoRelease(_Base):
     def test_known_original_org_passes_without_dialog(self):
         # Auch der ECHTE Firmenname (falls je gemappt) darf passieren —
         # die Policy lässt business_id ohnehin durch.
-        self._cfg("ask")
+        self._cfg("refuse")
         m = self._mapping()
         ps._entity_fake_organisation("Wiener Privatbank SE", m)
         ref, args = self._guard({"query": "Wiener Privatbank Firmenbuch"}, m)
-        self.assertIsNone(ref, "kein Refusal, kein Consent-Dialog für Orgs")
+        self.assertIsNone(ref, "kein Refusal für Orgs (Policy-Pass-Kategorie)")
 
 
 class TestPersonFakeStillRefused(_Base):
-    """DIE Regression, die M5 nicht brechen darf."""
+    """M5-Invariante: ein PERSONEN-Fake refust im `refuse`-Modus — dort ist der
+    Egress von Klarwerten NICHT freigegeben, also träfe der Fake echte fremde
+    Personen.
+
+    NEU (Chat faa124e1): im `allow`-Modus gilt das NICHT mehr — dort hat der
+    Admin den Klarwert-Egress dieser Session generell freigegeben, also wird ein
+    bekannter Personen-Fake ins ORIGINAL hin-übersetzt (nicht der Fake geht
+    raus, sondern der echte Name — genau das, was `allow` für ungefakte Werte
+    ohnehin zulässt; sonst kippt jede Personen-Recherche in einer
+    anonymisierenden Session)."""
 
     def _person_mapping(self):
         m = self._mapping()
         ps._entity_fake_name("Bonnie Stark", m)
         return m, m.forward["Bonnie Stark"]
 
-    def test_person_fake_refused_in_every_mode(self):
-        for mode in _MODES:
-            with self.subTest(mode=mode):
-                self._cfg(mode)
-                m, pf = self._person_mapping()
-                ref, args = self._guard({"query": f"{pf} fraud"}, m)
-                self.assertIsNotNone(
-                    ref, f"{mode}: ein PERSONEN-Fake muss refusen — er trifft "
-                         f"echte FREMDE Personen (Gift-Evidenz)")
+    def test_person_fake_refused_in_refuse_mode(self):
+        self._cfg("refuse")
+        m, pf = self._person_mapping()
+        ref, args = self._guard({"query": f"{pf} fraud"}, m)
+        self.assertIsNotNone(
+            ref, "refuse: ein PERSONEN-Fake muss refusen — er trifft echte "
+                 "FREMDE Personen (Gift-Evidenz)")
 
     def test_person_original_never_auto_released(self):
         self._cfg("refuse")
@@ -164,13 +171,30 @@ class TestPersonFakeStillRefused(_Base):
         ref, args = self._guard({"query": "Bonnie Stark fraud"}, m)
         self.assertIsNotNone(ref, "der echte Personenname darf NIE rausgehen")
 
-    def test_person_fake_never_translated_into_args(self):
+    def test_person_fake_translated_to_original_in_allow(self):
+        # allow-Modus: der Fake wird ins ORIGINAL übersetzt (Durchlass), damit
+        # eine gewollte Personen-Recherche funktioniert. Der Fake selbst darf
+        # NICHT in den Args landen (er würde Fremde treffen) — das Original ja,
+        # weil `allow` dessen Egress generell freigibt.
         self._cfg("allow")
         m, pf = self._person_mapping()
         ref, args = self._guard({"query": f"{pf} fraud"}, m)
-        self.assertIsNotNone(ref)
-        self.assertNotIn("Bonnie Stark", args.get("query", ""),
-                         "ein Refusal darf die Klarwerte nicht heraus reichen")
+        self.assertIsNone(ref, "allow: die gewollte Personen-Suche muss durch")
+        self.assertIn("Bonnie Stark", args.get("query", ""),
+                      "allow: der echte Name wird für den Request eingesetzt")
+        self.assertNotIn(pf, args.get("query", ""),
+                         "allow: der Fake darf NICHT hinausgehen (träfe Fremde)")
+
+    def test_allow_translation_is_dispatch_only(self):
+        # Das MODELL sieht das Original nie: die Übersetzung lebt in einer KOPIE
+        # der Args, das übergebene dict bleibt unberührt (wie beim Org-Fall).
+        self._cfg("allow")
+        m, pf = self._person_mapping()
+        original_args = {"query": f"{pf} portrait"}
+        ref, args = self._guard(original_args, m)
+        self.assertIsNone(ref)
+        self.assertIn(pf, original_args["query"],
+                      "die Args des Modells dürfen NICHT mutiert werden")
 
     def test_mixed_query_person_wins(self):
         # Firma + Person in EINER Query: die Person muss den Call kippen,

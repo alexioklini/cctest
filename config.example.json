@@ -766,7 +766,8 @@
         }
       },
       "base_model_id": "deepseek-v4-pro",
-      "coding_plan": "kilo-credit"
+      "coding_plan": "kilo-credit",
+      "cost_cache_read": 0.0435
     },
     "deepseek-v4-flash": {
       "enabled": true,
@@ -890,7 +891,8 @@
         }
       },
       "base_model_id": "deepseek-v4-flash",
-      "coding_plan": "kilo-credit"
+      "coding_plan": "kilo-credit",
+      "cost_cache_read": 0.014
     },
     "glm-5.2": {
       "enabled": true,
@@ -2619,7 +2621,7 @@
             "ts": "2026-07-19T20:29:27Z",
             "capability": 39,
             "source": "artificialanalysis",
-            "raw": 38.0,
+            "raw": 38,
             "official_name": "Mistral Large 3"
           }
         },
@@ -2721,7 +2723,9 @@
       "provider": "llm-router-local",
       "base_model_id": "mistral-large-3",
       "profile": "speed",
-      "_caps_canonical": true
+      "_caps_canonical": true,
+      "is_local": true,
+      "warmup": false
     }
   },
   "nodes": {},
@@ -3261,11 +3265,11 @@
     "block_unscannable_on_cloud": false,
     "confidence_lower": 0.5,
     "confidence_upper": 0.85,
-    "default_local_fallback_model": "",
+    "default_local_fallback_model": "gemma-4-12B-it-qat-oQ4-fp16",
     "background_pii_action": "anonymise",
     "background_ask_action": "anonymise",
     "background_anonymise_fail_action": "swap_to_local",
-    "web_egress": "refuse",
+    "web_egress": "allow",
     "categories": {
       "secrets": {
         "action": "block"
@@ -3653,6 +3657,10 @@
       "name": [
         2,
         3
+      ],
+      "name_gen": [
+        1,
+        2
       ],
       "phone": [
         1,

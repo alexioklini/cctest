@@ -8,8 +8,12 @@ Web-Tool-Calls, deren Args geschützte Werte (Originale), Pseudonyme/Tokens
 Die wichtigsten Invarianten (PII_ANALYSIS_PARITY_HANDOVER.md §4):
   - SICHERHEIT: mit aktivem Mapping erreicht kein Klarwert das Netzwerk —
     auch nicht im URL-Slug (bizapedia.com/people/bonnie-stark.html).
-  - Fakes werden in JEDEM Modus verweigert (eine Fake-Suche ist semantisch
-    leer oder trifft echte Fremdpersonen → Gift-Evidenz).
+  - Zwei Modi (v9.386.0): `refuse` blockt geschützte Werte, `allow` übersetzt
+    bekannte Fakes ins ORIGINAL für Retrieval-Tools (Chat faa124e1) — damit eine
+    gewollte Personen-Recherche funktioniert. Im `refuse`-Modus wird ein Fake
+    verweigert (eine Fake-Suche ist semantisch leer oder trifft echte
+    Fremdpersonen → Gift-Evidenz); opake Tokens ohne auflösbares Original
+    refusen in beiden Modi. ('ask'/'block_group' entfernt.)
   - FP-Kosten: technische Queries ("Samsung … EXIF", "ICAO 9303 check digit")
     laufen IMMER ungehindert durch.
   - Ohne aktives Mapping ist das Gate vollständig inaktiv.
@@ -49,6 +53,14 @@ class _GateTestBase(unittest.TestCase):
     def setUp(self):
         self._orig_cfg_fn = brain._get_gdpr_scanner_config
         self._mappings = []
+        # DEFAULT-Modus 'refuse' hart fixieren: die Refusal-Tests dieser Suite
+        # setzen keinen Modus explizit und erbten bisher STILL den web_egress
+        # der Live-config.json (dort 'allow'). Solange 'allow' auch Fakes
+        # refuste, fiel das nicht auf — seit dem allow-Fake→Original-Release
+        # (Chat faa124e1) hängt das Ergebnis sonst an der zufälligen Live-
+        # Config. Tests, die 'allow' prüfen, setzen den Modus selbst via
+        # _set_mode.
+        self._set_mode("refuse")
         # NER-Isolation (v9.342.0): diese Suite testet die GATE-Mechanik auf
         # Regex-/Mapping-Basis. Läuft sie NACH einer Suite, die die spaCy-
         # Modelle geladen hat (test_pii_ner), sieht der Gate-Zusatz-Scan
@@ -171,12 +183,31 @@ class TestFakes(_GateTestBase):
         self.assertIsNotNone(out)
         self.assertIn("semantisch leer", json.loads(out)["hint"])
 
-    def test_fake_refused_even_in_allow_mode(self):
+    def test_fake_translated_to_original_in_allow_mode(self):
+        """allow-Modus (Chat faa124e1): ein bekannter Personen-Fake wird ins
+        ORIGINAL hin-übersetzt statt refused — `allow` gibt den Klarwert-Egress
+        dieser Session generell frei, also darf ein VORHER pseudonymisierter
+        Name nicht schlechter stehen als ein ungefakter. NICHT der Fake geht
+        raus (er träfe Fremde), sondern das echte Original."""
         self._set_mode("allow")
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        out, args = self._guard_full(
+            "searxng_search", {"query": "Erika Muster obituary"}, mapping=m)
+        self.assertIsNone(out, "allow: die Suche muss durchgehen")
+        self.assertIn("Bonnie M Stark", args.get("query", ""),
+                      "allow: das Original wird für den Request eingesetzt")
+        self.assertNotIn("Erika Muster", args.get("query", ""),
+                         "allow: der Fake selbst darf NICHT hinausgehen")
+
+    def test_fake_still_refused_in_refuse_mode(self):
+        """Gegenprobe: derselbe Personen-Fake refust im (Default-)refuse-Modus
+        weiter — dort ist der Klarwert-Egress NICHT freigegeben."""
+        self._set_mode("refuse")
         m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
         out = self._guard("searxng_search",
                           {"query": "Erika Muster obituary"}, mapping=m)
         self.assertIsNotNone(out)
+        self.assertIn("semantisch leer", json.loads(out)["hint"])
 
 
 class TestTechnicalQueriesPass(_GateTestBase):
@@ -216,21 +247,19 @@ class TestModes(_GateTestBase):
             "searxng_search", {"query": "Bonnie M Stark Oregon City"},
             mapping=m))
 
-    def test_block_group_refuses_at_dispatch_too(self):
-        """Defense in depth: auch wenn exclude_tools den Call eigentlich
-        verhindert, verweigert der Dispatch-Gate zusätzlich."""
-        self._set_mode("block_group")
-        m = self._mapping(("Bonnie M Stark", "<PERSON_1_ab12>", "name"))
-        out = self._guard("searxng_search",
-                          {"query": "Bonnie M Stark"}, mapping=m)
-        self.assertIsNotNone(out)
-
-    def test_ask_mode_behaves_like_refuse_phase1(self):
-        self._set_mode("ask")
-        m = self._mapping(("Bonnie M Stark", "<PERSON_1_ab12>", "name"))
-        out = self._guard("searxng_search",
-                          {"query": "Bonnie M Stark"}, mapping=m)
-        self.assertIsNotNone(out)
+    def test_legacy_modes_fall_back_to_refuse(self):
+        """v9.386.0: 'ask'/'block_group' wurden entfernt. Ein unbekannter/alter
+        Modus-String im Gate fällt auf 'refuse' zurück (mode not in
+        _WEB_EGRESS_MODES → refuse), also blockt eine Query mit geschütztem
+        Wert. (Die persistierte Config normalisiert bereits beim Laden; dies
+        deckt den Gate-internen Fallback ab.)"""
+        for legacy in ("ask", "block_group", "garbage"):
+            with self.subTest(mode=legacy):
+                self._set_mode(legacy)
+                m = self._mapping(("Bonnie M Stark", "<PERSON_1_ab12>", "name"))
+                out = self._guard("searxng_search",
+                                  {"query": "Bonnie M Stark"}, mapping=m)
+                self.assertIsNotNone(out, f"{legacy} muss wie refuse blocken")
 
 
 class TestLedgerValues(_GateTestBase):
@@ -279,231 +308,6 @@ class TestNestedArgs(_GateTestBase):
              "extra": {"queries": ["harmless", "Bonnie M Stark file"]}},
             mapping=m)
         self.assertIsNotNone(out)
-
-
-class _AskModeBase(_GateTestBase):
-    """L4 Phase 2 (ask mode): per-value consent, release/deny ledger,
-    fake→original translation for the outgoing request only."""
-
-    SID = "web-egress-ask-test"
-
-    def setUp(self):
-        super().setUp()
-        from server_lib.db import ChatDB
-        self._ChatDB = ChatDB
-        self._orig_decisions = ChatDB.get_session_pii_decisions
-        self._orig_releases = ChatDB.get_session_web_releases
-        self._orig_record = ChatDB.record_pii_decisions
-        self.recorded = []   # (turn_action, decisions)
-        ChatDB.get_session_pii_decisions = staticmethod(lambda sid: {})
-        ChatDB.get_session_web_releases = staticmethod(lambda sid: {})
-        ChatDB.record_pii_decisions = staticmethod(
-            lambda sid, uid, tid, ta, ds: self.recorded.append((ta, ds)) or len(ds))
-        self._set_mode("ask")
-
-    def tearDown(self):
-        self._ChatDB.get_session_pii_decisions = self._orig_decisions
-        self._ChatDB.get_session_web_releases = self._orig_releases
-        self._ChatDB.record_pii_decisions = self._orig_record
-        super().tearDown()
-
-    def _set_releases(self, *entries):
-        """entries: (value, rule_id, status)."""
-        rel = {brain._web_release_hash(v): {"value": v, "rule_id": rid,
-                                            "status": st, "created_at": 0,
-                                            "user_id": "u1"}
-               for v, rid, st in entries}
-        self._ChatDB.get_session_web_releases = staticmethod(lambda sid: rel)
-
-    def _guard_ask(self, tool, args, mapping, cb=None):
-        with request_context():
-            ctx = get_request_context()
-            ctx._gdpr_mapping_id = mapping.mapping_id if mapping else ""
-            ctx.current_session_id = self.SID
-            ctx.current_user_id = "u1"
-            if cb is not None:
-                ctx.event_callback = cb
-            return brain._gdpr_guard_web_args(tool, args)
-
-    def _answering_cb(self, option, seen):
-        """Event-callback stub: answers the consent dialog synchronously with
-        `option` for every question (the pending slot is registered BEFORE the
-        emit, so a synchronous deliver is race-free)."""
-        def cb(event_type, payload):
-            seen.append((event_type, payload))
-            if event_type != "user_input_needed":
-                return
-            answers = {q["question"]: option
-                       for q in (payload.get("questions") or [])}
-            self.assertTrue(
-                brain.deliver_ask_user_answer(self.SID, answers=answers))
-        return cb
-
-
-class TestAskModeReleases(_AskModeBase):
-    def test_released_original_passes(self):
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        self._set_releases(("Bonnie M Stark", "name", "released"))
-        out, args = self._guard_ask(
-            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m)
-        self.assertIsNone(out)
-        self.assertEqual(args["query"], "Bonnie M Stark Oregon City")
-
-    def test_released_covers_registered_variant(self):
-        """Die Freigabe von 'Bonnie M Stark' deckt die L2-registrierte
-        Variante 'Bonnie Stark' (Variant-Intersection über den
-        first+last-Slug 'bonnie-stark')."""
-        m = self._mapping(("Bonnie M Stark", "Erika M Muster", "name"),
-                          ("Bonnie Stark", "Erika Muster", "name"))
-        self._set_releases(("Bonnie M Stark", "name", "released"))
-        out, _ = self._guard_ask(
-            "searxng_search", {"query": "Bonnie Stark obituary"}, m)
-        self.assertIsNone(out)
-
-    def test_denied_value_refused_without_dialog(self):
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        self._set_releases(("Bonnie M Stark", "name", "denied"))
-        seen = []
-        out, args = self._guard_ask(
-            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m,
-            cb=self._answering_cb("Freigeben (für diese Sitzung)", seen))
-        self.assertIsNotNone(out)
-        data = json.loads(out)
-        self.assertIn("verweigert", data["hint"])
-        self.assertEqual(seen, [])  # kein Dialog für verweigerte Werte
-
-    def test_released_fake_translated_for_dispatch_only(self):
-        """Step (c): Modell sucht mit dem Fake → ausgehende Args tragen das
-        Original (auch als URL-Slug); die Eingabe-Args bleiben unverändert."""
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        self._set_releases(("Bonnie M Stark", "name", "released"))
-        query_args = {"query": "Erika Muster Oregon City obituary"}
-        out, args = self._guard_ask("searxng_search", query_args, m)
-        self.assertIsNone(out)
-        self.assertIn("Bonnie M Stark", args["query"])
-        self.assertNotIn("Erika Muster", args["query"])
-        # Eingabestruktur (Wire) unangetastet
-        self.assertIn("Erika Muster", query_args["query"])
-        # URL-Slug-Form des Fakes
-        out, args = self._guard_ask(
-            "web_fetch",
-            {"url": "https://www.bizapedia.com/people/erika-muster.html"}, m)
-        self.assertIsNone(out)
-        self.assertNotIn("erika-muster", args["url"])
-        self.assertIn("bonnie", args["url"])
-
-    def test_unreleased_fake_never_translated(self):
-        """Sicherheits-Negativtest: ohne Freigabe wird NIE übersetzt — der
-        Refusal trägt die unveränderten Args (Fake bleibt Fake)."""
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        out, args = self._guard_ask(
-            "searxng_search", {"query": "Erika Muster Oregon City"}, m)
-        self.assertIsNotNone(out)
-        self.assertNotIn("Bonnie", args["query"])
-
-    def test_non_interactive_refuses_no_consent(self):
-        """Background/Scheduler (kein event_callback) kann nicht fragen →
-        refuse, nichts wird persistiert."""
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        out, _ = self._guard_ask(
-            "searxng_search", {"query": "Bonnie M Stark"}, m)
-        self.assertIsNotNone(out)
-        self.assertIn("nicht möglich", json.loads(out)["hint"])
-        self.assertEqual(self.recorded, [])
-
-
-class TestAskModeConsentDialog(_AskModeBase):
-    def test_consent_granted_records_and_passes(self):
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        seen = []
-        out, args = self._guard_ask(
-            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m,
-            cb=self._answering_cb("Freigeben (für diese Sitzung)", seen))
-        self.assertIsNone(out)
-        # Dialog wurde emittiert und beantwortet
-        kinds = [e for e, _ in seen]
-        self.assertIn("user_input_needed", kinds)
-        self.assertIn("user_input_received", kinds)
-        # Wert im Dialog sichtbar (der User ist Dateneigner), Ledger-Zeile da
-        payload = seen[0][1]
-        self.assertIn("Bonnie M Stark", payload["questions"][0]["question"])
-        self.assertEqual(len(self.recorded), 1)
-        action, ds = self.recorded[0]
-        self.assertEqual(action, "release_web")
-        self.assertEqual(ds[0]["value"], "Bonnie M Stark")
-        self.assertEqual(ds[0]["value_hash"],
-                         brain._web_release_hash("Bonnie M Stark"))
-
-    def test_consent_granted_translates_matched_fake(self):
-        """Konsent auf Basis einer FAKE-Query: Grant übersetzt den Fake im
-        ausgehenden Request auf das Original."""
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        seen = []
-        out, args = self._guard_ask(
-            "searxng_search", {"query": "Erika Muster Oregon City"}, m,
-            cb=self._answering_cb("Freigeben (für diese Sitzung)", seen))
-        self.assertIsNone(out)
-        self.assertIn("Bonnie M Stark", args["query"])
-        self.assertNotIn("Erika Muster", args["query"])
-
-    def test_consent_denied_records_and_refuses(self):
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        seen = []
-        out, args = self._guard_ask(
-            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m,
-            cb=self._answering_cb("Nicht freigeben", seen))
-        self.assertIsNotNone(out)
-        self.assertIn("verweigert", json.loads(out)["hint"])
-        self.assertEqual(self.recorded[0][0], "deny_web")
-        # Args unangetastet (keine Übersetzung bei Verweigerung)
-        self.assertEqual(args["query"], "Bonnie M Stark Oregon City")
-
-    def test_consent_timeout_refuses_and_no_second_dialog(self):
-        """Timeout: refuse ohne Ledger-Zeile; im SELBEN Turn kein zweites
-        Modal (asked-Set auf dem RequestContext)."""
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
-        orig_timeout = brain._WEB_CONSENT_TIMEOUT_S
-        brain._WEB_CONSENT_TIMEOUT_S = 1
-        seen = []
-
-        def silent_cb(event_type, payload):
-            seen.append((event_type, payload))
-
-        try:
-            with request_context():
-                ctx = get_request_context()
-                ctx._gdpr_mapping_id = m.mapping_id
-                ctx.current_session_id = self.SID
-                ctx.event_callback = silent_cb
-                out1, _ = brain._gdpr_guard_web_args(
-                    "searxng_search", {"query": "Bonnie M Stark"})
-                out2, _ = brain._gdpr_guard_web_args(
-                    "searxng_search", {"query": "Bonnie M Stark again"})
-        finally:
-            brain._WEB_CONSENT_TIMEOUT_S = orig_timeout
-        self.assertIsNotNone(out1)
-        self.assertIsNotNone(out2)
-        self.assertEqual(self.recorded, [])
-        dialogs = [e for e, _ in seen if e == "user_input_needed"]
-        self.assertEqual(len(dialogs), 1)  # nur EIN Modal pro Turn
-
-    def test_partial_release_denied_dob_refuses(self):
-        """Teilfreigabe (§4.3e): Name released, DOB denied → die kombinierte
-        Query wird refused (deny gewinnt), der Hinweis leitet zum
-        Umformulieren an."""
-        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"),
-                          ("05.02.1947", "17.02.1947", "dob"))
-        self._set_releases(("Bonnie M Stark", "name", "released"),
-                           ("05.02.1947", "dob", "denied"))
-        out, _ = self._guard_ask(
-            "searxng_search",
-            {"query": "Bonnie M Stark born 05.02.1947"}, m)
-        self.assertIsNotNone(out)
-        self.assertIn("verweigert", json.loads(out)["hint"])
-        # Nur der Name released → Query ohne DOB läuft durch
-        out2, _ = self._guard_ask(
-            "searxng_search", {"query": "Bonnie M Stark Oregon City"}, m)
-        self.assertIsNone(out2)
 
 
 if __name__ == "__main__":

@@ -142,6 +142,17 @@ class TestGateIsLiveInBackgroundTurn(unittest.TestCase):
         m.reverse["Sam Mitchell"] = "Bonnie Stark"
         m.categories["Bonnie Stark"] = "contact"
 
+        # Modus 'refuse' explizit: dieser Test kodiert G1 = "die Gate-MECHANIK
+        # lebt im Background-Turn" (die mapping_id erreicht den bg-Kontext, der
+        # Gate feuert). Seit dem allow-Fake→Original-Release (Chat faa124e1)
+        # LÄSST 'allow' einen geschützten Namen bei Retrieval-Tools durch — auch
+        # für Background-Turns (Nutzer-Entscheidung: allow gilt überall). Damit
+        # der Test die Mechanik prüft und nicht an der Live-Policy hängt, den
+        # refusenden Modus fixieren.
+        _orig_cfg = brain._get_gdpr_scanner_config
+        _cfg = dict(_orig_cfg())
+        _cfg["web_egress"] = "refuse"
+        brain._get_gdpr_scanner_config = lambda: _cfg
         try:
             with request_context():
                 sidecar_proxy._apply_bg_context({
@@ -154,6 +165,7 @@ class TestGateIsLiveInBackgroundTurn(unittest.TestCase):
                 err,
                 "background turn googled a protected real name — G1 is open")
         finally:
+            brain._get_gdpr_scanner_config = _orig_cfg
             ps.close_mapping(m.mapping_id)
 
     def test_web_gate_inactive_without_mapping(self):

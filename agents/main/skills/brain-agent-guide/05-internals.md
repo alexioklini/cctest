@@ -1694,32 +1694,30 @@ preamble goes in first-user-message instead.
   mapping + `pii_decisions` ledger; user-marked false positives are exempt),
   including URL slugs (`…/people/bonnie-stark.html`), plus a fresh scan with a
   gate-own category policy (organisations/network values pass, so technical
-  queries never block). Queries containing PSEUDONYMS are refused in every
-  mode (a fake search finds nothing — or real strangers). The model receives a
-  structured `web_query_blocked_pii` error (value KINDS only, never values)
-  telling it to report the check as "nicht prüfbar (Datenschutz)" instead of
-  claiming "no results". Admin knob `config.json → gdpr_scanner.web_egress`:
-  `refuse` (default) | `ask` (per-value consent, see next bullet) |
-  `block_group` (web tools hidden entirely in anonymising sessions) | `allow`
-  (real values pass but are audited; fakes still refused). Audit rows:
-  `pii_web_blocked` / `pii_web_egress`. Non-anonymising sessions are
-  completely unaffected.
-- **Web-Egress-Consent — the `ask` mode (9.338.0)**: brings web corroboration
-  back behind ONE user consent. The first blocked web call opens a single
-  question card in the chat with one question **per protected VALUE** (not per
-  query): "„Bonnie M Stark“ (Name) für die Web-Recherche freigeben?" —
-  Freigeben / Nicht freigeben. The outcome is session-sticky in the
-  `pii_decisions` ledger (`turn_action=release_web`/`deny_web`, value-only
-  namespaced hash): released values pass every later query without a new
-  dialog; denied values refuse with a "Freigabe verweigert" hint and never
-  re-open the dialog. If the model searches with the PSEUDONYM of a released
-  value, the gate translates it back to the original **for the outgoing
-  request only** (URL slugs included) — the results are re-anonymised through
-  the tool-result seam, so the cloud model never sees the real value even
-  though the search engine did. Background/scheduler turns can't ask →
-  refuse. Releases are visible + revocable in the GDPR history modal
-  (statuses "Web freigegeben"/"Web verweigert", per-row toggle). Audit:
-  `pii_web_egress` with `match=released` for every executed released call.
+  queries never block). The model receives a structured `web_query_blocked_pii`
+  error (value KINDS only, never values) telling it to report the check as
+  "nicht prüfbar (Datenschutz)" instead of claiming "no results".
+  **TWO modes** (v9.386.0 — `ask`/`block_group` removed; legacy config values
+  normalise to `refuse` on load): Admin knob `config.json →
+  gdpr_scanner.web_egress`:
+    - `refuse` (default) — **Blockieren**: no protected value reaches a search
+      engine; originals AND fakes refuse.
+    - `allow` — **Suchen**: for RETRIEVAL tools (`WEB_SEARCH_TOOLS` =
+      web_fetch/exa_search/searxng_search/science/dev/image/news) the real
+      value is put on the outgoing request. A known fake is translated
+      fake→original **in a dispatch-only copy of the args** (URL slugs
+      included); the model never sees the original, results come back
+      re-anonymised through the L3b tool-result seam. This is what makes a
+      wanted person/company image or KYC search work in an anonymising session
+      (Chat faa124e1: before the fix the model only knew the fake `Blake Young`,
+      the gate refused it, and the model hallucinated dead image URLs).
+  **allow is retrieval-only**: `email_send`/`email_reply`/`generate_image`/MCP
+  tools still refuse protected values even under `allow` — translating there
+  would CONTACT the protected person / ship the real value to a third party,
+  not merely retrieve (`test_gdpr_egress_gate` pins this). Audit rows:
+  `pii_web_blocked` / `pii_web_egress` (kinds `allowed`=original left,
+  `released`=fake→original translated, `policy_released`=org/network
+  auto-release). Non-anonymising sessions are completely unaffected.
 - **Organisation entity layer + auto-release (9.344.0, M4/M5)**: companies get
   the same entity treatment persons got in L2 — ONE fake per company, every
   surface form (long form, short form, the ALLCAPS form sanctions/registry
@@ -1746,15 +1744,18 @@ preamble goes in first-user-message instead.
   documented residual, not a silent error.
   **Auto-release (M5)**: a fake whose rule_id's CATEGORY is one the policy
   passes anyway (`business_id` → `organisation`, `network`) is translated
-  fake→original for the OUTGOING request instead of being refused — in every
-  `web_egress` mode, `ask` included. The model never sees the original (the
-  translation lives only in the dispatch copy of the args); results come back
-  re-anonymised through the L3b seam. Without it, M4 would have made company
-  research impossible: the gate let `organisation` through on a fresh scan,
-  but once the name was faked the model only knew the fake — and fakes refuse.
-  **Invariant (mutation-tested): PERSON fakes still refuse in EVERY mode**,
-  `allow` included, and a mixed query containing one kills the whole call.
-  Audit kind `policy_released` (`pii_web_egress`, tally `web_policy_released`).
+  fake→original for the OUTGOING request instead of being refused — in BOTH
+  `web_egress` modes. The model never sees the original (the translation lives
+  only in the dispatch copy of the args); results come back re-anonymised
+  through the L3b seam. Without it, M4 would have made company research
+  impossible: the gate let `organisation` through on a fresh scan, but once the
+  name was faked the model only knew the fake — and fakes refuse.
+  **PERSON fakes**: refuse under `refuse`, but under `allow` (retrieval tools)
+  they are translated fake→original like any other value — that is the whole
+  point of the "Suchen" mode. A mixed query is fine under `allow` and refuses
+  under `refuse`. Audit kind `policy_released` (`pii_web_egress`, tally
+  `web_policy_released`) for the org/network auto-release; `released` for the
+  allow-mode person/value translation.
 - **GDPR project presets REMOVED (9.348.0)**: the per-project `gdpr_preset`
   ('kyc'/'kyc_local'/'screening', 9.341.0–9.347.0) and its project-settings
   select are gone — a user/product call: protection that must be activated per

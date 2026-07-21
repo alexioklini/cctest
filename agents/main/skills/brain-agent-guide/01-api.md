@@ -287,8 +287,9 @@ streaming call, per-USER history, fixed read-only tool set. See
   GDPR: rule/category actions + confidence bands), identical in every chat,
   project or not. A legacy `gdpr_preset` field in project.json is ignored and
   stripped on the next save. `POST /v1/services/server` accepts
-  `gdpr_scanner.web_egress` (`refuse|ask|block_group|allow`), surfaced back
-  in the services GET.
+  `gdpr_scanner.web_egress` (`refuse|allow` — v9.386.0, legacy `ask`/
+  `block_group` normalise to `refuse` on load), surfaced back in the services
+  GET.
 - `GET .../projects/<name>/notes` / `POST` — project notes
 - `GET .../projects/<name>/docs` — list ingested docs
 - `GET .../projects/<name>/sources` — flat list of the project's individual

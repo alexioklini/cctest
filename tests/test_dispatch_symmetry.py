@@ -150,15 +150,26 @@ class TestArgsDeanon(_SymmetryTestBase):
 class TestDispatchOrder(_SymmetryTestBase):
     def test_web_gate_fires_before_deanon(self):
         """Ein Web-Call mit Fake wird am Gate refused — die Args erreichen
-        weder Deanon noch das Tool."""
+        weder Deanon noch das Tool. Modus 'refuse' explizit gesetzt: seit dem
+        allow-Fake→Original-Release (Chat faa124e1) würde 'allow' den Fake
+        stattdessen übersetzen; dieser Test prüft die DISPATCH-REIHENFOLGE
+        (Gate vor Deanon), nicht die allow-Policy, also den refusenden Modus
+        fixieren statt vom Live-web_egress abhängen."""
         from engine import llm_loop
-        m = self._mapping(("Bonnie M Stark", "<PERSON_1_ab12>", "name"))
-        with request_context():
-            ctx = get_request_context()
-            ctx._gdpr_mapping_id = m.mapping_id
-            ctx.current_session_id = None
-            result, is_error = llm_loop.dispatch_tool(
-                "searxng_search", {"query": "<PERSON_1_ab12> obituary"})
+        _orig_cfg = brain._get_gdpr_scanner_config
+        _cfg = dict(_orig_cfg())
+        _cfg["web_egress"] = "refuse"
+        brain._get_gdpr_scanner_config = lambda: _cfg
+        try:
+            m = self._mapping(("Bonnie M Stark", "<PERSON_1_ab12>", "name"))
+            with request_context():
+                ctx = get_request_context()
+                ctx._gdpr_mapping_id = m.mapping_id
+                ctx.current_session_id = None
+                result, is_error = llm_loop.dispatch_tool(
+                    "searxng_search", {"query": "<PERSON_1_ab12> obituary"})
+        finally:
+            brain._get_gdpr_scanner_config = _orig_cfg
         self.assertTrue(is_error)
         parsed = json.loads(result)
         self.assertEqual(parsed.get("error"), "web_query_blocked_pii")

@@ -3751,23 +3751,14 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             # web lockout is unioned on top inside apply_domain_context.
             if project_name:
                 session.project = project_name
-            # GDPR web_egress='block_group': in an anonymising session hide the
-            # whole web group up front so the model PLANS without web instead
-            # of running into per-call refusals (the dispatch-side gate in
-            # _gdpr_guard_web_args stays live as defense in depth). Condition
-            # mirrors the gate's activation: an active/rehydrated mapping or a
-            # pending anonymise action this turn.
-            _gdpr_web_block = False
-            try:
-                _gdpr_web_block = (
-                    (engine._get_gdpr_scanner_config().get("web_egress")
-                     or "refuse") == "block_group"
-                    and bool(getattr(session, "_gdpr_mapping_id", None)
-                             or getattr(session, "_gdpr_pending_action", "")))
-            except Exception:
-                _gdpr_web_block = False
+            # Websuche-Basket-Lockout: die kuratierten Quellen sind die einzige
+            # erlaubte Web-Herkunft dieses Turns → das Web-Tool-Set ausblenden.
+            # (Der GDPR-web_egress='block_group'-Modus, der hier früher zusätzlich
+            # die Web-Gruppe versteckte, wurde in v9.386.0 entfernt — es gibt nur
+            # noch refuse/allow, der Dispatch-Gate _gdpr_guard_web_args entscheidet
+            # per Call.)
             _base_excl = (list(engine.WEB_SEARCH_TOOLS)
-                          if (web_locked or _gdpr_web_block) else None)
+                          if web_locked else None)
             engine.apply_domain_context(
                 agent_id=session.agent_id,
                 project=(project_name or session.project or ""),

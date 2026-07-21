@@ -2452,31 +2452,24 @@ einen geschützten Wert der Sitzung (auch versteckt in einer Web-Adresse),
 wird der Aufruf angehalten. Der Assistent weist die betroffene Prüfung dann
 ehrlich als „nicht prüfbar (Datenschutz)" aus — er behauptet **nicht**
 fälschlich „keine Treffer". Rein technische Suchen (Gerätemodelle, Normen,
-Fehlermeldungen) laufen normal durch. Admins wählen das Verhalten seit
-v9.341.0 direkt unter **Einstellungen → GDPR → Master-Schalter → „Websuche in
-anonymisierten Chats"** (vorher nur `gdpr_scanner.web_egress` in der
-config.json): `refuse`/Verweigern (Standard), `ask`/Nachfragen
-(Freigabe-Dialog, siehe nächste Frage), `block_group`/Web-Tools ausblenden
-oder `allow`/Durchlassen (echte Werte dürfen raus, werden aber im Audit-Log
-protokolliert). Suchen mit **Ersatzwerten** (den Pseudonymen) werden immer
-verweigert — sie würden nichts finden oder fremde, echte Personen treffen.
+Fehlermeldungen) laufen normal durch. Admins wählen das Verhalten unter
+**Einstellungen → GDPR → Master-Schalter → „Websuche in anonymisierten
+Chats"** — seit v9.386.0 mit **zwei** Optionen:
+- **Suchen** (`allow`): Der echte Wert wird für die Anfrage an die
+  Suchmaschine eingesetzt — genau so findet eine gewollte Personen- oder
+  Firmen-Recherche (z. B. Bilder zu einer Person, KYC-Prüfung) etwas. Der
+  Assistent selbst sieht den echten Wert dabei nie; die Treffer werden vor der
+  Anzeige wieder anonymisiert. Diese Übersetzung gilt nur für Web-Suche und
+  -Abruf — **E-Mail-Versand und Bildgenerierung senden geschützte Werte nie**,
+  auch in diesem Modus nicht (das wäre Kontaktaufnahme mit der geschützten
+  Person bzw. ein Abfluss an einen fremden Dienst).
+- **Blockieren** (`refuse`, Standard): Kein geschützter Wert verlässt den
+  Rechner; die betroffene Prüfung wird als „nicht prüfbar (Datenschutz)"
+  ausgewiesen.
 
-**F: Kann ich die Web-Recherche für einzelne Werte freigeben?**
-A: Ja — seit v9.338.0 mit dem Freigabe-Modus (`gdpr_scanner.web_egress:
-"ask"`). Möchte der Assistent mit einem geschützten Wert im Web suchen,
-erscheint **einmal** eine Frage-Karte im Chat — eine Frage **pro Wert**, nicht
-pro Suche: „‚Bonnie M Stark' (Name) für die Web-Recherche freigeben?" Sie
-entscheiden je Wert mit „Freigeben (für diese Sitzung)" oder „Nicht
-freigeben". Freigegebene Werte darf der Assistent ab dann in Web-Suchen
-verwenden; die Suchergebnisse werden vor der Übergabe an das Cloud-Modell
-wieder anonymisiert. Nicht freigegebene Werte verlassen den Rechner weiterhin
-nicht — die betroffene Prüfung wird als „nicht prüfbar (Datenschutz)"
-ausgewiesen. Ihre Entscheidungen gelten nur für die aktuelle Sitzung und
-stehen im Datenschutz-Verlauf (Schild-Symbol → Übersicht) als „Web
-freigegeben" / „Web verweigert" — dort können Sie jede Freigabe jederzeit
-widerrufen oder eine Verweigerung nachträglich freigeben. In automatischen
-Läufen (geplante Aufgaben, Hintergrund-Analysen) gibt es niemanden, der
-freigeben könnte — dort bleibt die Suche gesperrt.
+Die früheren Modi „Nachfragen" (`ask`) und „Web-Tools ausblenden"
+(`block_group`) wurden in v9.386.0 entfernt; eine noch so eingestellte
+config.json wird beim Laden automatisch auf „Blockieren" gesetzt.
 
 **F: Findet ein anonymisierter Chat meine Projektdaten und Dateien noch?**
 A: Ja — seit v9.336.0. Vorher liefen Suchen im Projektgedächtnis und
@@ -2487,9 +2480,9 @@ Werkzeugaufruf automatisch zurück, führt das Werkzeug auf den echten Daten
 aus und anonymisiert das Ergebnis wieder, bevor es das Sprachmodell erreicht.
 Auch Inhalte aus dem Projektgedächtnis und aus dem Web (Suchtreffer,
 abgerufene Seiten, Websuche-Korb) werden seither vor der Übergabe an
-Cloud-Modelle anonymisiert. Web-Suchanfragen selbst werden dabei **nie**
-zurückübersetzt — dafür gilt weiterhin das Web-Egress-Gate (siehe vorherige
-Frage).
+Cloud-Modelle anonymisiert. Web-Suchanfragen selbst folgen dabei dem
+Web-Egress-Modus (Suchen/Blockieren, siehe oben): nur im Modus „Suchen" wird
+der echte Wert für die Anfrage eingesetzt, sonst nie.
 
 **F: Warum ist im anonymisierten Chat dieselbe Person überall gleich benannt?**
 A: Seit v9.337.0 arbeitet die Anonymisierung auf Personen-Ebene statt auf
