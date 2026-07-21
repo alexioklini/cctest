@@ -2051,6 +2051,20 @@ preamble goes in first-user-message instead.
   anonymise / swap to local / **skip** (succeed empty, `GDPRSkipError`) / abort,
   per `gdpr_scanner.background_pii_action`. KG mining makes a whole-document
   decision in `_process_source` (full-doc scan → correct per-doc min_occurrences).
+- **Decided-turn exception (9.393.0)**: when the call chain descends from an
+  interactive turn whose pre-send scan + dialog already ran
+  (`RequestContext.gdpr_turn_decided`, stamped by the chat worker from the
+  client's `pii_scan_done` body flag / dialog decision set / sticky-anonymise
+  mode), the seam does **NOT** re-scan: it applies the confirmed session
+  mapping (fuzzy entity sweep + exact known-value sweep) or passes through
+  clean. Detection runs exactly ONCE per turn, pre-dialog — a fresh scan
+  here used to mint undecided entities via the Gremium planner call (chat
+  6ba13da5: "Wiener Privatbank"/"Julius Baer" anonymised without ever being
+  shown in a dialog). Sub-turns (bg-task leaves, delegates) inherit the
+  marker via `build_tool_context` → `_apply_bg_context`. Scheduler/daemon/
+  Telegram calls (no dialog possible) keep the legacy scan+policy net. The
+  ARL classification gate still runs in decided turns (detection-only,
+  never mints).
 - `is_model_local()` bypasses the block entirely (data stays on-prem).
 - Client interlock: `piiBlockActive(chat)` filters dropdown to local-only
   when scanner enabled + server_block + chat has PII.

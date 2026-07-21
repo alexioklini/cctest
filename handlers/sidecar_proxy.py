@@ -185,6 +185,9 @@ def _apply_bg_context(ctx: dict) -> None:
         engine.gdpr_bind_mapping(_mid)
     else:
         tl._gdpr_mapping_id = ""
+    # v9.393.0: sub-turns of a decided interactive turn inherit the marker so
+    # their own background calls stay apply-only (no re-detection) too.
+    tl.gdpr_turn_decided = bool(ctx.get("gdpr_turn_decided", False))
     tl.execution_overrides = ctx.get("execution_overrides") or {}
     tl.attachment_image_model = ctx.get("attachment_image_model") or ""
     tl._current_model = ctx.get("model") or None

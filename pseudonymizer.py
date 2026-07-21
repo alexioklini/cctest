@@ -2557,20 +2557,9 @@ def lint_residual_fakes(text: str, *, mapping: Mapping) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def pseudonymize_with_scanner(
-    text: str,
-    scanner: Callable[[str], list[dict]],
-    *,
-    mapping: Mapping,
-    source: str = "chat_text",
-) -> tuple[str, list[dict]]:
-    """Helper: call `scanner(text)` and pseudonymize in one shot. Used in
-    tests and in step 3 to keep the chat-worker call site small. `scanner`
-    must return the same shape as `_pii_scan_text`."""
-    findings = scanner(text)
-    if not findings:
-        return text, []
-    return pseudonymize_text(text, findings, mapping=mapping, source=source), findings
+# pseudonymize_with_scanner was DELETED in v9.393.0 — a caller-less
+# scan+mint convenience wrapper. Detection runs ONCE per turn, pre-dialog;
+# apply paths use apply_entity_variants/apply_known_values (no fresh scan).
 
 
 # ---------------------------------------------------------------------------
@@ -2777,7 +2766,6 @@ __all__ = [
     "close_mapping",
     "pseudonymize_text",
     "deanonymize_text",
-    "pseudonymize_with_scanner",
     "find_restored_spans",
     "lint_residual_fakes",
     "apply_known_values",

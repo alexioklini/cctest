@@ -571,7 +571,7 @@ class API {
   }
 
   // SSE Streaming Chat
-  static async streamChat(sessionId, message, callbacks, model, files, images, gdprAction, piiDecisions) {
+  static async streamChat(sessionId, message, callbacks, model, files, images, gdprAction, piiDecisions, piiScanDone) {
     if (this._abortController) this._abortController.abort();
     this._abortController = new AbortController();
 
@@ -610,6 +610,10 @@ class API {
     // set; on a FIRST send (no session_id when the dialog ran) it's the only
     // channel the decisions reach the server at all.
     if (piiDecisions && piiDecisions.length) body.pii_decisions = piiDecisions;
+    // v9.393.0: "the pre-send PII gate ran" (even when it found nothing) —
+    // the server then keeps every background call of this turn apply-only
+    // (no re-detection, no undecided mints).
+    if (piiScanDone) body.pii_scan_done = true;
 
     // Deep Research toggle (composer 🔬): when on for this chat, the turn runs
     // the bounded research loop instead of a normal LLM answer and saves a

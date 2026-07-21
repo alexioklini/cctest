@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.392.1"
+VERSION = "9.393.0"
 VERSION_DATE = "2026-07-21"
 CHANGELOG = [
+    ("9.393.0", "2026-07-21", "fix(GDPR — Erkennung läuft GENAU EINMAL pro Turn, vor dem Dialog; Anlass Chat 6ba13da5: 'Wiener Privatbank'/'Julius Baer' anonymisiert, obwohl NIE in einem Dialog gezeigt). ROOT CAUSE: `gdpr_pick_model_for_background` → `_anonymise_background_samples` machte auf JEDEM Background-Call (Gremium-Referenzen/-Planner, translate, ask_llm, Summariser, …) einen FRISCHEN `_pii_scan_text` und mintete die Treffer entscheidungs-blind ins wiederverwendete Session-Mapping — der v9.383-Umbau (decision-driven) hatte den interaktiven Worker und die Read-Seams umgestellt, diesen Seam aber nicht. Im Anlass-Chat scannte der moa_planner-Call (glm-5.2) das Wire-Transkript + die 5 Drafts, fand 'Wiener Privatbank' (im getippten Text — den der Typed-Text-Scan dort NICHT geflaggt hatte, reproduziert 0 Findings) und 'Julius Baer' (aus den Drafts), seedete beide als Personen-Entitäten ('Alex Allen'/'Tristan Wright'; mapping.sources=['background:moa_planner'], Audit pii_detected 10 → pii_anonymised), die Read-Seams ersetzten sie danach in allen Attachments (35/49 applied) und der Planner plante wörtlich einen Code of Conduct für 'Alex Allen'. NEU — EIN Scan-Punkt pro Turn, keine Ausnahmen: (a) `RequestContext.gdpr_turn_decided` (engine/context.py) — vom Chat-Worker gestampt, wenn der Pre-Send-Gate-Vertrag lief: Client-Marker `body.pii_scan_done` (chat_send.js/api.js — gesetzt sobald runCancellableGdprScan durch ist, AUCH bei 0 Findings), ODER Dialog-Decision-Set im Body, ODER Sticky-Anonymise (`session._gdpr_pending_action=='anonymise'`). Vererbung an Sub-Turns (bg-task-Leaves, Delegates) via `build_tool_context` → `_apply_bg_context` (neuer Key `gdpr_turn_decided`). (b) `gdpr_pick_model_for_background` prüft den Marker NACH dem (bewusst weiterlaufenden, detection-only, nie mintenden) ARL-Klassifikations-Gate und VOR jedem Scan: entschiedener Turn → `_apply_decided_mapping_background` (NEU) — apply-only wie `_gdpr_anon_tool_text` (apply_entity_variants + apply_known_values(categories=None)), Mapping-Auflösung ctx._gdpr_mapping_id ZUERST, sonst letztes persistiertes Session-Mapping (der moa-Fan-out läuft auf dem Worker-Thread BEVOR run_turn die ctx-ID bindet); kein Mapping → Klartext-Passthrough (der Turn hat gegen Anonymisierung entschieden bzw. war clean); gebundene-aber-unladbare Mapping-ID → Local-Swap, sonst GDPRBlockedError (entschiedene Werte gehen NIE still im Klartext raus); deanon_fn.mapping_id-Kontrakt (M1) erfüllt; save_mapping nur wenn der Fuzzy-Sweep Varianten ENTSCHIEDENER Entitäten registriert hat. Scheduler/Daemons/Telegram/TUI (kein Dialog möglich, Marker fehlt) behalten das bisherige Scan+Policy-Netz unverändert. (c) TOTE Frisch-Scan-Pfade GELÖSCHT, damit sie nie wieder verdrahtet werden: `handlers/chat._pseudonymize_history_for_wire` (caller-los seit dem Ledger-Rewrite `_apply_pii_decisions_to_wire`) + `pseudonymizer.pseudonymize_with_scanner` (caller-los, aus __all__ entfernt). AUDIT ALLER verbleibenden `_pii_scan_text`-Sites: erlaubt bleiben die EINE Pre-Dialog-Erkennung (`/v1/gdpr/scan-text` + `/v1/attachments/scan` inkl. MRZ-Pass), der Worker-Guard-Fallback (nur wenn GAR KEIN Decision-Set ankam — fail-loud statt Klartext-Send), Detection-ONLY-Verbraucher (Web-/Cloud-Egress-Gates = refuse/allow, Klassifikations-PII-Dichte, PII-History-Badges, Ledger-Nachtrag bei continue/local) und der nutzerbestätigte Data-Review-Flow (eigene Review-UI). +3 Tests in tests/test_gdpr_decision_driven.py (decided+Mapping → sweep ohne Scan, unentschiedener Wert bleibt roh, kein Mint; decided ohne Mapping → Passthrough ohne Scan; ohne Marker → Netz scannt weiter; Klassifikations-Gate im Test stillgelegt, da sein Detection-only-Scan sonst den Spy triggert). 52+57 GDPR-/Context-Tests grün; py_compile brain/chat/sidecar_proxy/context/pseudonymizer OK; js_gate PASS (net-globals 2103 unverändert, Smoke 4/5 + bekannter Login-Flaky). Skill 05-internals + kuratierter Eintrag (user) im selben Commit. Server-Restart nötig."),
     ("9.392.1", "2026-07-21", "fix(Chat-UI: lange Anfrage jetzt auch per Klick auf den TEXT auf-/zuklappbar, nicht nur über den Pfeil — Nutzerwunsch). Ist der Anfrage-Text in der Turn-Kopfzeile zu lang für eine Zeile, wurde er mit Ellipsis gekürzt und nur der Chevron-Button (>) klappte die volle Anfrage aus. JETZT reagiert auch ein Klick auf den Anfrage-Text selbst (.turn-group-collapsed-hint) — löst dasselbe toggleHintExpand aus. SELEKTIONS-SCHUTZ: neuer Wrapper toggleHintExpandFromText(event, turnNum) (chat_nav.js) klappt NUR auf, wenn window.getSelection() leer ist — Text markieren zum Kopieren löst also kein Aufklappen aus. KLICKBARKEIT sichtbar nur wenn sinnvoll: chat_render.js setzt die Klasse .is-clickable am Hint post-render parallel zur Chevron-Sichtbarkeit (nur wenn der Text tatsächlich abgeschnitten ist ODER bereits aufgeklappt) — eine kurze Anfrage, die in eine Zeile passt, bleibt normaler Text ohne Cursor/Hover. main.css: .turn-group-collapsed-hint.is-clickable {cursor:pointer} + dezenter Hover (Textfarbe). Der onclick am Span wird nur gesetzt, wenn es überhaupt eine Anfrage gibt (hasQ). Reine Client-Änderung (Browser-Reload genügt; Restart nur fürs Versions-Reporting). js_gate PASS (net-globals 2102→2103, +toggleHintExpandFromText, Baseline im selben Commit; Smoke 5/5). Nutzer hat das Verhalten live bestätigt. Skill 06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.392.0", "2026-07-21", "feat(Experten-Gremium: nach einem echten Fan-out-Turn wechselt der Composer automatisch auf das AUSFÜHRENDE Modell — Nutzerwunsch 'für nachfolgende Querys wird meistens kein Gremium mehr benötigt'). BISHER blieb der Composer nach einem 🧬-Turn auf 'Experten-Gremium' stehen (der post-turn Composer-Restore setzte session.model auf die Direktive 'moa' zurück, genau wie bei Smart-Cloud/-Lokal); jeder Folge-Turn klassifizierte + fächerte also erneut auf. JETZT: hat der Fan-out für den Turn TATSÄCHLICH gefeuert (Referenzmodelle liefen — NICHT gated-out), schaltet der Composer danach auf den konkreten Aggregator/Executor um, der die Antwort erzeugt hat (session._auto_route_model). Ein GATE-MISS-Turn (Gremium feuerte nicht, lief wie ein normaler Smart-Cloud-Turn) BEHÄLT 'moa', damit der nächste Turn neu evaluiert wird. MECHANIK: (a) Server handlers/chat.py — neues per-Turn-Flag session._moa_fanout_ran (zu Turn-Beginn beim _moa_plan-Reset auf False gesetzt, True gesetzt an der Stelle, wo _run_moa_references wirklich ausgeführt wird); der want_auto-Restore-Block überschreibt die Direktive 'moa' durch _auto_route_model, wenn _moa_fanout_ran und der Wert ein konkretes Modell ist (nicht selbst eine Auto-Direktive) — reopened Session zeigt dann das Ausführungsmodell, nicht das Gremium. (b) Client web/js/chat_send.js done-Handler — spiegelt das serverseitig: bei chat.model==='moa' und echtem Fan-out (d.auto_route.moa vorhanden, gated_out!==true, references.length>0) wird chat.model=d.model gesetzt (autoPicked/autoReason geleert) statt in der generischen Auto-Zweig-Logik auf 'moa' zu bleiben; updateModelSelectorDisplay(chat.model) weiter unten übernimmt das Label. Das im Turn ausführende Modell steckt ohnehin schon in der Assistant-Message-Metadata (metadata.model = Aggregator) — es geht nichts verloren. Delegate-Modus: _auto_route_model ist dort der gepinnte Executor → korrekt das 'ausführende Modell'. js_gate PASS (net-globals unverändert 2102 — nur lokale const im Handler; Smoke server-up 4/5, 1 flaky Login-Timeout ohne Bezug). py_compile chat.py OK. Server-Restart nötig (handlers/chat.py). Skill 05-internals + 06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.391.2", "2026-07-21", "fix(GDPR-UI: '🔓 deanonymisiert'-Badge auf Tool-Aufrufen ENTFERNT — Nutzerwunsch 'not needed'; Chat- UND Aktivitäts-Panel-Pfad). Das Badge (9.387.0 renderToolCall / 9.389.2 _toolEntryCard) war als Sichtbarmachung 'Tool lief auf Echtdaten' gedacht; seit 9.391.0 tragen die per-Wert-PII-<mark>s mit Tooltip dieselbe Information präziser — das pauschale Badge ist redundant. ENTFERNT: deanonBadge in chat_tools.js:renderToolCall + panels_background.js:_toolEntryCard, zugehörige .tool-badge-deanon-CSS-Regeln (main.css, beide Scopes). Die deanon_args/deanon_result-MECHANIK bleibt vollständig (Echt-Werte in Titel/Args/Ergebnis); nur der Chip ist weg. Skill 05-internals + 06-user-manual angepasst (Badge-Erwähnungen → Verweis auf Markierungen). Reine Client-Änderung (Browser-Reload genügt; Restart nur fürs Versions-Reporting). js_gate PASS (net-globals unverändert 2102). Kein kuratierter Einzel-Eintrag — im 9.391-Bundle miterfasst."),
@@ -9150,6 +9151,7 @@ def build_tool_context(*, session_id: str, agent_id: str, user_id: str = "",
         "caveman_chat": int(ctx.caveman_chat or 0),
         "caveman_system": int(ctx.caveman_system or 0),
         "gdpr_mapping_id": gdpr_mapping_id or "",
+        "gdpr_turn_decided": bool(ctx.gdpr_turn_decided),
     }
 
 
@@ -12428,6 +12430,21 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
     if not any(samples):
         return (model, samples if not _input_was_str else samples[0], _identity_deanon)
 
+    # ── Decision-driven turn path (v9.393.0, chat 6ba13da5) ─────────────
+    # This call descends from an interactive turn whose PII detection + user
+    # decision already ran (the ONE scan point per turn: pre-send scan-text +
+    # attachment scan → dialog → decisions). NEVER re-detect here — a fresh
+    # scan in this seam minted undecided entities into the session mapping
+    # ('Wiener Privatbank'/'Julius Baer' via the Gremium planner call, never
+    # shown in any dialog). Apply the confirmed mapping or pass through.
+    try:
+        _turn_decided = bool(get_request_context().gdpr_turn_decided)
+    except Exception:
+        _turn_decided = False
+    if _turn_decided:
+        return _apply_decided_mapping_background(
+            model, samples, _input_was_str, purpose=purpose, cfg=cfg)
+
     # Full scan across all samples so anonymise has the complete finding set
     # (the legacy short-circuit-on-first-finding only worked for the model-swap
     # decision; pseudonymise needs every finding to mint a stable mapping).
@@ -12676,6 +12693,139 @@ def gdpr_pick_model_for_background(model: str, texts, purpose: str = ""):
         except Exception:
             pass
     return (model, anon_samples if not _input_was_str else anon_samples[0], deanon_fn)
+
+
+def _apply_decided_mapping_background(model, samples, input_was_str, *,
+                                      purpose, cfg):
+    """Apply-only background path for calls descending from an interactive
+    turn (`get_request_context().gdpr_turn_decided` — v9.393.0).
+
+    Detection + user decision ran ONCE, pre-dialog; this seam only APPLIES
+    the confirmed mapping (fuzzy entity sweep + exact known-value sweep, the
+    same semantics as `_gdpr_anon_tool_text`). No `_pii_scan_text`, no fresh
+    mints of undecided values. FP-marked values are absent from the mapping
+    and ship in the clear — exactly as decided.
+
+    Mapping resolution: the bound context mapping first (`_gdpr_mapping_id`,
+    set by run_turn / _apply_bg_context), else the session's latest persisted
+    map (the moa fan-out runs on the worker thread BEFORE run_turn binds the
+    context id). No mapping at all → the turn decided against anonymisation
+    (or the scan was clean) → pass through unchanged. A bound-but-unloadable
+    mapping fails toward the local fallback / GDPRBlockedError — decided
+    values must never silently ship in clear.
+    """
+    import pseudonymizer as _ps
+    ctx = get_request_context()
+    sid = ctx.current_session_id or ""
+    mid = ctx._gdpr_mapping_id or ""
+    mapping = None
+    if mid:
+        mapping = _ps.get_mapping(mid)
+        if mapping is None:
+            loaded = _ps.load_mapping(mid)
+            if loaded is not None:
+                _ps.restore_mapping_to_registry(loaded)
+                mapping = loaded
+        if mapping is None:
+            # A mapping id is bound but unresolvable — decided values would
+            # ship in clear. Fail toward the local fallback, else block.
+            fallback = (cfg.get("default_local_fallback_model") or "").strip()
+            try:
+                fcfg = (_models_config or {}).get(fallback) or {}
+                _swap_ok = bool(fallback and fallback != model
+                                and fcfg.get("enabled")
+                                and is_model_local(fallback))
+            except Exception:
+                _swap_ok = False
+            if _swap_ok:
+                print(f"[gdpr] decided-turn mapping {mid[:12]} unloadable → "
+                      f"local swap {model} -> {fallback} "
+                      f"(purpose={purpose or '-'})", flush=True)
+                return (fallback,
+                        samples if not input_was_str else samples[0],
+                        _identity_deanon)
+            raise GDPRBlockedError(
+                f"[GDPR block] Background call refused "
+                f"(purpose={purpose or '-'}): decided-turn mapping {mid} "
+                f"could not be loaded and no usable local fallback exists.")
+    elif sid:
+        try:
+            from server_lib.db import ChatDB as _ChatDB
+            rows = _ChatDB.list_pseudonym_maps_for_session(sid)
+            if rows:
+                _mid2 = rows[-1][0]
+                mapping = _ps.get_mapping(_mid2)
+                if mapping is None:
+                    loaded = _ps.load_mapping(_mid2)
+                    if loaded is not None:
+                        _ps.restore_mapping_to_registry(loaded)
+                        mapping = loaded
+        except Exception:
+            mapping = None
+    if mapping is None or (not mapping.forward and not mapping.entities):
+        return (model, samples if not input_was_str else samples[0],
+                _identity_deanon)
+    # A local model sees originals everywhere else (worker wire, read seams)
+    # — keep that consistent here.
+    try:
+        if is_model_local(model):
+            return (model, samples if not input_was_str else samples[0],
+                    _identity_deanon)
+    except Exception:
+        pass
+    out = []
+    swept = 0
+    tokens_before = len(mapping.forward)
+    for s in samples:
+        if not s:
+            out.append(s)
+            continue
+        t, n_fuzzy = _ps.apply_entity_variants(s, mapping=mapping)
+        t, n_exact = _ps.apply_known_values(t, mapping=mapping,
+                                            categories=None)
+        swept += n_fuzzy + n_exact
+        out.append(t)
+    if swept:
+        # Fuzzy variants of DECIDED entities may have registered new surface
+        # forms — persist so the parent turn's deanonymiser can reverse them.
+        if sid:
+            try:
+                _ps.save_mapping(mapping, session_id=sid,
+                                 turn_id=f"background:{purpose or 'apply'}")
+            except Exception:
+                pass
+        print(f"[gdpr] decided-turn apply session={sid or '-'} "
+              f"purpose={purpose or '-'} swept={swept} "
+              f"tokens={len(mapping.forward)} "
+              f"(+{len(mapping.forward) - tokens_before} variant forms) "
+              f"mapping={mapping.mapping_id[:12]}", flush=True)
+        if cfg.get("server_log", True) and _audit_log:
+            try:
+                _agent = get_request_context().current_agent or _current_agent
+                _audit_log.log_action(
+                    agent=_agent.agent_id if _agent else "main",
+                    action_type="pii_anonymised",
+                    tool_name="gdpr_scanner",
+                    args_summary=f"apply-only swept={swept}",
+                    result_summary=f"purpose={purpose or '-'} model={model} "
+                                   f"decision-driven",
+                    result_status="ok",
+                    session_id=sid or None,
+                    source="background",
+                )
+            except Exception:
+                pass
+
+    def _deanon(text):
+        if not text or not isinstance(text, str):
+            return text
+        try:
+            restored, _n = _ps.deanonymize_text(text, mapping=mapping)
+            return restored
+        except Exception:
+            return text
+    _deanon.mapping_id = mapping.mapping_id
+    return (model, out if not input_was_str else out[0], _deanon)
 
 
 def _anonymise_background_samples(samples, findings, *, session_id, agent_id,

@@ -86,6 +86,15 @@ class RequestContext:
     # --- gdpr ---
     _gdpr_mapping_id: str = ""
     _gdpr_anonymising: bool = False
+    # Decision-driven turn marker (v9.393.0, chat 6ba13da5): True when this
+    # call chain descends from an interactive turn whose pre-send PII
+    # detection + user decision already ran (the ONE scan point per turn).
+    # `gdpr_pick_model_for_background` then NEVER re-detects: it applies the
+    # confirmed session mapping (apply-only) or passes through clean — a
+    # fresh scan there minted undecided entities into the session mapping.
+    # Set by the chat worker; propagated to sub-turns via build_tool_context
+    # → _apply_bg_context.
+    gdpr_turn_decided: bool = False
     _gdpr_after_file_write_cb: object = None
     # Per-turn GDPR outcome, surfaced to the user as a chat badge + redo control
     # (set in the chat worker at the anonymise / local-fallback decision points,

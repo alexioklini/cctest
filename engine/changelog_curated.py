@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.393.0",
+        "date": "2026-07-21",
+        "title": "Anonymisiert wird nur, was Sie entschieden haben",
+        "body": "Die Datenschutz-Prüfung läuft jetzt garantiert genau einmal pro "
+                "Nachricht — vor dem Entscheidungs-Dialog. Interne Zwischenschritte "
+                "(z. B. das Experten-Gremium oder Übersetzungen) erkennen keine "
+                "neuen Begriffe mehr auf eigene Faust: Sie wenden ausschließlich "
+                "die von Ihnen bestätigten Ersetzungen an. Damit kann kein Name "
+                "mehr anonymisiert werden, der Ihnen nie im Dialog angezeigt wurde.",
+        "audience": "user",
+        "versions": ["9.393.0"],
+    },
+    {
         "version": "9.392.1",
         "date": "2026-07-21",
         "title": "Lange Anfrage per Klick auf den Text aufklappen",

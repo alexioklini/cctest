@@ -2067,78 +2067,11 @@ def _apply_pii_decisions_to_wire(messages, decisions):
     return wire, replaced, counts
 
 
-def _pseudonymize_history_for_wire(messages, mapping, scanner_cfg):
-    """Walk prior `session.messages` and produce a wire-only pseudonymised
-    copy. The reused mapping's `forward` table short-circuits already-known
-    values, so cost is one scan + zero new mints for stable conversations.
-    `session.messages` itself is NOT mutated — the chat UI keeps showing real
-    values; only the list handed to the sidecar is rewritten.
-
-    Returns `(wire_messages, new_tokens, finding_counts)`.
-    """
-    new_tokens = 0
-    counts: dict[str, int] = {}
-    wire: list[dict] = []
-    if not messages:
-        return wire, 0, counts
-    for msg in messages:
-        role = msg.get("role")
-        content = msg.get("content")
-        if role not in ("user", "assistant") or content is None:
-            wire.append(msg)
-            continue
-        if isinstance(content, str):
-            text = content
-            typed, notice = _split_attachment_notice(text)
-            f = engine._pii_scan_text(typed, cfg=scanner_cfg)
-            if not f:
-                wire.append(msg)
-                continue
-            before = len(mapping.forward)
-            new_typed = pseudonymizer.pseudonymize_text(
-                typed, f, mapping=mapping, source="history")
-            new_text = new_typed + notice
-            new_tokens += len(mapping.forward) - before
-            for x in f:
-                rid = x.get("rule_id") or "unknown"
-                counts[rid] = counts.get(rid, 0) + 1
-            new_msg = dict(msg)
-            new_msg["content"] = new_text
-            wire.append(new_msg)
-        elif isinstance(content, list):
-            new_blocks = []
-            mutated = False
-            for blk in content:
-                if not isinstance(blk, dict) or blk.get("type") != "text":
-                    new_blocks.append(blk)
-                    continue
-                text = blk.get("text") or ""
-                typed, notice = _split_attachment_notice(text)
-                f = engine._pii_scan_text(typed, cfg=scanner_cfg)
-                if not f:
-                    new_blocks.append(blk)
-                    continue
-                before = len(mapping.forward)
-                new_typed = pseudonymizer.pseudonymize_text(
-                    typed, f, mapping=mapping, source="history")
-                new_text = new_typed + notice
-                new_tokens += len(mapping.forward) - before
-                for x in f:
-                    rid = x.get("rule_id") or "unknown"
-                    counts[rid] = counts.get(rid, 0) + 1
-                new_blk = dict(blk)
-                new_blk["text"] = new_text
-                new_blocks.append(new_blk)
-                mutated = True
-            if mutated:
-                new_msg = dict(msg)
-                new_msg["content"] = new_blocks
-                wire.append(new_msg)
-            else:
-                wire.append(msg)
-        else:
-            wire.append(msg)
-    return wire, new_tokens, counts
+# _pseudonymize_history_for_wire was DELETED in v9.393.0: it was a dead
+# (caller-less) fresh-scan+mint path over the history — the live history
+# rewrite is `_apply_pii_decisions_to_wire` (decision-ledger-driven, no
+# scanning, no mints). Do not reintroduce scan-based history rewriting:
+# detection runs ONCE per turn, pre-dialog (see gdpr_turn_decided).
 
 
 def emit_gdpr_tool_event_for_session(
@@ -3781,7 +3714,7 @@ def _run_deep_research_turn(session, sid, message, live, *, saved_paths=None,
     return {"reply": card, "error": None, "_dr_meta": meta, "_dr_files": _dr_files}
 
 
-def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False, pinned_sources=None, design_context=False, pii_decisions=None):
+def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking_level, live, saved_paths, web_urls, web_locked, project_name, preamble_text, content_blocks, disk_files, auto_route, want_auto, deep_research=False, interactive=False, pinned_sources=None, design_context=False, pii_decisions=None, pii_scan_done=False):
     """Run one chat turn for `session`, end to end.
 
     Extracted verbatim from the former `_handle_chat.worker()` closure (it
@@ -4085,6 +4018,21 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # local-model or cancel. On cancel: emit done + return.
                 nonlocal_message = message
                 nonlocal_user_content = user_content
+                # ── Decision-driven turn marker (v9.393.0) ──
+                # True when this turn's PII detection + decision contract ran:
+                # the client's pre-send scan completed (pii_scan_done — set
+                # even on a clean scan), the dialog shipped a decision set,
+                # or the session is in sticky-anonymise mode. Background
+                # calls inside this turn (Gremium fan-out/planner, translate,
+                # ask_llm, summariser, bg-task leaves) then NEVER re-scan —
+                # gdpr_pick_model_for_background applies the confirmed
+                # mapping (apply-only) or passes through. Without the marker
+                # (Telegram/TUI/API sends that skipped the pre-send scan)
+                # the legacy background safety net stays active.
+                engine.get_request_context().gdpr_turn_decided = bool(
+                    pii_scan_done
+                    or (pii_decisions or [])
+                    or session._gdpr_pending_action == "anonymise")
                 if session._gdpr_pending_action == "anonymise":
                     # Reuse the session's existing mapping when one exists —
                     # same session = same PII scope, so a value pseudonymised
@@ -8363,6 +8311,10 @@ class ChatHandlerMixin:
             # This turn's dialog decision set (sanitised above) — the worker's
             # anonymise branch overlays it on the persisted ledger.
             pii_decisions=_body_pii_decisions,
+            # v9.393.0: client marker "the pre-send PII scan ran" (set even on
+            # a clean scan) — the worker stamps gdpr_turn_decided so
+            # background calls inside the turn never re-detect.
+            pii_scan_done=bool(body.get("pii_scan_done")),
         )
 
         # Stream this turn's events to the originating connection. The worker is

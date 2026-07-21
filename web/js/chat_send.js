@@ -210,6 +210,12 @@ async function sendMessage() {
   // the ledger write below is awaited too, but on a FIRST send there is no
   // session_id yet, so the body is the only channel then.
   let piiDecisionsForSend = null;
+  // v9.393.0: marker "the pre-send PII gate ran for this turn" (set even when
+  // the scan found nothing). Shipped as body.pii_scan_done so the server
+  // stamps gdpr_turn_decided — background calls inside the turn (Gremium
+  // fan-out/planner, translate, …) then apply the decided mapping only and
+  // NEVER re-scan/mint undecided values (chat 6ba13da5).
+  let piiScanDone = false;
   // Tracks whether the unified PII+classification modal has already
   // resolved this turn. Used by the classification fallback gate below
   // to avoid a second modal when the user just chose in the unified one.
@@ -293,6 +299,9 @@ async function sendMessage() {
         // A file the server rejected structurally (too large / unsupported)
         // can't be safely sent — surface it and abort (now known post-scan).
         if (_blockingFileToast()) { renderFilePreviews(); _abortRestore(); return; }
+        // The pre-send gate ran (scan completed or failed open — a cancel
+        // returned above). Per-file coverage gaps stay visible on the chips.
+        piiScanDone = true;
       }
       // Attachments: read the per-finding records the server just produced
       // (findings_full now populated by the send-time scan above).
@@ -574,7 +583,7 @@ async function sendMessage() {
       return;
     }
 
-    await API.streamChat(chat.sessionId, text, buildStreamCallbacks(chat, isActive), chat.model, filesToSend, null, gdprAction, piiDecisionsForSend);
+    await API.streamChat(chat.sessionId, text, buildStreamCallbacks(chat, isActive), chat.model, filesToSend, null, gdprAction, piiDecisionsForSend, piiScanDone);
   } catch(e) {
     _onStreamCatch(e, chat, isActive, streamGen);
   }

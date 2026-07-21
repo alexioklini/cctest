@@ -626,5 +626,82 @@ class TestMrzFindingsFromParse(unittest.TestCase):
             self.assertEqual(PII_RULE_CATEGORIES[rid], "personal")
 
 
+class TestBackgroundSeamDecisionDriven(_MappingTestBase):
+    """v9.393.0 (Chat 6ba13da5): `gdpr_pick_model_for_background` re-detektiert
+    NIE innerhalb eines entschiedenen Turns (ctx.gdpr_turn_decided) — es wendet
+    nur das bestätigte Mapping an. Der Frisch-Scan dieses Seams hatte
+    unentschiedene Entitäten ('Wiener Privatbank'/'Julius Baer') über den
+    Gremium-Planner ins Session-Mapping gemintet."""
+
+    def setUp(self):
+        super().setUp()
+        self._orig_scan = brain._pii_scan_text
+        self._scan_calls = []
+
+        def _spy(text, *a, **kw):
+            self._scan_calls.append(text)
+            return self._orig_scan(text, *a, **kw)
+
+        brain._pii_scan_text = _spy
+        # Das Klassifikations-Gate (ARL, orthogonal — Detection-only, mintet
+        # nie) läuft absichtlich AUCH in entschiedenen Turns; hier stillgelegt,
+        # damit der Scan-Spy nur den GDPR-Pfad misst.
+        self._orig_cls = brain.classification_pick_model_for_background
+        brain.classification_pick_model_for_background = (
+            lambda model, samples, purpose="": (model, samples, None))
+
+    def tearDown(self):
+        brain._pii_scan_text = self._orig_scan
+        brain.classification_pick_model_for_background = self._orig_cls
+        super().tearDown()
+
+    def test_decided_turn_with_mapping_applies_without_scanning(self):
+        m = self._new()
+        ps.seed_from_decision(m, "name", "Robert Löw")
+        with request_context():
+            ctx = get_request_context()
+            ctx.gdpr_turn_decided = True
+            ctx._gdpr_mapping_id = m.mapping_id
+            model, out, deanon = brain.gdpr_pick_model_for_background(
+                "some-cloud-model",
+                "Bericht über Robert Löw und die neue Julius Baer Filiale.",
+                purpose="moa_planner")
+        self.assertEqual(self._scan_calls, [],
+                         "decided turn must NOT re-detect")
+        fake = m.forward["Robert Löw"]
+        self.assertIn(fake, out)
+        self.assertNotIn("Robert Löw", out)
+        # Unentschiedener Name bleibt UNANGETASTET — kein Mint.
+        self.assertIn("Julius Baer", out)
+        self.assertNotIn("Julius Baer", m.forward)
+        # Deanon-Roundtrip + M1-Kontrakt (mapping_id am Closure).
+        self.assertIn("Robert Löw", deanon(out))
+        self.assertEqual(deanon.mapping_id, m.mapping_id)
+
+    def test_decided_turn_without_mapping_passes_clean(self):
+        text = "Kontakt: Robert Löw, robert.loew@example.com, +43 1 536 16-0"
+        with request_context():
+            ctx = get_request_context()
+            ctx.gdpr_turn_decided = True
+            model, out, deanon = brain.gdpr_pick_model_for_background(
+                "some-cloud-model", text, purpose="moa_reference")
+        self.assertEqual(self._scan_calls, [],
+                         "decided turn must NOT re-detect")
+        self.assertEqual(out, text)
+        self.assertEqual(model, "some-cloud-model")
+        self.assertEqual(deanon.mapping_id, "")
+
+    def test_undecided_context_still_scans(self):
+        # Ohne Marker (Scheduler/Daemons/Telegram) bleibt das bestehende
+        # Background-Sicherheitsnetz aktiv: der Seam scannt.
+        with request_context():
+            brain.gdpr_pick_model_for_background(
+                "some-cloud-model",
+                "Mail an test@example.com senden.",
+                purpose="kg_extract")
+        self.assertGreater(len(self._scan_calls), 0,
+                           "undecided context must keep scanning")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
