@@ -553,6 +553,59 @@ class TestFilenameDeanon(unittest.TestCase):
                                                ps.new_mapping()),
             "logan_edwards.html")
 
+    def test_rename_registers_filename_pair_for_reply_deanon(self):
+        # Chat 8de1eeb8: after the rename, the model's reply still says
+        # '…Logan_Kerry_Edwards.html' — underscore-joined name parts that the
+        # word-bounded alpha reverse keys can NEVER restore ('_' is \w, so
+        # 'Logan' has no boundary inside 'Logan_Kerry'). The rename block
+        # records the whole filename as a derived fake→real pair, which makes
+        # deanonymize_text (streamer + final reply pass) restore it — label
+        # AND markdown link target.
+        self.m.record("Bonnie Marie Stark", "Logan Kerry Edwards", "name")
+        fake_fn = "Pruefung_Logan_Kerry_Edwards.html"
+        real_fn = self.hc._gdpr_deanonymise_filename(fake_fn, self.m)
+        self.assertEqual(real_fn, "Pruefung_Bonnie_Marie_Stark.html")
+        # What the rename block does after a committed rename:
+        self.m.record(real_fn, fake_fn, "name", count=False)
+        reply = f"Der Report liegt bereit: 📁 [{fake_fn}]({fake_fn})"
+        out, n = ps.deanonymize_text(reply, mapping=self.m)
+        self.assertEqual(out, f"Der Report liegt bereit: 📁 [{real_fn}]({real_fn})")
+        self.assertGreaterEqual(n, 2)
+        # Derived bookkeeping: no new FINDING was counted, entry is derived.
+        self.assertIn(real_fn, self.m.derived)
+        # The reply-side highlight (find_restored_spans) marks the filename.
+        spans = ps.find_restored_spans(out, mapping=self.m)
+        self.assertTrue(any(s["original"] == real_fn for s in spans))
+
+    def test_after_write_cb_records_filename_pair(self):
+        # Drive the REAL callback end-to-end on a written .html: content is
+        # reversed, the file renamed real (alias at fake path), and the
+        # mapping now carries the fake→real FILENAME pair for the reply pass.
+        import shutil
+        self.m.record("Bonnie Marie Stark", "Logan Kerry Edwards", "name")
+        d = tempfile.mkdtemp()
+        try:
+            fake = os.path.join(d, "report_logan_edwards.html")
+            with open(fake, "w") as f:
+                f.write("<html>Logan Kerry Edwards</html>")
+            cb = self.hc.make_gdpr_after_file_write_cb(
+                mapping_id=self.m.mapping_id, session_id="test-fn-pair",
+                agent_id="main")
+            cb(fake, "write", "main")
+            real = os.path.join(d, "report_bonnie_stark.html")
+            self.assertTrue(os.path.isfile(real))
+            with open(real) as f:
+                self.assertIn("Bonnie Marie Stark", f.read())
+            self.assertEqual(
+                self.m.reverse.get("report_logan_edwards.html"),
+                "report_bonnie_stark.html")
+            self.assertEqual(
+                self.m.forward.get("report_bonnie_stark.html"),
+                "report_logan_edwards.html")
+            self.assertIn("report_bonnie_stark.html", self.m.derived)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_rename_alias_roundtrip_hardlink(self):
         # The alias fallback chain (hardlink first — the Windows-safe path)
         # leaves the fake path pointing at the renamed real file.

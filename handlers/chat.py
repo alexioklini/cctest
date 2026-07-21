@@ -2619,6 +2619,26 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                         if alias_ok:
                             result["file"] = new_name
                             result["renamed_from"] = fname
+                            # Chat 8de1eeb8: the model keeps REFERRING to the
+                            # fake filename in its reply text ("📁 Kunden…_
+                            # Sage_Emerson_Adams.html"), but deanonymize_text
+                            # can't restore it — the name parts are joined
+                            # with underscores, and purely-alphabetic reverse
+                            # keys replace word-bounded ('_' is a \w char, so
+                            # 'Sage' never matches inside 'Sage_Emerson').
+                            # Register the WHOLE filename as a derived
+                            # fake→real pair: the streamer re-runs
+                            # deanonymize_text per delta with this mapping, so
+                            # the reply shows the real filename live AND in
+                            # the persisted text; the forward entry re-fakes
+                            # the real name if the user types it next turn;
+                            # turn-end save_mapping persists the pair.
+                            # count=False → derived bookkeeping, not a finding.
+                            try:
+                                mapping.record(new_name, fname, "name",
+                                               count=False)
+                            except Exception:
+                                pass
                             fname = new_name
                             path = new_path
                             try:

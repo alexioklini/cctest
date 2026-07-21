@@ -270,6 +270,9 @@ function toggleGdprDetails() {
   refreshGdprDetailsButton();
 
   renderMessages();
+  // Tool cards in the Aktivitäts-Panel carry the same PII marks — repaint it
+  // too (its 2s poll only rebuilds on structural change, not on this toggle).
+  if (typeof renderBackgroundTasksPane === 'function') renderBackgroundTasksPane();
   showToast(state.showGdprDetails
     ? 'Datenschutz-Details sichtbar'
     : 'Datenschutz-Details ausgeblendet');

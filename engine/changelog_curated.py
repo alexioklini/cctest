@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.391.0",
+        "date": "2026-07-21",
+        "title": "Datenschutz-Markierungen auch bei Werkzeug-Aufrufen",
+        "body": "Sind die Datenschutz-Details eingeschaltet, werden geschützte "
+                "Werte jetzt auch in den Werkzeug-Aufrufen farblich markiert — "
+                "in der Chat-Zeile ebenso wie im Aktivitäts-Panel (Titel, "
+                "Parameter und Ergebnis). Der Tooltip zeigt wie gewohnt, "
+                "welcher Wert durch welches Pseudonym ersetzt wurde. Zudem "
+                "nennt die Antwort erzeugte Dateien jetzt immer beim echten "
+                "Namen: verwies der Text bisher noch auf den Pseudonym-"
+                "Dateinamen, obwohl die Datei bereits umbenannt war, zeigen "
+                "Text und Link nun direkt auf die echte Datei.",
+        "audience": "user",
+        "versions": ["9.391.0"],
+    },
+    {
         "version": "9.390.0",
         "date": "2026-07-21",
         "title": "Anonymisierung: Dateinamen und Ergebnisse konsistent",

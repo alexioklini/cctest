@@ -1771,6 +1771,25 @@ function _gdprMarksVisible() {
   return true;
 }
 
+// GDPR marks for TOOL surfaces (chat tool-line, Aktivitäts-Panel cards, args
+// tables): escape `text` and wrap every ledger-decided PII value in the same
+// amber/red <mark> + tooltip the user query and the assistant reply get.
+// Drop-in replacement for esc(text) — returns plain esc(text) when the
+// Datenschutz-Details toggle is off, the model is local, or nothing matches.
+// Ledger-driven (chat._piiDecisions), so it marks exactly the values whose
+// anonymisation the user decided on — displayed tool args/results are the
+// de-anonymised REAL values (deanon_args/deanon_result), which is what the
+// ledger keys on.
+function gdprHighlightPlain(text) {
+  const s = text == null ? '' : String(text);
+  if (!s) return '';
+  const chat = state.activeChat;
+  if (!_gdprMarksVisible() || !chat || !chat._piiDecisions) return esc(s);
+  const spans = buildGdprCleartextSpans(s, chat._piiDecisions);
+  if (!spans.length) return esc(s);
+  return renderPlainTextWithGdprHighlights(s, spans);
+}
+
 // Build GDPR highlight spans from the chat's decision ledger (see body).
 function buildGdprCleartextSpans(text, decisions) {
   // Build highlight spans for EVERY decided PII value that occurs in `text`,

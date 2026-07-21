@@ -211,7 +211,9 @@ function renderToolArgsTable(args) {
   for (const [k, v] of Object.entries(args)) {
     const val = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
     const displayVal = val.length > 300 ? val.substring(0, 300) + '...' : val;
-    html += `<tr><td class="tool-args-key">${esc(k)}</td><td class="tool-args-val"><pre>${esc(displayVal)}</pre></td></tr>`;
+    // GDPR: arg values get the same amber/red PII marks (+ tooltip) as the
+    // user query — the displayed args are the de-anonymised real values.
+    html += `<tr><td class="tool-args-key">${esc(k)}</td><td class="tool-args-val"><pre>${gdprHighlightPlain(displayVal)}</pre></td></tr>`;
   }
   html += '</table>';
   return html;
@@ -375,6 +377,12 @@ function detectToolResultLang(toolName, args, body) {
   return null; // plaintext
 }
 function highlightToolResult(text, lang) {
+  // Syntax highlighting + GDPR marks: the mark pass runs on the FINISHED
+  // (escaped/hljs) HTML so both call sites (initial render + expand) and both
+  // surfaces (inline chat, Aktivitäts-Panel) get the marks from one seam.
+  return _gdprMarkHighlightedHtml(_highlightToolResultRaw(text, lang));
+}
+function _highlightToolResultRaw(text, lang) {
   if (!text || typeof hljs === 'undefined') return esc(text || '');
   if (!lang || lang === 'plaintext') return esc(text);
   try {
@@ -388,6 +396,36 @@ function highlightToolResult(text, lang) {
     }
   } catch(e) {}
   return esc(text);
+}
+// Inject GDPR <mark>s (amber restored / red cleartext, with tooltip) into
+// ALREADY-escaped or hljs-highlighted HTML. Only text segments BETWEEN tags
+// are touched, so hljs markup/attributes can never be shattered; a value that
+// hljs split across two spans simply isn't marked (view nicety — same
+// degradation rule as the markdown protected ranges). Each segment is
+// unescaped, span-matched against the chat's decision ledger, and re-rendered
+// through the shared plain-text highlighter (which re-escapes 1:1).
+function _gdprMarkHighlightedHtml(html) {
+  if (!html) return html;
+  if (typeof _gdprMarksVisible !== 'function' || !_gdprMarksVisible()) return html;
+  const chat = state.activeChat;
+  const decisions = chat && chat._piiDecisions;
+  if (!decisions || !Object.keys(decisions).length) return html;
+  const parts = html.split(/(<[^>]*>)/);
+  let changed = false;
+  for (let i = 0; i < parts.length; i++) {
+    const seg = parts[i];
+    if (!seg || seg.charCodeAt(0) === 60 /* '<' */) continue;
+    // Exact inverse of esc() (+ hljs's ' entity); &amp; MUST be last.
+    const raw = seg
+      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&#039;/g, "'")
+      .replace(/&amp;/g, '&');
+    const spans = buildGdprCleartextSpans(raw, decisions);
+    if (!spans.length) continue;
+    parts[i] = renderPlainTextWithGdprHighlights(raw, spans);
+    changed = true;
+  }
+  return changed ? parts.join('') : html;
 }
 // Detects the server's _apply_tool_result_budget preview stub — when a >50KB
 // result was spilled to disk and replaced with a preview after a turn/reload.
@@ -752,7 +790,7 @@ function renderToolCall(msg, idx) {
     <div class="tool-line${hasResult ? ' has-result' : ''}" title="Im Aktivitäts-Panel öffnen"
          onclick="openActivityEntry('${esc(actId)}')">
       ${icon}
-      <span class="tool-name">${desc}</span>
+      <span class="tool-name">${gdprHighlightPlain(desc)}</span>
       ${workerBadge}${parallelBadge}${backendBadge}${deanonBadge}
       ${timing}
       ${progressHtml}

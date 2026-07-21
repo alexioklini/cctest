@@ -727,7 +727,13 @@ function _toolEntryCard(e) {
   // (not the model's pseudonyms). Mirrors renderToolCall in chat_tools.js.
   const _deanon = (e.deanon_args && typeof e.deanon_args === 'object') ? e.deanon_args : null;
   const _args = _deanon || e.args || {};
-  const desc = (typeof toolDescribe === 'function') ? toolDescribe(e.type, _args) : escapeHtml(e.type);
+  // GDPR: the card title gets the same amber/red PII marks (+ tooltip "X wurde
+  // mit Y anonymisiert") as the chat query/reply — see gdprHighlightPlain.
+  const desc = (typeof toolDescribe === 'function')
+    ? ((typeof gdprHighlightPlain === 'function')
+        ? gdprHighlightPlain(toolDescribe(e.type, _args))
+        : toolDescribe(e.type, _args))
+    : escapeHtml(e.type);
   const st = e.status === 'running' ? _BG_STATUS.running : _BG_STATUS.done;
   const deanonBadge = _deanon
     ? '<span class="tool-badge-deanon" title="Lokal ausgeführt auf echten Daten — das Modell sah nur Pseudonyme. Anonymisierung schützt nur den Weg zum Modell.">🔓 deanonymisiert</span>'

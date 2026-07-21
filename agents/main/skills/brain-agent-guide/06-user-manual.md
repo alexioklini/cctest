@@ -2628,6 +2628,13 @@ und dem grünen Abzeichen „🔓 deanonymisiert", damit sichtbar ist, dass das
 Werkzeug auf echten Daten lief. Das Ergebnis wird wieder pseudonymisiert, bevor
 es zum Sprachmodell zurückgeht. Bei Werkzeugen, die Daten **nach außen** geben
 (Websuche, E-Mail-Versand), gilt das nicht — die schützt Brain gesondert.
+Sind zusätzlich die **Datenschutz-Details** eingeschaltet (Schalter im
+Eingabefeld), werden geschützte Werte seit v9.391.0 **auch in den
+Werkzeug-Aufrufen farblich markiert** — in der Aufruf-Zeile im Chat ebenso wie
+im Aktivitäts-Panel (Titel, Parameter-Tabelle und Ergebnis-Box), genau wie in
+Ihrer Frage und der Antwort. Der Tooltip an jeder Markierung nennt, welcher
+Wert durch welches Pseudonym ersetzt wurde (bzw. dass ein Wert bewusst im
+Klartext blieb).
 
 **F: Ein erzeugter Report hat einen Pseudonym-Namen im Dateinamen — obwohl der
 Inhalt echt ist. Kann man das beheben?**
@@ -2638,7 +2645,11 @@ zurückübersetzt ist. Brain benennt die Datei danach auf den **echten** Namen u
 (`..._bonnie_stark.html`), sodass Name und Inhalt zusammenpassen — in der
 Artefakt-Liste und beim Download sehen Sie den echten Namen. Damit spätere
 Zugriffe des Modells nicht ins Leere laufen, bleibt der alte (Pseudonym-)Pfad
-als Verweis bestehen; die Funktion bricht also nie.
+als Verweis bestehen; die Funktion bricht also nie. Seit v9.391.0 nennt auch
+der **Antworttext** die Datei beim echten Namen: verwies die Antwort bisher
+noch auf den Pseudonym-Dateinamen („📁 `..._logan_edwards.html`"), obwohl die
+Datei längst umbenannt war, zeigen Text und Link jetzt direkt auf die echte
+Datei.
 
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
