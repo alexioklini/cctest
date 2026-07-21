@@ -663,13 +663,25 @@ cluster) is classifier-gated. When the flag is OFF, or the model is
 warmup-protected, `_auto_tool_groups` is left `None` (no classifier cost, static
 deferral stands). No-signal → static deferral stands (fail-open).
 
-**Cache-priced models freeze routing to turn 1.** A model with an explicit
-non-zero `cost_cache_read` (per-model config) is "cache-priced" —
-`brain.model_is_cache_priced(model)` is the single trigger. The point: such a
-provider (e.g. Mistral direct, Kilo) serves a byte-identical prompt prefix from
-its own cache at ~0.1×, so the prefix must stay stable across turns. Two effects:
-(1) `model_should_optimize_tools` returns **False** for a cache-priced model (never
-reshape its tool set per turn — same KV-prefix-stability reason as full-mode warmup).
+**Cache-priced models freeze routing to turn 1.** Whether a model is
+"cache-priced" is `brain.model_is_cache_priced(model)`, a **THREE-STATE** read of
+the per-model `cost_cache_read` field (v9.386.2 — aligned with the cost display,
+which always defaulted unset→0.1×): **unset** = DEFAULT (cloud ⇒ ON, local ⇒
+OFF — a warm-pool local model keeps its own KV, no provider cache to protect);
+**explicit 0** = OFF (operator opt-out, no freeze); **>0** = ON at that rate.
+Locality comes from `is_model_local` (provider `is_local`). So "leave it blank"
+now means ON for a cloud model (the common case), and only an explicit 0 turns
+it off — the GUI's Aus / Standard / Eigener-Tarif dropdown. The point: such a
+provider (e.g. Mistral direct, Kilo, or any cloud model by default) serves a
+byte-identical prompt prefix from its own cache at ~0.1×, so the prefix must stay
+stable across turns. Two effects:
+(1) Tool reshaping is gated by **`brain.model_tool_reshape_allowed(model)`** — the
+single combined predicate = `model_should_optimize_tools(model)` OR (cache-priced
+AND not `model_maintains_warm_prefix`). It lets a cache-priced model be classified
+(so its tool set grows monotonically) but a **warmup-protected** model still bails
+(its warm KV prefix must not be reshaped — the collision the cloud-default change
+introduced, since a warmup cloud model is now cache-priced by default).
+`model_should_optimize_tools` itself is now warmup-only (no cache-priced branch).
 (2) Once an Auto session routes to a cache-priced model, `handlers/chat.py` records
 `session._cache_freeze_model` and on every later Auto turn **reuses that model**
 (never re-routes) — the spinner shows `frozen: true`. The freeze sticks for the

@@ -343,7 +343,24 @@ async function _genTab_models(C) {
               <div style="border-left:1px solid var(--border-100);margin:0 -2px"></div>
               ${mdlInput('mdl-cost-input','Kosten ein ($/M)',cfg.cost_input,{step:'0.01',min:0,ph:'0'})}
               ${mdlInput('mdl-cost-output','Kosten aus ($/M)',cfg.cost_output,{step:'0.01',min:0,ph:'0'})}
-              ${mdlInput('mdl-cost-cache-read','Kosten cached ($/M)',cfg.cost_cache_read,{step:'0.001',min:0,ph:'auto (0,1× ein)'})}
+              ${(()=>{
+                // Prompt-Caching: DREI Zustände auf EINEM Feld (cost_cache_read).
+                //   unset/leer → Default (Cloud: an @ 0,1× ein · Lokal: aus)
+                //   0          → explizit Aus (kein Cache-Freeze/-Gating)
+                //   >0         → expliziter Tarif (an)
+                // Der Modus-Select steuert die Sichtbarkeit des Wert-Felds; das
+                // Speichern (settings_general.js) liest beide zusammen.
+                const ccr = cfg.cost_cache_read;
+                const mode = ccr == null ? 'default' : (Number(ccr) > 0 ? 'value' : 'off');
+                const isLocal = !!cfg.is_local;
+                const defLabel = isLocal ? 'Standard (aus — lokal)' : 'Standard (an · 0,1× ein)';
+                const opts = [['default', defLabel], ['off', 'Aus (kein Caching)'], ['value', 'Eigener Tarif …']];
+                const selS = `padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200);width:100%`;
+                const valS = `width:100%;padding:2px 6px;border:1px solid var(--border-100);border-radius:4px;font-size:11px;background:var(--bg-000);color:var(--text-200);margin-top:2px;display:${mode==='value'?'block':'none'}`;
+                const sel = `<select class="mdl-cache-mode" style="${selS}" onchange="this.parentElement.querySelector('.mdl-cost-cache-read').style.display=this.value==='value'?'block':'none'">${opts.map(([v,l])=>`<option value="${v}"${mode===v?' selected':''}>${l}</option>`).join('')}</select>`;
+                const val = `<input class="mdl-cost-cache-read" type="number" value="${(mode==='value'?ccr:'')??''}" step="0.001" min="0" placeholder="0,1× ein" style="${valS}">`;
+                return `<div><label style="font-size:10px;color:var(--text-400);display:block;margin-bottom:2px">Caching ($/M cached)</label>${sel}${val}</div>`;
+              })()}
               ${(()=>{
                 // Unit-billed services (OCR/TTS/STT) are priced PER MODEL, not by
                 // token. Show only the field matching the model's capability.

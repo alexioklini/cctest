@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.386.2",
+        "date": "2026-07-21",
+        "title": "Caching-Einstellung pro Modell klarer",
+        "body": "Die Modell-Einstellung zum Prompt-Caching hat jetzt drei "
+                "eindeutige Optionen: „Standard“ (bei Cloud-Modellen an, bei "
+                "lokalen aus), „Aus“ und „Eigener Tarif“. Bisher war ein leeres "
+                "Feld mehrdeutig — es zeigte einen Kostensatz an, wurde intern "
+                "aber als „kein Caching“ behandelt. Neu genügt es, das Feld für "
+                "Cloud-Modelle leer zu lassen, damit Caching aktiv ist; nur eine "
+                "explizite Null schaltet es ab.",
+        "audience": "admin",
+        "versions": ["9.386.2"],
+    },
+    {
         "version": "9.386.1",
         "date": "2026-07-21",
         "title": "Datenschutz-Ansicht im Chat verbessert",

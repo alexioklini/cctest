@@ -374,12 +374,22 @@ async function saveModelsConfig() {
       if (ci !== undefined) mc[mid].cost_input = ci; else delete mc[mid].cost_input;
       const co = readNum(row, 'mdl-cost-output');
       if (co !== undefined) mc[mid].cost_output = co; else delete mc[mid].cost_output;
-      // Cached-input rate. Also the switch that marks a model "cache-priced":
-      // a non-zero value freezes Auto model+tool selection to turn 1 so the
-      // provider prompt cache hits (brain.model_is_cache_priced). Unset =
-      // auto 0.1× of cost_input for billing, and NOT cache-priced (no freeze).
-      const ccr = readNum(row, 'mdl-cost-cache-read');
-      if (ccr !== undefined) mc[mid].cost_cache_read = ccr; else delete mc[mid].cost_cache_read;
+      // Prompt caching — THREE states via the mode select (v9.386.2). This is
+      // the switch that marks a model "cache-priced" (freezes Auto model+tool
+      // selection so the provider prompt cache hits — brain.model_is_cache_priced):
+      //   'default' → delete the field (UNSET): on for cloud, off for local.
+      //   'off'     → cost_cache_read = 0 (explicit opt-out, no freeze).
+      //   'value'   → the entered per-1M rate (>0 = on; a 0/blank falls back to
+      //               'off' so the field can't be an ambiguous on-with-0-price).
+      const cacheMode = (row.querySelector('.mdl-cache-mode') || {}).value || 'default';
+      if (cacheMode === 'default') {
+        delete mc[mid].cost_cache_read;
+      } else if (cacheMode === 'off') {
+        mc[mid].cost_cache_read = 0;
+      } else { // 'value'
+        const ccr = readNum(row, 'mdl-cost-cache-read');
+        mc[mid].cost_cache_read = (ccr !== undefined && ccr > 0) ? ccr : 0;
+      }
       // Per-model UNIT rates for the char/page/minute-billed services (OCR/TTS/
       // STT). Only the field matching the model's capability is rendered, so an
       // absent input just means "not applicable to this model" → delete the key.

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.386.1"
+VERSION = "9.386.2"
 VERSION_DATE = "2026-07-21"
 CHANGELOG = [
+    ("9.386.2", "2026-07-21", "fix(Caching-Semantik: cost_cache_read jetzt DREI Zustände statt zwei — GUI-Anzeige und interne Freeze-/Gating-Logik waren widersprüchlich; Nutzer: 'wenn nichts ausgefüllt ist steht 0,1×, das trifft die Kosten aber nicht die interne Logik'). PROBLEM: die Kosten-Anzeige defaultete unset→0,1× Eingabe (Cache AN), aber model_is_cache_priced behandelte unset als 'nicht cache-priced' (kein Freeze/Gating) — dasselbe Feld bedeutete zwei Gegenteile. NEU (Nutzer-gewählt: EIN Feld, Sentinel-Semantik; Lokal-Erkennung via is_model_local): UNSET = DEFAULT (Cloud ⇒ AN @ 0,1× ein · Lokal ⇒ AUS — ein Warmpool-Lokalmodell hält eigenes KV, kein Provider-Cache zu schützen), EXPLIZITE 0 = AUS (Operator-Opt-out, kein Prefix-Freeze), >0 = AN mit Tarif. 'Leer lassen' heißt jetzt AN für Cloud (der Normalfall), nur eine explizite 0 schaltet ab. model_is_cache_priced liest unset→(not is_model_local); Kosten-Pfad (_get_cost_rate) unverändert (defaultete schon 0,1×). GUI (settings_general_tabs.js): das eine Zahlenfeld → Modus-Select Aus/Standard/Eigener-Tarif + bedingtes Wert-Feld; Speichern (settings_general.js) mappt Modus→Feld (default=löschen, off=0, value=Zahl). Cache-Badge-Tooltip (chat_render.js) nutzt jetzt die BERECHNETE Ersparnis (>0) als Wahrheit statt cost_cache_read>0 — ein Cloud-Modell ohne expliziten Tarif zeigt jetzt korrekt die 0,1×-Ersparnis. KOLLISION behoben: ein warmup-geschütztes CLOUD-Modell ist per neuem Default cache-priced=True, aber sein warmer KV-Prefix darf NICHT reshaped werden — das alte 'model_should_optimize_tools OR model_is_cache_priced' an 4 Stellen ließ cache-priced gewinnen. NEU model_tool_reshape_allowed(model) = should_optimize OR (cache-priced AND not model_maintains_warm_prefix), zentralisiert die 4 Duplikate; model_should_optimize_tools ist wieder rein warmup-only (die cache-priced-Zeile entfernt). VERHALTEN sonst unverändert: das effektive Gate war überall schon 'or cache_priced', nur die Warmup-Kollision ist neu korrekt. TESTS: NEU tests/test_cache_priced_semantics.py (14 — Drei-Zustands-Matrix Cloud/Lokal × unset/0/>0, Kollision warmup-full überstimmt cache-priced, minimal reshaped, unparseable→default); test_tool_optimize_gate 8/8 + test_websearch_escalation_gating + test_session_tool_group_memory + test_auto_route_ranking grün (101 gesamt). py_compile OK. Skill 05-internals aktualisiert. Server-Restart nötig."),
     ("9.386.1", "2026-07-21", "fix(GDPR-Chat-Anzeige — drei Nutzer-Reports aus Chat 0e103e99). (1) INLINE-BILDER verschwanden bei EINGESCHALTETEM Datenschutz-Highlight-Toggle (aus: Bild da). URSACHE: renderMarkdownWithGdprHighlights injiziert Sentinel-Zeichen um JEDES Vorkommen eines geschützten Werts im ROHEN Markdown — auch INNERHALB von ![alt](url)/[text](url)/nackten URLs; ein kurzer Span wie 'Lara' matcht in der Bild-URL '.../ee/Lara_Pulver_in_Fleming.jpg', die Sentinels landen in der src, marked URL-encodet sie → kaputte URL → Bild lädt nicht (Toggle aus läuft plain renderMarkdown → Bild da). FIX: neue Helferin _gdprMarkdownProtectedRanges(text) findet Link-/Bild-URL-Ziele + Bild-Alt-Text + nackte URLs; die Sentinel-Injektion überspringt Vorkommen darin (inProtected). Highlight ist reine View-Deko → Auslassen in MD-Syntax ist immer sicher; sichtbare Prosa-Vorkommen bleiben markiert. Verifiziert mit echtem marked@18 gegen den echten Reply: Bild-src + beide Links intakt, 11 Prosa-Highlights erhalten. (2) LABEL 'Name (spaCy NER, Deutsch)' → 'Name (Deutsch)' (+ name_gen/address/organisation analog) in PII_RULE_LABELS: 'spaCy NER' ist ein Implementierungsdetail, das kein Nutzer parst; erscheint im Anonymisierungs-Dialog + Verlauf. (3) REIHENFOLGE + MEHRERE BLÖCKE der Datenschutz-Aktivität: statt EINES an-die-erste-Row-gepinnten Sammelblocks (Nutzer: 'zeigt deanonymise vor anonymise, und nicht dort wo durchgeführt') werden konsekutive Privacy-Ops jetzt zu je EINEM Block an ihrer chronologischen Position gerendert (ein echter Tool-Call dazwischen beginnt den nächsten Block) — so erscheint 'anonymise → 🔍Suche → deanonymise' als ZWEI Blöcke in echter Reihenfolge. Block-eindeutiger Toggle-Key (turnNum-p<n>), Zähler pro Gruppe. RELOAD-Sortier-Fix (sessions.js): eine deanonymise-Row wirkt auf die FINALE Antwort, muss also NACH den Tools sortieren — ihre DB-id ist aber kleiner als die rekonstruierten Tool-Keys (assistant.id-1+frac), sodass sie auf Reload fälschlich VOR die Suche rutschte; Post-Pass gibt ihr _seq=assistant.id+0.5 (nach allen Tools des Turns, vor dem Content). anonymise/anonymise_read laufen vor den Tools und behalten ihre id-Sortierung. js_gate: net-globals 2097→2098 (nur _gdprMarkdownProtectedRanges), keine neuen no-undef. Server-Restart nötig (pii_ner.py-Labels)."),
     ("9.386.0", "2026-07-21", "fix+refactor(Web-Egress: 'Websuche erlaubt' funktioniert jetzt wirklich, ZWEI Modi statt vier — Chat faa124e1 + Nutzer-Modell 'suchen=Fake durch Original ersetzen, blocken=nichts raus'). SYMPTOM: anonymisierender Chat, web_egress='allow', 'suche Bilder von <Person>' → das Modell kannte nur den Fake 'Blake Young', der Egress-Gate REFUSTE Personen-Fakes in JEDEM Modus (M5-Invariante 'Fake-Suche trifft echte Fremde') → das Modell verweigerte bzw. halluzinierte tote Bild-URLs. ROOT CAUSE: der 'allow'-Modus liess Original-KLARWERTE durch (Recherche gewollt), aber ein VORHER pseudonymisierter Wert blieb ein Fake → schlechter gestellt als ein ungefakter, obwohl 'allow' den Egress generell freigibt. FIX A (der eigentliche Bug): im 'allow'-Modus wird ein bekannter Fake für REINE RETRIEVAL-Tools (WEB_SEARCH_TOOLS: web_fetch/exa/searxng/science/dev/image/news) ins ORIGINAL hin-übersetzt (translate_pairs, wie der M5-Org-Auto-Release) — NICHT der Fake geht raus, sondern der echte Wert, den 'allow' ohnehin zulässt; das Modell sieht das Original nie (Dispatch-Kopie der Args), Treffer kommen re-anonymisiert durch den L3b-Seam. email_send/email_reply/generate_image/MCP bleiben ausgenommen (Kontaktaufnahme MIT der Person / Abfluss an Dritte, kein Retrieval) — ihre Fakes UND Originale refusen auch unter 'allow'. NEBENBEFUND dabei behoben: der alte 'if orig_kinds and mode != \"allow\"'-Durchlass liess Original-Klarwerte pauschal für ALLE Egress-Tools durch → email_send mit echtem Empfänger ging unter 'allow' raus (test_gdpr_egress_gate war auf der Live-config 'allow' vorbestehend ROT); jetzt tool-abhängig (_allow_orig = mode=='allow' and tool in WEB_SEARCH_TOOLS). FIX B (sauberer Schnitt, Nutzer-Call 'toten Code raus'): die vier Modi (refuse/ask/block_group/allow) auf ZWEI reduziert (refuse=Blockieren, allow=Suchen). 'ask' (Consent-Dialog pro Wert, 9.338.0) hing am 9.348 ENTFERNTEN kyc-Preset und hatte keinen Aktivierungsweg mehr; 'block_group' war eine refuse-Variante. Entfernt: _web_consent_ask (~110 Zeilen), _web_release_hash, die Consent-Konstanten, released_sets/denied_sets/_consent_status/_want_consent/consent-Maschinerie im Gate, denied_kinds, die reason='denied'/'no_consent'-Zweige in _web_gate_refusal; _WEB_EGRESS_MODES=('refuse','allow'); Legacy 'ask'/'block_group' in der config.json normalisieren beim Laden auf 'refuse'. GUI (settings_general_tabs.js): Dropdown auf 'Suchen'/'Blockieren'. panels_gdpr.js: die ask-SCHREIB-Seite (Web-Freigabe/-Widerruf im Verlaufs-Modal, mkWebDec, release_web/deny_web-Persist) entfernt; die LESE-Seite (Status-Badges/Filter für historische Ledger-Zeilen) BEHALTEN, damit alte Chats lesbar bleiben. get_session_web_releases (db.py) bleibt als Reader für Altdaten. Auch der tote _gdpr_web_block-Zweig in handlers/chat.py (versteckte die Web-Gruppe bei web_egress='block_group') entfernt — der Modus existiert nicht mehr. TESTS: test_web_egress_gate (ask-Consent-Klassen entfernt, allow-Fake→Original-Fälle + Legacy-Fallback-Test), test_web_auto_release (_MODES=(refuse,allow); Personen-Fake refust nur unter refuse, wird unter allow übersetzt), test_gdpr_egress_gate (beide Mail-Tests grün — einer war vorbestehend rot), test_gdpr_mapping_every_turn + test_dispatch_symmetry (Modus explizit auf 'refuse' fixiert statt Live-config-abhängig). NEU tests/test_gdpr_web_matrix.py (11 — die 6 End-to-End-Fälle PII-Entscheidung × Web-Egress × lokal/cloud: LLM-Sicht via Mapping-Rückschreiben, Suchmaschinen-Sicht via echtem Egress-Gate, Rück-Anon via L3b-Seam; anonymise/FP/send/local/lokal). GDPR-Familie (265+ Tests) grün. py_compile + brain-Import OK; node --check beider JS-Dateien grün. Skill 01-api/05-internals/06-user-manual aktualisiert. Server-Restart nötig. KURATIERTER Eintrag (user)."),
     ("9.385.0", "2026-07-20", "fix(Tool-Gating — Toolset wächst jetzt in JEDER Session monoton, nie schrumpfen; Chat aa6cab7d + Nutzer-Vorschlag 'in weiteren Turns nur Tools hinzugeben statt wegnehmen'). SYMPTOM: Turn 2 'suche im internet nach Bildern zu Lisa Pulver' → Klassifikator [web], image_search lief, echte Treffer; Korrektur-Turn 3 'ich meinte Lara pulver' → Klassifikator [context,memory] (Follow-up-Kontext nicht erkannt), FRISCHER Trim warf web weg → deepseek-v4-flash konnte nicht suchen und halluzinierte 5 tote Bild-URLs (Getty 400, IMDb 404, Guardian 401 mit sichtbar synthetischem Hash, Shutterstock 422) — die Chat-View rendert Markdown-Bilder korrekt (marked-Default, kein Sanitizer/CSP), es gab schlicht nichts zu laden. ROOT CAUSE: die 9.277.2-Monotonie-Union (_cache_freeze_groups: pro Turn klassifizierte Gruppen in die eingefrorene Menge unionen, nie schrumpfen) galt NUR für cache-priced Modelle (cost_cache_read gesetzt); deepseek-v4-flash ist nicht cache-priced → jeder Turn klassifizierte von Null, kept_groups sprang [context,memory]→[web]→[context,memory]. FIX (handlers/chat.py, Choke-Point-Helper): NEU _remember_tool_groups(session, model, groups) — pro-Session/pro-MODELL-Merkliste (weiter im _cache_freeze_tool_groups-Dict, Name bleibt wegen des Cache-Honor-Branches), uniont die klassifizierten Gruppen jedes Turns hinein und gibt die Merge-Liste zurück; leere Liste [] bleibt am ERSTEN Auftritt ein echter Trim-to-Floor, kann später aber nichts mehr löschen. BEIDE Branches umgestellt: (1) Concrete-Model-Branch — _seen_this_model ohne _cp-Gate (jedes gemerkte Modell pre-seedet seine akkumulierte Menge, steht auch bei Klassifikator-Fehler = fail-open auf bekannt-gute Union statt frischem Lean-Trim), _run_classifier zum uniformen Ausdruck kollabiert (_opt_on and (should_optimize or _cp) — für gemerkte Modelle identisch, da ein Eintrag das Gate schon passiert hat); (2) Auto-Fresh-Route — Union+Store für ALLE gerouteten Modelle (Re-Route zurück auf ein Session-Modell trimmt nicht mehr frisch), der redundante Cache-Freeze-Group-Store entfällt (None-Store == absent == volle Menge). Frozen-Auto-Honor-Branch UNVERÄNDERT (macht die Union seit 9.277.2 selbst, mit eigenem Nie-untrimmed-Shrinken-Guard). KV/CACHE-EFFEKT: strikt besser — vorher flippte der Prefix bei Nicht-Cache-Modellen mit jeder Klassifikations-Änderung, jetzt ändert er sich nur auf Wachstums-Turns. Warmup-geschützte Modelle unberührt (Klassifikator läuft dort nie → nie ein Eintrag). Grenze (dokumentiert): Merkliste ist in-memory pro Session-Objekt — Server-Restart/Reload beginnt die Akkumulation neu (wie der bestehende Cache-Freeze). Tests: NEU tests/test_session_tool_group_memory.py (7 — aa6cab7d-Sequenz endet mit web, No-Growth stabil, []-Semantik, Per-Modell-Keying, absent=None=voll); test_websearch_escalation_gating 17/17 + test_tool_optimize_gate 8/8 grün. py_compile OK. Skill 05-internals aktualisiert. Server-Restart nötig. KURATIERTER Eintrag (user)."),
@@ -14241,13 +14242,16 @@ def model_should_optimize_tools(model: str) -> bool:
         return False  # unknown -> conservative: don't reshape
     try:
         cfg = (_models_config or {}).get(model) or {}
-        # Cache-priced models get prompt-cache reuse from a byte-stable prefix
-        # (provider prefix cache, e.g. Mistral cache_read at 0.1×). Reshaping the
-        # tool set per turn changes the prefix → kills the cache hit. So a
-        # cache-priced model is NEVER tool-optimized, exactly like a warm-full
-        # local model — same KV-prefix-stability argument, different cache layer.
-        if model_is_cache_priced(model):
-            return False
+        # NB: cache-priced handling is NOT here. This predicate answers only
+        # "does this model keep a WARM KV PREFIX that per-turn reshaping would
+        # invalidate" (warmup config). The cache-priced axis is orthogonal and
+        # is applied by EVERY caller as `model_should_optimize_tools(m) OR
+        # model_is_cache_priced(m)` — a cache-priced model IS classified (so its
+        # tool set can grow monotonically, v9.385.0), just never SHRUNK. Folding
+        # cache-priced in here (old `if model_is_cache_priced: return False`)
+        # became wrong once "cloud default = cache-priced" (v9.386.2): it would
+        # exclude every plain cloud model from tool-opt. The `or` in the callers
+        # already covers the cache case, so this stays warmup-only.
         if cfg.get("warmup"):
             # Only a FULL-mode prime builds a tool-bearing KV prefix to protect.
             # A minimal-mode prime is weights-only → safe to reshape per turn.
@@ -14259,25 +14263,54 @@ def model_should_optimize_tools(model: str) -> bool:
         return False
 
 
-def model_is_cache_priced(model: str) -> bool:
-    """True iff this model has prompt-cache pricing configured — the SINGLE
-    trigger for the turn-1-freeze routing behavior.
+def model_tool_reshape_allowed(model: str) -> bool:
+    """The EFFECTIVE per-turn tool-gating gate — the single combined predicate
+    every caller should use (was an inline `should_optimize OR cache_priced` at
+    4 sites, which broke once cloud-default became cache-priced in v9.386.2).
 
-    A model is cache-priced iff its config carries an EXPLICIT non-zero
-    `cost_cache_read` (per 1M tokens). This is read straight from config, NOT via
-    the 0.1×-input billing default in `_get_cost_rate` — the default exists so
-    cost math is always sane, but the FREEZE decision must be an explicit operator
-    opt-in per model. Set `cost_cache_read` on a model ⇒ that model (a) bills cache
-    hits at that rate, (b) freezes Auto model+tool selection to turn 1 so its
-    prefix stays byte-stable and the provider cache actually hits. Leave it 0/unset
-    ⇒ current behavior (re-classify every Auto turn, no cache assumption)."""
+    A turn's tool set may be reshaped when EITHER:
+      - `model_should_optimize_tools` (no warm KV prefix to protect: cloud /
+        warmup-disabled local / minimal-mode warmup), OR
+      - the model is cache-priced AND does NOT maintain a warm prefix. The
+        cache branch lets a cache-priced model be classified (so its tool set
+        grows monotonically, v9.385.0) — BUT a warmup-protected model (now
+        automatically cache-priced when cloud-default) must still bail, or its
+        static KV prefix would be reshaped. `model_maintains_warm_prefix` is the
+        guard the old bare `or model_is_cache_priced` lacked.
+    """
+    if model_should_optimize_tools(model):
+        return True
+    return model_is_cache_priced(model) and not model_maintains_warm_prefix(model)
+
+
+def model_is_cache_priced(model: str) -> bool:
+    """True iff this model participates in prompt caching — the SINGLE trigger
+    for the turn-1-freeze routing + monotone tool-gating behavior.
+
+    THREE-STATE semantics on the per-model `cost_cache_read` field (v9.386.2 —
+    aligns the FREEZE decision with the cost display, which always showed 0.1×):
+      - UNSET / None  → DEFAULT: cloud model ⇒ caching ON (providers cache by
+        default, billed at 0.1× input); local model ⇒ OFF (a warm-pool local
+        model keeps its own KV, no provider cache to protect).
+      - 0 (explicit)  → OFF: operator opted this model OUT of the cache
+        assumption (re-classify every Auto turn, no prefix-stability freeze).
+      - > 0           → ON with an explicit per-1M rate.
+    So "leave it blank" now means ON for cloud (the common case), and only an
+    explicit 0 turns it off — matching the GUI's Aus/Default/Wert dropdown.
+    Cost math is unchanged (`_get_cost_rate` already defaults unset→0.1× input);
+    this only changes what UNSET means for the ROUTING/GATING decision."""
     if not model or model == "auto":
         return False
     try:
         ccr = ((_models_config or {}).get(model) or {}).get("cost_cache_read")
-        return ccr is not None and float(ccr) > 0
+        if ccr is None:
+            # DEFAULT: on for cloud, off for local (provider-based locality is
+            # the single source of truth — is_model_local).
+            return not is_model_local(model)
+        return float(ccr) > 0
     except (TypeError, ValueError):
-        return False
+        # Unparseable value → treat as default (same as unset).
+        return not is_model_local(model)
 
 
 def resolve_model_plan_id(model: str) -> str:
@@ -14429,13 +14462,10 @@ def classifier_tool_deferral(model: str, tool_groups: list[str] | None) -> tuple
     """
     if tool_groups is None:
         return [], []
-    # Cache-priced models are reshaped too — but the CALLER only invokes this on
-    # TURN 1 for them (turn 1 is cold; the trimmed set is then frozen for turns 2+
-    # so the prefix stays byte-stable and the provider cache hits). So a
-    # cache-priced model is allowed here even though model_should_optimize_tools
-    # returns False for it (that predicate is the every-turn gate; turn-1-only is
-    # decided caller-side). Warmup-protected non-cache models still bail out.
-    if not (model_should_optimize_tools(model) or model_is_cache_priced(model)):
+    # Cache-priced models are reshaped too (their tool set grows monotonically),
+    # but a warmup-protected model still bails — model_tool_reshape_allowed is the
+    # combined gate (see its docstring). The CALLER decides turn-1-only freezing.
+    if not model_tool_reshape_allowed(model):
         return [], []  # preserve KV prefix — never reshape a warmup-protected model
     keep = set(tool_groups) | _TOOL_GATING_NEVER_STRIP
     _floor = tool_gating_floor(model)
@@ -14476,7 +14506,7 @@ def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dic
     if tool_groups is None:
         return {"applied": False, "reason": "no classification signal (keyword mode miss or fail-open)",
                 "kept_groups": [], "excluded_groups": [], "needed_groups": needed}
-    if not (model_should_optimize_tools(model) or model_is_cache_priced(model)):
+    if not model_tool_reshape_allowed(model):
         why = ("local model, warmup enabled" if is_model_local(model) else "warmup enabled")
         return {"applied": False,
                 "reason": f"model keeps a warm KV prefix ({why}) — deferral left static to preserve it",

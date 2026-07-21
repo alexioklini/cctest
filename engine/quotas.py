@@ -179,10 +179,10 @@ def _get_cost_rate(model: str) -> dict[str, float]:
     because cached tokens bill at a steep discount (Mistral/Anthropic ≈ 0.1×). The
     per-model `cost_cache_read` field wins when set/non-zero; otherwise cache_read
     defaults to 0.1× the input rate (the common provider discount) so a freshly
-    auto-discovered model still prices cache hits sensibly. A `cost_cache_read` of
-    0 (or unset) ALSO means "this model is not cache-priced" for the routing-freeze
-    decision (see brain.model_is_cache_priced) — there the explicit config field is
-    read directly, NOT this derived default."""
+    auto-discovered model still prices cache hits sensibly. COST is separate from
+    the ROUTING-FREEZE decision (brain.model_is_cache_priced): there, UNSET means
+    "default" (on for cloud, off for local) and an EXPLICIT 0 means off — see that
+    function. This cost path always resolves a sane cache_read rate regardless."""
     import brain as _brain
     cfg = _brain._models_config.get(model, {})
     ci = cfg.get("cost_input")

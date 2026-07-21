@@ -7398,8 +7398,7 @@ class ChatHandlerMixin:
             # it. So allow the trim when the model is normally optimizable OR it's a
             # cache-priced model (turn-1 trim + freeze).
             _cp_auto = engine.model_is_cache_priced(auto_model)
-            _opt_ok = _opt_on and (
-                engine.model_should_optimize_tools(auto_model) or _cp_auto)
+            _opt_ok = _opt_on and engine.model_tool_reshape_allowed(auto_model)
             with session.lock:
                 _tg_auto = (
                     auto_analysis.get("tool_groups")
@@ -7460,8 +7459,8 @@ class ChatHandlerMixin:
             # cache hits. model_should_optimize_tools returns False for cache-priced
             # models (never reshape mid-session), so we handle their turn-1 case
             # explicitly here. On turns 2+ we reuse the frozen groups + skip the
-            # classifier LLM call entirely.
-            _cp = engine.model_is_cache_priced(session.model)
+            # classifier LLM call entirely. (The cache-priced check now lives
+            # inside model_tool_reshape_allowed — no local _cp needed here.)
             _opt_on = engine.agent_optimize_tools_enabled(agent_cfg)
             # Tool-group memory is PER-MODEL, keyed on the model id — NOT on
             # session turn 0. "First turn on THIS model" is what matters (the
@@ -7485,13 +7484,12 @@ class ChatHandlerMixin:
                 # inspector icon) alive.
                 with session.lock:
                     session._auto_tool_groups = _freeze.get(session.model)
-            # Uniform gate (identical for seen/unseen): cache-priced models pass
-            # via `_cp` (model_should_optimize_tools returns False for them by
-            # design — turn-1 is cold, later turns only grow), everything else
-            # via model_should_optimize_tools. A model with a memory entry
-            # necessarily passed this gate when the entry was created.
-            _run_classifier = _opt_on and (
-                engine.model_should_optimize_tools(session.model) or _cp)
+            # Uniform gate (identical for seen/unseen): model_tool_reshape_allowed
+            # is the combined predicate — cache-priced models pass (their set grows
+            # monotonically) EXCEPT warmup-protected ones, everything else via the
+            # warm-prefix rule. A model with a memory entry necessarily passed it
+            # when the entry was created.
+            _run_classifier = _opt_on and engine.model_tool_reshape_allowed(session.model)
             if session.model and _run_classifier:
                 try:
                     _ta = engine.resolve_task_analysis(message)
