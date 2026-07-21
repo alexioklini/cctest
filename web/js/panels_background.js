@@ -512,6 +512,10 @@ function _syncToolEntries() {
       id: m.tool_use_id || ('tc-' + (m._seq || i)),
       type: m.name || 'tool',
       args: m.args || {},
+      // GDPR: the real (de-anonymised) args the local tool ran on, so the
+      // activity card shows the same real values + 🔓 badge as the inline chat
+      // line (not the model's pseudonyms). See _toolEntryCard.
+      deanon_args: m.deanon_args || null,
       status: result != null ? 'done' : 'running',
       result: result,
       ts: m._ts || 0,
@@ -545,6 +549,7 @@ function _toolEntriesFromMetadata() {
         id: t.tool_use_id || ('tm-' + seq),
         type: t.name || 'tool',
         args: t.args || {},
+        deanon_args: t.deanon_args || null,   // GDPR: real args (see _toolEntryCard)
         status: 'done',
         result: typeof t.result === 'string' ? t.result : (t.result != null ? JSON.stringify(t.result) : null),
         ts: (m.metadata && m.metadata.ts) || seq,  // metadata has no per-tool ts; keep turn order
@@ -715,15 +720,23 @@ function _collectActivityEntries() {
 // chat_tools.js's buildToolResultBlock (full view + copy + download) so that
 // logic stays single-sourced — it just lives in the panel now.
 function _toolEntryCard(e) {
-  const desc = (typeof toolDescribe === 'function') ? toolDescribe(e.type, e.args) : escapeHtml(e.type);
+  // GDPR: prefer the de-anonymised (real) args the local tool actually ran on,
+  // so the activity card shows the same real values as the inline chat line
+  // (not the model's pseudonyms). Mirrors renderToolCall in chat_tools.js.
+  const _deanon = (e.deanon_args && typeof e.deanon_args === 'object') ? e.deanon_args : null;
+  const _args = _deanon || e.args || {};
+  const desc = (typeof toolDescribe === 'function') ? toolDescribe(e.type, _args) : escapeHtml(e.type);
   const st = e.status === 'running' ? _BG_STATUS.running : _BG_STATUS.done;
+  const deanonBadge = _deanon
+    ? '<span class="tool-badge-deanon" title="Lokal ausgeführt auf echten Daten — das Modell sah nur Pseudonyme. Anonymisierung schützt nur den Weg zum Modell.">🔓 deanonymisiert</span>'
+    : '';
   const argsTable = (typeof renderToolArgsTable === 'function')
     ? renderToolArgsTable(e.type === 'python_exec'
-        ? Object.fromEntries(Object.entries(e.args || {}).filter(([k]) => k !== 'code'))
-        : (e.args || {}))
+        ? Object.fromEntries(Object.entries(_args).filter(([k]) => k !== 'code'))
+        : _args)
     : '';
   const resultBlock = (e.result != null && typeof buildToolResultBlock === 'function')
-    ? buildToolResultBlock(e.type, e.args || {}, (typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2)), e.id)
+    ? buildToolResultBlock(e.type, _args, (typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2)), e.id)
     : '';
   const hasBody = !!(argsTable || resultBlock);
   // Cancel (✕) for a still-running bg-task tool call. Only when the entry opts
@@ -739,6 +752,7 @@ function _toolEntryCard(e) {
       <summary class="bgtask-summary">
         <span class="bgtask-dot ${st.cls}"></span>
         <span class="bgtask-title">${desc}</span>
+        ${deanonBadge}
         ${cancelBtn}
         ${hasBody ? '<svg class="bggroup-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>' : ''}
       </summary>
