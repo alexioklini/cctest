@@ -20,6 +20,14 @@ let _bgTranscriptCtrl = null;
 // skip a redundant innerHTML rebuild when nothing structural changed (preserves
 // expanded tool cards on running tasks; live updates are targeted instead).
 let _bgPaneSig = null;
+// The session `_bgPaneSig` was last computed for. The signature only covers
+// server BACKGROUND tasks — NOT the session's inline tool calls — so on a
+// SESSION SWITCH the sig can be unchanged (e.g. old + new session both have no
+// bg-tasks) even though the whole activity list changed. Without this the pane
+// would keep the previous session's cards (or the static empty default) and
+// never re-render the new session's tool-call activity. Tracking the sid forces
+// a rebuild whenever the session changes, regardless of the bg-task signature.
+let _bgPaneSid = null;
 
 // Live tool-activity subscriptions for RUNNING tasks. The sidecar already emits
 // tool_dispatch_start/done + text deltas on its per-turn event log, and the
@@ -142,7 +150,11 @@ async function loadBackgroundTasks() {
   // card switches from live data to the persisted (expandable-result) tool_events.
   if (state.rightPanelOpen && state.rightPanelTab === 'bgtasks') {
     const sig = _bgTasksFor(sid).map(t => t.id + ':' + t.status).join('|');
-    if (sig !== _bgPaneSig) { _bgPaneSig = sig; renderBackgroundTasksPane(); }
+    // Force a render on session change (sig alone misses inline-tool-call-only
+    // sessions whose bg-task sig is identical to the previous session's).
+    if (sig !== _bgPaneSig || sid !== _bgPaneSid) {
+      _bgPaneSig = sig; _bgPaneSid = sid; renderBackgroundTasksPane();
+    }
   }
 
   // Live delivery (poll-reattach): if a task just went running -> terminal, the
@@ -780,6 +792,7 @@ function renderBackgroundTasksPane() {
   // 2s tick only rebuilds on a real structural change.
   const _sid = state.activeChat?.sessionId;
   _bgPaneSig = (_sid ? _bgTasksFor(_sid) : []).map(t => t.id + ':' + t.status).join('|');
+  _bgPaneSid = _sid || null;   // keep the session marker in sync with the render
   const entries = _collectActivityEntries();
   if (!entries.length) {
     host.innerHTML = '<div class="bgtasks-empty" id="bgtasks-empty">Keine Aktivität in diesem Chat</div>';

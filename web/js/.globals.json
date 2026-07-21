@@ -72,6 +72,7 @@
     "_bgLiveStop": "writable",
     "_bgLiveStopAll": "writable",
     "_bgLiveTextInner": "writable",
+    "_bgPaneSid": "writable",
     "_bgPaneSig": "writable",
     "_bgPollHandle": "writable",
     "_bgSortNewestFirst": "writable",

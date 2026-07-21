@@ -326,7 +326,12 @@ async function openSession(sessionId, agentId) {
             // duration_ms is the real server-measured execution time (the _ts
             // values here are synthetic sort keys, NOT wall-clock, so the
             // renderer must use duration_ms on reload — see renderToolCall).
-            expanded.push({ role: 'tool_call', name: t.name, args: t.args || {}, tool_round: t.tool_round, tool_use_id: t.tool_use_id || null, duration_ms: t.duration_ms, _seq, _ts: _seq });
+            // deanon_args: the de-anonymised (real) args the local tool actually
+            // ran on — carried through so the reloaded chat shows real values +
+            // the "deanonymisiert" badge, exactly like the live turn (else a
+            // reloaded tool call falls back to the model's fakes). See
+            // renderToolCall in chat_tools.js.
+            expanded.push({ role: 'tool_call', name: t.name, args: t.args || {}, deanon_args: t.deanon_args || null, tool_round: t.tool_round, tool_use_id: t.tool_use_id || null, duration_ms: t.duration_ms, _seq, _ts: _seq });
             if (t.result !== undefined) {
               const _rSeq = _toolKeyBase + _toolFrac + 0.0005;
               expanded.push({ role: 'tool_result', name: t.name, result: t.result, tool_round: t.tool_round, tool_use_id: t.tool_use_id || null, _seq: _rSeq, _ts: _rSeq });
