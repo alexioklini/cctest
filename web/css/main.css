@@ -2801,10 +2801,13 @@ textarea { resize: none; }
 /* GDPR — restored (de-anonymised) value highlight.
    The <mark> wraps each span where the server reversed a pseudonymisation;
    tooltip carries category + original/fake mapping. Yellow tint sits over
-   both light and dark themes via color-mix against the bg token. */
-.msg-content mark.gdpr-restored,
-.msg-user mark.gdpr-restored,
-.turn-group-collapsed-hint mark.gdpr-restored {
+   both light and dark themes via color-mix against the bg token.
+   UNSCOPED on purpose (9.391.1): the marks render on tool surfaces too
+   (tool-line, args table, result <pre>, Aktivitäts-Panel cards) — the old
+   .msg-content/.msg-user scoping let the browser's default mark style
+   (glaring yellow, black text) through everywhere else. The classes are
+   feature-unique, so a bare selector is safe. */
+mark.gdpr-restored {
   background: color-mix(in srgb, var(--warning, #d97706) 28%, transparent);
   color: inherit;
   padding: 0.05em 0.2em;
@@ -2812,17 +2815,13 @@ textarea { resize: none; }
   cursor: help;
   border-bottom: 1px dotted color-mix(in srgb, var(--warning, #d97706) 65%, transparent);
 }
-.msg-content mark.gdpr-restored:hover,
-.msg-user mark.gdpr-restored:hover,
-.turn-group-collapsed-hint mark.gdpr-restored:hover {
+mark.gdpr-restored:hover {
   background: color-mix(in srgb, var(--warning, #d97706) 42%, transparent);
 }
 /* Detected-but-NOT-anonymised PII (accepted in clear / false positive). Red
    tint to signal the value left the system unprotected — distinct from the
    amber anonymised mark. */
-.msg-content mark.gdpr-cleartext,
-.msg-user mark.gdpr-cleartext,
-.turn-group-collapsed-hint mark.gdpr-cleartext {
+mark.gdpr-cleartext {
   background: color-mix(in srgb, var(--error, #dc2626) 22%, transparent);
   color: inherit;
   padding: 0.05em 0.2em;
@@ -2830,9 +2829,7 @@ textarea { resize: none; }
   cursor: help;
   border-bottom: 1px dotted color-mix(in srgb, var(--error, #dc2626) 60%, transparent);
 }
-.msg-content mark.gdpr-cleartext:hover,
-.msg-user mark.gdpr-cleartext:hover,
-.turn-group-collapsed-hint mark.gdpr-cleartext:hover {
+mark.gdpr-cleartext:hover {
   background: color-mix(in srgb, var(--error, #dc2626) 36%, transparent);
 }
 
