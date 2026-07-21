@@ -188,13 +188,16 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
                            && !localActive;
 
     const isBlock = scan.worstAction === 'block' || clsHardVeto || clsForcesLocal;
-    // "Trotzdem senden" — cloud is allowed:
-    //   - no hard veto, AND
-    //   - PII gate doesn't block (or model is already local), AND
-    //   - classification doesn't demand local-only.
-    const canSend = !clsHardVeto
-                    && (scan.worstAction !== 'block' || localActive)
-                    && !clsForcesLocal;
+    // "Trotzdem senden" — the button is always OFFERED unless cloud is
+    // categorically forbidden (strict hard veto / classification force-local):
+    // the subtitle explicitly promises the option ("oder bewusst trotzdem
+    // senden"), so hiding it contradicts the header. But on a high-band PII
+    // BLOCK to a cloud model it is shown DISABLED with an explanatory tooltip,
+    // so conscious send stays visible without letting highly-sensitive data
+    // leave by a single click.
+    const canSend = !clsHardVeto && !clsForcesLocal;
+    // Disabled (but visible) when the PII gate blocks on a non-local model.
+    const sendBlocked = scan.worstAction === 'block' && !localActive;
     // "Anonymisieren & senden" — auto-anon-deanon. Only meaningful if
     // there's PII to strip; a classification veto still kills it (we
     // can't anonymise a document's classification away).
@@ -309,10 +312,12 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
         /* On the wide modal, tile source-cards into a responsive grid so a chat
            with many sources (history + several files) stays compact. Falls back
            to one column under ~620px. The cards' own margin-top is neutralised
-           by the grid gap. */
+           by the grid gap. auto-FIT (not auto-fill) so a SINGLE source card —
+           the common "just Nachrichtentext" case — stretches to the full modal
+           width instead of leaving empty phantom columns to its right. */
         .pii-units {
           display:grid; gap:8px;
-          grid-template-columns:repeat(auto-fill, minmax(420px, 1fr));
+          grid-template-columns:repeat(auto-fit, minmax(420px, 1fr));
           align-items:start;
         }
         .pii-units .pii-source-card { margin-top:0; }
@@ -624,7 +629,11 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     // The four canonical verdicts are: continue / local / anonymise / cancel.
     // The strict hard veto reduces this to {cancel} only.
     const sendBtn = canSend
-      ? '<button class="pii-btn pii-btn-warn" id="pii-send-btn">Trotzdem senden</button>'
+      ? '<button class="pii-btn pii-btn-warn" id="pii-send-btn"' +
+          (sendBlocked
+            ? ' disabled title="Deaktiviert weil hochsensible Informationen erkannt wurden — bitte anonymisieren, ein lokales Modell verwenden, oder die Treffer als falsch markieren."'
+            : '') +
+          '>Trotzdem senden</button>'
       : '';
     const localBtn = canLocal
       ? '<button class="pii-btn pii-btn-secondary" id="pii-local-btn">Lokales Modell verwenden</button>'
@@ -698,10 +707,33 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
     const onKey = (e) => { if (e.key === 'Escape') cleanup('cancel'); };
     document.addEventListener('keydown', onKey);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) cleanup('cancel'); });
+    // "Trotzdem senden" starts disabled when a high-band PII block reaches a
+    // cloud model (sendBlocked). But if the user marks EVERY block-level finding
+    // as a false positive, nothing highly-sensitive would actually be sent in
+    // clear text — so re-enable the button dynamically. Re-run after every FP
+    // toggle (single + bulk). classification vetoes are out of scope here: they
+    // set canSend=false and the button isn't rendered at all.
+    const _sendBtn = document.getElementById('pii-send-btn');
+    const _reevalSend = () => {
+      if (!_sendBtn || !sendBlocked) return;  // only relevant while start-blocked
+      let liveBlock = false;
+      for (const sev of overlay.querySelectorAll('.pii-finding-sev.is-block')) {
+        const row = sev.closest('.pii-finding-row');
+        if (row && !row.classList.contains('pii-is-fp')) { liveBlock = true; break; }
+      }
+      _sendBtn.disabled = liveBlock;
+      if (liveBlock) {
+        _sendBtn.title = 'Deaktiviert weil hochsensible Informationen erkannt wurden — '
+          + 'bitte anonymisieren, ein lokales Modell verwenden, oder die Treffer als falsch markieren.';
+      } else {
+        _sendBtn.removeAttribute('title');
+      }
+    };
     // FP checkbox: strike through the row so the user sees what they excluded.
     for (const cb of overlay.querySelectorAll('.pii-fp-check')) {
       cb.addEventListener('change', (e) => {
         e.target.closest('.pii-finding-row')?.classList.toggle('pii-is-fp', e.target.checked);
+        _reevalSend();
       });
     }
     // "Verlauf" toggle on SEEN rows — same who/what/when trail as the history
@@ -757,6 +789,7 @@ function gdprActionModal(scan, chat, localActive, classifiedFiles) {
           cb.checked = e.target.checked;
           cb.closest('.pii-finding-row')?.classList.toggle('pii-is-fp', e.target.checked);
         }
+        _reevalSend();
       });
     }
     document.getElementById('pii-cancel-btn').onclick = () => cleanup('cancel');

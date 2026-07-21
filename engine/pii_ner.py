@@ -1035,7 +1035,7 @@ PII_RULE_LABELS: dict[str, str] = {
     "pl_pesel": "Polnische PESEL", "pt_nif": "Portugiesische NIF",
     "se_personnummer": "Schwedische Personnummer", "dk_cpr": "Dänische CPR",
     "no_fnr": "Norwegische Fødselsnummer", "ch_ahv": "Schweizer AHV",
-    "cz_rc": "Tschechische rodné číslo", "ro_cnp": "Rumänische CNP",
+    "cz_rc": "Tschechische Personenkennnummer", "ro_cnp": "Rumänische CNP",
     "hu_taj": "Ungarische TAJ", "gr_amka": "Griechische AMKA",
     "bg_egn": "Bulgarische EGN", "ie_pps": "Irische PPS",
     "br_cpf": "Brasilianische CPF", "br_cnpj": "Brasilianische CNPJ",

@@ -3259,8 +3259,8 @@
     "voxtral-mini-realtime-mellon-greek-2606-solutions"
   ],
   "gdpr_scanner": {
-    "enabled": true,
-    "server_log": true,
+    "enabled": false,
+    "server_log": false,
     "name_precision_gate": true,
     "block_unscannable_on_cloud": false,
     "confidence_lower": 0.5,

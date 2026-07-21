@@ -2881,10 +2881,13 @@ textarea { resize: none; }
 .tool-line .tool-timing { font-family: var(--font-mono); font-size: 11px; color: var(--text-400); flex: 0 0 auto; }
 .tool-line .tool-badge-worker,
 .tool-line .tool-badge-parallel,
-.tool-line .tool-badge-backend { font-size: 9px; font-weight: 600; color: #fff; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.5px; flex: 0 0 auto; }
+.tool-line .tool-badge-backend,
+.tool-line .tool-badge-deanon { font-size: 9px; font-weight: 600; color: #fff; padding: 1px 5px; border-radius: 3px; letter-spacing: 0.5px; flex: 0 0 auto; }
 .tool-line .tool-badge-worker { background: #0891b2; }
 .tool-line .tool-badge-parallel { background: #7c3aed; }
 .tool-line .tool-badge-backend { background: #475569; }
+/* GDPR: local tool ran on de-anonymised real data (model saw only fakes). */
+.tool-line .tool-badge-deanon { background: #047857; cursor: help; }
 .tool-line-preview { color: var(--text-400); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; flex: 1 1 auto; min-width: 0; }
 /* Live tool progress (report_tool_progress) — phase label + optional % bar,

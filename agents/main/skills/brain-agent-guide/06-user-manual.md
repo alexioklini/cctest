@@ -2615,6 +2615,20 @@ Wenn dort steht, dass eine Websuche nicht ausgeführt wurde, heißt „kein
 Web-Treffer erwähnt" eben **nicht** „im Web gibt es nichts". Die Zeile nennt
 nur Anzahlen, nie die geschützten Werte selbst.
 
+**F: Ein Werkzeug-Aufruf (z. B. Suche im Wissensspeicher) zeigt einen echten
+Namen mit dem Hinweis „deanonymisiert" — ist das ein Leck?**
+A: Nein, das ist gewollt und sicher (seit v9.387.0). Werkzeuge laufen **lokal
+auf Ihrem Rechner** und arbeiten deshalb auf den **echten** Daten — anonymisiert
+wird nur der Weg zum Sprachmodell. In einem geschützten Chat sieht das
+Sprachmodell nur Pseudonyme (z. B. „Collins Kerry A"); bevor eine lokale Suche,
+ein Dateizugriff oder ein Skript läuft, setzt Brain die echten Werte wieder ein
+(„Stark Bonnie M"), sonst fände die Suche im Wissensspeicher nichts. Der Chat
+zeigt Ihnen jetzt diesen **tatsächlich ausgeführten** Aufruf mit echten Werten
+und dem grünen Abzeichen „🔓 deanonymisiert", damit sichtbar ist, dass das
+Werkzeug auf echten Daten lief. Das Ergebnis wird wieder pseudonymisiert, bevor
+es zum Sprachmodell zurückgeht. Bei Werkzeugen, die Daten **nach außen** geben
+(Websuche, E-Mail-Versand), gilt das nicht — die schützt Brain gesondert.
+
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
 `ask_user_for_file` / `ask_user` (geplante Aufgaben können nicht

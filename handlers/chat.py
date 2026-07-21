@@ -3203,6 +3203,12 @@ def build_chat_event_callback(session, live, sid):
         elif event_type == "tool_call":
             name = data.get("name", "")
             args = data.get("args", {})
+            # GDPR transparency: the DE-anonymised args the tool actually ran on
+            # (present only for locally-executing tools under an active mapping,
+            # and only when it differed from the model's fakes). Wire/history keep
+            # the fakes; this is display-only so the chat view can show what the
+            # local tool really executed. See engine/llm_loop.py tool_call emit.
+            deanon_args = data.get("deanon_args")
             tr = data.get("tool_round")
             tuid = data.get("tool_use_id", "")
             # Update existing entry if re-emitted with full args, else append.
@@ -3212,12 +3218,16 @@ def build_chat_event_callback(session, live, sid):
             # tool calls (model emits N tool_use blocks; parallel_tool_calls=True).
             if args and _partial_tools and _partial_tools[-1].get("name") == name and not _partial_tools[-1].get("args"):
                 _partial_tools[-1]["args"] = args
+                if deanon_args:
+                    _partial_tools[-1]["deanon_args"] = deanon_args
                 if tr is not None:
                     _partial_tools[-1]["tool_round"] = tr
                 if tuid and not _partial_tools[-1].get("tool_use_id"):
                     _partial_tools[-1]["tool_use_id"] = tuid
             else:
                 entry = {"name": name, "args": args}
+                if deanon_args:
+                    entry["deanon_args"] = deanon_args
                 if tr is not None:
                     entry["tool_round"] = tr
                 if tuid:

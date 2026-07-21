@@ -627,8 +627,16 @@ function renderToolCall(msg, idx) {
       if (next.role === 'assistant' || next.role === 'user') break;
     }
   }
-  const desc = toolDescribe(msg.name, msg.args);
-  const args = typeof msg.args === 'string' ? {} : (msg.args || {});
+  // GDPR transparency: locally-executing tools run on DE-anonymised (real)
+  // args — the server ships them as `deanon_args` (present only when the
+  // dispatch actually swapped pseudonyms for real values). Show what the tool
+  // REALLY ran on: the fake label ("Collins Kerry A …") is what the model saw,
+  // but the search hit real data ("Stark Bonnie M …"). The user is local and
+  // sees their own real data anyway; hiding it here just looked like a leak.
+  const deanonArgs = (msg.deanon_args && typeof msg.deanon_args === 'object')
+    ? msg.deanon_args : null;
+  const desc = toolDescribe(msg.name, deanonArgs || msg.args);
+  const args = deanonArgs || (typeof msg.args === 'string' ? {} : (msg.args || {}));
   const hasResult = resultMsg !== null;
   // Prefer the server-measured duration_ms (persisted per tool, survives
   // reload). Fall back to the live _ts delta for in-flight turns where the
@@ -704,6 +712,12 @@ function renderToolCall(msg, idx) {
     m => m.role === 'tool_call' && m.tool_round === toolRound
   ).length > 1;
   const parallelBadge = isParallel ? '<span class="tool-badge-parallel" title="Parallel ausgeführt">Parallel</span>' : '';
+  // GDPR: this local tool ran on real (de-anonymised) data — the model only
+  // ever saw the pseudonyms. Badge makes the split visible so a de-anonymised
+  // call no longer reads as "the tool got fakes".
+  const deanonBadge = deanonArgs
+    ? '<span class="tool-badge-deanon" title="Lokal ausgeführt auf echten Daten — das Modell sah nur Pseudonyme. Anonymisierung schützt nur den Weg zum Modell.">🔓 deanonymisiert</span>'
+    : '';
 
   // One flat line per tool call: icon + title + badges + timing. Click opens the
   // Aktivitäts-Panel (full args + result + copy/download live there).
@@ -734,7 +748,7 @@ function renderToolCall(msg, idx) {
          onclick="openActivityEntry('${esc(actId)}')">
       ${icon}
       <span class="tool-name">${desc}</span>
-      ${workerBadge}${parallelBadge}${backendBadge}
+      ${workerBadge}${parallelBadge}${backendBadge}${deanonBadge}
       ${timing}
       ${progressHtml}
       ${preview}

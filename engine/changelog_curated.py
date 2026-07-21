@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.387.0",
+        "date": "2026-07-21",
+        "title": "Datenschutz-Dialog & Werkzeug-Ansicht klarer",
+        "body": "Der Anonymisierungs-Dialog vor dem Senden ist verständlicher: "
+                "alle Bezeichnungen der erkannten Werte sind auf Deutsch, die "
+                "Trefferliste nutzt die volle Breite, und „Trotzdem senden“ ist "
+                "jetzt immer sichtbar — bei hochsensiblen Werten zunächst "
+                "gesperrt, und wieder freigegeben, sobald Sie diese Treffer als "
+                "Falschtreffer markiert haben. Außerdem zeigt der Chat bei "
+                "Werkzeug-Aufrufen (z. B. einer Suche im Wissensspeicher) jetzt "
+                "die tatsächlich verwendeten echten Werte mit dem Hinweis "
+                "„deanonymisiert“ an: Werkzeuge laufen lokal auf Ihren echten "
+                "Daten — anonymisiert wird nur der Weg zum Sprachmodell.",
+        "audience": "user",
+        "versions": ["9.387.0"],
+    },
+    {
         "version": "9.386.2",
         "date": "2026-07-21",
         "title": "Caching-Einstellung pro Modell klarer",

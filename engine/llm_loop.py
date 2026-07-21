@@ -1309,8 +1309,26 @@ def run_loop(
             if tu["name"] == "think" and isinstance(tu_args, dict) and len(tu_args) > 1:
                 tu_args = {"thought": tu_args.get("thought", "")}
                 tu["input"] = tu_args
+            # GDPR transparency: for locally-executing tools the dispatcher
+            # de-anonymises the args before running (L3a) — the tool works on
+            # REAL values while the wire/history keep the model's fakes. That
+            # split is correct but INVISIBLE in the chat view, which reads the
+            # fakes and so looks like "the tool ran on pseudonyms". Compute the
+            # SAME deanon here (idempotent — deanon of already-real values is a
+            # no-op) and, only when it actually changed something, ship it as a
+            # separate `deanon_args` field so the UI can show what really ran.
+            # `tu_args`/`tu["input"]` are UNTOUCHED (dispatch re-derives its own,
+            # web-gate-ordered copy — this is display-only).
+            _deanon_args = None
+            try:
+                _da = engine._gdpr_deanon_tool_args(tu["name"], tu_args)
+                if _da is not tu_args and _da != tu_args:
+                    _deanon_args = _da
+            except Exception:
+                _deanon_args = None
             emit("tool_call", {
                 "name": tu["name"], "args": tu_args,
+                "deanon_args": _deanon_args,
                 "tool_round": round_no, "tool_use_id": tu["id"],
             })
             _report_progress(round=round_no, phase="tool_call",
@@ -1364,6 +1382,7 @@ def run_loop(
                              active_tool=None)
             tool_events.append({
                 "round": round_no, "name": tu["name"], "args": tu_args,
+                "deanon_args": _deanon_args,
                 "elapsed_ms": int(elapsed * 1000),
                 "result_chars": len(result_str), "is_error": is_error,
                 "result_text": (result_str or "")[:100000],
