@@ -118,6 +118,13 @@ class RequestContext:
     # path keeps later read_document(fake_path) working. Str or None; read+cleared
     # by _after_file_write on the same thread.
     _gdpr_renamed_path: object = None
+    # GDPR display: the ACTUAL args a tool was dispatched with after the
+    # web-egress translate (allow mode: fake→original) AND the local args-deanon
+    # — i.e. the real values the tool ran on, for ALL tools (web + local). Set by
+    # `dispatch_tool` per call, read back by the loop to surface as `deanon_args`
+    # in the tool event so the UI shows real values uniformly (no local/web
+    # split). Str/dict or None; overwritten every dispatch, read once after.
+    _gdpr_dispatched_args: object = None
     # --- tracing / audit ---
     trace_id: object = None
     current_trace_span: object = None

@@ -243,41 +243,60 @@ class TestLedgerNoticeSplit(unittest.TestCase):
         self.assertIn("107625.jpg", out)
 
 
-class TestDisplayResultDeanonTruthfulness(_SymmetryTestBase):
-    """The DISPLAY-only result de-anon (activity-panel / chat result box) must be
-    per-tool truthful: LOCAL tools (args were de-anonymised → ran on real data)
-    show a real result; WEB/egress tools (args stay fake → the FAKE went to the
-    search engine) must NOT de-anon their result, else the display would both
-    contradict its own fake args and misrepresent what was sent to the internet.
+class TestDisplayResultDeanon(_SymmetryTestBase):
+    """The DISPLAY-only result de-anon (activity-panel / chat result box).
+
+    The function itself just reverses under an active mapping; the CALLER
+    (engine/llm_loop) decides WHEN by gating on whether the tool actually ran on
+    real values (`_deanon_args is not None`). So the check is: a mapping + a
+    changed result → de-anon; no mapping / no change / oversize → None.
     """
 
-    def _display(self, tool, result_str, mapping):
+    def _display(self, result_str, mapping):
         from engine.llm_loop import _gdpr_deanon_result_for_display
         with request_context():
             get_request_context()._gdpr_mapping_id = mapping.mapping_id
-            return _gdpr_deanon_result_for_display(tool, result_str)
+            return _gdpr_deanon_result_for_display(result_str)
 
-    def test_local_tool_result_is_deanonymised(self):
+    def test_result_is_deanonymised_under_mapping(self):
         m = self._mapping(("Bonnie Stark", "Logan Carter", "name"))
-        out = self._display("mempalace_query",
-                            '{"query":"Logan Carter","text":"Logan Carter"}', m)
+        out = self._display('{"query":"Logan Carter","text":"Logan Carter"}', m)
         self.assertEqual(out, '{"query":"Bonnie Stark","text":"Bonnie Stark"}')
-
-    def test_web_tools_result_never_deanonymised(self):
-        m = self._mapping(("Bonnie Stark", "Logan Carter", "name"))
-        fake = '{"query":"Logan Carter","content":"Logan Carter ..."}'
-        for tool in brain.WEB_SEARCH_TOOLS:
-            self.assertIsNone(
-                self._display(tool, fake, m),
-                f"{tool}: web-tool result was de-anonymised — the display would "
-                "show a real name the search engine never received.")
 
     def test_no_mapping_returns_none(self):
         from engine.llm_loop import _gdpr_deanon_result_for_display
         with request_context():
             get_request_context()._gdpr_mapping_id = ""
             self.assertIsNone(_gdpr_deanon_result_for_display(
-                "mempalace_query", '{"x":"Logan Carter"}'))
+                '{"x":"Logan Carter"}'))
+
+    def test_unchanged_result_returns_none(self):
+        m = self._mapping(("Bonnie Stark", "Logan Carter", "name"))
+        # Nothing to reverse → None (no redundant field shipped).
+        self.assertIsNone(self._display('{"x":"nothing to reverse here"}', m))
+
+
+class TestDispatchedArgsStash(_SymmetryTestBase):
+    """dispatch_tool records the REAL args a tool ran on (`_gdpr_dispatched_args`)
+    for uniform display — local tools always, web tools when allow-mode
+    translated their args to originals; in refuse mode a protected web query is
+    blocked (no dispatched args)."""
+
+    def test_local_tool_stashes_real_args(self):
+        import engine
+        from engine.llm_loop import dispatch_tool
+        m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
+        with request_context():
+            get_request_context()._gdpr_mapping_id = m.mapping_id
+            # mempalace_query is local + in the deanon whitelist.
+            try:
+                dispatch_tool("mempalace_query", {"query": "Erika Muster KYC"})
+            except Exception:
+                pass  # the tool impl may error in a bare test ctx — we only
+                      # care that the stash was set before the call ran.
+            disp = get_request_context()._gdpr_dispatched_args
+        self.assertIsNotNone(disp)
+        self.assertEqual(disp.get("query"), "Bonnie M Stark KYC")
 
 
 if __name__ == "__main__":

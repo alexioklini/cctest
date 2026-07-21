@@ -715,30 +715,19 @@ def _looks_like_error_dict(obj) -> bool:
     return isinstance(obj, dict) and "error" in obj and len(obj) <= 4
 
 
-def _gdpr_deanon_result_for_display(tool_name: str, result_str: str):
+def _gdpr_deanon_result_for_display(result_str: str):
     """Return a DE-anonymised (fake→real) copy of a tool result for UI display,
-    or None when it must not / can not de-anonymise.
+    or None when no mapping / nothing changed / too big.
 
-    ONLY for LOCAL tools whose ARGS were also de-anonymised
-    (`GDPR_ARGS_DEANON_TOOLS`): those genuinely ran on real data, so showing the
-    real result is truthful and consistent with the de-anonymised query header.
-
-    NEVER for web/egress tools (searxng/exa/web_fetch/…): their args are NOT
-    de-anonymised (the FAKE is what actually went to the search engine — L4), so
-    the args display the fake. De-anonymising their RESULT would then contradict
-    the args ("searched Logan → result shows Bonnie") AND misrepresent what was
-    sent to the internet. Their result stays fake, matching their fake args.
+    The CALLER decides WHEN this applies: it is invoked only for tools that
+    actually ran on real values (their args were de-anonymised — local tools
+    always, web tools when allow-mode translated their args to originals). So the
+    displayed result matches the displayed (real) args for EVERY tool uniformly.
 
     The result the model receives is re-anonymised (L3b) regardless; this copy is
     DISPLAY-ONLY. Never raises; caps input size. Model-facing text is untouched.
     """
     if not result_str or not isinstance(result_str, str):
-        return None
-    # Truthfulness gate: only tools whose args were de-anonymised (local tools).
-    try:
-        if tool_name not in engine.GDPR_ARGS_DEANON_TOOLS:
-            return None
-    except Exception:
         return None
     # Bound the work — a multi-hundred-KB tool result is not worth reversing for
     # a display convenience (the panel truncates anyway).
@@ -769,13 +758,17 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
     tool_result. (Ported from tool_mcp._dispatch; the context rebuild is gone —
     the worker thread already set the context via `with request_context()`.)
     """
+    # Snapshot the model's own (fake) args so we can tell, after the two
+    # transforms below, whether the tool actually ran on DIFFERENT (real) values
+    # — and if so record them for the UI (see the stash after args-deanon).
+    _model_args = args
+
     # Web-egress gate (L4): in anonymising sessions, refuse web-tool calls
     # whose args contain protected values / pseudonyms BEFORE anything leaves
     # the machine. Never raises; no-op for non-web tools and non-anonymising
-    # sessions (the overwhelming common case). In ask mode (Phase 2) the gate
-    # may block on a per-value consent dialog and returns args in which
-    # RELEASED fakes are translated back to originals — dispatch-only copy,
-    # the wire history keeps the model's fakes.
+    # sessions (the overwhelming common case). In allow mode the gate returns
+    # args in which RELEASED fakes are translated back to originals — the
+    # OUTGOING request carries the real value; the wire history keeps the fakes.
     guard, args = engine._gdpr_guard_web_args(name, args)
     if guard is not None:
         return guard, True
@@ -787,6 +780,20 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
     # would be silent egress — see brain.GDPR_ARGS_DEANON_TOOLS). Returns a
     # new structure; `args` (and thus the wire history) keeps the fakes.
     args = engine._gdpr_deanon_tool_args(name, args)
+
+    # UNIFORM DISPLAY: `args` is now what the tool REALLY runs on — after the
+    # web-egress fake→original translation (allow mode) AND the local args-deanon.
+    # Record it (only when it changed from the model's fakes) so the loop can show
+    # the SAME real values in the chat + activity panel for ALL tools, web and
+    # local alike (the user's rule: tools run on originals, display them
+    # consistently). Model/wire never see this — it's display-only.
+    try:
+        if args is not _model_args and args != _model_args:
+            engine.get_request_context()._gdpr_dispatched_args = args
+        else:
+            engine.get_request_context()._gdpr_dispatched_args = None
+    except Exception:
+        pass
 
     fn = engine.TOOL_DISPATCH.get(name)
     if fn is not None:
@@ -1415,15 +1422,36 @@ def run_loop(
                 t0 = time.time()
                 result_str, is_error = dispatch_tool(tu["name"], tu_args)
                 elapsed = time.time() - t0
+                # UNIFORM DISPLAY: dispatch_tool recorded the REAL args the tool
+                # ran on (web-gate translate + local deanon) — for ALL tools,
+                # web and local. Prefer it over the local-only `_deanon_args`
+                # computed before dispatch, and re-emit the tool_call so the
+                # live chat/activity view shows the real values for web tools
+                # too (the initial emit above only had the local deanon).
+                try:
+                    _disp = engine.get_request_context()._gdpr_dispatched_args
+                except Exception:
+                    _disp = None
+                if _disp is not None and _disp != tu_args:
+                    _deanon_args = _disp
+                    emit("tool_call", {
+                        "name": tu["name"], "args": tu_args,
+                        "deanon_args": _deanon_args,
+                        "tool_round": round_no, "tool_use_id": tu["id"],
+                    })
 
             # GDPR transparency (display-only): the result the model receives is
             # RE-anonymised (L3b) — it stays in fake-space so the model never
-            # sees real values. But that makes the activity-panel result box show
-            # pseudonyms right under the de-anonymised query header (confusing).
-            # Compute a de-anonymised COPY of the result (fake→real) so the UI can
-            # show what the tool really returned. The model's `result_str` (and
-            # thus the wire) is UNTOUCHED — this ships as a separate field.
-            _deanon_result = _gdpr_deanon_result_for_display(tu["name"], result_str)
+            # sees real values. But that makes the result box show pseudonyms
+            # right under the de-anonymised query header (confusing). Compute a
+            # de-anonymised COPY of the result (fake→real) so the UI shows what
+            # the tool really returned — for EVERY tool that actually ran on real
+            # values (i.e. whose args were de-anonymised, local OR a web tool
+            # translated to originals under allow mode: `_deanon_args` is set).
+            # The model's `result_str`/wire is UNTOUCHED — separate field.
+            _deanon_result = (
+                _gdpr_deanon_result_for_display(result_str)
+                if _deanon_args is not None else None)
             emit("tool_result", {
                 "name": tu["name"], "tool_use_id": tu["id"],
                 "result": result_str,

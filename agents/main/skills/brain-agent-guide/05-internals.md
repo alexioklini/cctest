@@ -1672,14 +1672,20 @@ preamble goes in first-user-message instead.
   of the result string (only under an active mapping, when it changed, ≤200KB);
   `buildToolResultBlock` renders it in the result box so it matches the
   de-anonymised query header (the user is local and owns the data).
-  **Truthfulness gate (9.390.1)**: `deanon_args`/`deanon_result` are computed
-  ONLY for tools in `GDPR_ARGS_DEANON_TOOLS` (local tools that genuinely ran on
-  real data). WEB/egress tools (searxng/exa/web_fetch) are NEVER de-anonymised
-  in the display — their args show the FAKE because the fake is what actually
-  went to the search engine (L4), so de-anonymising their result would both
-  contradict their fake args and misrepresent what left the machine. So a web
-  search correctly displays fake args + fake result + NO badge; a local search
-  displays real args + real result + badge. BOTH are
+  **Uniform display, gated by what the tool ACTUALLY ran on (9.390.2)**: the
+  rule is "tools run on originals; show the originals" — for EVERY tool, no
+  local/web split. `dispatch_tool` records the real dispatched args
+  (`_gdpr_dispatched_args`) AFTER both the web-egress translate (allow mode:
+  fake→original) and the local args-deanon; the loop reads it back for
+  `deanon_args` + a re-emitted `tool_call`, and computes `deanon_result` ONLY
+  when `deanon_args` is set (i.e. the tool genuinely ran on real values). So:
+  local tools → real args+result+badge (always); a WEB tool under
+  `web_egress='allow'` → its query was translated to the ORIGINAL for the
+  outgoing request, so it too shows real args+result+badge (identical to local
+  — the search really ran on the real name); a web tool under `web_egress='refuse'`
+  is BLOCKED (the protected value never leaves), so nothing ran on real → the
+  display keeps the fake, correctly. The truthfulness holds because the display
+  mirrors exactly what the tool executed with. BOTH are
   threaded through live (`chat_send.js`), reload (`sessions.js` + `metadata.tools[]`),
   and the two render paths (`renderToolCall` in `chat_tools.js`, `_toolEntryCard`
   in `panels_background.js`). The model NEVER sees real values — `args`/`result`
