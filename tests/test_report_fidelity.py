@@ -515,5 +515,75 @@ class TestUserMessageCountsAsSource(unittest.TestCase):
         self.assertEqual(val["verified"], 0)
 
 
+class TestFilenameDeanon(unittest.TestCase):
+    """Generated artifacts named from the model's fake identity get renamed to
+    the real name (content is already reversed); a same-dir ALIAS keeps the
+    model's remembered (fake) path readable so the round-trip never breaks."""
+
+    def setUp(self):
+        import handlers.chat as _hc
+        self.hc = _hc
+        self.m = ps.new_mapping()
+        # Name PARTS as they land in the reverse map (fake → real).
+        for real, fake in [
+            ("Bonnie Marie Stark", "Logan Kerry Edwards"),
+            ("Stark", "Edwards"), ("Bonnie", "Logan"), ("Marie", "Kerry"),
+        ]:
+            self.m.record(real, fake, "name")
+
+    def test_helper_substitutes_name_tokens(self):
+        got = self.hc._gdpr_deanonymise_filename(
+            "kundendaten_pruefung_logan_edwards.html", self.m)
+        self.assertEqual(got, "kundendaten_pruefung_bonnie_stark.html")
+
+    def test_helper_preserves_case_and_separators(self):
+        self.assertEqual(
+            self.hc._gdpr_deanonymise_filename("Report-Logan-Edwards.pdf", self.m),
+            "Report-Bonnie-Stark.pdf")
+
+    def test_helper_noop_without_name(self):
+        # A name-less filename is never touched (safe no-op).
+        self.assertEqual(
+            self.hc._gdpr_deanonymise_filename("kundendaten_pruefung.html", self.m),
+            "kundendaten_pruefung.html")
+
+    def test_helper_noop_empty_mapping(self):
+        self.assertEqual(
+            self.hc._gdpr_deanonymise_filename("logan_edwards.html",
+                                               ps.new_mapping()),
+            "logan_edwards.html")
+
+    def test_rename_alias_roundtrip_hardlink(self):
+        # The alias fallback chain (hardlink first — the Windows-safe path)
+        # leaves the fake path pointing at the renamed real file.
+        import shutil
+        d = tempfile.mkdtemp()
+        try:
+            fake = os.path.join(d, "report_logan_edwards.html")
+            with open(fake, "w") as f:
+                f.write("<html>Bonnie Marie Stark</html>")
+            new_name = self.hc._gdpr_deanonymise_filename(
+                os.path.basename(fake), self.m)
+            real = os.path.join(d, new_name)
+            os.rename(fake, real)
+            alias_ok = False
+            for mk in (lambda: os.link(real, fake),
+                       lambda: os.symlink(real, fake),
+                       lambda: shutil.copy2(real, fake)):
+                try:
+                    mk(); alias_ok = True; break
+                except Exception:
+                    continue
+            self.assertTrue(alias_ok)
+            self.assertEqual(new_name, "report_bonnie_stark.html")
+            self.assertTrue(os.path.isfile(real))
+            # The model's remembered fake path still resolves to the same bytes.
+            self.assertTrue(os.path.isfile(fake))
+            with open(fake) as a, open(real) as b:
+                self.assertEqual(a.read(), b.read())
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

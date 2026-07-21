@@ -715,6 +715,39 @@ def _looks_like_error_dict(obj) -> bool:
     return isinstance(obj, dict) and "error" in obj and len(obj) <= 4
 
 
+def _gdpr_deanon_result_for_display(result_str: str):
+    """Return a DE-anonymised (fake→real) copy of a tool result for UI display,
+    or None when no mapping is active / nothing changed / it's too big.
+
+    The result the model receives is re-anonymised (L3b) so the model stays in
+    fake-space; this copy is DISPLAY-ONLY (the activity-panel result box), so the
+    user — who is local and owns the data — sees real values consistent with the
+    de-anonymised query header. Never raises; caps the input so a huge result
+    doesn't stall the turn. Model-facing text is never affected.
+    """
+    if not result_str or not isinstance(result_str, str):
+        return None
+    # Bound the work — a multi-hundred-KB tool result is not worth reversing for
+    # a display convenience (the panel truncates anyway).
+    if len(result_str) > 200_000:
+        return None
+    try:
+        mapping_id = engine.get_request_context()._gdpr_mapping_id or ""
+    except Exception:
+        mapping_id = ""
+    if not mapping_id:
+        return None
+    try:
+        import pseudonymizer as _ps
+        mapping = _ps.get_mapping(mapping_id)
+        if mapping is None or not getattr(mapping, "reverse", None):
+            return None
+        out, n = _ps.deanonymize_text(result_str, mapping=mapping)
+        return out if n else None
+    except Exception:
+        return None
+
+
 def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
     """Run one tool by name on THIS thread (which holds the RequestContext).
 
@@ -1370,9 +1403,19 @@ def run_loop(
                 result_str, is_error = dispatch_tool(tu["name"], tu_args)
                 elapsed = time.time() - t0
 
+            # GDPR transparency (display-only): the result the model receives is
+            # RE-anonymised (L3b) — it stays in fake-space so the model never
+            # sees real values. But that makes the activity-panel result box show
+            # pseudonyms right under the de-anonymised query header (confusing).
+            # Compute a de-anonymised COPY of the result (fake→real) so the UI can
+            # show what the tool really returned. The model's `result_str` (and
+            # thus the wire) is UNTOUCHED — this ships as a separate field.
+            _deanon_result = _gdpr_deanon_result_for_display(result_str)
             emit("tool_result", {
                 "name": tu["name"], "tool_use_id": tu["id"],
-                "result": result_str, "tool_round": round_no,
+                "result": result_str,
+                "deanon_result": _deanon_result,
+                "tool_round": round_no,
                 "elapsed_ms": int(elapsed * 1000), "is_error": is_error,
             })
             _completed_tools.append({"name": tu["name"],
@@ -1383,6 +1426,7 @@ def run_loop(
             tool_events.append({
                 "round": round_no, "name": tu["name"], "args": tu_args,
                 "deanon_args": _deanon_args,
+                "deanon_result": _deanon_result,
                 "elapsed_ms": int(elapsed * 1000),
                 "result_chars": len(result_str), "is_error": is_error,
                 "result_text": (result_str or "")[:100000],

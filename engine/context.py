@@ -110,6 +110,14 @@ class RequestContext:
     # the chat worker into the assistant turn's metadata.gdpr_degradation so
     # the UI can explain WHY the output differs. Counts only, never values.
     _gdpr_degradation: object = None
+    # GDPR filename de-anonymisation: when the after-file-write callback renames
+    # a written artifact from a pseudonym-named path to the real-name path (the
+    # file CONTENT is already reversed; the model chose the filename from a fake
+    # it saw), it records the new absolute path here so _after_file_write
+    # registers the artifact under the real name. A symlink at the old (fake)
+    # path keeps later read_document(fake_path) working. Str or None; read+cleared
+    # by _after_file_write on the same thread.
+    _gdpr_renamed_path: object = None
     # --- tracing / audit ---
     trace_id: object = None
     current_trace_span: object = None

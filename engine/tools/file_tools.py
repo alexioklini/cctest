@@ -4043,6 +4043,13 @@ def _snapshot_dir(dir_path: str) -> dict[str, tuple[float, int]]:
                 if fn.startswith("."):
                     continue
                 fp = os.path.join(root, fn)
+                # Skip symlinks: the GDPR filename de-anon leaves a symlink at
+                # the old (fake) path pointing at the renamed real file, so the
+                # real file is the ONE artifact — following the link here would
+                # register the alias as a second, duplicate artifact on a later
+                # tool run.
+                if os.path.islink(fp):
+                    continue
                 try:
                     st = os.stat(fp)
                 except OSError:

@@ -793,6 +793,7 @@ function buildStreamCallbacks(chat, isActive) {
         // d.references is pre-extracted server-side; attach to the message so
         // extractReferencesFromToolResult reads from it directly (no re-parsing).
         const toolMsg = { role: 'tool_result', name: d.name, result: d.result,
+                          deanon_result: d.deanon_result || null,
                           tool_use_id: d.tool_use_id || null,
                           references: d.references || undefined, _ts: Date.now(), _seq: _nextSeq(chat) };
         chat.messages.push(toolMsg);

@@ -1644,7 +1644,38 @@ preamble goes in first-user-message instead.
   reversed or linted — it now produces a LOUD error row + degradation tally
   (`image_unreversible`) + a model-directed warning to re-render as .svg. A
   Mistral `generate_image` .png hits this (its prompt is also egress-gated
-  via EGRESS_TOOLS); a local render_diagram .svg never does.
+  via EGRESS_TOOLS); a local render_diagram .svg never does. **(9.390.0)
+  FILENAME de-anonymisation**: the model names generated files from the
+  pseudonym it sees (`kundendaten_pruefung_logan_edwards.html`), so the file
+  ended up with real CONTENT but a fake NAME. After the content reverse, the
+  after-file-write callback also de-anonymises the FILENAME
+  (`_gdpr_deanonymise_filename` — tokenises the stem on `_`/`-`/space, matches
+  each token case-insensitively against single-token person-name reverse keys,
+  substitutes the real part preserving case/separators; name-less filenames are
+  a safe no-op) and RENAMES the file to the real name, recording it on
+  `_gdpr_renamed_path` so `_after_file_write` registers the artifact under the
+  real name. To keep the round-trip intact, an ALIAS is left at the old (fake)
+  path the model still remembers — **cross-platform, Windows-safe**: hardlink
+  (`os.link`, no admin needed) first, then symlink, then a copy; if none can be
+  made the rename is reverted (fake name kept) so a later `read_document` never
+  404s. `_snapshot_dir` skips symlinks so an alias is never double-registered.
+- **Tool-call transparency in the UI (9.387–9.390, display-only)**: locally-
+  executing tools run on DE-anonymised args (L3a) and their result is RE-
+  anonymised (L3b) before the model sees it — correct, but the UI (inline chat
+  tool-line AND the Aktivität panel) read the model's fakes, so a de-anonymised
+  call looked like it ran on pseudonyms. Two display-only fields fix this
+  WITHOUT touching the wire/model-facing text: **`deanon_args`** — the loop
+  (`engine/llm_loop.py` tool_call emit) computes the same L3a de-anon and ships
+  it alongside the fake `args`; the renderer prefers it for the label + args
+  table and shows a `🔓 deanonymisiert` badge. **`deanon_result`** — the loop
+  (`_gdpr_deanon_result_for_display`, tool_result emit) ships a fake→real copy
+  of the result string (only under an active mapping, when it changed, ≤200KB);
+  `buildToolResultBlock` renders it in the result box so it matches the
+  de-anonymised query header (the user is local and owns the data). BOTH are
+  threaded through live (`chat_send.js`), reload (`sessions.js` + `metadata.tools[]`),
+  and the two render paths (`renderToolCall` in `chat_tools.js`, `_toolEntryCard`
+  in `panels_background.js`). The model NEVER sees real values — `args`/`result`
+  (the wire) stay fake; these fields are read only by the human-facing UI.
 - **Detection net — tables + Sperrschrift + English (M6/M9, 9.347.0)**: three
   detectors that raise recall where prose-NER misses PII. **(M6/G4) Table
   columns**: `engine/pii_ner._scan_markdown_table_columns` runs as the FIRST

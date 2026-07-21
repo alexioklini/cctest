@@ -2307,6 +2307,56 @@ def _lint_written_file(path: str, ext: str, mapping) -> list:
         return []
 
 
+def _gdpr_deanonymise_filename(fname: str, mapping) -> str:
+    """De-anonymise a generated artifact's FILENAME (fake → real name parts).
+
+    The model names files from the pseudonyms it sees (e.g.
+    `kundendaten_pruefung_logan_edwards.html`), but the file CONTENT is reversed
+    to real values — so the name is left inconsistent (and leaks the fake
+    identity in artifact lists / shares). `deanonymize_text` can't fix it: the
+    filename fragment (`logan_edwards`, lower-case + underscores) is not an exact
+    reverse key. This tokenises the stem on filename separators, matches each
+    token case-insensitively against SINGLE-TOKEN person-name reverse keys, and
+    substitutes the real part while preserving the filename's case/separator
+    style. Returns the (possibly) renamed filename; unchanged (safe no-op) when
+    no name token matches, so a name-less filename is never touched.
+    """
+    import re as _re_fn
+    try:
+        rev = getattr(mapping, "reverse", None) or {}
+        if not rev:
+            return fname
+        # Single-token alphabetic fake→real pairs only (name PARTS like
+        # Edwards→Stark / Logan→Bonnie). Skip multi-word keys, keys with digits
+        # or punctuation, and 1-char keys — those aren't filename name tokens.
+        tok_map = {}
+        for _fake, _real in rev.items():
+            if (isinstance(_fake, str) and isinstance(_real, str)
+                    and _re_fn.fullmatch(r"[A-Za-zÀ-ÿ]{2,}", _fake)
+                    and _re_fn.fullmatch(r"[A-Za-zÀ-ÿ]{2,}", _real)):
+                # First writer wins (matches the reverse-registration order); a
+                # lower-key already present is kept.
+                tok_map.setdefault(_fake.lower(), _real)
+        if not tok_map:
+            return fname
+        stem, ext = os.path.splitext(fname)
+        parts = _re_fn.split(r"([_\-\s]+)", stem)   # keep separators
+        changed = False
+        out = []
+        for p in parts:
+            real = tok_map.get(p.lower())
+            if real is not None and p and p[0].isalpha():
+                # Preserve the token's case: all-lower fake → lower real;
+                # otherwise keep the real value's own casing.
+                out.append(real.lower() if p.islower() else real)
+                changed = True
+            else:
+                out.append(p)
+        return (("".join(out)) + ext) if changed else fname
+    except Exception:
+        return fname
+
+
 def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                                   agent_id: str):
     """Build a `_after_file_write` callback for a session with active
@@ -2529,6 +2579,62 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
             }
             err = result["error"]
             restored = 0
+
+        # Filename de-anonymisation: the content is now real, but the model
+        # named the file from a pseudonym it saw (e.g. `..._logan_edwards.html`
+        # where the real subject is Bonnie Stark). Rename the file to the real
+        # name so the artifact is consistent (name + content), and leave an
+        # ALIAS at the old (fake) path so a later read_document/edit_document
+        # with the fake filename the model still remembers keeps resolving — the
+        # round-trip never breaks.
+        #
+        # CROSS-PLATFORM (Windows): the alias must NOT rely on os.symlink —
+        # symlink creation on Windows needs admin / Developer Mode and typically
+        # raises. Try a HARDLINK first (os.link: works on Windows NTFS + macOS +
+        # Linux without privileges, same-volume — and the alias is in the same
+        # dir as the target, so same volume), then symlink, then a plain COPY as
+        # the final fallback. If NONE of the three can produce the alias, we do
+        # NOT commit the rename at all (revert) — leaving the fake-named file
+        # exactly as written, so the model's read round-trip can never break.
+        # Prior behaviour (fake name, real content) is the safe floor.
+        if status == "ok":
+            try:
+                new_name = _gdpr_deanonymise_filename(fname, mapping)
+                if new_name and new_name != fname:
+                    new_path = os.path.join(os.path.dirname(path), new_name)
+                    if not os.path.exists(new_path):   # never clobber
+                        os.rename(path, new_path)
+                        alias_ok = False
+                        for _mk in (
+                            lambda: os.link(new_path, path),      # hardlink
+                            lambda: os.symlink(new_path, path),   # symlink
+                            lambda: __import__("shutil").copy2(new_path, path),
+                        ):
+                            try:
+                                _mk()
+                                alias_ok = True
+                                break
+                            except Exception:
+                                continue
+                        if alias_ok:
+                            result["file"] = new_name
+                            result["renamed_from"] = fname
+                            fname = new_name
+                            path = new_path
+                            try:
+                                engine.get_request_context()._gdpr_renamed_path = new_path
+                            except Exception:
+                                pass
+                        else:
+                            # No alias possible — revert so the model's fake path
+                            # still points at the (real-content) file.
+                            try:
+                                os.rename(new_path, path)
+                            except Exception:
+                                pass
+            except Exception as _e:
+                print(f"[gdpr-fname] rename skipped for {fname}: {_e}",
+                      flush=True)
 
         # L6b: lint the RESTORED file's extracted text for residual fake
         # substance the per-run walkers can't see (a fake split across docx
@@ -3246,6 +3352,11 @@ def build_chat_event_callback(session, live, sid):
             tool_name = data.get("name", "")
             result_tuid = data.get("tool_use_id", "")
             result_str = str(data.get("result", ""))
+            # GDPR display-only: de-anonymised (real) copy of the result so the
+            # activity-panel result box shows real values (the model-facing
+            # result stays fake). Present only under an active mapping + when it
+            # differed. See engine/llm_loop.py tool_result emit.
+            deanon_result = data.get("deanon_result")
             if tool_name in ("read_document", "read_file",
                              "read_path", "read_path_original"):
                 cap = 50000
@@ -3271,6 +3382,8 @@ def build_chat_event_callback(session, live, sid):
             # (legacy / id-less events) — preserves the prior behavior there.
             def _finish_tool(t):
                 t["result"] = capped
+                if deanon_result:
+                    t["deanon_result"] = str(deanon_result)[:cap]
                 if refs:
                     t["references"] = refs
                 # Real execution duration: wall-time from the tool_call event to

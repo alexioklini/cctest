@@ -29,6 +29,21 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.390.0",
+        "date": "2026-07-21",
+        "title": "Anonymisierung: Dateinamen und Ergebnisse konsistent",
+        "body": "In geschützten Chats sind Werkzeug-Ansicht und Dateien jetzt "
+                "durchgehend konsistent. Erzeugte Dateien (z. B. HTML-Reports) "
+                "werden automatisch auf den echten Namen umbenannt, statt das "
+                "Pseudonym im Dateinamen zu tragen — bei gleichzeitig echtem "
+                "Inhalt; spätere Zugriffe bleiben dank eines Verweises intakt. "
+                "Und das angezeigte Werkzeug-Ergebnis zeigt jetzt die echten "
+                "Werte (passend zur bereits deanonymisierten Anfrage) — das "
+                "Sprachmodell selbst sieht weiterhin nur Pseudonyme.",
+        "audience": "user",
+        "versions": ["9.390.0"],
+    },
+    {
         "version": "9.389.0",
         "date": "2026-07-21",
         "title": "Datenschutz-Dialog: Kontext, Labels, kein Textverlust",

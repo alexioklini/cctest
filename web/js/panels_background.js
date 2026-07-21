@@ -481,13 +481,13 @@ function _syncToolEntries() {
       || (m.kind || m.name) === 'moa_plan_review');
     if (m.synthetic && !isMoaRef) continue;
     // Pair with its result (match by tool_use_id, else name; don't cross turns).
-    let result = null, resTs = null;
+    let result = null, resTs = null, deanonResult = null;
     for (let j = i + 1; j < msgs.length; j++) {
       const n = msgs[j];
       if (n.role === 'tool_result') {
         const idMatch = m.tool_use_id && n.tool_use_id && m.tool_use_id === n.tool_use_id;
         const nameMatch = !m.tool_use_id && n.name === m.name;
-        if (idMatch || nameMatch) { result = n.result; resTs = n._ts; break; }
+        if (idMatch || nameMatch) { result = n.result; resTs = n._ts; deanonResult = n.deanon_result || null; break; }
       }
       if (n.role === 'assistant' || n.role === 'user') break;
     }
@@ -518,6 +518,7 @@ function _syncToolEntries() {
       deanon_args: m.deanon_args || null,
       status: result != null ? 'done' : 'running',
       result: result,
+      deanon_result: deanonResult,   // de-anonymised result for display (see _toolEntryCard)
       ts: m._ts || 0,
       seq: m._seq || 0,
       isBackground: false,
@@ -552,6 +553,7 @@ function _toolEntriesFromMetadata() {
         deanon_args: t.deanon_args || null,   // GDPR: real args (see _toolEntryCard)
         status: 'done',
         result: typeof t.result === 'string' ? t.result : (t.result != null ? JSON.stringify(t.result) : null),
+        deanon_result: (typeof t.deanon_result === 'string' && t.deanon_result) ? t.deanon_result : null,
         ts: (m.metadata && m.metadata.ts) || seq,  // metadata has no per-tool ts; keep turn order
         seq: seq++,
         isBackground: false,
@@ -735,8 +737,13 @@ function _toolEntryCard(e) {
         ? Object.fromEntries(Object.entries(_args).filter(([k]) => k !== 'code'))
         : _args)
     : '';
+  // GDPR: prefer the de-anonymised (real) result for the displayed box so it
+  // matches the de-anonymised query header (model-facing result stays fake).
+  const _resultForBox = (typeof e.deanon_result === 'string' && e.deanon_result)
+    ? e.deanon_result
+    : (typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2));
   const resultBlock = (e.result != null && typeof buildToolResultBlock === 'function')
-    ? buildToolResultBlock(e.type, _args, (typeof e.result === 'string' ? e.result : JSON.stringify(e.result, null, 2)), e.id)
+    ? buildToolResultBlock(e.type, _args, _resultForBox, e.id)
     : '';
   const hasBody = !!(argsTable || resultBlock);
   // Cancel (✕) for a still-running bg-task tool call. Only when the entry opts

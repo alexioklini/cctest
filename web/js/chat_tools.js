@@ -671,6 +671,11 @@ function renderToolCall(msg, idx) {
   if (hasResult) {
     const resultStr = typeof resultMsg.result === 'string' ? resultMsg.result : JSON.stringify(resultMsg.result, null, 2);
     resultStrForFlow = resultStr;
+    // GDPR: for the DISPLAYED result box prefer the de-anonymised (real) result
+    // so it's consistent with the de-anonymised query header (the model-facing
+    // result stays fake). Worker-detection etc. keep using the raw resultStr.
+    const resultDisplay = (typeof resultMsg.deanon_result === 'string' && resultMsg.deanon_result)
+      ? resultMsg.deanon_result : resultStr;
     // Permissive check mirrors session inspector: handles stringified envelopes,
     // objects with nested `worker: true`, and survives truncation.
     if (resultStr.includes('"worker": true') || resultStr.includes('"worker":true')) {
@@ -678,7 +683,7 @@ function renderToolCall(msg, idx) {
     } else {
       try { const rj = JSON.parse(resultStr); if (rj && rj.worker) isWorker = true; } catch(e) {}
     }
-    bodyHtml += buildToolResultBlock(msg.name, args, resultStr, resultMsg.tool_use_id || msg.tool_use_id || '');
+    bodyHtml += buildToolResultBlock(msg.name, args, resultDisplay, resultMsg.tool_use_id || msg.tool_use_id || '');
   }
   // Worker flow: shown when the tool ran (or is running) via a worker
   if (isWorker || isRunningWorker) {

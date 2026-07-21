@@ -2629,6 +2629,17 @@ Werkzeug auf echten Daten lief. Das Ergebnis wird wieder pseudonymisiert, bevor
 es zum Sprachmodell zurückgeht. Bei Werkzeugen, die Daten **nach außen** geben
 (Websuche, E-Mail-Versand), gilt das nicht — die schützt Brain gesondert.
 
+**F: Ein erzeugter Report hat einen Pseudonym-Namen im Dateinamen — obwohl der
+Inhalt echt ist. Kann man das beheben?**
+A: Ja, das passiert automatisch (seit v9.390.0). Weil das Sprachmodell nur die
+Pseudonyme sieht, benennt es eine erzeugte Datei manchmal nach dem Fake-Namen
+(z. B. `..._logan_edwards.html`), während der **Inhalt** bereits in Echtwerte
+zurückübersetzt ist. Brain benennt die Datei danach auf den **echten** Namen um
+(`..._bonnie_stark.html`), sodass Name und Inhalt zusammenpassen — in der
+Artefakt-Liste und beim Download sehen Sie den echten Namen. Damit spätere
+Zugriffe des Modells nicht ins Leere laufen, bleibt der alte (Pseudonym-)Pfad
+als Verweis bestehen; die Funktion bricht also nie.
+
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an
 `ask_user_for_file` / `ask_user` (geplante Aufgaben können nicht

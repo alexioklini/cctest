@@ -334,7 +334,10 @@ async function openSession(sessionId, agentId) {
             expanded.push({ role: 'tool_call', name: t.name, args: t.args || {}, deanon_args: t.deanon_args || null, tool_round: t.tool_round, tool_use_id: t.tool_use_id || null, duration_ms: t.duration_ms, _seq, _ts: _seq });
             if (t.result !== undefined) {
               const _rSeq = _toolKeyBase + _toolFrac + 0.0005;
-              expanded.push({ role: 'tool_result', name: t.name, result: t.result, tool_round: t.tool_round, tool_use_id: t.tool_use_id || null, _seq: _rSeq, _ts: _rSeq });
+              // deanon_result: de-anonymised (real) result for display, carried
+              // through so a reloaded activity-panel result box shows real values
+              // (like the live turn). See buildToolResultBlock in chat_tools.js.
+              expanded.push({ role: 'tool_result', name: t.name, result: t.result, deanon_result: t.deanon_result || null, tool_round: t.tool_round, tool_use_id: t.tool_use_id || null, _seq: _rSeq, _ts: _rSeq });
               try {
                 const rj = JSON.parse(typeof t.result === 'string' ? t.result : JSON.stringify(t.result));
                 if (rj && rj.worker && rj.worker_id) {
