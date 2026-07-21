@@ -641,17 +641,53 @@ function fallbackCopy(text, cb) {
   try { document.execCommand('copy'); cb && cb(); } catch(e) {}
   document.body.removeChild(ta);
 }
+// Fallback counter for LEGACY tool rows that predate the server-side
+// deanon_*_count fields (turns run before v9.395.0 carry deanon_args/
+// deanon_result but no counts). Counts total occurrences of every ledger value
+// that was de-anonymised (turn_action 'anonymise', not FP) inside `text` — the
+// same semantic the server's per-occurrence count uses. Returns 0 when the
+// ledger is unavailable or nothing matches. `text` should be the DE-anonymised
+// (real-value) surface, so the ledger's real `value` is what occurs in it.
+function _gdprCountDeanonInText(text, decisions) {
+  if (!text || !decisions) return 0;
+  const s = String(text);
+  let n = 0;
+  for (const d of Object.values(decisions)) {
+    if (!d || d.false_positive || d.turn_action !== 'anonymise') continue;
+    const val = d.value;
+    if (!val) continue;
+    let from = 0, idx;
+    while ((idx = s.indexOf(val, from)) !== -1) { n++; from = idx + val.length; }
+  }
+  return n;
+}
+
 // GDPR de-anonymisation count badge for a tool line. `callMsg` is the
-// tool_call row (carries deanon_args_count), `resultMsg` the paired tool_result
-// row (carries deanon_result_count) or null when the tool is still running.
-// Returns '' unless the Datenschutz-Details toggle is on AND the model is not
-// local (same gate as every other GDPR mark) AND at least one count is > 0.
-// Shows 🔓 aN/rN: aN = values de-anonymised in the args the tool ran on, rN =
-// pseudonyms restored in the result for display.
+// tool_call row (carries deanon_args_count + deanon_args), `resultMsg` the
+// paired tool_result row (carries deanon_result_count + deanon_result) or null
+// when the tool is still running. Returns '' unless the Datenschutz-Details
+// toggle is on AND the model is not local (same gate as every other GDPR mark)
+// AND at least one count is > 0. Shows 🔓 aN/rN: aN = values de-anonymised in
+// the args the tool ran on, rN = pseudonyms restored in the result for display.
+// The server ships exact counts (deanon_*_count); for LEGACY rows that lack
+// them we recompute from the ledger over the de-anonymised text so old sessions
+// show the badge too.
 function _buildGdprCountBadge(callMsg, resultMsg) {
   if (typeof _gdprMarksVisible === 'function' && !_gdprMarksVisible()) return '';
-  const aN = (callMsg && Number(callMsg.deanon_args_count)) || 0;
-  const rN = (resultMsg && Number(resultMsg.deanon_result_count)) || 0;
+  const chat = state.activeChat;
+  const decisions = chat && chat._piiDecisions;
+  let aN = (callMsg && Number(callMsg.deanon_args_count)) || 0;
+  let rN = (resultMsg && Number(resultMsg.deanon_result_count)) || 0;
+  // Legacy fallback: server count absent but a de-anonymised surface exists.
+  if (!aN && callMsg && callMsg.deanon_args_count == null && callMsg.deanon_args) {
+    let argsText = '';
+    try { argsText = JSON.stringify(callMsg.deanon_args); } catch (e) {}
+    aN = _gdprCountDeanonInText(argsText, decisions);
+  }
+  if (!rN && resultMsg && resultMsg.deanon_result_count == null
+      && typeof resultMsg.deanon_result === 'string') {
+    rN = _gdprCountDeanonInText(resultMsg.deanon_result, decisions);
+  }
   if (!aN && !rN) return '';
   const parts = [];
   if (aN) parts.push(`a${aN}`);

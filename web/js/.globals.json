@@ -240,6 +240,7 @@
     "_folderImportProgressOpen": "writable",
     "_folderImportProgressUpdate": "writable",
     "_folderImportShowResult": "writable",
+    "_gdprCountDeanonInText": "writable",
     "_gdprMarkdownProtectedRanges": "writable",
     "_gdprMarkHighlightedHtml": "writable",
     "_gdprMarksVisible": "writable",

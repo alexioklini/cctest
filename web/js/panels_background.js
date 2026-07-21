@@ -481,13 +481,13 @@ function _syncToolEntries() {
       || (m.kind || m.name) === 'moa_plan_review');
     if (m.synthetic && !isMoaRef) continue;
     // Pair with its result (match by tool_use_id, else name; don't cross turns).
-    let result = null, resTs = null, deanonResult = null, deanonResultCount = 0;
+    let result = null, resTs = null, deanonResult = null, deanonResultCount = null;
     for (let j = i + 1; j < msgs.length; j++) {
       const n = msgs[j];
       if (n.role === 'tool_result') {
         const idMatch = m.tool_use_id && n.tool_use_id && m.tool_use_id === n.tool_use_id;
         const nameMatch = !m.tool_use_id && n.name === m.name;
-        if (idMatch || nameMatch) { result = n.result; resTs = n._ts; deanonResult = n.deanon_result || null; deanonResultCount = n.deanon_result_count || 0; break; }
+        if (idMatch || nameMatch) { result = n.result; resTs = n._ts; deanonResult = n.deanon_result || null; deanonResultCount = (n.deanon_result_count ?? null); break; }
       }
       if (n.role === 'assistant' || n.role === 'user') break;
     }
@@ -516,7 +516,7 @@ function _syncToolEntries() {
       // activity card shows the same real values + 🔓 badge as the inline chat
       // line (not the model's pseudonyms). See _toolEntryCard.
       deanon_args: m.deanon_args || null,
-      deanon_args_count: m.deanon_args_count || 0,   // GDPR badge (see _toolEntryCard)
+      deanon_args_count: (m.deanon_args_count ?? null),   // GDPR badge; null → legacy ledger recount
       status: result != null ? 'done' : 'running',
       result: result,
       deanon_result: deanonResult,   // de-anonymised result for display (see _toolEntryCard)
@@ -553,11 +553,11 @@ function _toolEntriesFromMetadata() {
         type: t.name || 'tool',
         args: t.args || {},
         deanon_args: t.deanon_args || null,   // GDPR: real args (see _toolEntryCard)
-        deanon_args_count: t.deanon_args_count || 0,   // GDPR badge
+        deanon_args_count: (t.deanon_args_count ?? null),   // GDPR badge; null → legacy ledger recount
         status: 'done',
         result: typeof t.result === 'string' ? t.result : (t.result != null ? JSON.stringify(t.result) : null),
         deanon_result: (typeof t.deanon_result === 'string' && t.deanon_result) ? t.deanon_result : null,
-        deanon_result_count: t.deanon_result_count || 0,   // GDPR badge
+        deanon_result_count: (t.deanon_result_count ?? null),   // GDPR badge; null → legacy ledger recount
         ts: (m.metadata && m.metadata.ts) || seq,  // metadata has no per-tool ts; keep turn order
         seq: seq++,
         isBackground: false,
@@ -741,11 +741,16 @@ function _toolEntryCard(e) {
   const st = e.status === 'running' ? _BG_STATUS.running : _BG_STATUS.done;
   // GDPR de-anonymisation count badge, gated on the Datenschutz-Details toggle
   // (+ non-local model) — same helper the inline chat tool-line uses, so the
-  // two surfaces stay identical. Reads e.deanon_args_count / e.deanon_result_count.
+  // two surfaces stay identical. Pass the server counts AND the de-anonymised
+  // surfaces so the helper's LEGACY fallback (ledger recount) can fire on old
+  // entries that predate the counts. Preserve null (not 0) when the count is
+  // absent — the fallback keys on `== null`.
   const gdprBadge = (typeof _buildGdprCountBadge === 'function')
     ? _buildGdprCountBadge(
-        { deanon_args_count: e.deanon_args_count || 0 },
-        { deanon_result_count: e.deanon_result_count || 0 })
+        { deanon_args_count: (e.deanon_args_count != null ? e.deanon_args_count : null),
+          deanon_args: e.deanon_args || null },
+        { deanon_result_count: (e.deanon_result_count != null ? e.deanon_result_count : null),
+          deanon_result: (typeof e.deanon_result === 'string' ? e.deanon_result : null) })
     : '';
   const argsTable = (typeof renderToolArgsTable === 'function')
     ? renderToolArgsTable(e.type === 'python_exec'

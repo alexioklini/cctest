@@ -831,6 +831,15 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
     except Exception:
         pass
 
+    # Reset the file-reverse counter so it tallies ONLY the files this dispatch
+    # writes (a write_document / python_exec / execute_command de-anonymises its
+    # written file via the after-file-write reverse; the callback accumulates the
+    # restored count here). Read back after the tool returns for the 🔓 rN badge.
+    try:
+        engine.get_request_context()._gdpr_file_deanon_count = None
+    except Exception:
+        pass
+
     fn = engine.TOOL_DISPATCH.get(name)
     if fn is not None:
         try:
@@ -1493,6 +1502,19 @@ def run_loop(
             if _deanon_args is not None:
                 _deanon_result, _deanon_result_count = \
                     _gdpr_deanon_result_for_display(result_str)
+            # File-writing tools (write_document, python_exec, execute_command)
+            # de-anonymise the WRITTEN FILE via the after-file-write reverse, not
+            # via the args/result seam — so `_deanon_result_count` is 0 for them
+            # even though N values were made real on disk. Fold that count in so
+            # the 🔓 rN badge appears on the write tool too. Read + clear the
+            # per-dispatch tally the callback accumulated on the context.
+            try:
+                _fc = engine.get_request_context()._gdpr_file_deanon_count
+                if _fc:
+                    _deanon_result_count += int(_fc)
+                engine.get_request_context()._gdpr_file_deanon_count = None
+            except Exception:
+                pass
             emit("tool_result", {
                 "name": tu["name"], "tool_use_id": tu["id"],
                 "result": result_str,

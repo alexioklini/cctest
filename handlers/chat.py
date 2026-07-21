@@ -2511,6 +2511,17 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                 "mapping_id": mapping_id,
             }
             err = ""
+            # Accumulate the file-reverse count on the request context so the
+            # DISPATCHING tool (write_document / python_exec / execute_command)
+            # can surface it as its tool_result's deanon_result_count → the 🔓 rN
+            # badge. A single tool call may write several files; sum them. Read
+            # + cleared by dispatch_tool after the tool returns.
+            try:
+                _rc = engine.get_request_context()
+                _prev = _rc._gdpr_file_deanon_count or 0
+                _rc._gdpr_file_deanon_count = _prev + int(restored)
+            except Exception:
+                pass
         except Exception as e:
             status = "error"
             result = {

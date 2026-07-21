@@ -134,6 +134,15 @@ class RequestContext:
     # in the tool event so the UI shows real values uniformly (no local/web
     # split). Str/dict or None; overwritten every dispatch, read once after.
     _gdpr_dispatched_args: object = None
+    # GDPR transparency badge for FILE-writing tools (write_document, python_exec
+    # / execute_command that wrote files): these de-anonymise the written FILE
+    # via the after-file-write reverse (deanonymize_file → N restored values),
+    # NOT via the args-deanon seam — so they have no deanon_args/deanon_result
+    # and would show no badge. The after-file-write callback ACCUMULATES the
+    # restored count here (a turn may write several files in one tool call);
+    # dispatch_tool reads+clears it after the tool returns and surfaces it as the
+    # tool_result's deanon_result_count. Int or None; per-dispatch, same thread.
+    _gdpr_file_deanon_count: object = None
     # --- tracing / audit ---
     trace_id: object = None
     current_trace_span: object = None

@@ -2654,7 +2654,13 @@ kleines **Zähl-Abzeichen** `🔓 a<N>/r<N>` (im Chat und im Aktivitäts-Panel):
 `r<N>` = wie viele im **Ergebnis** zurückübersetzt wurden. So sehen Sie auf einen
 Blick, wie viel Schutz pro Schritt gewirkt hat. Das Abzeichen erscheint **nur**
 bei eingeschalteten Datenschutz-Details (und nicht bei lokalem Modell, weil dann
-nichts die Maschine verlässt); Null-Werte werden ausgeblendet.
+nichts die Maschine verlässt); Null-Werte werden ausgeblendet. Seit v9.395.1
+wird das Abzeichen auch für **ältere** Chats angezeigt, die vor der Einführung
+entstanden sind — die Zahl wird dann aus den bereits gespeicherten Ersetzungen
+nachgerechnet. Seit v9.395.2 erscheint das `r`-Abzeichen auch an Werkzeugen, die
+**Dateien schreiben** (z. B. „Dokument schreiben"): dort zählt es, wie viele
+Werte beim Zurückschreiben in die erzeugte Datei wieder in Klartext gesetzt
+wurden.
 
 **F: Ein erzeugter Report hat einen Pseudonym-Namen im Dateinamen — obwohl der
 Inhalt echt ist. Kann man das beheben?**
