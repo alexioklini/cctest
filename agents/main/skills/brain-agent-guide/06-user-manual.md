@@ -438,7 +438,14 @@ anonymisierte Daten, zeigt der Beitrag die Ersatzwerte). Dieselben Karten
 stehen auch im **Aktivität-Tab des rechten Panels**, ebenfalls mit Text. Bei Aufgaben, wo mehrere Meinungen nichts bringen
 (z. B. Programmierung, Mathematik, schnelle Kurzanfragen), wird der Fan-out
 automatisch übersprungen — die Anfrage läuft dann exakt wie Smart (Cloud),
-ohne Zusatzkosten. Wissenswert: Jeder Entwurf ist ein eigener
+ohne Zusatzkosten. **Nach einem Turn, für den das Gremium wirklich gearbeitet
+hat, stellt der Composer automatisch auf das Modell um, das die Antwort erstellt
+hat** (den Orchestrator bzw. bei Plan-Delegation das Ausführungs-Modell) — so
+läuft die nächste Anfrage direkt auf diesem Modell, statt jedes Mal wieder das
+ganze Gremium einzubeziehen (Rückfragen brauchen es meist nicht erneut; wählen
+Sie „Experten-Gremium" einfach wieder aus, wenn Sie es benötigen). Wurde der
+Fan-out für eine Anfrage übersprungen, bleibt „Experten-Gremium" ausgewählt
+(9.392.0). Wissenswert: Jeder Entwurf ist ein eigener
 kostenpflichtiger Modell-Aufruf (im Kosten-Popover als „moa_reference"
 ausgewiesen); die Antwort startet erst, wenn alle Entwürfe da sind (oder ihr
 Timeout abläuft); Bild-Anhänge sieht nur das antwortende Modell, nicht die

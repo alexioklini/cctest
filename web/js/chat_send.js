@@ -1436,10 +1436,24 @@ function buildStreamCallbacks(chat, isActive) {
         }
         if (d.tokens) chat.totalTokens = d.tokens;
         if (d.max_context) chat.maxContext = d.max_context;
+        // Experten-Gremium: when the composer is on "moa" and the fan-out
+        // ACTUALLY ran this turn (not gated out, references were planned),
+        // drop the composer onto the concrete model that answered (d.model =
+        // the aggregator/executor). Follow-ups on the same session usually
+        // don't need the panel again, so we don't leave it armed. A gated-out
+        // MoA turn keeps "moa" via the generic auto branch below. Mirrors the
+        // server-side composer restore (_moa_fanout_ran).
+        const _moaMeta = d.auto_route && d.auto_route.moa;
+        const _moaFanoutRan = !!_moaMeta && _moaMeta.gated_out !== true
+          && Array.isArray(_moaMeta.references) && _moaMeta.references.length > 0;
         // Auto routing: keep the composer on "Auto" (the user re-routes every
         // turn) but remember which model was picked + why, for the label and
         // tooltip. Otherwise adopt the server's resolved model as usual.
-        if (d.auto_route && isAutoModel(chat.model)) {
+        if (chat.model === 'moa' && _moaFanoutRan && d.model) {
+          chat.model = d.model;
+          chat.autoPicked = null;
+          chat.autoReason = '';
+        } else if (d.auto_route && isAutoModel(chat.model)) {
           chat.autoPicked = d.auto_route.model;
           chat.autoReason = d.auto_route.reason || '';
           if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(chat.model);

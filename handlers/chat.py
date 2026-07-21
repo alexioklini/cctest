@@ -4951,6 +4951,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     _moa_plan_now = getattr(session, "_moa_plan", None)
                     if (_moa_plan_now and _moa_plan_now.get("references")
                             and not deep_research):
+                        # A real fan-out is about to run — mark the turn so the
+                        # post-turn composer restore drops "moa" to the concrete
+                        # aggregator (see the want_auto restore block).
+                        session._moa_fanout_ran = True
                         if _moa_cache is None:
                             _moa_cache = _run_moa_references(
                                 _moa_plan_now, _wire_messages, sid, live, session)
@@ -6339,6 +6343,20 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # composer model itself was an Auto directive.
                 if want_auto:
                     _directive = getattr(session, "_composer_auto_model", "") or "auto-cloud"
+                    # Experten-Gremium: after a turn where the fan-out ACTUALLY
+                    # ran, switch the composer off "moa" onto the concrete model
+                    # that answered (the aggregator/executor). Follow-up queries
+                    # on the same session usually don't need the panel again, so
+                    # leaving it armed would re-classify + re-fan-out every turn.
+                    # A gated-out MoA turn (no fan-out) keeps "moa" so the next
+                    # turn is re-evaluated. The aggregator id lives in
+                    # _auto_route_model (still the concrete pick here — the
+                    # restore to the directive happens just below).
+                    if (_directive == "moa"
+                            and getattr(session, "_moa_fanout_ran", False)):
+                        _agg = getattr(session, "_auto_route_model", "") or ""
+                        if _agg and not _parse_auto_directive(_agg)[0]:
+                            _directive = _agg
                     with session.lock:
                         session.model = _directive
                     try:
@@ -7293,6 +7311,13 @@ class ChatHandlerMixin:
             # Clear any prior turn's MoA fan-out plan for the same reason — a
             # later non-MoA turn on this session must never inherit it.
             session._moa_plan = None
+            # Per-turn flag: did the Experten-Gremium fan-out actually run this
+            # turn? Set True only when reference models executed (below). The
+            # post-turn composer restore reads it to drop the composer from
+            # "moa" to the concrete aggregator that ran — a real fan-out turn
+            # switches away from the panel (follow-ups rarely need it again),
+            # but a gated-out turn (no fan-out) stays on Experten-Gremium.
+            session._moa_fanout_ran = False
         auto_by_agent = (agent_cfg.get("model") == "auto" and len(session.messages) == 0)
         # FREEZE for cache-priced models: once an Auto session has been routed to a
         # model that has prompt-cache pricing (cost_cache_read set), we pin that

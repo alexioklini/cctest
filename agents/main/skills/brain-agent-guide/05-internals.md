@@ -322,6 +322,24 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   tool set from turn 2 exactly like Smart mode (prefix byte-stable, cached-token
   pricing intact); the classifier still runs every turn but ONLY for gate +
   reference selection (`resolve_task_analysis`, classify-without-swap).
+- **Post-turn composer switch to the executing model** (v9.392.0): unlike
+  `auto-cloud`/`auto-local` (which the post-turn restore always re-persists as
+  the directive so the user re-routes every turn), a `moa` turn where the
+  fan-out ACTUALLY ran drops the composer OFF `moa` onto the concrete model
+  that answered (the aggregator, or the pinned executor in delegate mode).
+  Rationale: follow-ups on the same session usually don't need the panel again,
+  so leaving it armed would re-classify + re-fan-out every turn. A GATED-OUT
+  MoA turn (no fan-out — plan was `None`) KEEPS `moa` so the next turn is
+  re-evaluated. Mechanism: worker sets a per-turn `session._moa_fanout_ran`
+  (False at turn start next to the `_moa_plan` reset, True where
+  `_run_moa_references` executes); the `want_auto` restore block
+  (`handlers/chat.py`) overrides the `moa` directive with `session._auto_route_model`
+  (guarded to a concrete id via `_parse_auto_directive`) when the flag is set —
+  so a reopened session shows the executing model, not the panel. The client
+  mirrors it in the `done` handler (`web/js/chat_send.js`): `chat.model === 'moa'`
+  + `d.auto_route.moa` present, `gated_out !== true`, `references.length > 0` →
+  `chat.model = d.model` (autoPicked/autoReason cleared). The executing model
+  was always recorded on the assistant message metadata, so nothing is lost.
 - **Surfaces**: one synthetic tool-card pair per reference
   (`kind="moa_reference"`, 🧬 + MOA badge) — rendered INLINE in the
   conversation flow like real tool cards, NOT inside the Datenschutz

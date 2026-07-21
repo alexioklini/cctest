@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.392.0",
+        "date": "2026-07-21",
+        "title": "Experten-Gremium wechselt danach zum Antwort-Modell",
+        "body": "Nachdem das Experten-Gremium eine Anfrage bearbeitet hat, "
+                "stellt der Composer jetzt automatisch auf das Modell um, das "
+                "die Antwort tatsächlich erstellt hat. Für Rückfragen im "
+                "gleichen Chat brauchen Sie das Gremium meist nicht erneut — so "
+                "läuft die nächste Anfrage direkt und schnell auf dem passenden "
+                "Modell, statt jedes Mal wieder das ganze Gremium einzubeziehen. "
+                "Wählen Sie das Experten-Gremium einfach erneut aus, wenn Sie es "
+                "wieder benötigen. Kam das Gremium für eine Anfrage gar nicht "
+                "zum Einsatz, bleibt die Auswahl unverändert stehen.",
+        "audience": "user",
+        "versions": ["9.392.0"],
+    },
+    {
         "version": "9.391.0",
         "date": "2026-07-21",
         "title": "Datenschutz-Markierungen auch bei Werkzeug-Aufrufen",
