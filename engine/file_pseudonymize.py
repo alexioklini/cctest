@@ -161,16 +161,37 @@ def _walk_office(
             parts[name] = tree
 
     # Re-zip preserving member order so layout apps that key off it are happy.
-    with zipfile.ZipFile(src_path, "r") as zin, zipfile.ZipFile(
-            dst_path, "w", zipfile.ZIP_DEFLATED) as zout:
-        for name in zin.namelist():
-            if name in parts:
-                buf = io.BytesIO()
-                parts[name].write(buf, xml_declaration=True,
-                                  encoding="UTF-8", default_namespace=None)
-                zout.writestr(name, buf.getvalue())
-            else:
-                zout.writestr(name, zin.read(name))
+    # CRITICAL: write to a TEMP file, never in-place. When src_path == dst_path
+    # (the deanonymise-in-place callback calls `deanonymize_file(path, path)`),
+    # opening `dst_path` in mode "w" TRUNCATES the source to 0 bytes before the
+    # `zin.read(name)` loop has read its members — the read then fails with
+    # "Truncated file header", the re-zip aborts mid-write, and the file is
+    # left as a 22-byte empty-EOCD stub (a 47 KB .docx destroyed on write-back;
+    # chat 3811cb61). Staging in a sibling temp + atomic os.replace keeps the
+    # original readable for the whole copy and makes the swap all-or-nothing.
+    _tmp_path = dst_path + ".pii-tmp"
+    try:
+        with zipfile.ZipFile(src_path, "r") as zin, zipfile.ZipFile(
+                _tmp_path, "w", zipfile.ZIP_DEFLATED) as zout:
+            for name in zin.namelist():
+                if name in parts:
+                    buf = io.BytesIO()
+                    parts[name].write(buf, xml_declaration=True,
+                                      encoding="UTF-8", default_namespace=None)
+                    zout.writestr(name, buf.getvalue())
+                else:
+                    zout.writestr(name, zin.read(name))
+        os.replace(_tmp_path, dst_path)
+    except BaseException:
+        # Never leave the staging file behind on failure (and never let a
+        # partial temp masquerade as the output — the original dst is untouched
+        # because os.replace only runs after a clean re-zip).
+        try:
+            if os.path.exists(_tmp_path):
+                os.remove(_tmp_path)
+        except OSError:
+            pass
+        raise
 
     return runs_visited, total_count
 
