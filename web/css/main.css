@@ -2490,6 +2490,15 @@ textarea { resize: none; }
   text-overflow: clip;
   color: var(--text-200);
 }
+/* When the question is truncated (or expanded), clicking the text itself
+   toggles the expand — same as the chevron. Set post-render via .is-clickable
+   so a short question that fits stays plain text. */
+.turn-group-collapsed-hint.is-clickable {
+  cursor: pointer;
+}
+.turn-group-collapsed-hint.is-clickable:hover {
+  color: var(--text-100);
+}
 .turn-group-hint-toggle {
   flex-shrink: 0;
   display: inline-flex;

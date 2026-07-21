@@ -28,6 +28,14 @@ function toggleHintExpand(turnNum) {
   else chat._expandedHints.add(turnNum);
   renderMessages();
 }
+// Click on the (truncated) question text itself toggles the same expand as the
+// chevron — but not while the user is selecting text to copy. A non-empty
+// window selection means a drag-select just happened, so leave it alone.
+function toggleHintExpandFromText(event, turnNum) {
+  const sel = window.getSelection && window.getSelection();
+  if (sel && sel.toString().length > 0) return;
+  toggleHintExpand(turnNum);
+}
 // Chat-summary block toggle. Now a plain div (not <details>) so it shares the
 // animated grid-rows collapse. State lives on the chat object so it survives
 // re-renders without auto-expanding when the server pushes summary updates;

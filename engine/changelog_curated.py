@@ -29,6 +29,18 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.392.1",
+        "date": "2026-07-21",
+        "title": "Lange Anfrage per Klick auf den Text aufklappen",
+        "body": "Ist eine Anfrage oben in der Kopfzeile zu lang für eine Zeile, "
+                "wird sie gekürzt angezeigt. Sie können sie jetzt direkt durch "
+                "einen Klick auf den Anfrage-Text auf- und wieder zuklappen — "
+                "nicht mehr nur über den kleinen Pfeil daneben. Möchten Sie den "
+                "Text markieren und kopieren, klappt dabei nichts auf.",
+        "audience": "user",
+        "versions": ["9.392.1"],
+    },
+    {
         "version": "9.392.0",
         "date": "2026-07-21",
         "title": "Experten-Gremium wechselt danach zum Antwort-Modell",

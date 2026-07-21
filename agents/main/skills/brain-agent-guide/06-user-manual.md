@@ -485,7 +485,11 @@ sich nach der gehaltenen Anfrage (eine offene gehalten → alle zu; eine
 zugeklappte gehalten → alle auf); danach wird die gehaltene Anfrage wieder
 in den Blick gescrollt. Alle Auf-/Zuklapp-Bereiche im Chat — Anfragen, der
 **Datenschutz**-Block, verdichteter Kontext, Webquellen, Quellen-Legende,
-durchsuchte Quellen — animieren weich.
+durchsuchte Quellen — animieren weich. Ist der Anfrage-Text neben dem Badge
+zu lang für eine Zeile, wird er abgekürzt und ein kleiner Pfeil zeigt die
+volle Anfrage. **Sie können dafür direkt auf den Anfrage-Text klicken** (nicht
+nur auf den Pfeil), um ihn ein- bzw. auszuklappen; Text markieren zum Kopieren
+löst das Aufklappen nicht aus.
 
 **Live-Anzeige während der Antwort (Claude-Code-Stil)**: Denken und Tool-Aufrufe
 erscheinen jetzt **direkt im Chat-Verlauf, genau in der Reihenfolge, in der sie

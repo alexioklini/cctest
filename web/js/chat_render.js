@@ -94,7 +94,11 @@ function renderMessages() {
     const fullQ = turnQuestionFull(t.userMsg);
     const isHintExpanded = chat._expandedHints && chat._expandedHints.has(t.turnNum);
     const hasQ = fullQ.length > 0;
-    const hintCls = 'turn-group-collapsed-hint' + (isHintExpanded ? ' expanded' : '');
+    // is-clickable (cursor + hover) is applied here when already expanded and,
+    // for the collapsed case, post-render once we know the text is truncated
+    // (same measure that shows/hides the chevron below).
+    const hintCls = 'turn-group-collapsed-hint'
+      + (isHintExpanded ? ' expanded is-clickable' : '');
     const chevronTitle = isHintExpanded ? 'Anfrage einklappen' : 'Vollständige Anfrage anzeigen';
     const chevron = hasQ
       ? `<button class="turn-group-hint-toggle${isHintExpanded ? ' expanded' : ''}" onclick="toggleHintExpand(${t.turnNum})" title="${chevronTitle}" aria-label="${chevronTitle}">
@@ -138,7 +142,7 @@ function renderMessages() {
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
              ${_drIcon}Anfrage ${t.turnNum}
            </span>
-           <span class="${hintCls}">${hintInner}</span>
+           <span class="${hintCls}"${hasQ ? ` onclick="toggleHintExpandFromText(event,${t.turnNum})"` : ''}>${hintInner}</span>
            ${chevron}
          </div>`
       : '';
@@ -221,11 +225,15 @@ function renderMessages() {
       if (!hint || !toggle) return;
       if (hint.classList.contains('expanded')) {
         toggle.style.display = '';
+        hint.classList.add('is-clickable');
         return;
       }
       if (hint.clientWidth === 0) return; // not laid out yet — leave default
       const truncated = hint.scrollWidth > hint.clientWidth + 1;
       toggle.style.display = truncated ? '' : 'none';
+      // Text is clickable-to-expand only when there's something hidden to reveal
+      // (chevron shown). A short question that fits stays non-interactive.
+      hint.classList.toggle('is-clickable', truncated);
     });
 
     // Syntax highlight code blocks (skip tool-result blocks — pre-highlighted inline)

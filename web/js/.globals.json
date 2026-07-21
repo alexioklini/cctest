@@ -1748,6 +1748,7 @@
     "toggleDeepResearch": "writable",
     "toggleGdprDetails": "writable",
     "toggleHintExpand": "writable",
+    "toggleHintExpandFromText": "writable",
     "toggleModelDropdown": "writable",
     "toggleMsgEditMenu": "writable",
     "toggleMsgMemoryMenu": "writable",
