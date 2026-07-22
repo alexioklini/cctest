@@ -500,7 +500,13 @@ Ausführungsdauer. Am Anfang der laufenden Antwort steht eine **Status-Zeile**
 (Spinner-Balken + arbeitendes Modell + „Denke nach…" + verstrichene Zeit); sie
 verschwindet automatisch, sobald der Turn fertig ist oder abgebrochen wird.
 Nur **Datenschutz**-Vorgänge (Anonymisierung / De-Anonymisierung) bleiben in
-einem eigenen, aufklappbaren **Datenschutz**-Block mit Zählern zusammengefasst.
+einem eigenen, aufklappbaren **Datenschutz**-Block zusammengefasst. Seit
+v9.395.5 zeigt der Block-Kopf die **Summe der tatsächlichen Ersetzungen** als
+Pfeil-Zähler: **`→N`** = N Werte wurden anonymisiert (als Pseudonym an das
+Modell gesendet), **`←N`** = N Werte wurden im Ergebnis wieder in Klartext
+zurückgesetzt. Gezählt werden echte Ersetzungen pro Vorkommen (ein Name, der
+zehnmal vorkommt, zählt zehn) — nicht die Zahl der verschiedenen Fund-Typen.
+Der Tooltip nennt beide Richtungen im Klartext.
 
 **Quellenangaben (Zitat-Chips)**: Belegt die Antwort eine Aussage mit einer
 Quelle, erscheint an der Stelle eine kleine nummerierte Hochzahl **[1] [2] …**.

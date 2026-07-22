@@ -674,6 +674,29 @@ function _gdprCountDeanonInText(text, decisions) {
   return n;
 }
 
+// Count how many pseudonyms were RESTORED in a de-anonymised reply, BY
+// OCCURRENCE. The reply already carries the REAL values, so this counts the
+// real `value` only (not the fake — a stray fake residue is not a
+// "restoration"), value-DEDUPED so a ledger that holds the same value under
+// several rule_ids/rows isn't multiplied. Used by the De-Anon block header to
+// show the true footprint ('Wien' ×6 …) instead of the synthetic row's DISTINCT
+// `restored`. Returns 0 when the ledger/text is unavailable.
+function _gdprCountRestoredInReply(text, decisions) {
+  if (!text || !decisions) return 0;
+  const s = String(text);
+  const seen = new Set();
+  let n = 0;
+  for (const d of Object.values(decisions)) {
+    if (!d || d.false_positive || d.turn_action !== 'anonymise') continue;
+    const val = d.value;
+    if (!val || seen.has(val)) continue;
+    seen.add(val);
+    let from = 0, idx;
+    while ((idx = s.indexOf(val, from)) !== -1) { n++; from = idx + val.length; }
+  }
+  return n;
+}
+
 // Fallback for FILE-WRITING tools (write_document, python_exec, execute_command)
 // whose file was de-anonymised via the after-file-write reverse — the restored
 // count lives on a SEPARATE synthetic `deanonymise_file` row (the "Datenschutz ·
@@ -950,7 +973,14 @@ function renderSyntheticGdprCall(msg, idx) {
 
   let summary = '';
   if (kind === 'anonymise' && status === 'ok') {
-    const n = result.findings ?? 0;
+    // REAL replacements in the user's typed text = user_spans.length, NOT
+    // `findings` (which counts EVERY decided value including the attachments'
+    // — those get their own anonymise_read blocks with their own counts). The
+    // old `findings` display conflated the two (showed 71 for a query with 7
+    // actual replacements). Fall back to known_values_swept, then findings, for
+    // older rows that predate user_spans.
+    const n = Array.isArray(result.user_spans) ? result.user_spans.length
+      : (result.known_values_swept ?? result.findings ?? 0);
     // Speaking German labels (Geburtsdatum, Krankenversicherungsnummer …)
     // from the server catalog instead of the technical rule_ids (dob,
     // health_insurance_ctx). gdprRuleLabel falls back to the id if unknown.
@@ -959,7 +989,7 @@ function renderSyntheticGdprCall(msg, idx) {
     const pending = Array.isArray(result.pending_on_read) ? result.pending_on_read : [];
     const pendNote = pending.length ? ` · ${pending.length} Datei${pending.length === 1 ? '' : 'en'} ausstehend` : '';
     const mapNote = result.mapping === 'reused' ? ' · Session-Mapping wiederverwendet' : '';
-    summary = `Chat-Text: ${n} Treffer${catLabel}${pendNote}${mapNote}`;
+    summary = `Chat-Text: ${n} Ersetzung${n === 1 ? '' : 'en'}${catLabel}${pendNote}${mapNote}`;
   } else if (kind === 'anonymise' && status === 'error') {
     summary = String(result.error || 'fehlgeschlagen').slice(0, 200);
   } else if (kind === 'anonymise_read' && status === 'ok') {

@@ -42,7 +42,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "Schritt gewirkt hat. Ohne die Datenschutz-Ansicht bleibt das "
                 "Abzeichen ausgeblendet.",
         "audience": "user",
-        "versions": ["9.395.0", "9.395.1", "9.395.2", "9.395.3", "9.395.4"],
+        "versions": ["9.395.0", "9.395.1", "9.395.2", "9.395.3", "9.395.4", "9.395.5"],
     },
     {
         "version": "9.394.0",

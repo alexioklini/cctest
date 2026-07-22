@@ -606,17 +606,71 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
   // Position). trailingNotes ("keine Anonymisierung nötig") hängen an den
   // LETZTEN emittierten Block.
   let privacyBlockSeq = 0;
+  // The turn's full response text (assistant + segments), for counting how many
+  // pseudonyms were restored BY OCCURRENCE in what the user actually reads. The
+  // synthetic deanonymise_text row reports `restored` as DISTINCT values (4),
+  // but the reply shows each value many times ('Wien' ×6) — 12 real
+  // occurrences. Counting over the ledger (like the tool badge) gives the true
+  // figure and needs no server change.
+  let _turnResponseText = '';
+  for (const _mi of memberIdxs) {
+    const _rm = messages[_mi];
+    if (!_rm) continue;
+    if ((_rm.role === 'assistant' || _rm.role === 'assistant_segment')
+        && typeof _rm.content === 'string') {
+      _turnResponseText += _rm.content + '\n';
+    }
+  }
+  const _decisions = chat && chat._piiDecisions;
+
   // Render EINE Gruppe konsekutiver privacy-Entries als eigenen Block. Zähler
   // (Anon / De-Anon) werden aus GENAU dieser Gruppe berechnet, nicht global.
   // `withNotes` hängt die trailingNotes an (nur am letzten Block).
+  // Real replacement count for ONE privacy entry — the number of values
+  // actually swapped, not how many findings were decided:
+  //   • anonymise (chat_text): user_spans.length = the real replacements in the
+  //     user's typed text. NOT `findings`, which counts EVERY decided value
+  //     including the attachments' (they get their own anonymise_read blocks).
+  //   • anonymise_read (attachment): `applied` = replacements in that tool output.
+  //   • deanonymise_text: OCCURRENCES restored in the reply (ledger recount over
+  //     the response text) — not the row's DISTINCT `restored`. Falls back to
+  //     `restored` when the ledger/response is unavailable.
+  //   • deanonymise_file: `restored` (a written file, not the reply).
+  const entryRealCount = (e) => {
+    const k = e.item.m.kind || e.item.m.name || '';
+    const res = (synthDone.get(e.item.idx)?.result) || {};
+    if (k === 'anonymise') {
+      return Array.isArray(res.user_spans) ? res.user_spans.length
+        : Number(res.known_values_swept || 0);
+    }
+    if (k === 'anonymise_read') return Number(res.applied || 0);
+    if (k === 'deanonymise_text') {
+      const byOcc = (typeof _gdprCountRestoredInReply === 'function' && _turnResponseText && _decisions)
+        ? _gdprCountRestoredInReply(_turnResponseText, _decisions) : 0;
+      return byOcc || Number(res.restored || 0);
+    }
+    if (k === 'deanonymise_file') return Number(res.restored || 0);
+    return 0;
+  };
   const privacyBlockHtml = (entries, withNotes) => {
     if (!entries.length && !(withNotes && trailingNotes.length)) return '';
     const key = `${turnNum}-p${privacyBlockSeq++}`;
-    let gAnon = 0, gDeanon = 0;
+    // Sum the REAL replacements in this block (per user request): a block is
+    // either anonymisation OR de-anonymisation, so one directional total each.
+    // → = anonymised (sent as pseudonyms), ← = restored (back to the human).
+    let anonSum = 0, deanonSum = 0;
+    let deanonTextCounted = false;   // count reply occurrences ONCE per block
     for (const e of entries) {
       const k = e.item.m.kind || e.item.m.name || '';
-      if (isAnonKind(k)) gAnon++;
-      else if (isDeanonKind(k)) gDeanon++;
+      if (isAnonKind(k)) { anonSum += entryRealCount(e); continue; }
+      if (!isDeanonKind(k)) continue;
+      // deanonymise_text: the occurrence recount spans the WHOLE reply, so add
+      // it once even if a block holds several such rows (avoids over-summing).
+      if (k === 'deanonymise_text') {
+        if (deanonTextCounted) continue;
+        deanonTextCounted = true;
+      }
+      deanonSum += entryRealCount(e);
     }
     let pBody = '';
     if (state.showGdprDetails) {
@@ -626,10 +680,13 @@ function renderTurnBody(messages, memberIdxs, turnNum, chat) {
       if (withNotes) pBody += trailingNotes.join('');
     }
     const parts = [];
-    if (gAnon > 0) parts.push(gAnon === 1 ? '1 Anon' : `${gAnon} Anon`);
-    if (gDeanon > 0) parts.push(gDeanon === 1 ? '1 De-Anon' : `${gDeanon} De-Anon`);
+    const titleBits = [];
+    if (anonSum > 0) { parts.push(`→${anonSum}`); titleBits.push(`${anonSum} Wert(e) anonymisiert (→ als Pseudonym gesendet)`); }
+    if (deanonSum > 0) { parts.push(`←${deanonSum}`); titleBits.push(`${deanonSum} Wert(e) wiederhergestellt (← zurück in Klartext)`); }
     if (!parts.length && !(withNotes && trailingNotes.length)) return '';
-    const countHtml = parts.length ? `<span class="activity-summary-count">${esc(parts.join(' · '))}</span>` : '';
+    const countHtml = parts.length
+      ? `<span class="activity-summary-count" title="${esc(titleBits.join(' · '))}">${esc(parts.join(' · '))}</span>`
+      : '';
     if (!pBody.trim()) {
       return `<div class="activity-summary-header-static"><span>Datenschutz</span>${countHtml}</div>`;
     }

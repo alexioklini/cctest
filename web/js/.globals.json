@@ -241,6 +241,7 @@
     "_folderImportProgressUpdate": "writable",
     "_folderImportShowResult": "writable",
     "_gdprCountDeanonInText": "writable",
+    "_gdprCountRestoredInReply": "writable",
     "_gdprFileReverseCountFor": "writable",
     "_gdprMarkdownProtectedRanges": "writable",
     "_gdprMarkHighlightedHtml": "writable",
