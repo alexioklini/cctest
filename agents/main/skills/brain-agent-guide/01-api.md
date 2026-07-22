@@ -302,6 +302,11 @@ streaming call, per-USER history, fixed read-only tool set. See
 - `GET .../projects/<name>/sync-runs` — sync history
 - `GET .../projects/<name>/sync-runs/<id>` — one run detail
 - `POST .../projects/<name>/sync-now` — trigger immediate sync
+- `GET/POST .../projects/<name>/pii-scan` — project-PII pre-decision scan
+  status / start (9.400.0; start is owner/admin; incremental via sha1 cursor)
+- `GET/POST .../projects/<name>/pii-decisions` — project-PII ledger rows +
+  counts / bulk decide `{decisions:[{id, status: open|anonymise|fp}]}`
+  (9.400.0; BOTH owner/admin-only — the review shows cleartext values)
 - `POST .../projects/<name>/full-resync` — wipe wing + re-mine
 - `POST .../projects/<name>/sync-cancel` — abort live sync
 - `POST .../projects/<name>/ingest` — upload files (multipart). Since 9.324.0

@@ -442,6 +442,10 @@ async function loadProjectDetail(agentId, projectName) {
     // Datenquellen-Sektion rendert in normalen UND Code-Projekten (E9) —
     // deshalb NICHT in der Hide-Liste oben. Async, fire-and-forget.
     renderProjectDataSources(project);
+    // PII-Vorentscheidungs-Sektion (Option 3, v9.400.0) — nur für
+    // Besitzer/Admin sichtbar (der Server gated die Klartext-Liste mit 403;
+    // dann bleibt die Sektion versteckt). Async, fire-and-forget.
+    loadProjectPiiSection(agentId, projectName);
     // Code project → show its working-directory file tree (refreshed here on
     // open; also after each turn via the post-turn hook) and start polling for
     // init progress + auto-refresh on file changes. Non-code projects stop any
@@ -2082,6 +2086,188 @@ async function _pdsSave() {
 // Shim: web URLs now render inside the unified source tree. Keep
 // state._projectDetail.web_urls authoritative, then re-render the tree (the
 // tree reads it). Expand/collapse state survives via localStorage.
+// ── Projekt-PII-Vorentscheidung (Option 3, v9.400.0) ──
+// Einmal pro Projekt kuratieren statt pro Sitzung fragen. Zustand auf
+// state._projPii = {agentId, projectName, rows, counts}; die Sektion ist nur
+// für Besitzer/Admin sichtbar (Server-403 auf die Klartext-Liste versteckt sie).
+
+async function loadProjectPiiSection(agentId, projectName) {
+  const section = document.getElementById('project-pii-section');
+  if (!section) return;
+  try {
+    const data = await API.getProjectPiiDecisions(agentId, projectName);
+    state._projPii = { agentId, projectName, rows: data.rows || [],
+                       counts: data.counts || {} };
+    section.style.display = '';
+    _projPiiPaintSection();
+    if (data.scan && data.scan.running) _projPiiPollScan();
+  } catch (e) {
+    section.style.display = 'none';   // kein Manage-Recht oder Fehler
+    state._projPii = null;
+  }
+}
+
+function _projPiiPaintSection() {
+  const p = state._projPii;
+  if (!p) return;
+  const c = p.counts || {};
+  const badge = document.getElementById('project-pii-badge');
+  if (badge) {
+    if (c.open > 0) {
+      badge.textContent = `${c.open} offen`;
+      badge.style.display = '';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+  const counts = document.getElementById('project-pii-counts');
+  if (counts) {
+    const total = (c.open || 0) + (c.anonymise || 0) + (c.fp || 0);
+    counts.textContent = total
+      ? `${total} Werte — ${c.open || 0} offen · ${c.anonymise || 0} anonymisieren · ${c.fp || 0} Falschtreffer`
+      : 'Noch keine Funde — „Jetzt scannen" durchsucht das Projektwissen.';
+  }
+  const mc = document.getElementById('project-pii-modal-counts');
+  if (mc) mc.textContent = `${c.open || 0} offen · ${c.anonymise || 0} anonymisieren · ${c.fp || 0} Falschtreffer`;
+}
+
+async function projectPiiScanNow() {
+  const p = state._projPii;
+  if (!p) return;
+  const statusEl = document.getElementById('project-pii-scan-status');
+  try {
+    await API.startProjectPiiScan(p.agentId, p.projectName);
+    if (statusEl) statusEl.textContent = 'Scan läuft…';
+    _projPiiPollScan();
+  } catch (e) {
+    showToast('PII-Scan konnte nicht gestartet werden', true);
+  }
+}
+
+function _projPiiPollScan() {
+  const p = state._projPii;
+  if (!p) return;
+  if (p._pollTimer) clearTimeout(p._pollTimer);
+  p._pollTimer = setTimeout(async () => {
+    const cur = state._projPii;
+    if (!cur || cur !== p) return;   // Projekt gewechselt → Poll verwaist
+    try {
+      const st = await API.getProjectPiiScanStatus(p.agentId, p.projectName);
+      const scan = (st && st.scan) || {};
+      const statusEl = document.getElementById('project-pii-scan-status');
+      if (scan.running) {
+        if (statusEl) statusEl.textContent =
+          `Scan läuft… ${scan.files_scanned || 0}/${scan.files_total || 0} Dateien`;
+        _projPiiPollScan();
+        return;
+      }
+      if (statusEl) {
+        statusEl.textContent = scan.error
+          ? `Scan-Fehler: ${scan.error}`
+          : (scan.finished_at
+             ? `Scan fertig — ${scan.new_candidates || 0} neue offene Funde`
+             : '');
+      }
+      await loadProjectPiiSection(p.agentId, p.projectName);
+      if (document.getElementById('project-pii-modal').style.display !== 'none') {
+        _projPiiRenderModal();
+      }
+    } catch (e) { /* Poll best-effort */ }
+  }, 1500);
+}
+
+function openProjectPiiModal() {
+  const p = state._projPii;
+  if (!p) return;
+  const modal = document.getElementById('project-pii-modal');
+  document.getElementById('project-pii-modal-project').textContent = p.projectName;
+  modal.style.display = 'flex';
+  _projPiiRenderModal();
+}
+
+function closeProjectPiiModal() {
+  const modal = document.getElementById('project-pii-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+const _PROJ_PII_RENDER_CAP = 500;
+
+function _projPiiRenderModal() {
+  const p = state._projPii;
+  const list = document.getElementById('project-pii-modal-list');
+  if (!p || !list) return;
+  const q = (document.getElementById('project-pii-search').value || '').toLowerCase();
+  const filter = document.getElementById('project-pii-filter').value || '';
+  let rows = p.rows || [];
+  if (filter) rows = rows.filter(r => (r.status || 'open') === filter);
+  if (q) rows = rows.filter(r =>
+    (r.raw_value || '').toLowerCase().includes(q)
+    || (r.rule_id || '').toLowerCase().includes(q)
+    || (r.source_files || []).some(f => f.toLowerCase().includes(q)));
+  const capped = rows.slice(0, _PROJ_PII_RENDER_CAP);
+  const stChip = (st) => st === 'anonymise'
+    ? '<span style="color:var(--success,#2e7d32);font-size:11px;font-weight:600">anonymisieren</span>'
+    : st === 'fp'
+      ? '<span style="color:var(--text-400);font-size:11px;font-weight:600">Falschtreffer</span>'
+      : '<span style="color:var(--warning,#c47f00);font-size:11px;font-weight:600">offen</span>';
+  list.innerHTML = capped.map(r => {
+    const st = r.status || 'open';
+    const label = (typeof gdprRuleLabel === 'function')
+      ? gdprRuleLabel(r.rule_id) : (r.rule_id || '');
+    const files = (r.source_files || []).join(', ');
+    return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--border-100,var(--border-200))">
+      <div style="flex:1;min-width:0">
+        <div style="font-family:var(--font-mono,monospace);font-size:12.5px;word-break:break-all">${esc(r.raw_value || '')}</div>
+        <div style="font-size:11px;color:var(--text-400)" title="${esc(files)}">${esc(label)} · ×${r.occurrences || 0}${files ? ' · ' + esc(files.length > 60 ? files.slice(0, 60) + '…' : files) : ''}</div>
+      </div>
+      ${stChip(st)}
+      <div style="display:flex;gap:4px">
+        ${st !== 'anonymise' ? `<button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="projPiiDecide('${esc(r.id)}','anonymise')">Anonymisieren</button>` : ''}
+        ${st !== 'fp' ? `<button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="projPiiDecide('${esc(r.id)}','fp')">Falschtreffer</button>` : ''}
+        ${st !== 'open' ? `<button class="btn-secondary" style="padding:2px 8px;font-size:11px" onclick="projPiiDecide('${esc(r.id)}','open')">Zurücksetzen</button>` : ''}
+      </div>
+    </div>`;
+  }).join('') || '<div style="color:var(--text-400);font-size:12.5px;padding:14px 0">Keine Einträge für diesen Filter.</div>';
+  if (rows.length > _PROJ_PII_RENDER_CAP) {
+    list.innerHTML += `<div style="color:var(--text-400);font-size:12px;padding:8px 0">… ${rows.length - _PROJ_PII_RENDER_CAP} weitere — Suche/Filter nutzen.</div>`;
+  }
+}
+
+async function projPiiDecide(id, status) {
+  const p = state._projPii;
+  if (!p) return;
+  try {
+    const resp = await API.decideProjectPii(p.agentId, p.projectName,
+                                            [{ id, status }]);
+    const row = (p.rows || []).find(r => r.id === id);
+    if (row) row.status = status;
+    p.counts = resp.counts || p.counts;
+    _projPiiPaintSection();
+    _projPiiRenderModal();
+  } catch (e) {
+    showToast('Entscheidung konnte nicht gespeichert werden', true);
+  }
+}
+
+async function projPiiBulk(status) {
+  const p = state._projPii;
+  if (!p) return;
+  const open = (p.rows || []).filter(r => (r.status || 'open') === 'open');
+  if (!open.length) { showToast('Keine offenen Funde'); return; }
+  const label = status === 'anonymise' ? 'anonymisieren' : 'als Falschtreffer markieren';
+  if (!confirm(`${open.length} offene Funde ${label}?`)) return;
+  try {
+    const resp = await API.decideProjectPii(p.agentId, p.projectName,
+      open.map(r => ({ id: r.id, status })));
+    open.forEach(r => { r.status = status; });
+    p.counts = resp.counts || p.counts;
+    _projPiiPaintSection();
+    _projPiiRenderModal();
+  } catch (e) {
+    showToast('Bulk-Entscheidung fehlgeschlagen', true);
+  }
+}
+
 function renderProjectWebUrls(urls) {
   if (state._projectDetail && Array.isArray(urls)) state._projectDetail.web_urls = urls;
   if (typeof renderProjectSourceTree === 'function' && document.getElementById('project-source-tree')) {

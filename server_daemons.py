@@ -3265,6 +3265,30 @@ def _project_sync_loop(srv):
                         _run_finished = True
                     srv._project_sync_clear_live(agent_id, proj_name)
                     cycle_filed += files_filed
+                    # Project-PII pre-decision scan (Option 3, v9.400.0):
+                    # after a CHANGED, successful cycle (the unchanged fast
+                    # path `continue`d far above), incrementally scan the
+                    # refreshed corpus — new/changed documents surface as
+                    # 'open' candidates in the project's PII ledger (badge in
+                    # the project panel; deliberately NOT auto-decided).
+                    # Cursor-based (sha1 per file) → only changed files pay
+                    # the NER cost. Best-effort: a scan failure must never
+                    # mark the sync cycle as failed.
+                    if final_state == "idle":
+                        try:
+                            _pii_st = engine.project_pii_scan(
+                                agent_id, proj_name)
+                            _pii_new = int(_pii_st.get("new_candidates", 0)
+                                           or 0)
+                            if _pii_new:
+                                print(f"[project-sync] {agent_id}/"
+                                      f"{proj_name}: PII scan → {_pii_new} "
+                                      f"neue offene Kandidaten", flush=True)
+                        except Exception as _e_pii:
+                            print(f"[project-sync] PII scan failed "
+                                  f"{agent_id}/{proj_name}: "
+                                  f"{type(_e_pii).__name__}: {_e_pii}",
+                                  flush=True)
                 except Exception as _pe:
                     # Per-project isolation: one project's unhandled error must not
                     # starve every project after it for the whole cycle interval.

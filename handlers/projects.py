@@ -454,6 +454,109 @@ class ProjectsHandlerMixin:
             return "", err
         return rp, ""
 
+    # ── Project-wide PII pre-decision (Option 3, v9.400.0) ──
+    # Curate PII once per project; decisions apply to ALL project users.
+    # GET rows is require_manage: the review shows CLEARTEXT values.
+
+    def _handle_project_pii_scan_get(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/pii-scan — scan job status."""
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name)
+        if project is None:
+            return
+        pid = project.get("id") or ""
+        self._send_json({"project_id": pid,
+                         "scan": engine.project_pii_scan_status(pid)})
+
+    def _handle_project_pii_scan_post(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/pii-scan — start an
+        incremental scan (owner/admin). Body: {force_full?: bool}."""
+        import threading
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name,
+                                             require_manage=True)
+        if project is None:
+            return
+        try:
+            body = self._read_json()
+        except Exception:
+            body = {}
+        force_full = bool((body or {}).get("force_full"))
+        pid = project.get("id") or ""
+        st = engine.project_pii_scan_status(pid)
+        if not st.get("running"):
+            threading.Thread(
+                target=engine.project_pii_scan,
+                args=(agent_id, proj_name),
+                kwargs={"force_full": force_full},
+                daemon=True, name=f"project-pii-scan-{pid[:8]}").start()
+        self._send_json({"started": True, "project_id": pid})
+
+    @staticmethod
+    def _project_pii_counts(rows):
+        counts = {"open": 0, "anonymise": 0, "fp": 0}
+        for r in rows:
+            st = r.get("status") or "open"
+            counts[st] = counts.get(st, 0) + 1
+        return counts
+
+    def _handle_project_pii_decisions_get(self, path: str):
+        """GET /v1/agents/{id}/projects/{name}/pii-decisions — ledger rows
+        (cleartext values → owner/admin only)."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name,
+                                             require_manage=True)
+        if project is None:
+            return
+        pid = project.get("id") or ""
+        rows = ChatDB.get_project_pii_rows(pid) or []
+        self._send_json({"project_id": pid, "rows": rows,
+                         "counts": self._project_pii_counts(rows),
+                         "scan": engine.project_pii_scan_status(pid)})
+
+    def _handle_project_pii_decisions_post(self, path: str):
+        """POST /v1/agents/{id}/projects/{name}/pii-decisions — bulk decide.
+        Body: {decisions: [{id, status: open|anonymise|fp}]}."""
+        from server_lib.db import ChatDB
+        agent_id = self._parse_agent_from_path(path)
+        proj_name = self._parse_project_from_path(path)
+        if not agent_id or not proj_name:
+            self._send_json({"error": "Missing agent or project"}, 400)
+            return
+        project = self._project_access_check(agent_id, proj_name,
+                                             require_manage=True)
+        if project is None:
+            return
+        try:
+            body = self._read_json()
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        decisions = body.get("decisions")
+        if not isinstance(decisions, list) or not decisions:
+            self._send_json({"error": "decisions (list) required"}, 400)
+            return
+        pid = project.get("id") or ""
+        auth_user = getattr(self, '_auth_user', None) or {}
+        n = ChatDB.decide_project_pii(pid, decisions[:2000],
+                                      auth_user.get("id") or "")
+        rows = ChatDB.get_project_pii_rows(pid) or []
+        self._send_json({"updated": int(n or 0), "project_id": pid,
+                         "counts": self._project_pii_counts(rows)})
+
     def _handle_project_input_folders_list(self, path: str):
         """GET /v1/agents/{id}/projects/{name}/input-folders"""
         agent_id = self._parse_agent_from_path(path)

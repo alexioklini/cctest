@@ -324,6 +324,27 @@ of a live mapping. Methods: `record_pii_decisions` / `get_session_pii_decisions`
 (returns fake_value) / `pii_decision_stats` / `delete_session_pii_decisions`.
 Endpoints under `/v1/gdpr/decisions`.
 
+### chats.db → project_pii_decisions + project_pii_scan_files (9.400.0)
+```
+project_pii_decisions: id PK, project_id, norm_value (runtime match key —
+  whitespace/JSON-escape-collapsed casefold, UNIQUE per project), raw_value
+  (capped 512), rule_id, status ('open'|'anonymise'|'fp'), occurrences,
+  source_files (JSON, capped 20), created_at, decided_at, decided_by
+project_pii_scan_files: (project_id, file_path) PK, sha1, scanned_at
+```
+PROJECT-wide PII pre-decision ledger (Option 3 of the retrieval-dialog
+consolidation): one curated decision per VALUE per PROJECT, applying to ALL
+project users. Stores DECISIONS only, never fakes — fakes are minted per
+session (per-mapping salt) when the retrieval guard lazily seeds a curated
+'anonymise' value. 'open' rows are the incremental scan's undecided
+candidates (badge in the project panel; new/changed documents re-scan at the
+end of each changed project-sync cycle). `project_pii_scan_files` is the
+per-file sha1 cursor that makes the scan incremental. Methods:
+`upsert_project_pii_candidates` / `get_project_pii_rows` /
+`decide_project_pii` / `get_project_pii_decided_map` (decided rows only) /
+`delete_project_pii` / scan-cursor getter+setter. Endpoints:
+`.../projects/<name>/pii-scan` + `.../pii-decisions` (owner/admin).
+
 ### chats.db → data_reviews (GDPR + classification document reviews)
 ```
 review_id TEXT PK, user_id TEXT, created_at/updated_at REAL,

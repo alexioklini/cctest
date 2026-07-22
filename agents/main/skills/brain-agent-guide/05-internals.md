@@ -1517,6 +1517,24 @@ preamble goes in first-user-message instead.
 
 ## GDPR / PII scanner
 
+- **Project-wide PII pre-decision (9.400.0, Option 3)**: curate the project
+  corpus ONCE instead of per session. An incremental scan (sha1 cursor per
+  file; auto-runs at the end of every changed project-sync cycle, manual via
+  the project panel's "Jetzt scannen") walks the MINED text corpus
+  (.brain-extracted companions + text inputs + web-urls — exactly what
+  retrieval returns) and aggregates PII candidates into the
+  `project_pii_decisions` ledger as 'open' rows. The owner reviews them in
+  the "Datenschutz (PII)" project-panel section (per value anonymise/fp,
+  bulk actions; decisions apply to ALL project users; new documents surface
+  as fresh 'open' rows with a badge — never auto-decided). The retrieval
+  guard consults the decided map BEFORE the standing orders: curated
+  'anonymise' values seed silently into the session mapping (lazy, with the
+  runtime surface form; session-ledger write-through, disposition
+  `project-curated`), 'fp' values stay clear forever, only UNDECIDED values
+  still raise the dialog. A session-level decision beats the project
+  decision. The shared norm key (`_retrieval_pii_norm`) bridges JSON-escape
+  differences between the offline scan (raw markdown) and the runtime scan
+  (JSON-encoded tool text).
 - **Retrieval-dialog consolidation (9.399.0)**: the mid-turn retrieval
   dialog (below) now asks at most ONCE per turn — the turn-wide "anonymisiert
   fortfahren" answer becomes a standing order for the rest of the turn, so

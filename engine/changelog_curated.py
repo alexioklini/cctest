@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.400.0",
+        "date": "2026-07-22",
+        "title": "Datenschutz im Projekt einmal zentral bewerten",
+        "body": "Projekt-Besitzer können personenbezogene Daten im "
+                "Projektwissen jetzt vorab und an einer Stelle bewerten: Die "
+                "neue Sektion „Datenschutz (PII)\" im Projekt durchsucht alle "
+                "hinterlegten Dokumente und listet die Funde zur Bewertung — "
+                "pro Wert „Anonymisieren\" (das Cloud-Modell sieht nur einen "
+                "Ersatzwert) oder „Falschtreffer\" (bleibt Klartext), einzeln "
+                "oder gesammelt. Bewertete Werte lösen in anonymisierten "
+                "Chats keine Nachfrage mehr aus — für alle Nutzer des "
+                "Projekts. Neue oder geänderte Dokumente werden beim "
+                "Projekt-Abgleich automatisch mitgeprüft; neue Funde "
+                "erscheinen als „offen\" mit Hinweis-Badge und warten auf "
+                "Ihre Bewertung.",
+        "audience": "user",
+        "versions": ["9.400.0"],
+    },
+    {
         "version": "9.399.0",
         "date": "2026-07-22",
         "title": "Datenschutz-Nachfrage: einmal entscheiden statt mehrfach",

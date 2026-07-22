@@ -819,6 +819,47 @@ class ChatDB:
                 "CREATE INDEX IF NOT EXISTS idx_pii_decisions_session_hash "
                 "ON pii_decisions(session_id, value_hash)"
             )
+            # PROJECT-wide PII pre-decision ledger (v9.400.0, Option 3 of the
+            # retrieval-dialog consolidation): one curated decision per VALUE
+            # per PROJECT, applying to ALL users of the project. Deliberately
+            # separate from the session-scoped `pii_decisions`: it stores
+            # DECISIONS only, never fakes (fakes are minted per session — each
+            # mapping has its own salt). `norm_value` is the runtime match key
+            # (whitespace/escape-collapsed casefold via brain._retrieval_pii_norm);
+            # status: 'open' (found, undecided — new candidates from the
+            # incremental scan stay open until curated), 'anonymise', 'fp'.
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS project_pii_decisions (
+                    id            TEXT PRIMARY KEY,
+                    project_id    TEXT NOT NULL,
+                    norm_value    TEXT NOT NULL,
+                    raw_value     TEXT NOT NULL DEFAULT '',
+                    rule_id       TEXT NOT NULL DEFAULT '',
+                    status        TEXT NOT NULL DEFAULT 'open',
+                    occurrences   INTEGER NOT NULL DEFAULT 0,
+                    source_files  TEXT NOT NULL DEFAULT '[]',
+                    created_at    REAL NOT NULL DEFAULT 0,
+                    decided_at    REAL NOT NULL DEFAULT 0,
+                    decided_by    TEXT NOT NULL DEFAULT '',
+                    UNIQUE(project_id, norm_value)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_project_pii_project "
+                "ON project_pii_decisions(project_id, status)"
+            )
+            # Incremental-scan cursor: per corpus file the content sha1 of the
+            # last scan — unchanged files are skipped (the KG-sync idempotency
+            # pattern).
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS project_pii_scan_files (
+                    project_id  TEXT NOT NULL,
+                    file_path   TEXT NOT NULL,
+                    sha1        TEXT NOT NULL DEFAULT '',
+                    scanned_at  REAL NOT NULL DEFAULT 0,
+                    PRIMARY KEY (project_id, file_path)
+                )
+            """)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_pii_decisions_rule_fp "
                 "ON pii_decisions(rule_id, false_positive)"
@@ -3138,6 +3179,152 @@ class ChatDB:
                 "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
             conn.commit()
         return len(rows)
+
+    # ── Project-wide PII pre-decision ledger (v9.400.0) ──
+
+    @staticmethod
+    @_db_safe(default=int)
+    def upsert_project_pii_candidates(project_id, candidates):
+        """Merge scan results into the project ledger. `candidates` is a list
+        of {norm_value, raw_value, rule_id, occurrences, source_files (list)}.
+        New norm_values insert as status='open'; existing rows keep their
+        status/decision and only refresh occurrences + the (unioned, capped)
+        source_files. Returns the number of NEWLY inserted candidates."""
+        import uuid
+        if not candidates:
+            return 0
+        now = time.time()
+        new_rows = 0
+        with _db_conn() as conn:
+            for c in candidates:
+                nv = str(c.get("norm_value") or "").strip()
+                if not nv:
+                    continue
+                row = conn.execute(
+                    "SELECT id, source_files FROM project_pii_decisions "
+                    "WHERE project_id = ? AND norm_value = ?",
+                    (project_id, nv)).fetchone()
+                files = [str(f) for f in (c.get("source_files") or [])][:20]
+                if row is None:
+                    conn.execute(
+                        "INSERT INTO project_pii_decisions (id, project_id, "
+                        "norm_value, raw_value, rule_id, status, occurrences, "
+                        "source_files, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                        (uuid.uuid4().hex, project_id, nv,
+                         str(c.get("raw_value") or "")[:512],
+                         str(c.get("rule_id") or ""), "open",
+                         int(c.get("occurrences") or 0),
+                         json.dumps(files, ensure_ascii=False), now))
+                    new_rows += 1
+                else:
+                    try:
+                        prev = json.loads(row[1] or "[]")
+                    except Exception:
+                        prev = []
+                    merged = list(dict.fromkeys([*prev, *files]))[:20]
+                    conn.execute(
+                        "UPDATE project_pii_decisions SET occurrences = ?, "
+                        "source_files = ? WHERE id = ?",
+                        (int(c.get("occurrences") or 0),
+                         json.dumps(merged, ensure_ascii=False), row[0]))
+            conn.commit()
+        return new_rows
+
+    @staticmethod
+    @_db_safe(default=list)
+    def get_project_pii_rows(project_id):
+        """All ledger rows of a project (cleartext — callers must be
+        owner/admin-gated)."""
+        with _db_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM project_pii_decisions WHERE project_id = ? "
+                "ORDER BY status = 'open' DESC, occurrences DESC, norm_value",
+                (project_id,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["source_files"] = json.loads(d.get("source_files") or "[]")
+            except Exception:
+                d["source_files"] = []
+            out.append(d)
+        return out
+
+    @staticmethod
+    @_db_safe(default=int)
+    def decide_project_pii(project_id, decisions, user_id):
+        """Bulk decide: `decisions` is [{id, status}] with status in
+        open|anonymise|fp ('open' = reset). Returns rows updated."""
+        now = time.time()
+        n = 0
+        with _db_conn() as conn:
+            for d in decisions or []:
+                st = str(d.get("status") or "")
+                if st not in ("open", "anonymise", "fp"):
+                    continue
+                cur = conn.execute(
+                    "UPDATE project_pii_decisions SET status = ?, "
+                    "decided_at = ?, decided_by = ? "
+                    "WHERE project_id = ? AND id = ?",
+                    (st, (0 if st == "open" else now),
+                     ("" if st == "open" else str(user_id or "")),
+                     project_id, str(d.get("id") or "")))
+                n += cur.rowcount
+            conn.commit()
+        return n
+
+    @staticmethod
+    @_db_safe(default=dict)
+    def get_project_pii_decided_map(project_id):
+        """Runtime lookup for the retrieval guard: norm_value → 'anonymise'|
+        'fp' (+ '_rule:<norm>' → rule_id for seeding). Open rows are ABSENT —
+        undecided values must still raise the dialog."""
+        out = {}
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT norm_value, status, rule_id, raw_value "
+                "FROM project_pii_decisions "
+                "WHERE project_id = ? AND status IN ('anonymise','fp')",
+                (project_id,)).fetchall()
+        for nv, st, rid, rv in rows:
+            out[nv] = {"status": st, "rule_id": rid or "", "value": rv or ""}
+        return out
+
+    @staticmethod
+    @_db_safe(default=None)
+    def delete_project_pii(project_id):
+        """Drop a project's ledger + scan cursor (project deletion / tests)."""
+        with _db_conn() as conn:
+            conn.execute("DELETE FROM project_pii_decisions WHERE project_id = ?",
+                         (project_id,))
+            conn.execute("DELETE FROM project_pii_scan_files WHERE project_id = ?",
+                         (project_id,))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=dict)
+    def get_project_pii_scan_map(project_id):
+        """file_path → sha1 of the last scan (incremental cursor)."""
+        with _db_conn() as conn:
+            rows = conn.execute(
+                "SELECT file_path, sha1 FROM project_pii_scan_files "
+                "WHERE project_id = ?", (project_id,)).fetchall()
+        return {r[0]: r[1] for r in rows}
+
+    @staticmethod
+    @_db_safe(default=None)
+    def set_project_pii_scan_files(project_id, entries):
+        """Upsert cursor rows. `entries` is [(file_path, sha1)]."""
+        now = time.time()
+        with _db_conn() as conn:
+            conn.executemany(
+                "INSERT INTO project_pii_scan_files (project_id, file_path, "
+                "sha1, scanned_at) VALUES (?,?,?,?) "
+                "ON CONFLICT(project_id, file_path) DO UPDATE SET "
+                "sha1 = excluded.sha1, scanned_at = excluded.scanned_at",
+                [(project_id, p, s, now) for p, s in (entries or [])])
+            conn.commit()
 
     @staticmethod
     @_db_safe(default=dict)

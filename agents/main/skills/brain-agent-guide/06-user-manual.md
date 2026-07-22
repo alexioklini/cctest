@@ -2535,6 +2535,20 @@ auch geplante Hintergrund-Aufgaben dürfen dann mit dem Projektwissen
 arbeiten (ohne diese Freigabe halten sie Inhalte mit unbewerteten
 personenbezogenen Daten weiterhin zurück).
 
+**Projekt-Besitzer** können die Bewertung seit v9.400.0 zusätzlich **einmal
+zentral fürs ganze Projekt** erledigen: Die Sektion „**Datenschutz (PII)**"
+im rechten Projekt-Panel durchsucht das gesamte Projektwissen („Jetzt
+scannen") und listet alle Funde im Bewertungs-Modal („Bewerten…") — pro Wert
+Anonymisieren oder Falschtreffer, einzeln oder gesammelt („Alle offenen →
+…"). So bewertete Werte lösen in anonymisierten Chats **keine Nachfrage
+mehr aus**, und zwar für **alle Nutzer** des Projekts; eine abweichende
+Entscheidung innerhalb eines Chats hat für diesen Chat Vorrang. Neue oder
+geänderte Dokumente werden beim Projekt-Abgleich automatisch mitgescannt —
+neue Funde erscheinen als „offen" mit Badge und warten auf Bewertung (sie
+werden nie automatisch entschieden). Die Sektion ist nur für
+Projekt-Besitzer und Admins sichtbar, weil die Bewertungsliste die
+gefundenen Werte im Klartext zeigt.
+
 **F: Warum ist im anonymisierten Chat dieselbe Person überall gleich benannt?**
 A: Seit v9.337.0 arbeitet die Anonymisierung auf Personen-Ebene statt auf
 Zeichenketten-Ebene. Früher bekam jede Schreibweise desselben Namens (Akte,

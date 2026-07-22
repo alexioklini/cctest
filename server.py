@@ -1880,6 +1880,10 @@ class BrainAgentHandler(
             self._handle_code_index_symbols(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/history"):
             self._handle_code_index_history(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/pii-scan"):
+            self._handle_project_pii_scan_get(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/pii-decisions"):
+            self._handle_project_pii_decisions_get(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-status"):
             self._handle_project_sync_status(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/ingest-status"):
@@ -2367,6 +2371,10 @@ class BrainAgentHandler(
             self._handle_code_index_refresh(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/code-index/rebuild"):
             self._handle_code_index_rebuild(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/pii-scan"):
+            self._handle_project_pii_scan_post(path)
+        elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/pii-decisions"):
+            self._handle_project_pii_decisions_post(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/sync-now"):
             self._handle_project_sync_now(path)
         elif path.startswith("/v1/agents/") and "/projects/" in path and path.endswith("/full-resync"):

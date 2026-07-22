@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.399.0"
+VERSION = "9.400.0"
 VERSION_DATE = "2026-07-22"
 CHANGELOG = [
+    ("9.400.0", "2026-07-22", "feat(GDPR — Projekt-weite PII-Vorentscheidung; Option 3 der Retrieval-Dialog-Konsolidierung, Nutzer-Entscheide: gilt für ALLE Projekt-Nutzer, neue Funde bleiben 'open', KEIN Admin-Default). IDEE: den Projekt-Korpus EINMAL kuratieren statt pro Sitzung fragen — die NER-FP-Flut aus OCR-Dokumenten (E2E: 'Systemverantwortliche'-PDF) wird einmal vom Projekt-Besitzer bewertet; kuratierte Werte lösen in anonymisierenden Chats keinen Dialog mehr aus. VIER Bausteine: (1) DB `project_pii_decisions` (chats.db; UNIQUE(project_id, norm_value); status open|anonymise|fp; occurrences+source_files; BEWUSST getrennt von der session-scoped pii_decisions: speichert ENTSCHEIDUNGEN, nie Fakes — Fakes bleiben per-Session-Salt) + `project_pii_scan_files` (inkrementeller sha1-Cursor pro Korpus-Datei, das KG-Sync-Idempotenz-Muster). ChatDB: upsert_project_pii_candidates (neu=open; entschiedene Zeilen behalten Status, mergen Quellen [Cap 20], refreshen occurrences), get_project_pii_rows, decide_project_pii (Bulk, open=Reset), get_project_pii_decided_map (NUR entschiedene — open muss weiter fragen), delete_project_pii, Scan-Cursor-Getter/Setter. (2) SCAN `brain.project_pii_scan(agent, name, force_full=)`: inkrementell über den GEMINETEN Text-Korpus (.md/.txt unter pdir inkl. .brain-extracted-Companions + web-urls + Input-Folder außerhalb pdir — exakt der Text, den Retrieval liefert; keine Neu-Extraktion), Chunking ~100k an Absatzgrenzen (PII-Test-1-Lektion: NER >200KB unzuverlässig), Datei-Cap 2MB, Production-FP-Gates via _pii_scan_text; Status-Registry _PROJECT_PII_SCAN_STATE (ein Lauf pro Projekt). AUTO-HOOK im project-sync-Daemon: nach jedem ERFOLGREICHEN veränderten Zyklus (der unchanged-Fastpath continue't vorher) läuft der Inkrement-Scan — neue Dokumente werden automatisch zu open-Kandidaten (Badge), NIE auto-entschieden; best-effort, ein Scan-Fehler markiert den Sync nie als failed. (3) ENDPOINTS (Muster input-folders; Routen in server.py GET+POST): GET/POST /v1/agents/<a>/projects/<n>/pii-scan (Status/Start, Start owner/admin) + GET/POST …/pii-decisions (Zeilen+Counts / Bulk-Decide [Cap 2000] — BEIDE require_manage: das Review zeigt KLARTEXT-Werte). (4) GUARD-INTEGRATION (~20 Zeilen): `_retrieval_project_decisions()` (per-Turn-Cache auf ctx._dynamic; Projekt-Name aus ctx.project → ProjectManager → id) wird in `_gdpr_retrieval_guard` VOR den Standing-Orders konsultiert (sonst würde die Session-Order ein Projekt-FP faken): project-anonymise → stiller LAZY-Seed via _retrieval_seed_values (choice=project, disposition=project-curated — geseedet wird die RUNTIME-Oberflächenform des Kandidaten, nicht die Projekt-Zeile: nur die steht im Tool-Text) + Session-Ledger-Write-through; project-fp → Klartext, nie fragen; open/unbekannt → Standing-Orders/Dialog wie bisher. Session-Entscheidung schlägt Projekt-Entscheidung (die Session-Filterung läuft früher — jüngere, spezifischere Absicht). NORM-BRÜCKE `_retrieval_pii_norm` (NEU, beidseitig verwendet): der Runtime-Scan sieht JSON-ENCODIERTEN Text (echte Zeilenumbrüche als literales \\n), der Projekt-Scan rohes Markdown — literale \\n/\\t/\\r-Escapes UND echte Whitespaces kollabieren zu Leerzeichen + casefold, sonst matchte eine zeilenumbruch-überspannende Projekt-Entscheidung nie (der E2E-Befund 'Infrastruktur\\nOnBASE'). (5) UI (Projekt-Panel, panels_projects.js + index.html + api.js): Sektion 'Datenschutz (PII)' (nur Besitzer/Admin — Server-403 versteckt sie) mit offen-Badge, Zählern, 'Jetzt scannen' (Poll alle 1.5s) + 'Bewerten…'-Modal (Suche, Status-Filter [Default: Offen], pro Zeile Wert mono/Regel-Label via gdprRuleLabel/×Vorkommen/Quellen, Aktionen Anonymisieren/Falschtreffer/Zurücksetzen, Bulk 'Alle offenen → …' mit confirm, Render-Cap 500). js_gate GRÜN (eslint clean, net-globals 2112→2122 [+10: loadProjectPiiSection/_projPiiPaintSection/projectPiiScanNow/_projPiiPollScan/openProjectPiiModal/closeProjectPiiModal/_PROJ_PII_RENDER_CAP/_projPiiRenderModal/projPiiDecide/projPiiBulk, Baseline angepasst], Smoke 4/5+1 flaky-retry-passed). Tests: tests/test_project_pii_curation.py NEU (9 — Upsert-Semantik/decided-Map/Reset; Scan legt open an + Cursor skippt unverändert + neue Datei = neuer Kandidat; Guard: anonymise seedet ohne Dialog + Ledger-Write-through, fp bleibt klar, open fragt weiter, Session-FP schlägt Projekt-anonymise, Norm-Brücke über JSON-Escapes); GDPR-Familie 142 grün. py_compile OK (brain/server/db/projects/server_daemons). Migration additiv (2 Tabellen). KV-Cache unberührt (Tool-Result-Pfad + neue Endpoints, kein Prompt/Schema). Server-Restart nötig. Skill 01-api/03-storage/05-internals/06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.399.0", "2026-07-22", "feat(GDPR — Retrieval-PII-Dialog KONSOLIDIERT: Turn-Vererbung + Session-Standing-Order; Anlass Eval-Befund F2_kreditvergabe = 11 Dialoge in EINEM Turn, und Nutzer-Ansage 'ab nächster Woche ist PII in Produktion default an' → der Dialog trifft künftig JEDEN Projekt-Chat). ZWEI Mechanismen, ein Einhängepunkt (`_gdpr_retrieval_guard`, VOR asked-Set/Cap/Dialog): (1) TURN-VERERBUNG — die Turn-Wahl 'Anonymisiert fortfahren' des ERSTEN Dialogs wird als `_retrieval_pii_turn_policy` auf dem RequestContext zur Standing-Order für den REST des Turns: jede weitere Retrieval-Welle mit neuen Werten seedet automatisch als anonymise (gemeinsamer Helper `_retrieval_seed_values` — seed_from_decision + Ledger-Zeilen + gdpr_persist_mapping + Audit, jetzt von Dialog- UND Auto-Pfad geteilt; Audit-`choice` = dialog|turn_auto|session_auto) statt erneut zu fragen. Begründung: die Richtungsentscheidung ist gefallen, Folgedialoge lieferten nur FP-Granularität — und die bleibt RETROAKTIV korrigierbar (FP-Mark im Datenschutz-Panel → purge_value, die 9.383-Maschinerie). Trade-off dokumentiert: ein FP aus Welle 2+ wird in diesem Turn fälschlich gefakt (marginales Antwort-Risiko), der Nutzer sieht dank Deanonymisierung immer echte Werte. (2) SESSION-STANDING-ORDER — der erste Dialog trägt eine zusätzliche Frage 'Künftige neue Funde in dieser Sitzung automatisch anonymisieren (ohne erneut zu fragen)?' (Ja/Nein, VOR der Turn-Frage; unbeantwortet = Nein = konservativ weiter fragen; bindet nur bei turn_choice=proceed): Ja persistiert `sessions.retrieval_auto_anon` (additive Migration + `ChatDB.update_session_retrieval_auto_anon` + Session-Feld + Load + GET-/messages-Echo + manage-Action `retrieval_auto_anon {value}` — spiegelt allow_further_web end-to-end; Widerruf via manage-Action, kein neues UI: die Frage reitet in der bestehenden ask_user-Karte). Der Guard liest die Order über `_retrieval_auto_anon_enabled()` (live In-Memory-Session zuerst — der Dialog setzt sie mid-turn — dann DB-Fallback für Background-Turns). WICHTIGSTER NEBENEFFEKT: die Session-Order hebt das Background-fail-closed — ein Scheduler-/Hintergrund-Turn auf einer Session mit Standing-Order seedet+fakt statt `retrieval_pii_withheld` zu refusen → geplante Tasks auf Anon-Projekten werden nutzbar (der Produktions-Fall ab KW 2026-07-27). Ohne Order bleibt Background fail-closed (unverändert Plan §5.4). Eval-Harness beantwortet die Sticky-Frage explizit mit Nein (misst den Ask-Pfad). Tests: test_gdpr_retrieval_dialog 14→20 (Turn-Vererbung: 1 Dialog trotz 2. Welle + Welle-2-Wert geseedet/gefakt/im Ledger; Sticky-Frage vorhanden + Position vor Turn-Frage; Sticky-Ja persistiert + nächster Turn still + auto-gefakt; Sticky-Nein fragt nächsten Turn wieder; Background MIT Order seedet statt refuse [der Produktions-Test]; Widerruf via Setter fragt wieder; Sticky-Basis mit realer sessions-Zeile via save_session/delete_session). Bestandssuite 14/14 unverändert grün (unbeantwortete Sticky-Frage = altes Verhalten). py_compile OK (brain/server/db/sessions_handler/eval). Migration additiv. KV-Cache: Tool-Result-Pfad, kein Prompt/Schema → Prefix unberührt. Server-Restart nötig (Spalte + Session-Feld + Guard). Skill 05-internals/06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.398.0", "2026-07-22", "feat(GDPR — Mid-Turn-PII-Dialog bei Projekt-Retrieval; PROJECT_RETRIEVAL_PII_DIALOG_PLAN.md, Anlass PII-Phase-1 Test 2). BEFUND (2026-07-22, belegt): in einem Projekt-Chat mit gdpr_action=anonymise ging PII aus den gemineten Dokumenten über mempalace_query/KG/Wiki ROH ans Cloud-LLM (applied:0, anonymise_read:0) — Drawer sind BEWUSST roh gespeichert (v9.96.0: anonymisierte Drawer verschieben die Embeddings und brechen das Vektor-Retrieval), der Result-Seam `_gdpr_anon_tool_text` ist seit 9.383.0 apply-only, und ein Projekt-Chat hat weder Attachment-Scan noch pii_decisions für die Dokument-PII → leeres Mapping → Seam no-op. Die Architektur war zu 90% fertig; es fehlte nur der SEED. NEU — ZWEITER, bewusster Mid-Turn-Detektionspunkt NUR für Retrieval-Quellen (mempalace_query, wiki_read[:tree], mempalace_kg_query/_search/_neighbors — Erweiterung, kein Widerspruch zu GDPR_ALL_CHECKS_PRE_DIALOG_PLAN §C: Retrieval-PII ist pre-send UNBEKANNT, sie entsteht erst durch die Modell-Query): (a) `brain._gdpr_retrieval_guard` (gerufen aus `_gdpr_anon_tool_text` nach der Mapping-Auflösung, d.h. nur in anonymisierenden Sessions — der Normalfall ohne Anon zahlt NICHTS) fährt einen FRISCHEN `_pii_scan_text` mit den Production-FP-Gates (org=ignore, rule_overrides, min_occurrences, Tabellen-/NER-Filter — die 'Systemverantwortliche'-Liste flutet den Dialog nicht mit Systemnamen) und behält nur Werte OHNE jede Vorentscheidung: nicht im Mapping (forward+reverse, casefold), nicht im pii_decisions-Ledger (per-VALUE-Recency via `_latest_decisions_by_value` — jede Entscheidung zählt, entschiedene Werte fragen NIE wieder), nicht im asked-Set dieses Turns. (b) EIN blockierender Batch-Dialog pro Turn (`_retrieval_pii_ask`, Blaupause: der in 9.386.0 gelöschte `_web_consent_ask` via git show 525bd19e~1): pro Wert 'Anonymisieren / Falschtreffer (Klartext lassen)' PLUS die Turn-weite Frage 'Anonymisiert fortfahren / Lokales Modell verwenden / Anfrage abbrechen' (das Recovery-Modal-Tripel) — über die bestehende ask_user-Mechanik (_ask_user_register VOR dem Emit, Antwort via POST /v1/chat/answer, bestehende Frage-Karte, null neue UI). Unbeantwortete Werte defaulten auf Anonymisieren (sichere Richtung). Cap 40 Werte (mehr → fail-closed Refusal mit Eingrenzungs-Hint statt 100-Zeilen-Modal). (c) ENTSCHEIDUNG→SEED: 'Anonymisieren'-Werte → `pseudonymizer.seed_from_decision` (DIESELBEN Fakes wie der Pre-Send-Pfad, token-stabil) + pii_decisions-Zeile (turn_action=anonymise, fake_value, disposition=retrieval-dialog, Standard-Hash sha256(rule|value) — kein Namespace nötig, es IST eine gewöhnliche Anonymise-Entscheidung) + `gdpr_persist_mapping` (Restart-sicher); 'Falschtreffer' → false_positive=1-Zeile, bleibt Klartext, fragt nie wieder. Ab da faken die BESTEHENDEN Apply-Sweeps die Werte im selben Ergebnis, im Rest des Turns und in Folge-Turns (sticky via Turn-End-Recorder + Wire-Rewrite); der L3a-args-deanon übersetzt retrieval-geseedete Fakes in read_path zurück (Roundtrip per Test gepinnt). (d) 'Abbrechen' → session.cancel_token.cancel() (der normale Stop-Pfad) + Refusal; nichts persistiert. (e) 'Lokales Modell' → Kontext-Flags `_retrieval_pii_local_switch`/`_retrieval_pii_all_local` + Cancel; der Chat-Worker (handlers/chat.py, direkt nach run_turn) poppt das Flag und fährt denselben Turn EINMAL auf dem default_local_fallback_model neu (Provider/max_context/inf_params neu aufgelöst wie der MoA-Executor-Swap, frischer CancelToken, thinking_level=None, _current_model gesetzt, pii_local_swap-Audit + session._gdpr_local_swap-Badge): Wire bleibt unverändert (Mapping aktiv → lokales Modell sieht dieselben Fakes wie die Historie, Antwort-Deanonymiser greift weiter — bewusste Abweichung vom Pre-Turn-Recovery 'ORIGINAL content', mid-turn ist der Fake-Namespace schon auf dem Wire); der Guard selbst ist auf lokalen Modellen inaktiv (`_retrieval_turn_model_is_local` über ctx._current_model, Fallback live-Session — Rohwerte lokal erlaubt, dafür ist der Fallback da), strukturell max. ein Restart. (f) FAIL-CLOSED: nicht-interaktive Turns (Background/Scheduler — kein event_callback oder bg_task) können nicht fragen → Refusal `retrieval_pii_withheld` (kinds, nie Werte), NIE stiller Klartext-Egress; Timeout → asked-Set auf dem RequestContext, Retry im selben Turn refust ohne zweites Modal, nächster Turn fragt frisch; Guard-interne Fehler fallen auf das Pre-Feature-Verhalten (apply-only) zurück, konsistent mit der Seam-Stance. Audit `pii_retrieval_dialog` (counts+kinds). KV-Cache: reiner Tool-Result-Pfad, kein System-Prompt/Schema → Prefix unberührt, kein Warmup-Reprime. Tests: tests/test_gdpr_retrieval_dialog.py NEU (14 — Dialog seedet Mapping+Ledger+Fake im selben Ergebnis, Roundtrip args-deanon, Ledger-/Mapping-decided → kein Dialog, rule_override ignore + Scanner aus → no-op, Background+bg_task+Timeout fail-closed + ein Modal pro Turn, FP bleibt klar + Zeile, Cancel persistiert nichts, Lokal setzt Flags + Guard danach inaktiv, Nicht-Retrieval-Quelle unberührt, lokales Modell fragt nie); GDPR-Familie 120 + Scanner/Pseudonymizer 116 grün (1 pre-existing test_pii_ner-NER-FP, HEAD-verifiziert in 9.397.0). py_compile OK. Server-Restart nötig (brain/handlers). DANACH möglich: policies-Eval mit --anonymise (Gold-Reuse 20260705T065248, --parallel 1) misst den echten Anon-Qualitätseffekt. Skill 05-internals/06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.397.0", "2026-07-22", "refactor(GDPR-Kernpolitik invertiert — 'wir schützen NUR die Kombination PII+LLM, sonst nichts' [Nutzer-Grundsatzentscheid]) + der xlsx-Deanon-Race strukturell beseitigt. ANLASS: der v9.396.1-Fix beseitigte EINE Race-Quelle (Rename/Alias-mtime-Churn), aber der reproduzierte Testlauf (Transaktion, mistral-medium, Anon AN) zeigte den `FilePseudonymizeError: File is not a zip file` WEITER — der Deanon feuerte 13× auf dieselbe xlsx (per-write `_after_file_write` → `_changed_files`-mtime-Diff pro python_exec-Runde), der ERSTE Fire traf die halb-geschriebene Datei (openpyxl schreibt ein Zip inkrementell). Der bisherige Fix relokierte den Reverse, statt die Ursache zu entfernen. WURZEL: die datei-schreibenden Tools (write_file/write_document/edit_file) bekamen die FAKES des Modells als Inhalt und wurden NACHTRÄGLICH auf der Platte zurückübersetzt (racy), während python_exec seine Args schon vor Ausführung deanonymisiert bekam (real from the start). Zwei Wege für dasselbe Ziel — der eine racy. ARCHITEKTUR-FIX: (1) POLITIK-INVERSION — die frühere Allow-Liste `GDPR_ARGS_DEANON_TOOLS` ist jetzt die DENY-Liste `GDPR_LLM_ARG_TOOLS`: JEDES Tool bekommt reale, deanonymisierte Args, AUSSER den Tools, die ihre Args in ein internes/Cloud-MODELL weiterreichen (ask_llm, agent_step, delegate_task, run_background_task, translate_text/_document, generate_audio_overview, context_recall, transcribe_audio, generate_image) — die behalten die Fakes, weil genau DAS die geschützte Kombination ist. Die Deny-Liste wurde durch Lesen jeder Tool-Implementierung ermittelt (Kennzeichen: Import von sidecar_proxy / gdpr_pick_model_for_background / Sub-Agent-Turn — nur in 4 Tool-Dateien). (2) DATEIEN REAL FROM THE START — write_file/write_document/edit_file/edit_document/r_exec/kernel_exec/ast_grep_replace sind NICHT auf der Deny-Liste → ihr Inhalts-Arg wird VOR dem Schreiben deanonymisiert → die Bytes landen echt auf der Platte, KEIN On-Disk-Reverse, KEINE halb-geschriebene Datei für einen Reverse-Walker zum Rennen. Der racy `deanonymize_file`-Pfad im After-File-Write-Callback ist ENTFERNT; an seine Stelle tritt ein READ-ONLY-Lint (race-tolerant: nicht-lesbare = mid-write → zum Turn-Ende vertagt) + der AUTORITATIVE quiescente Turn-End-Sweep `gdpr_lint_written_files_at_turn_end` (aus sidecar_proxy.run_turn's finally, NACH Loop-Ende → jede Datei fertig geschrieben, genau EIN Lint, Rest-Fake = fail-loud, nie stiller Ship). Neu `RequestContext._gdpr_written_files`. (3) EGRESS-BLOCK-GATE ENTFERNT — `_gdpr_guard_web_args` + Helfer (`_web_gate_*`, `_WEB_GATE_PASS_CATEGORIES`, `_web_release_translate_args`, ~490 Zeilen) GELÖSCHT: es blockierte web/mail-Calls mit geschützten Werten, aber 'ein Nicht-LLM-Tool sendet reale Daten nach außen' ist unter der Grundsatz-Politik AUßER SCOPE. Der `web_egress`-Admin-Knopf (Schema/Default/Loader + admin_config/admin_artifacts-Validierung + settings_general_tabs.js/nav.js-UI) mit-entfernt. Der Deny-by-default-Netzwerk-Guard für execute_command/python_exec (`_deanon_string_is_local_safe` + Netzwerk-Marker/Local-Command-Tabellen) ebenfalls GELÖSCHT — akzeptierter Trade-off auf Protokoll: ein modell-verfasstes netzwerk-berührendes Skript läuft jetzt mit realen Werten und KANN sie nach außen senden; das ist eine Skript-Sandbox-Frage, nicht die geschützte PII+LLM-Kombination. WAS BLEIBT: der Result-Seam `_gdpr_anon_tool_text` (anonymisiert JEDES Tool-Ergebnis auf dem Weg ZURÜCK zum Chat-LLM) — die eigentliche PII+LLM-Grenze, unverändert; und `_gdpr_scan_cloud_egress` auf generate_image (Nutzer-Entscheid: ein Cloud-BILDMODELL, das PII empfängt, IST in Scope — verweigert PII-tragende Prompts auch aus lokalen Sessions). VERIFIZIERT End-to-End (Transaktion, Anon AN, neuer Code): deanon_errs=0, deanon_calls=0, fake_leaks=0, applied=1, valide xlsx — der Race ist durch Konstruktion weg (nichts öffnet mehr eine halb-geschriebene Datei). Tests: test_dispatch_symmetry/test_gdpr_egress_gate/test_kernel_tools/test_gdpr_mapping_every_turn auf die neue Politik umgeschrieben (Web-Tools bekommen jetzt reale Args, LLM-Arg-Tools behalten Fakes, bg-Turn-Mapping-Vererbung via args-deanon geprobt); test_web_egress_gate/test_gdpr_web_matrix/test_web_auto_release (nur das gelöschte Gate) ENTFERNT; test_report_fidelity/test_chat_worker_helpers auf 'Callback lintet, reverst NICHT' umgeschrieben. Voller discover: 909 Tests, 0 neue Failures (1 pre-existing test_pii_ner-NER-FP, HEAD-verifiziert). py_compile + import brain OK. Server-Restart nötig (brain/engine/handlers). KURATIERTER Eintrag (user+admin: Werkzeuge arbeiten auf echten Daten, Schutz greift gezielt bei KI-Weitergabe; keine Fake-Dateien mehr)."),
@@ -3383,6 +3384,194 @@ _RETRIEVAL_PII_OPT_STICKY_YES = "Ja, automatisch anonymisieren"
 _RETRIEVAL_PII_OPT_STICKY_NO = "Nein, weiter nachfragen"
 
 
+def _retrieval_pii_norm(value: str) -> str:
+    """Shared match key for retrieval-PII values across DETECTION SURFACES.
+    The runtime scan sees JSON-ENCODED tool text (real newlines appear as the
+    literal two-char sequence backslash-n), the project pre-decision scan sees
+    raw markdown (real newlines) — a value spanning a line break would
+    normalise differently per side and the project decision would never
+    match. Collapse literal \\n/\\t/\\r escapes AND real whitespace to single
+    spaces, then casefold."""
+    v = str(value or "")
+    for esc in ("\\n", "\\t", "\\r"):
+        v = v.replace(esc, " ")
+    return " ".join(v.split()).casefold()
+
+
+# ── Project-wide PII pre-decision scan (Option 3, v9.400.0) ──
+#
+# Curate the project corpus ONCE instead of per session: an incremental scan
+# over the MINED text corpus (the .brain-extracted companions + text inputs +
+# web-urls — exactly what retrieval returns) aggregates PII candidates into
+# the project_pii_decisions ledger as 'open' rows. The owner reviews them in
+# the project panel (anonymise/fp, applies to ALL users of the project); the
+# retrieval guard then honours decided values without a dialog. New/changed
+# documents surface as fresh 'open' rows (badge) — they deliberately do NOT
+# auto-decide (operator choice 2026-07-22: "open lassen").
+
+_PROJECT_PII_SCAN_STATE: dict = {}
+_PROJECT_PII_SCAN_LOCK = threading.Lock()
+_PROJECT_PII_MAX_FILE_BYTES = 2_000_000
+_PROJECT_PII_CHUNK_CHARS = 100_000
+
+
+def _project_pii_corpus_files(pdir: str, project: dict) -> list:
+    """Text corpus of a project: .md/.txt under the project dir (incl.
+    .brain-extracted companions + web-urls) and under input folders OUTSIDE
+    the project dir. Skips trash/hidden dirs except .brain-extracted."""
+    roots = [pdir]
+    for entry in (project.get("input_folders") or []):
+        p = (entry.get("path") or "").strip()
+        try:
+            if p and os.path.isdir(p) and not os.path.realpath(p).startswith(
+                    os.path.realpath(pdir)):
+                roots.append(p)
+        except OSError:
+            continue
+    out = []
+    for root in roots:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames
+                           if d == ".brain-extracted"
+                           or not (d.startswith(".") or d == "__pycache__")]
+            for fn in filenames:
+                if fn.lower().endswith((".md", ".txt")):
+                    out.append(os.path.join(dirpath, fn))
+    return sorted(set(out))
+
+
+def _project_pii_scan_chunks(text: str):
+    """Yield ~100k-char chunks split on paragraph boundaries (the PII-Test-1
+    lesson: NER over >200KB in one call is unreliable)."""
+    if len(text) <= _PROJECT_PII_CHUNK_CHARS:
+        yield text
+        return
+    pos = 0
+    while pos < len(text):
+        end = min(pos + _PROJECT_PII_CHUNK_CHARS, len(text))
+        if end < len(text):
+            nl = text.rfind("\n\n", pos, end)
+            if nl > pos + 1000:
+                end = nl
+        yield text[pos:end]
+        pos = end
+
+
+def project_pii_scan_status(project_id: str) -> dict:
+    with _PROJECT_PII_SCAN_LOCK:
+        return dict(_PROJECT_PII_SCAN_STATE.get(project_id) or {})
+
+
+def project_pii_scan(agent_id: str, name: str, *,
+                     force_full: bool = False) -> dict:
+    """Incremental PII pre-decision scan for one project. Synchronous —
+    callers that must not block (HTTP handler) run it on their own thread;
+    the project-sync daemon calls it at the end of a changed cycle. Only one
+    scan per project at a time. Returns the final status dict."""
+    import hashlib
+    project = ProjectManager.get_project(agent_id, name)
+    pid = (project or {}).get("id") or ""
+    if not project or not pid:
+        return {"error": "project not found", "running": False}
+    with _PROJECT_PII_SCAN_LOCK:
+        st = _PROJECT_PII_SCAN_STATE.get(pid)
+        if st and st.get("running"):
+            return dict(st)
+        st = {"running": True, "started_at": time.time(), "files_total": 0,
+              "files_scanned": 0, "new_candidates": 0, "error": ""}
+        _PROJECT_PII_SCAN_STATE[pid] = st
+
+    def _set(**kw):
+        with _PROJECT_PII_SCAN_LOCK:
+            st.update(kw)
+
+    try:
+        from server_lib.db import ChatDB
+        cfg = _get_gdpr_scanner_config()
+        if not cfg.get("enabled", True):
+            _set(running=False, error="GDPR-Scanner deaktiviert")
+            return dict(st)
+        pdir = ProjectManager._project_dir(agent_id, name)
+        files = _project_pii_corpus_files(pdir, project)
+        cursor = {} if force_full else (
+            ChatDB.get_project_pii_scan_map(pid) or {})
+        _set(files_total=len(files))
+        agg = {}      # norm → {raw_value, rule_id, occurrences, files:set}
+        scanned = []  # (path, sha1) cursor updates
+        done = 0
+        for path in files:
+            done += 1
+            _set(files_scanned=done)
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read(_PROJECT_PII_MAX_FILE_BYTES)
+            except OSError:
+                continue
+            sha = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+            if cursor.get(path) == sha:
+                continue
+            try:
+                for chunk in _project_pii_scan_chunks(text):
+                    for fnd in _pii_scan_text(chunk, cfg=cfg) or []:
+                        s, e = fnd.get("start"), fnd.get("end")
+                        if not isinstance(s, int) or not isinstance(e, int) \
+                                or e <= s:
+                            continue
+                        val = " ".join(chunk[s:e].split()).strip()
+                        if len(val) < 2:
+                            continue
+                        norm = _retrieval_pii_norm(val)
+                        slot = agg.setdefault(norm, {
+                            "raw_value": val,
+                            "rule_id": fnd.get("rule_id") or "unknown",
+                            "occurrences": 0, "files": set()})
+                        slot["occurrences"] += 1
+                        slot["files"].add(os.path.basename(path))
+            except Exception as e:
+                print(f"[project-pii] scan failed {path}: {e}", flush=True)
+                continue
+            scanned.append((path, sha))
+        new_n = ChatDB.upsert_project_pii_candidates(pid, [
+            {"norm_value": k, "raw_value": v["raw_value"],
+             "rule_id": v["rule_id"], "occurrences": v["occurrences"],
+             "source_files": sorted(v["files"])}
+            for k, v in agg.items()])
+        if scanned:
+            ChatDB.set_project_pii_scan_files(pid, scanned)
+        _set(running=False, new_candidates=int(new_n or 0),
+             finished_at=time.time())
+    except Exception as e:
+        print(f"[project-pii] scan error {agent_id}/{name}: {e}", flush=True)
+        _set(running=False, error=str(e)[:300])
+    return dict(st)
+
+
+def _retrieval_project_decisions() -> dict:
+    """Project-curation lookup for the guard: norm → {status, rule_id, value}
+    for DECIDED rows of the session's project ({} outside projects / on any
+    error — the dialog then handles the values as before). Cached per turn."""
+    ctx = get_request_context()
+    cached = ctx._dynamic.get("_retrieval_proj_decisions")
+    if cached is not None:
+        return cached
+    out = {}
+    try:
+        pname = (ctx.project or "").strip() if isinstance(ctx.project, str) \
+            else ""
+        agent = ctx.current_agent.agent_id if ctx.current_agent else "main"
+        if pname:
+            proj = ProjectManager.get_project(agent, pname)
+            pid = (proj or {}).get("id") or ""
+            if pid:
+                from server_lib.db import ChatDB
+                out = ChatDB.get_project_pii_decided_map(pid) or {}
+    except Exception as e:
+        print(f"[gdpr] project decisions load failed: {e}", flush=True)
+        out = {}
+    ctx._dynamic["_retrieval_proj_decisions"] = out
+    return out
+
+
 def _retrieval_auto_anon_enabled() -> bool:
     """Session-sticky standing order: new retrieval-borne PII auto-anonymises
     without a dialog. Reads the LIVE in-memory session first (the dialog sets
@@ -3431,14 +3620,16 @@ def _retrieval_set_auto_anon() -> None:
 
 
 def _retrieval_seed_values(mapping, values: dict, fp_norms: set,
-                           source: str, choice: str) -> None:
+                           source: str, choice: str,
+                           disposition: str = "retrieval-dialog") -> None:
     """Seed the confirmed values into the active mapping + write the
     pii_decisions ledger rows + persist the mapping (restart-safe) + audit.
-    Shared by the dialog's proceed path (`choice='dialog'`) and the
-    standing-order auto paths (`choice='turn_auto'|'session_auto'`).
-    `values` is norm → {value, rule_id, label}; norms in `fp_norms` become
-    false_positive=1 rows (stay clear), the rest mint via seed_from_decision
-    (same fakes the pre-send path would produce)."""
+    Shared by the dialog's proceed path (`choice='dialog'`), the
+    standing-order auto paths (`choice='turn_auto'|'session_auto'`) and the
+    project-curation path (`choice='project'`, disposition
+    'project-curated'). `values` is norm → {value, rule_id, label}; norms in
+    `fp_norms` become false_positive=1 rows (stay clear), the rest mint via
+    seed_from_decision (same fakes the pre-send path would produce)."""
     import pseudonymizer as _ps
     ctx = get_request_context()
     sid = ctx.current_session_id or ""
@@ -3447,7 +3638,7 @@ def _retrieval_seed_values(mapping, values: dict, fp_norms: set,
     for key, slot in values.items():
         if key in fp_norms:
             rows.append({"rule_id": slot["rule_id"], "value": slot["value"],
-                         "disposition": "retrieval-dialog",
+                         "disposition": disposition,
                          "false_positive": True, "source": source})
             continue
         try:
@@ -3455,7 +3646,7 @@ def _retrieval_seed_values(mapping, values: dict, fp_norms: set,
         except Exception as e:
             print(f"[gdpr] retrieval seed failed: {e}", flush=True)
         rows.append({"rule_id": slot["rule_id"], "value": slot["value"],
-                     "disposition": "retrieval-dialog",
+                     "disposition": disposition,
                      "false_positive": False, "source": source,
                      "fake_value": mapping.forward.get(slot["value"], "")})
     try:
@@ -3533,7 +3724,7 @@ def _gdpr_retrieval_new_values(text: str, mapping) -> dict:
         return {}
     known = set()
     for k in list(mapping.forward.keys()) + list(mapping.reverse.keys()):
-        known.add(" ".join(str(k).split()).casefold())
+        known.add(_retrieval_pii_norm(k))
     decided = set()
     try:
         from server_lib.db import ChatDB
@@ -3542,7 +3733,7 @@ def _gdpr_retrieval_new_values(text: str, mapping) -> dict:
         if sid:
             for nn in _latest_decisions_by_value(
                     ChatDB.get_session_pii_decisions(sid)):
-                decided.add(nn.casefold())
+                decided.add(_retrieval_pii_norm(nn))
     except Exception as e:
         print(f"[gdpr] retrieval ledger read failed: {e}", flush=True)
     out = {}
@@ -3553,7 +3744,7 @@ def _gdpr_retrieval_new_values(text: str, mapping) -> dict:
         val = " ".join(text[s:e].split()).strip()
         if len(val) < 2:
             continue
-        norm = val.casefold()
+        norm = _retrieval_pii_norm(val)
         if norm in known or norm in decided or norm in out:
             continue
         rid = f.get("rule_id") or "unknown"
@@ -3708,6 +3899,25 @@ def _gdpr_retrieval_guard(text: str, source: str, mapping) -> str | None:
         return None
     if not candidates:
         return None
+    # Project curation (Option 3, v9.400.0) — MUST run before the standing
+    # orders: a project-FP value would otherwise be auto-faked by the
+    # session/turn order, contradicting the curated decision. Curated
+    # 'anonymise' values seed silently (with the RUNTIME candidate's surface
+    # form — the project row's clean form may differ across JSON-escape
+    # boundaries, the norm key bridges them); 'fp' values stay clear; only
+    # UNDECIDED values proceed to standing orders / dialog.
+    proj_dec = _retrieval_project_decisions()
+    if proj_dec:
+        proj_anon = {k: v for k, v in candidates.items()
+                     if (proj_dec.get(k) or {}).get("status") == "anonymise"}
+        candidates = {k: v for k, v in candidates.items()
+                      if k not in proj_dec}
+        if proj_anon:
+            _retrieval_seed_values(mapping, proj_anon, set(), source,
+                                   choice="project",
+                                   disposition="project-curated")
+        if not candidates:
+            return None
     kinds = sorted({v["rule_id"] for v in candidates.values()})
     # Standing orders (v9.399.0 consolidation): the first dialog's "proceed"
     # answer governs the REST of the turn, and the sticky opt-in governs the

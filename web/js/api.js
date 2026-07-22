@@ -334,6 +334,11 @@ class API {
   static lookupUsers() { return this.get('/v1/auth/users/lookup'); }
   static getProject(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
   static updateProject(agent, name, cfg) { return this.put(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`, cfg); }
+  // Projekt-PII-Vorentscheidung (Option 3, v9.400.0)
+  static getProjectPiiDecisions(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/pii-decisions`); }
+  static decideProjectPii(agent, name, decisions) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/pii-decisions`, { decisions }); }
+  static startProjectPiiScan(agent, name, forceFull) { return this.post(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/pii-scan`, { force_full: !!forceFull }); }
+  static getProjectPiiScanStatus(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/pii-scan`); }
   static deleteProject(agent, name) { return this.del(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}`); }
   static listProjectInstructionFiles(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/instruction-files`); }
   static getProjectIngestStatus(agent, name) { return this.get(`/v1/agents/${agent}/projects/${encodeURIComponent(name)}/ingest-status`); }
