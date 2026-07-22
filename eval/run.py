@@ -93,20 +93,27 @@ def brain_create_session(base_url: str, token: str, agent: str, project: str, mo
 
 
 def brain_chat(base_url: str, token: str, session_id: str, message: str, timeout: float,
-               thinking: str | None = None, model: str | None = None) -> dict:
+               thinking: str | None = None, model: str | None = None,
+               anonymise: bool = False) -> dict:
     """POST /v1/chat and drain SSE until 'done'. Returns the done-event data plus
     a list of tool-call summaries lifted from 'tool_*' events.
 
     `model` is passed per-turn — REQUIRED for routing directives ('auto',
     'auto-cloud', 'auto-local', 'moa'): the send handler only routes/fans-out
     when the directive arrives as the composer model of the turn; a directive
-    that only sits on the session (create-time) is not re-evaluated."""
+    that only sits on the session (create-time) is not re-evaluated.
+
+    `anonymise=True` sets `gdpr_action=anonymise` on the turn, so the session
+    gets a mapping and every retrieval result (mempalace_query / KG) carrying
+    PII is pseudonymised before the model sees it. Test-2 (project PII) knob."""
     url = base_url.rstrip("/") + "/v1/chat"
     body = {"session_id": session_id, "message": message}
     if model:
         body["model"] = model
     if thinking and thinking != "none":
         body["thinking"] = thinking
+    if anonymise:
+        body["gdpr_action"] = "anonymise"
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -361,6 +368,10 @@ def main() -> int:
     ap.add_argument("--disciplines", choices=["none", "citation_only", "full"],
                     help="override claude_code.disciplines from config")
     ap.add_argument("--brain-model", help="override brain.model from config")
+    ap.add_argument("--anonymise", action="store_true",
+                    help="Test-2: run the Brain side with gdpr_action=anonymise "
+                         "(project retrieval PII pseudonymised before the model). "
+                         "Gold side is unaffected (reuse Opus gold as-is).")
     ap.add_argument("--thinking", choices=["none", "low", "medium", "high"], default=None,
                     help="enable thinking for Brain chat requests (mistral_blocks format: only 'high' is valid)")
     ap.add_argument("--judge-model", default=None,
@@ -508,7 +519,8 @@ def main() -> int:
                                            brain_model)
                 done = brain_chat(brain_cfg["base_url"], brain_token, sid,
                                   q["question"], brain_cfg["timeout_seconds"],
-                                  thinking=args.thinking, model=brain_model)
+                                  thinking=args.thinking, model=brain_model,
+                                  anonymise=args.anonymise)
                 done["_session_id"] = sid
                 done["_elapsed_s"] = round(time.time() - t0, 2)
                 with open(brain_path, "w", encoding="utf-8") as f:
