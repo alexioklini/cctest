@@ -123,6 +123,7 @@ def brain_chat(base_url: str, token: str, session_id: str, message: str, timeout
     final: dict = {}
     tools: list[dict] = []
     errors: list[str] = []
+    pii_dialogs = 0
     start = time.time()
 
     with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -148,6 +149,35 @@ def brain_chat(base_url: str, token: str, session_id: str, message: str, timeout
                         errors.append(payload.get("message", payload_str))
                     if event_name in ("tool_use", "tool_result", "tool_round"):
                         tools.append({"event": event_name, "data": payload})
+                    if event_name == "user_input_needed" and anonymise:
+                        # v9.398.0 Mid-Turn-Retrieval-PII-Dialog: auto-answer
+                        # (alles anonymisieren, anonymisiert fortfahren) — der
+                        # Eval misst den Anon-Qualitätseffekt, nicht die
+                        # Dialog-UX; ohne Antwort liefe jede Frage in den
+                        # 300s-Dialog-Timeout (fail-closed Refusal). NUR den
+                        # Retrieval-Dialog beantworten (erkennbar an der
+                        # Turn-Frage) — ask_user-Fragen des Modells bleiben
+                        # unberührt.
+                        qs = payload.get("questions") or []
+                        if any("wie soll die Anfrage fortgesetzt"
+                               in (q.get("question") or "") for q in qs):
+                            answers = {}
+                            for q in qs:
+                                qt = q.get("question") or ""
+                                if "wie soll die Anfrage fortgesetzt" in qt:
+                                    answers[qt] = "Anonymisiert fortfahren"
+                                else:
+                                    answers[qt] = "Anonymisieren"
+                            try:
+                                _http_post_json(
+                                    base_url.rstrip("/") + "/v1/chat/answer",
+                                    {"session_id": session_id,
+                                     "answers": answers},
+                                    headers={"Authorization": f"Bearer {token}"},
+                                    timeout=15)
+                                pii_dialogs += 1
+                            except Exception as e:
+                                errors.append(f"pii-dialog answer failed: {e}")
                 event_name, data_buf = None, []
                 continue
             if line.startswith("event: "):
@@ -158,6 +188,7 @@ def brain_chat(base_url: str, token: str, session_id: str, message: str, timeout
         raise RuntimeError(f"brain_chat ended without 'done' event. errors={errors}")
     final["_tool_events"] = tools
     final["_errors"] = errors
+    final["_pii_dialogs"] = pii_dialogs
     return final
 
 
