@@ -498,6 +498,17 @@ class ChatDB:
                 conn.execute("ALTER TABLE sessions ADD COLUMN allow_further_web INTEGER DEFAULT 0")
             except sqlite3.OperationalError:
                 pass
+            # Retrieval-PII standing order (v9.399.0): when 1, NEW PII values
+            # surfacing from project retrieval (mempalace/wiki/KG) in an
+            # anonymising session are auto-anonymised WITHOUT the mid-turn
+            # dialog — set via the "Auch künftige Funde automatisch
+            # anonymisieren?" question in the first dialog. Also lets
+            # non-interactive turns (scheduler/background) seed instead of
+            # fail-closed-refusing. Default 0 (ask per new-value batch).
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN retrieval_auto_anon INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass
             # Sticky per-session opt-in: when 1, the post-turn GDPR feedback
             # modal (gdprFeedbackModal) fires after every turn that took a GDPR
             # action, so the user can retry with a different method or abort.
@@ -2727,6 +2738,17 @@ class ChatDB:
         escape hatch). value: truthy -> 1 (allow), falsy -> 0 (locked)."""
         with _db_conn() as conn:
             conn.execute("UPDATE sessions SET allow_further_web = ? WHERE id = ?",
+                        (1 if value else 0, session_id))
+            conn.commit()
+
+    @staticmethod
+    @_db_safe(default=None)
+    def update_session_retrieval_auto_anon(session_id, value):
+        """Per-session retrieval-PII standing order: truthy -> 1 (new
+        retrieval-borne PII auto-anonymises without the mid-turn dialog),
+        falsy -> 0 (ask per new-value batch)."""
+        with _db_conn() as conn:
+            conn.execute("UPDATE sessions SET retrieval_auto_anon = ? WHERE id = ?",
                         (1 if value else 0, session_id))
             conn.commit()
 

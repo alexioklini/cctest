@@ -688,6 +688,7 @@ class SessionsHandlerMixin:
             _rmo = getattr(session, "research_mode_override", None)
             resp["research_mode_override"] = (None if _rmo is None else bool(_rmo))
             resp["allow_further_web"] = bool(getattr(session, "allow_further_web", False))
+            resp["retrieval_auto_anon"] = bool(getattr(session, "retrieval_auto_anon", False))
             resp["gdpr_feedback_ask"] = bool(getattr(session, "gdpr_feedback_ask", False))
             resp["gdpr_details_visible"] = bool(getattr(session, "gdpr_details_visible", False))
             resp["web_basket"] = getattr(session, "web_basket", "") or ""
@@ -723,6 +724,7 @@ class SessionsHandlerMixin:
                 resp["research_mode_override"] = (None if _rmo_db is None
                                                    else bool(_rmo_db))
                 resp["allow_further_web"] = bool(info.get("allow_further_web", 0))
+                resp["retrieval_auto_anon"] = bool(info.get("retrieval_auto_anon", 0))
                 resp["gdpr_feedback_ask"] = bool(info.get("gdpr_feedback_ask", 0))
                 resp["gdpr_details_visible"] = bool(info.get("gdpr_details_visible", 0))
                 resp["web_basket"] = info.get("web_basket", "") or ""
@@ -2176,6 +2178,15 @@ class SessionsHandlerMixin:
             if s:
                 s.allow_further_web = allow
             self._send_json({"status": "ok", "allow_further_web": allow, "session_id": sid})
+        elif action == "retrieval_auto_anon":
+            # Retrieval-PII standing order (v9.399.0) — API-togglable so the
+            # in-dialog opt-in stays revocable without new UI.
+            allow = bool(body.get("value"))
+            ChatDB.update_session_retrieval_auto_anon(sid, allow)
+            s = sessions.get(sid)
+            if s:
+                s.retrieval_auto_anon = allow
+            self._send_json({"status": "ok", "retrieval_auto_anon": allow, "session_id": sid})
         elif action == "gdpr_feedback_ask":
             # Sticky opt-in for the post-turn GDPR feedback modal. Set on by the
             # pre-send modal checkbox; off when the user unticks "Frag mich

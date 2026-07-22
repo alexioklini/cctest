@@ -1517,6 +1517,19 @@ preamble goes in first-user-message instead.
 
 ## GDPR / PII scanner
 
+- **Retrieval-dialog consolidation (9.399.0)**: the mid-turn retrieval
+  dialog (below) now asks at most ONCE per turn — the turn-wide "anonymisiert
+  fortfahren" answer becomes a standing order for the rest of the turn, so
+  further retrieval waves with new values auto-anonymise silently (a research
+  turn produced 11 dialogs before; false positives from later waves stay
+  retroactively correctable in the Datenschutz panel via the purge
+  machinery). The first dialog additionally offers a SESSION-wide standing
+  order ("Künftige neue Funde in dieser Sitzung automatisch anonymisieren?"),
+  persisted as `sessions.retrieval_auto_anon` (manage action
+  `retrieval_auto_anon` toggles it; echoed in GET /messages). With the
+  session order active, non-interactive turns (scheduler/background) SEED
+  instead of fail-closed-refusing — scheduled tasks on anonymising project
+  sessions become usable. Without it, background stays fail-closed.
 - **Mid-turn retrieval-PII dialog (9.398.0)**: project retrieval
   (`mempalace_query`, `wiki_read`, the KG tools) returns RAW knowledge —
   drawers are stored unanonymised by design (anonymising them would change

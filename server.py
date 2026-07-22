@@ -369,6 +369,13 @@ class Session:
         # them. True = also permit autonomous web access on top. Only bites
         # when the turn carries enabled curated URLs. Persists in sessions DB.
         self.allow_further_web: bool = False
+        # Retrieval-PII standing order (sticky per session, v9.399.0): when
+        # True, NEW PII values surfacing from project retrieval in an
+        # anonymising session are auto-anonymised without the mid-turn dialog;
+        # non-interactive turns seed instead of fail-closed-refusing. Set via
+        # the sticky question in the first retrieval dialog. Persists in
+        # sessions DB.
+        self.retrieval_auto_anon: bool = False
         # Sticky opt-in: when True, the post-turn GDPR feedback modal fires
         # after every turn that took a GDPR action (anonymise / local swap), so
         # the user can retry with a different method or abort. Set when the user
@@ -488,6 +495,7 @@ class Session:
                 self.research_mode_override = (None if _rmo is None
                                                 else bool(_rmo))
                 self.allow_further_web = bool(info.get("allow_further_web", 0))
+                self.retrieval_auto_anon = bool(info.get("retrieval_auto_anon", 0))
                 self.gdpr_feedback_ask = bool(info.get("gdpr_feedback_ask", 0))
                 self.gdpr_details_visible = bool(info.get("gdpr_details_visible", 0))
                 self.web_basket = info.get("web_basket", "") or ""

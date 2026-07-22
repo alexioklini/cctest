@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.398.0"
+VERSION = "9.399.0"
 VERSION_DATE = "2026-07-22"
 CHANGELOG = [
+    ("9.399.0", "2026-07-22", "feat(GDPR — Retrieval-PII-Dialog KONSOLIDIERT: Turn-Vererbung + Session-Standing-Order; Anlass Eval-Befund F2_kreditvergabe = 11 Dialoge in EINEM Turn, und Nutzer-Ansage 'ab nächster Woche ist PII in Produktion default an' → der Dialog trifft künftig JEDEN Projekt-Chat). ZWEI Mechanismen, ein Einhängepunkt (`_gdpr_retrieval_guard`, VOR asked-Set/Cap/Dialog): (1) TURN-VERERBUNG — die Turn-Wahl 'Anonymisiert fortfahren' des ERSTEN Dialogs wird als `_retrieval_pii_turn_policy` auf dem RequestContext zur Standing-Order für den REST des Turns: jede weitere Retrieval-Welle mit neuen Werten seedet automatisch als anonymise (gemeinsamer Helper `_retrieval_seed_values` — seed_from_decision + Ledger-Zeilen + gdpr_persist_mapping + Audit, jetzt von Dialog- UND Auto-Pfad geteilt; Audit-`choice` = dialog|turn_auto|session_auto) statt erneut zu fragen. Begründung: die Richtungsentscheidung ist gefallen, Folgedialoge lieferten nur FP-Granularität — und die bleibt RETROAKTIV korrigierbar (FP-Mark im Datenschutz-Panel → purge_value, die 9.383-Maschinerie). Trade-off dokumentiert: ein FP aus Welle 2+ wird in diesem Turn fälschlich gefakt (marginales Antwort-Risiko), der Nutzer sieht dank Deanonymisierung immer echte Werte. (2) SESSION-STANDING-ORDER — der erste Dialog trägt eine zusätzliche Frage 'Künftige neue Funde in dieser Sitzung automatisch anonymisieren (ohne erneut zu fragen)?' (Ja/Nein, VOR der Turn-Frage; unbeantwortet = Nein = konservativ weiter fragen; bindet nur bei turn_choice=proceed): Ja persistiert `sessions.retrieval_auto_anon` (additive Migration + `ChatDB.update_session_retrieval_auto_anon` + Session-Feld + Load + GET-/messages-Echo + manage-Action `retrieval_auto_anon {value}` — spiegelt allow_further_web end-to-end; Widerruf via manage-Action, kein neues UI: die Frage reitet in der bestehenden ask_user-Karte). Der Guard liest die Order über `_retrieval_auto_anon_enabled()` (live In-Memory-Session zuerst — der Dialog setzt sie mid-turn — dann DB-Fallback für Background-Turns). WICHTIGSTER NEBENEFFEKT: die Session-Order hebt das Background-fail-closed — ein Scheduler-/Hintergrund-Turn auf einer Session mit Standing-Order seedet+fakt statt `retrieval_pii_withheld` zu refusen → geplante Tasks auf Anon-Projekten werden nutzbar (der Produktions-Fall ab KW 2026-07-27). Ohne Order bleibt Background fail-closed (unverändert Plan §5.4). Eval-Harness beantwortet die Sticky-Frage explizit mit Nein (misst den Ask-Pfad). Tests: test_gdpr_retrieval_dialog 14→20 (Turn-Vererbung: 1 Dialog trotz 2. Welle + Welle-2-Wert geseedet/gefakt/im Ledger; Sticky-Frage vorhanden + Position vor Turn-Frage; Sticky-Ja persistiert + nächster Turn still + auto-gefakt; Sticky-Nein fragt nächsten Turn wieder; Background MIT Order seedet statt refuse [der Produktions-Test]; Widerruf via Setter fragt wieder; Sticky-Basis mit realer sessions-Zeile via save_session/delete_session). Bestandssuite 14/14 unverändert grün (unbeantwortete Sticky-Frage = altes Verhalten). py_compile OK (brain/server/db/sessions_handler/eval). Migration additiv. KV-Cache: Tool-Result-Pfad, kein Prompt/Schema → Prefix unberührt. Server-Restart nötig (Spalte + Session-Feld + Guard). Skill 05-internals/06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.398.0", "2026-07-22", "feat(GDPR — Mid-Turn-PII-Dialog bei Projekt-Retrieval; PROJECT_RETRIEVAL_PII_DIALOG_PLAN.md, Anlass PII-Phase-1 Test 2). BEFUND (2026-07-22, belegt): in einem Projekt-Chat mit gdpr_action=anonymise ging PII aus den gemineten Dokumenten über mempalace_query/KG/Wiki ROH ans Cloud-LLM (applied:0, anonymise_read:0) — Drawer sind BEWUSST roh gespeichert (v9.96.0: anonymisierte Drawer verschieben die Embeddings und brechen das Vektor-Retrieval), der Result-Seam `_gdpr_anon_tool_text` ist seit 9.383.0 apply-only, und ein Projekt-Chat hat weder Attachment-Scan noch pii_decisions für die Dokument-PII → leeres Mapping → Seam no-op. Die Architektur war zu 90% fertig; es fehlte nur der SEED. NEU — ZWEITER, bewusster Mid-Turn-Detektionspunkt NUR für Retrieval-Quellen (mempalace_query, wiki_read[:tree], mempalace_kg_query/_search/_neighbors — Erweiterung, kein Widerspruch zu GDPR_ALL_CHECKS_PRE_DIALOG_PLAN §C: Retrieval-PII ist pre-send UNBEKANNT, sie entsteht erst durch die Modell-Query): (a) `brain._gdpr_retrieval_guard` (gerufen aus `_gdpr_anon_tool_text` nach der Mapping-Auflösung, d.h. nur in anonymisierenden Sessions — der Normalfall ohne Anon zahlt NICHTS) fährt einen FRISCHEN `_pii_scan_text` mit den Production-FP-Gates (org=ignore, rule_overrides, min_occurrences, Tabellen-/NER-Filter — die 'Systemverantwortliche'-Liste flutet den Dialog nicht mit Systemnamen) und behält nur Werte OHNE jede Vorentscheidung: nicht im Mapping (forward+reverse, casefold), nicht im pii_decisions-Ledger (per-VALUE-Recency via `_latest_decisions_by_value` — jede Entscheidung zählt, entschiedene Werte fragen NIE wieder), nicht im asked-Set dieses Turns. (b) EIN blockierender Batch-Dialog pro Turn (`_retrieval_pii_ask`, Blaupause: der in 9.386.0 gelöschte `_web_consent_ask` via git show 525bd19e~1): pro Wert 'Anonymisieren / Falschtreffer (Klartext lassen)' PLUS die Turn-weite Frage 'Anonymisiert fortfahren / Lokales Modell verwenden / Anfrage abbrechen' (das Recovery-Modal-Tripel) — über die bestehende ask_user-Mechanik (_ask_user_register VOR dem Emit, Antwort via POST /v1/chat/answer, bestehende Frage-Karte, null neue UI). Unbeantwortete Werte defaulten auf Anonymisieren (sichere Richtung). Cap 40 Werte (mehr → fail-closed Refusal mit Eingrenzungs-Hint statt 100-Zeilen-Modal). (c) ENTSCHEIDUNG→SEED: 'Anonymisieren'-Werte → `pseudonymizer.seed_from_decision` (DIESELBEN Fakes wie der Pre-Send-Pfad, token-stabil) + pii_decisions-Zeile (turn_action=anonymise, fake_value, disposition=retrieval-dialog, Standard-Hash sha256(rule|value) — kein Namespace nötig, es IST eine gewöhnliche Anonymise-Entscheidung) + `gdpr_persist_mapping` (Restart-sicher); 'Falschtreffer' → false_positive=1-Zeile, bleibt Klartext, fragt nie wieder. Ab da faken die BESTEHENDEN Apply-Sweeps die Werte im selben Ergebnis, im Rest des Turns und in Folge-Turns (sticky via Turn-End-Recorder + Wire-Rewrite); der L3a-args-deanon übersetzt retrieval-geseedete Fakes in read_path zurück (Roundtrip per Test gepinnt). (d) 'Abbrechen' → session.cancel_token.cancel() (der normale Stop-Pfad) + Refusal; nichts persistiert. (e) 'Lokales Modell' → Kontext-Flags `_retrieval_pii_local_switch`/`_retrieval_pii_all_local` + Cancel; der Chat-Worker (handlers/chat.py, direkt nach run_turn) poppt das Flag und fährt denselben Turn EINMAL auf dem default_local_fallback_model neu (Provider/max_context/inf_params neu aufgelöst wie der MoA-Executor-Swap, frischer CancelToken, thinking_level=None, _current_model gesetzt, pii_local_swap-Audit + session._gdpr_local_swap-Badge): Wire bleibt unverändert (Mapping aktiv → lokales Modell sieht dieselben Fakes wie die Historie, Antwort-Deanonymiser greift weiter — bewusste Abweichung vom Pre-Turn-Recovery 'ORIGINAL content', mid-turn ist der Fake-Namespace schon auf dem Wire); der Guard selbst ist auf lokalen Modellen inaktiv (`_retrieval_turn_model_is_local` über ctx._current_model, Fallback live-Session — Rohwerte lokal erlaubt, dafür ist der Fallback da), strukturell max. ein Restart. (f) FAIL-CLOSED: nicht-interaktive Turns (Background/Scheduler — kein event_callback oder bg_task) können nicht fragen → Refusal `retrieval_pii_withheld` (kinds, nie Werte), NIE stiller Klartext-Egress; Timeout → asked-Set auf dem RequestContext, Retry im selben Turn refust ohne zweites Modal, nächster Turn fragt frisch; Guard-interne Fehler fallen auf das Pre-Feature-Verhalten (apply-only) zurück, konsistent mit der Seam-Stance. Audit `pii_retrieval_dialog` (counts+kinds). KV-Cache: reiner Tool-Result-Pfad, kein System-Prompt/Schema → Prefix unberührt, kein Warmup-Reprime. Tests: tests/test_gdpr_retrieval_dialog.py NEU (14 — Dialog seedet Mapping+Ledger+Fake im selben Ergebnis, Roundtrip args-deanon, Ledger-/Mapping-decided → kein Dialog, rule_override ignore + Scanner aus → no-op, Background+bg_task+Timeout fail-closed + ein Modal pro Turn, FP bleibt klar + Zeile, Cancel persistiert nichts, Lokal setzt Flags + Guard danach inaktiv, Nicht-Retrieval-Quelle unberührt, lokales Modell fragt nie); GDPR-Familie 120 + Scanner/Pseudonymizer 116 grün (1 pre-existing test_pii_ner-NER-FP, HEAD-verifiziert in 9.397.0). py_compile OK. Server-Restart nötig (brain/handlers). DANACH möglich: policies-Eval mit --anonymise (Gold-Reuse 20260705T065248, --parallel 1) misst den echten Anon-Qualitätseffekt. Skill 05-internals/06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.397.0", "2026-07-22", "refactor(GDPR-Kernpolitik invertiert — 'wir schützen NUR die Kombination PII+LLM, sonst nichts' [Nutzer-Grundsatzentscheid]) + der xlsx-Deanon-Race strukturell beseitigt. ANLASS: der v9.396.1-Fix beseitigte EINE Race-Quelle (Rename/Alias-mtime-Churn), aber der reproduzierte Testlauf (Transaktion, mistral-medium, Anon AN) zeigte den `FilePseudonymizeError: File is not a zip file` WEITER — der Deanon feuerte 13× auf dieselbe xlsx (per-write `_after_file_write` → `_changed_files`-mtime-Diff pro python_exec-Runde), der ERSTE Fire traf die halb-geschriebene Datei (openpyxl schreibt ein Zip inkrementell). Der bisherige Fix relokierte den Reverse, statt die Ursache zu entfernen. WURZEL: die datei-schreibenden Tools (write_file/write_document/edit_file) bekamen die FAKES des Modells als Inhalt und wurden NACHTRÄGLICH auf der Platte zurückübersetzt (racy), während python_exec seine Args schon vor Ausführung deanonymisiert bekam (real from the start). Zwei Wege für dasselbe Ziel — der eine racy. ARCHITEKTUR-FIX: (1) POLITIK-INVERSION — die frühere Allow-Liste `GDPR_ARGS_DEANON_TOOLS` ist jetzt die DENY-Liste `GDPR_LLM_ARG_TOOLS`: JEDES Tool bekommt reale, deanonymisierte Args, AUSSER den Tools, die ihre Args in ein internes/Cloud-MODELL weiterreichen (ask_llm, agent_step, delegate_task, run_background_task, translate_text/_document, generate_audio_overview, context_recall, transcribe_audio, generate_image) — die behalten die Fakes, weil genau DAS die geschützte Kombination ist. Die Deny-Liste wurde durch Lesen jeder Tool-Implementierung ermittelt (Kennzeichen: Import von sidecar_proxy / gdpr_pick_model_for_background / Sub-Agent-Turn — nur in 4 Tool-Dateien). (2) DATEIEN REAL FROM THE START — write_file/write_document/edit_file/edit_document/r_exec/kernel_exec/ast_grep_replace sind NICHT auf der Deny-Liste → ihr Inhalts-Arg wird VOR dem Schreiben deanonymisiert → die Bytes landen echt auf der Platte, KEIN On-Disk-Reverse, KEINE halb-geschriebene Datei für einen Reverse-Walker zum Rennen. Der racy `deanonymize_file`-Pfad im After-File-Write-Callback ist ENTFERNT; an seine Stelle tritt ein READ-ONLY-Lint (race-tolerant: nicht-lesbare = mid-write → zum Turn-Ende vertagt) + der AUTORITATIVE quiescente Turn-End-Sweep `gdpr_lint_written_files_at_turn_end` (aus sidecar_proxy.run_turn's finally, NACH Loop-Ende → jede Datei fertig geschrieben, genau EIN Lint, Rest-Fake = fail-loud, nie stiller Ship). Neu `RequestContext._gdpr_written_files`. (3) EGRESS-BLOCK-GATE ENTFERNT — `_gdpr_guard_web_args` + Helfer (`_web_gate_*`, `_WEB_GATE_PASS_CATEGORIES`, `_web_release_translate_args`, ~490 Zeilen) GELÖSCHT: es blockierte web/mail-Calls mit geschützten Werten, aber 'ein Nicht-LLM-Tool sendet reale Daten nach außen' ist unter der Grundsatz-Politik AUßER SCOPE. Der `web_egress`-Admin-Knopf (Schema/Default/Loader + admin_config/admin_artifacts-Validierung + settings_general_tabs.js/nav.js-UI) mit-entfernt. Der Deny-by-default-Netzwerk-Guard für execute_command/python_exec (`_deanon_string_is_local_safe` + Netzwerk-Marker/Local-Command-Tabellen) ebenfalls GELÖSCHT — akzeptierter Trade-off auf Protokoll: ein modell-verfasstes netzwerk-berührendes Skript läuft jetzt mit realen Werten und KANN sie nach außen senden; das ist eine Skript-Sandbox-Frage, nicht die geschützte PII+LLM-Kombination. WAS BLEIBT: der Result-Seam `_gdpr_anon_tool_text` (anonymisiert JEDES Tool-Ergebnis auf dem Weg ZURÜCK zum Chat-LLM) — die eigentliche PII+LLM-Grenze, unverändert; und `_gdpr_scan_cloud_egress` auf generate_image (Nutzer-Entscheid: ein Cloud-BILDMODELL, das PII empfängt, IST in Scope — verweigert PII-tragende Prompts auch aus lokalen Sessions). VERIFIZIERT End-to-End (Transaktion, Anon AN, neuer Code): deanon_errs=0, deanon_calls=0, fake_leaks=0, applied=1, valide xlsx — der Race ist durch Konstruktion weg (nichts öffnet mehr eine halb-geschriebene Datei). Tests: test_dispatch_symmetry/test_gdpr_egress_gate/test_kernel_tools/test_gdpr_mapping_every_turn auf die neue Politik umgeschrieben (Web-Tools bekommen jetzt reale Args, LLM-Arg-Tools behalten Fakes, bg-Turn-Mapping-Vererbung via args-deanon geprobt); test_web_egress_gate/test_gdpr_web_matrix/test_web_auto_release (nur das gelöschte Gate) ENTFERNT; test_report_fidelity/test_chat_worker_helpers auf 'Callback lintet, reverst NICHT' umgeschrieben. Voller discover: 909 Tests, 0 neue Failures (1 pre-existing test_pii_ner-NER-FP, HEAD-verifiziert). py_compile + import brain OK. Server-Restart nötig (brain/engine/handlers). KURATIERTER Eintrag (user+admin: Werkzeuge arbeiten auf echten Daten, Schutz greift gezielt bei KI-Weitergabe; keine Fake-Dateien mehr)."),
     ("9.396.1", "2026-07-22", "fix(GDPR-Dateinamen-Manipulation KOMPLETT zurückgebaut — beseitigt den File-Deanon-Race, der Fake-tragende Dateien ausliefern konnte; zwei Nutzer-Entscheide). ANLASS: PII-Phase-1-Testlauf (Transaktion, mistral-medium-3.5, Anon AN) — `_xlsx_reverse` warf `FilePseudonymizeError: File is not a zip file`, obwohl die Datei valide war. ROOT CAUSE (reproduziert): der v9.390.0-Artefakt-Rename (`make_gdpr_after_file_write_cb` benannte eine erzeugte Datei vom Fake-Namen auf den Echtnamen um + legte Hardlink/Symlink-Alias an) bumpt die mtime UND erzeugt einen zweiten Disk-Pfad → der nächste `python_exec`-Change-Diff (`_changed_files`, mtime/size-basiert) flaggt die Datei erneut als 'modified' → `_after_file_write` (Deanon) feuert MEHRFACH auf dieselbe Datei; jedes Feuern eine neue Chance, die Datei in schlechtem Zustand zu treffen und zu SCHEITERN — und ein gescheiterter Reverse wird an ZWEI Stellen verschluckt (Callback → nur synthetisches Error-Event restored=0; `_after_file_write` bare try/except:pass), sodass eine Datei, die noch Fakes trug, an den Nutzer gehen konnte. Nutzer-Vorgabe: der File-Pseudonymizer MUSS unter ALLEN Umständen korrekte Dateien liefern, nie Fakes, nie korrupt. FIX 1 — Artefakt-Rename+Alias DEAKTIVIERT (handlers/chat.py `make_gdpr_after_file_write_cb`): der Callback rückübersetzt jetzt nur den INHALT in-place, KEIN Rename, KEIN Alias, KEINE mtime-Churn → EIN Reverse-Pass pro Datei, Race-frei. Safe floor = echter Inhalt unter (evtl. Fake-)Namen (das Fallback, das der Code eh schon hatte). Kosmetischer Verlust: eine erzeugte Datei kann einen Pseudonym-Dateinamen tragen (Inhalt echt) — akzeptiert gegen die Daten-Sicherheit. `_gdpr_renamed_path`-Konsument (brain.py) no-op't sauber (Feld nie gesetzt). FIX 2 — Attachment-Dateinamen-Pseudonymisierung (v9.394.0) KOMPLETT ENTFERNT (zweiter Nutzer-Entscheid): `pseudonymizer.pseudonymize_filename` + `_FILENAME_TOKEN_SPLIT_RE` gelöscht; Worker-Rewrites der name_block- + notice-Pfadzeilen raus; name_block-Emission + `_NAME_BLOCK_MARKER` raus. Attachments behalten ihren ORIGINALNAMEN auf der Platte UND im Wire (Notice-Pfade verbatim), werden so ans LLM übergeben — wie jeder andere Tool-Pfad. Der Attachment-Pfad war schon immer scan-exempt (`_split_attachment_notice`); nur der user-getippte Text wird weiter gescannt+anonymisiert. tests/test_attachment_neutral_names.py entfernt (testete nur die gelöschte Funktion); test_report_fidelity TestFilenameDeanon auf 'Inhalt reversed, KEIN Rename' umgeschrieben + rename_alias_roundtrip-Test entfernt. 95 Tests der 4 berührten Module grün. py_compile + Import OK. Server-Restart nötig (chat.py/pseudonymizer). KURATIERTER Eintrag (nutzersichtbar: erzeugte Dateien + Anhänge behalten konsistente, unmanipulierte Namen; Anon schützt Inhalt)."),
@@ -3376,6 +3377,114 @@ _RETRIEVAL_PII_OPT_LOCAL = "Lokales Modell verwenden"
 _RETRIEVAL_PII_OPT_CANCEL = "Anfrage abbrechen"
 _RETRIEVAL_PII_TURN_Q = ("Personenbezogene Daten im Projektwissen gefunden — "
                          "wie soll die Anfrage fortgesetzt werden?")
+_RETRIEVAL_PII_STICKY_Q = ("Künftige neue Funde in dieser Sitzung automatisch "
+                           "anonymisieren (ohne erneut zu fragen)?")
+_RETRIEVAL_PII_OPT_STICKY_YES = "Ja, automatisch anonymisieren"
+_RETRIEVAL_PII_OPT_STICKY_NO = "Nein, weiter nachfragen"
+
+
+def _retrieval_auto_anon_enabled() -> bool:
+    """Session-sticky standing order: new retrieval-borne PII auto-anonymises
+    without a dialog. Reads the LIVE in-memory session first (the dialog sets
+    it mid-turn), falls back to the DB row (background turns whose session
+    isn't cached). Unknown → False (keep asking — the conservative default)."""
+    sid = get_request_context().current_session_id or ""
+    if not sid:
+        return False
+    try:
+        import sys as _sys
+        _srv = _sys.modules.get("__main__") or _sys.modules.get("server")
+        _sessions = getattr(_srv, "sessions", None) if _srv else None
+        s = _sessions.peek(sid) if _sessions is not None else None
+        if s is not None:
+            return bool(getattr(s, "retrieval_auto_anon", False))
+    except Exception:
+        pass
+    try:
+        from server_lib.db import ChatDB
+        info = ChatDB.get_session_info(sid)
+        return bool((info or {}).get("retrieval_auto_anon", 0))
+    except Exception:
+        return False
+
+
+def _retrieval_set_auto_anon() -> None:
+    """Persist the session-sticky standing order (dialog answered
+    'Ja, automatisch anonymisieren'). In-memory session + DB row; best-effort."""
+    sid = get_request_context().current_session_id or ""
+    if not sid:
+        return
+    try:
+        from server_lib.db import ChatDB
+        ChatDB.update_session_retrieval_auto_anon(sid, True)
+    except Exception as e:
+        print(f"[gdpr] retrieval sticky persist failed: {e}", flush=True)
+    try:
+        import sys as _sys
+        _srv = _sys.modules.get("__main__") or _sys.modules.get("server")
+        _sessions = getattr(_srv, "sessions", None) if _srv else None
+        s = _sessions.peek(sid) if _sessions is not None else None
+        if s is not None:
+            s.retrieval_auto_anon = True
+    except Exception:
+        pass
+
+
+def _retrieval_seed_values(mapping, values: dict, fp_norms: set,
+                           source: str, choice: str) -> None:
+    """Seed the confirmed values into the active mapping + write the
+    pii_decisions ledger rows + persist the mapping (restart-safe) + audit.
+    Shared by the dialog's proceed path (`choice='dialog'`) and the
+    standing-order auto paths (`choice='turn_auto'|'session_auto'`).
+    `values` is norm → {value, rule_id, label}; norms in `fp_norms` become
+    false_positive=1 rows (stay clear), the rest mint via seed_from_decision
+    (same fakes the pre-send path would produce)."""
+    import pseudonymizer as _ps
+    ctx = get_request_context()
+    sid = ctx.current_session_id or ""
+    uid = ctx.current_user_id or ""
+    rows = []
+    for key, slot in values.items():
+        if key in fp_norms:
+            rows.append({"rule_id": slot["rule_id"], "value": slot["value"],
+                         "disposition": "retrieval-dialog",
+                         "false_positive": True, "source": source})
+            continue
+        try:
+            _ps.seed_from_decision(mapping, slot["rule_id"], slot["value"])
+        except Exception as e:
+            print(f"[gdpr] retrieval seed failed: {e}", flush=True)
+        rows.append({"rule_id": slot["rule_id"], "value": slot["value"],
+                     "disposition": "retrieval-dialog",
+                     "false_positive": False, "source": source,
+                     "fake_value": mapping.forward.get(slot["value"], "")})
+    try:
+        from server_lib.db import ChatDB
+        if rows:
+            ChatDB.record_pii_decisions(sid, uid, "", "anonymise", rows)
+    except Exception as e:
+        print(f"[gdpr] retrieval ledger write failed: {e}", flush=True)
+    # Persist the extended mapping so a Brain restart can still reverse the
+    # freshly minted tokens (M1 semantics).
+    gdpr_persist_mapping(mapping.mapping_id, sid, "retrieval")
+    try:
+        if _audit_log:
+            _n_fp = len(fp_norms & set(values))
+            _audit_log.log_action(
+                agent=(ctx.current_agent.agent_id if ctx.current_agent
+                       else "main"),
+                action_type="pii_retrieval_dialog",
+                tool_name="gdpr_scanner",
+                args_summary=(f"source={source} kinds="
+                              + ",".join(sorted({v['rule_id']
+                                                 for v in values.values()}))),
+                result_summary=(f"anonymise={len(values) - _n_fp} fp={_n_fp} "
+                                f"choice={choice}"),
+                result_status="success",
+                session_id=sid or None, source="tool",
+            )
+    except Exception:
+        pass
 
 
 def _retrieval_turn_model_is_local() -> bool:
@@ -3453,14 +3562,15 @@ def _gdpr_retrieval_new_values(text: str, mapping) -> dict:
     return out
 
 
-def _retrieval_pii_ask(candidates: dict) -> tuple[dict, str, str]:
+def _retrieval_pii_ask(candidates: dict) -> tuple[dict, str, bool, str]:
     """Blocking batch dialog over new retrieval-PII values (blueprint: the
     deleted `_web_consent_ask`). `candidates` is norm → {value, rule_id,
-    label}. Returns (per_value, turn_choice, failure): per_value maps
+    label}. Returns (per_value, turn_choice, sticky, failure): per_value maps
     norm → 'anonymise'|'fp' (unanswered defaults to anonymise — the safe
-    direction), turn_choice ∈ {'proceed','local','cancel'}, failure '' when
-    the dialog was decided, else 'no_dialog' (non-interactive turn),
-    'timeout' or 'cancelled'.
+    direction), turn_choice ∈ {'proceed','local','cancel'}, sticky True when
+    the user opted into the session-wide standing order (unanswered → False,
+    keep asking), failure '' when the dialog was decided, else 'no_dialog'
+    (non-interactive turn), 'timeout' or 'cancelled'.
 
     Uses the ask_user blocking machinery (_ask_user_register + Event, answer
     via POST /v1/chat/answer). Safe here: dispatch runs single-threaded on
@@ -3471,7 +3581,7 @@ def _retrieval_pii_ask(candidates: dict) -> tuple[dict, str, str]:
     sid = ctx.current_session_id or ""
     cb = ctx.event_callback
     if not sid or cb is None or ctx.current_bg_task:
-        return {}, "", "no_dialog"
+        return {}, "", False, "no_dialog"
     label_map = {}   # question text → candidate key (text must be unique)
     questions = []
     for key, slot in sorted(candidates.items()):
@@ -3482,6 +3592,9 @@ def _retrieval_pii_ask(candidates: dict) -> tuple[dict, str, str]:
         questions.append({"question": q,
                           "options": [_RETRIEVAL_PII_OPT_ANON,
                                       _RETRIEVAL_PII_OPT_FP]})
+    questions.append({"question": _RETRIEVAL_PII_STICKY_Q,
+                      "options": [_RETRIEVAL_PII_OPT_STICKY_YES,
+                                  _RETRIEVAL_PII_OPT_STICKY_NO]})
     questions.append({"question": _RETRIEVAL_PII_TURN_Q,
                       "options": [_RETRIEVAL_PII_OPT_PROCEED,
                                   _RETRIEVAL_PII_OPT_LOCAL,
@@ -3505,11 +3618,11 @@ def _retrieval_pii_ask(candidates: dict) -> tuple[dict, str, str]:
         try:
             cb("user_input_needed", payload)
         except Exception:
-            return {}, "", "no_dialog"
+            return {}, "", False, "no_dialog"
         from engine.tools.ask_tools import _wait_answer_or_cancel
         got, cancelled = _wait_answer_or_cancel(event, _RETRIEVAL_PII_TIMEOUT_S)
         if not got:
-            return {}, "", ("cancelled" if cancelled else "timeout")
+            return {}, "", False, ("cancelled" if cancelled else "timeout")
         with _ask_user_lock:
             slot = _ask_user_pending.get(sid) or {}
             got_answers = slot.get("answers")
@@ -3521,6 +3634,8 @@ def _retrieval_pii_ask(candidates: dict) -> tuple[dict, str, str]:
     for q, key in label_map.items():
         ans = str(answers.get(q, "") or "").strip().lower()
         per_value[key] = "fp" if ans.startswith("falschtreffer") else "anonymise"
+    sticky = str(answers.get(_RETRIEVAL_PII_STICKY_Q, "") or "") \
+        .strip().lower().startswith("ja")
     t_ans = str(answers.get(_RETRIEVAL_PII_TURN_Q, "") or "").strip().lower()
     if t_ans.startswith("lokal"):
         turn_choice = "local"
@@ -3532,7 +3647,7 @@ def _retrieval_pii_ask(candidates: dict) -> tuple[dict, str, str]:
         cb("user_input_received", {"session_id": sid, "answers": answers})
     except Exception:
         pass
-    return per_value, turn_choice, ""
+    return per_value, turn_choice, sticky, ""
 
 
 def _retrieval_fire_cancel() -> None:
@@ -3594,6 +3709,22 @@ def _gdpr_retrieval_guard(text: str, source: str, mapping) -> str | None:
     if not candidates:
         return None
     kinds = sorted({v["rule_id"] for v in candidates.values()})
+    # Standing orders (v9.399.0 consolidation): the first dialog's "proceed"
+    # answer governs the REST of the turn, and the sticky opt-in governs the
+    # whole session — further new-value batches auto-seed as anonymise
+    # WITHOUT another dialog (a research turn made 11 dialogs before this;
+    # retroactive FP correction stays available in the GDPR panel via the
+    # 9.383 purge machinery). The session order also lifts the background
+    # fail-closed: a scheduler turn on such a session seeds + fakes instead
+    # of withholding the retrieval result.
+    if ctx._dynamic.get("_retrieval_pii_turn_policy") == "anonymise":
+        _retrieval_seed_values(mapping, candidates, set(), source,
+                               choice="turn_auto")
+        return None
+    if _retrieval_auto_anon_enabled():
+        _retrieval_seed_values(mapping, candidates, set(), source,
+                               choice="session_auto")
+        return None
     asked = ctx._dynamic.setdefault("_retrieval_pii_asked", set())
     fresh = {k: v for k, v in candidates.items() if k not in asked}
     if not fresh:
@@ -3609,9 +3740,10 @@ def _gdpr_retrieval_guard(text: str, source: str, mapping) -> str | None:
             source, kinds,
             f"{len(fresh)} neue Werte — zu viele für einen Dialog; Anfrage "
             "eingrenzen oder Werte im Datenschutz-Panel vorentscheiden")
-    per_value, turn_choice, failure = _retrieval_pii_ask(fresh)
+    per_value, turn_choice, sticky, failure = _retrieval_pii_ask(fresh)
     if failure == "no_dialog":
-        # Fail-closed: a background/scheduler turn cannot ask (Plan §5.4).
+        # Fail-closed: a background/scheduler turn cannot ask (Plan §5.4) —
+        # unless the session carries the standing order (checked above).
         return _retrieval_refusal(
             source, kinds, "nicht-interaktiver Lauf kann nicht nachfragen")
     if failure:
@@ -3634,51 +3766,17 @@ def _gdpr_retrieval_guard(text: str, source: str, mapping) -> str | None:
         _retrieval_fire_cancel()
         return _retrieval_refusal(source, kinds,
                                   "Wechsel auf das lokale Modell")
-    # proceed: seed the mapping + write the ledger. From here the EXISTING
-    # apply-only sweeps fake the confirmed values (this result included).
-    import pseudonymizer as _ps
-    sid = ctx.current_session_id or ""
-    uid = ctx.current_user_id or ""
-    rows = []
-    for key, slot in fresh.items():
-        if per_value.get(key) == "fp":
-            rows.append({"rule_id": slot["rule_id"], "value": slot["value"],
-                         "disposition": "retrieval-dialog",
-                         "false_positive": True, "source": source})
-            continue
-        try:
-            _ps.seed_from_decision(mapping, slot["rule_id"], slot["value"])
-        except Exception as e:
-            print(f"[gdpr] retrieval seed failed: {e}", flush=True)
-        rows.append({"rule_id": slot["rule_id"], "value": slot["value"],
-                     "disposition": "retrieval-dialog",
-                     "false_positive": False, "source": source,
-                     "fake_value": mapping.forward.get(slot["value"], "")})
-    try:
-        from server_lib.db import ChatDB
-        if rows:
-            ChatDB.record_pii_decisions(sid, uid, "", "anonymise", rows)
-    except Exception as e:
-        print(f"[gdpr] retrieval ledger write failed: {e}", flush=True)
-    # Persist the extended mapping so a Brain restart can still reverse the
-    # freshly minted tokens (M1 semantics).
-    gdpr_persist_mapping(mapping.mapping_id, sid, "retrieval")
-    try:
-        if _audit_log:
-            _n_fp = sum(1 for r in rows if r.get("false_positive"))
-            _audit_log.log_action(
-                agent=(ctx.current_agent.agent_id if ctx.current_agent
-                       else "main"),
-                action_type="pii_retrieval_dialog",
-                tool_name="gdpr_scanner",
-                args_summary=f"source={source} kinds={','.join(kinds)}",
-                result_summary=(f"anonymise={len(rows) - _n_fp} fp={_n_fp} "
-                                f"choice={turn_choice}"),
-                result_status="success",
-                session_id=sid or None, source="tool",
-            )
-    except Exception:
-        pass
+    # proceed: the turn-wide decision becomes this turn's standing order —
+    # further new-value batches seed without another dialog; the sticky
+    # opt-in extends that to the whole session (persisted, revocable via
+    # the `retrieval_auto_anon` manage action).
+    ctx._dynamic["_retrieval_pii_turn_policy"] = "anonymise"
+    if sticky:
+        _retrieval_set_auto_anon()
+    fp_norms = {k for k, v in per_value.items() if v == "fp"}
+    _retrieval_seed_values(mapping, fresh, fp_norms, source, choice="dialog")
+    # From here the EXISTING apply-only sweeps fake the confirmed values
+    # (this result included).
     return None
 
 

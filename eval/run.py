@@ -166,6 +166,12 @@ def brain_chat(base_url: str, token: str, session_id: str, message: str, timeout
                                 qt = q.get("question") or ""
                                 if "wie soll die Anfrage fortgesetzt" in qt:
                                     answers[qt] = "Anonymisiert fortfahren"
+                                elif "automatisch anonymisieren" in qt:
+                                    # Sticky-Frage (v9.399.0): explizit NEIN —
+                                    # der Eval misst den Ask-Pfad; mit Ja
+                                    # würden Folge-Dialoge (und damit die
+                                    # Dialog-Mechanik) unsichtbar.
+                                    answers[qt] = "Nein, weiter nachfragen"
                                 else:
                                     answers[qt] = "Anonymisieren"
                             try:

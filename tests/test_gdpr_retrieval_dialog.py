@@ -78,10 +78,13 @@ class _GuardTestBase(unittest.TestCase):
             ctx.current_bg_task = bg_task
             return fn()
 
-    def _answering_cb(self, per_value_option, turn_option, calls):
+    def _answering_cb(self, per_value_option, turn_option, calls,
+                      sticky_option=None):
         """Event-callback that answers the dialog synchronously (the slot is
         registered BEFORE the emit, so delivering inside the emit is the
-        race-free fast path)."""
+        race-free fast path). `sticky_option` answers the session-standing-
+        order question; None leaves the legacy behavior (per_value_option,
+        which never starts with 'ja' → sticky off)."""
         def cb(event_type, payload):
             if event_type != "user_input_needed":
                 return
@@ -90,6 +93,9 @@ class _GuardTestBase(unittest.TestCase):
             for q in payload.get("questions") or []:
                 if q["question"] == brain._RETRIEVAL_PII_TURN_Q:
                     answers[q["question"]] = turn_option
+                elif q["question"] == brain._RETRIEVAL_PII_STICKY_Q:
+                    answers[q["question"]] = (sticky_option
+                                              or per_value_option)
                 else:
                     answers[q["question"]] = per_value_option
             brain.deliver_ask_user_answer(self.sid, answers=answers)
@@ -300,6 +306,124 @@ class TestUserChoices(_GuardTestBase):
         self.assertEqual(flags, (True, True))
         self.assertIn(IBAN, second)
         self.assertEqual(len(calls), 1)
+
+
+IBAN2 = "DE02120300000000202051"  # zweiter valider Test-IBAN (andere Welle)
+
+
+class TestConsolidation(_GuardTestBase):
+    """v9.399.0: Turn-Vererbung + Session-Standing-Order."""
+
+    def test_turn_policy_inherits_after_first_dialog(self):
+        # Erster Dialog (proceed) → zweite Retrieval-Welle mit NEUEM Wert im
+        # selben Turn seedet OHNE zweiten Dialog und fakt im Ergebnis.
+        calls = []
+        cb = self._answering_cb(brain._RETRIEVAL_PII_OPT_ANON,
+                                brain._RETRIEVAL_PII_OPT_PROCEED, calls)
+
+        def _two_waves():
+            first = brain._gdpr_anon_tool_text(
+                f"Welle 1: IBAN {IBAN}", "mempalace_query")
+            second = brain._gdpr_anon_tool_text(
+                f"Welle 2: IBAN {IBAN2}", "mempalace_query")
+            return first, second
+        first, second = self._ctx_run(_two_waves, event_callback=cb)
+        self.assertEqual(len(calls), 1, "nur EIN Dialog trotz zweiter Welle")
+        self.assertIn(IBAN2, self.mapping.forward, "Welle-2-Wert geseedet")
+        self.assertNotIn(IBAN2, second)
+        self.assertIn(self.mapping.forward[IBAN2], second)
+        # Ledger trägt beide Werte.
+        rows = ChatDB.get_session_pii_decisions(self.sid)
+        vals = {d.get("value") for d in rows.values()}
+        self.assertIn(IBAN, vals)
+        self.assertIn(IBAN2, vals)
+
+    def test_sticky_question_in_dialog(self):
+        calls = []
+        cb = self._answering_cb(brain._RETRIEVAL_PII_OPT_ANON,
+                                brain._RETRIEVAL_PII_OPT_PROCEED, calls)
+        self._ctx_run(lambda: brain._gdpr_anon_tool_text(
+            f"IBAN {IBAN}", "mempalace_query"), event_callback=cb)
+        qs = [q["question"] for q in calls[0]["questions"]]
+        self.assertIn(brain._RETRIEVAL_PII_STICKY_Q, qs)
+        # Sticky-Frage steht VOR der Turn-Frage (Turn-Entscheidung zuletzt).
+        self.assertLess(qs.index(brain._RETRIEVAL_PII_STICKY_Q),
+                        qs.index(brain._RETRIEVAL_PII_TURN_Q))
+
+
+class _StickyTestBase(_GuardTestBase):
+    """Mit realer sessions-Zeile (die Standing-Order persistiert in der DB)."""
+
+    def setUp(self):
+        super().setUp()
+        import time as _t
+        ChatDB.save_session(self.sid, "main", "test-model", "retrieval-test",
+                            "active", _t.time(), _t.time())
+
+    def tearDown(self):
+        try:
+            ChatDB.delete_session(self.sid)
+        except Exception:
+            pass
+        super().tearDown()
+
+
+class TestStickyStandingOrder(_StickyTestBase):
+    def test_sticky_yes_persists_and_silences_next_turn(self):
+        calls = []
+        cb = self._answering_cb(
+            brain._RETRIEVAL_PII_OPT_ANON, brain._RETRIEVAL_PII_OPT_PROCEED,
+            calls, sticky_option=brain._RETRIEVAL_PII_OPT_STICKY_YES)
+        self._ctx_run(lambda: brain._gdpr_anon_tool_text(
+            f"IBAN {IBAN}", "mempalace_query"), event_callback=cb)
+        self.assertEqual(len(calls), 1)
+        info = ChatDB.get_session_info(self.sid) or {}
+        self.assertTrue(bool(info.get("retrieval_auto_anon")),
+                        "Standing-Order in der DB persistiert")
+        # NÄCHSTER Turn (frischer Request-Kontext): neuer Wert → KEIN Dialog,
+        # auto-geseedet + gefakt.
+        out2 = self._ctx_run(lambda: brain._gdpr_anon_tool_text(
+            f"IBAN {IBAN2}", "mempalace_query"),
+            event_callback=lambda *_: self.fail("kein Dialog erwartet"))
+        self.assertIn(IBAN2, self.mapping.forward)
+        self.assertIn(self.mapping.forward[IBAN2], out2)
+        self.assertNotIn(IBAN2, out2)
+
+    def test_sticky_no_keeps_asking_next_turn(self):
+        calls = []
+        cb = self._answering_cb(
+            brain._RETRIEVAL_PII_OPT_ANON, brain._RETRIEVAL_PII_OPT_PROCEED,
+            calls, sticky_option=brain._RETRIEVAL_PII_OPT_STICKY_NO)
+        self._ctx_run(lambda: brain._gdpr_anon_tool_text(
+            f"IBAN {IBAN}", "mempalace_query"), event_callback=cb)
+        info = ChatDB.get_session_info(self.sid) or {}
+        self.assertFalse(bool(info.get("retrieval_auto_anon")))
+        # Nächster Turn fragt wieder (neuer Wert → zweiter Dialog).
+        self._ctx_run(lambda: brain._gdpr_anon_tool_text(
+            f"IBAN {IBAN2}", "mempalace_query"), event_callback=cb)
+        self.assertEqual(len(calls), 2)
+
+    def test_background_with_standing_order_seeds_instead_of_refusing(self):
+        # DER Produktions-Fall (PII default an ab KW 2026-07-27): ein
+        # Scheduler-/Background-Turn auf einer Session mit Standing-Order
+        # liefert das Ergebnis anonymisiert statt fail-closed zu refusen.
+        ChatDB.update_session_retrieval_auto_anon(self.sid, True)
+        out = self._ctx_run(lambda: brain._gdpr_anon_tool_text(
+            f"IBAN {IBAN}", "mempalace_query"), event_callback=None)
+        self.assertNotIn("retrieval_pii_withheld", out)
+        self.assertIn(IBAN, self.mapping.forward)
+        self.assertIn(self.mapping.forward[IBAN], out)
+        self.assertNotIn(IBAN, out)
+
+    def test_revocation_via_setter_asks_again(self):
+        ChatDB.update_session_retrieval_auto_anon(self.sid, True)
+        ChatDB.update_session_retrieval_auto_anon(self.sid, False)
+        calls = []
+        cb = self._answering_cb(brain._RETRIEVAL_PII_OPT_ANON,
+                                brain._RETRIEVAL_PII_OPT_PROCEED, calls)
+        self._ctx_run(lambda: brain._gdpr_anon_tool_text(
+            f"IBAN {IBAN}", "mempalace_query"), event_callback=cb)
+        self.assertEqual(len(calls), 1, "nach Widerruf wird wieder gefragt")
 
 
 class TestScopeAndLocality(_GuardTestBase):

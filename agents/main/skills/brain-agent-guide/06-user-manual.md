@@ -2524,6 +2524,17 @@ nächste Nachricht fragt erneut. Automatische Hintergrund-Aufgaben (z. B.
 geplante Tasks) können nicht nachfragen und halten solche Inhalte dann
 ebenfalls zurück.
 
+Seit v9.399.0 fragt der Dialog höchstens **einmal pro Antwort**: Ihre Wahl
+„Anonymisiert fortfahren" gilt für alle weiteren Abrufe derselben Antwort —
+neue Funde werden dann automatisch anonymisiert (und lassen sich, falls
+etwas fälschlich erkannt wurde, jederzeit nachträglich im
+Datenschutz-Verlauf als Falschtreffer korrigieren). Zusätzlich bietet der
+Dialog die Frage „**Künftige neue Funde in dieser Sitzung automatisch
+anonymisieren?**": Mit „Ja" fragt diese Sitzung gar nicht mehr nach — und
+auch geplante Hintergrund-Aufgaben dürfen dann mit dem Projektwissen
+arbeiten (ohne diese Freigabe halten sie Inhalte mit unbewerteten
+personenbezogenen Daten weiterhin zurück).
+
 **F: Warum ist im anonymisierten Chat dieselbe Person überall gleich benannt?**
 A: Seit v9.337.0 arbeitet die Anonymisierung auf Personen-Ebene statt auf
 Zeichenketten-Ebene. Früher bekam jede Schreibweise desselben Namens (Akte,

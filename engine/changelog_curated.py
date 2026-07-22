@@ -29,6 +29,25 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.399.0",
+        "date": "2026-07-22",
+        "title": "Datenschutz-Nachfrage: einmal entscheiden statt mehrfach",
+        "body": "Die Datenschutz-Nachfrage beim Projektwissen (siehe 9.398.0) "
+                "fragt jetzt deutlich seltener: Ihre Entscheidung "
+                "„Anonymisiert fortfahren\" gilt automatisch für die gesamte "
+                "Antwort — auch wenn der Assistent mehrfach neue Inhalte "
+                "abruft, erscheint nur noch ein Dialog. Zusätzlich können Sie "
+                "im Dialog wählen, dass künftige Funde in dieser Sitzung "
+                "automatisch anonymisiert werden — dann fragt die Sitzung gar "
+                "nicht mehr nach, und auch geplante Hintergrund-Aufgaben "
+                "können mit dem Projektwissen arbeiten (bisher hielten sie "
+                "solche Inhalte sicherheitshalber zurück). Als Falschtreffer "
+                "lassen sich Werte weiterhin jederzeit nachträglich im "
+                "Datenschutz-Verlauf korrigieren.",
+        "audience": "user",
+        "versions": ["9.399.0"],
+    },
+    {
         "version": "9.398.0",
         "date": "2026-07-22",
         "title": "Datenschutz-Nachfrage bei Projektwissen",
