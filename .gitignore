@@ -39,6 +39,7 @@ config.json.bak-*
 .claude/hooks/*
 !.claude/hooks/block-sigkill-brain.sh
 agents/*/artifacts/
+agents/*/attachments/
 agents/*/chats-indexed/
 agents/*/user_profiles/
 agents/*/user_skills/

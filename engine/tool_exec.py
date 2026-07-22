@@ -340,9 +340,26 @@ def brain_tmp_root() -> str:
 
 
 def brain_attachments_dir(session_id: str | None = None) -> str:
-    """<tmp root>/brain-attachments[/<session_id>] — single source for the
-    chat-attachment staging dir (writers AND the download allowlist)."""
-    base = os.path.join(brain_tmp_root(), "brain-attachments")
+    """<AGENTS_DIR>/main/attachments[/<session_id>] — single source for the
+    chat-attachment staging dir (writers AND the download allowlist).
+
+    PERSISTENT location (v9.396.0): attachments used to live under
+    `/tmp/brain-attachments/`, but macOS auto-purges /tmp after ~3 days, so a
+    chat's uploaded files vanished — the agent could no longer `read_document`
+    them when the user returned to an older chat, despite the design intent that
+    the dir "persists ALL files for the whole chat". Moved under `agents/` (same
+    tree as artifacts, which survive) so uploads live as long as the chat does.
+
+    Agent-agnostic (keyed only by session_id), matching the prior behaviour.
+    Falls back to the old /tmp root if AGENTS_DIR can't be resolved (never raise
+    on a path helper). Callers `os.makedirs(..., exist_ok=True)` before writing.
+    """
+    try:
+        import brain as _brain
+        base = os.path.join(_brain.AGENTS_DIR, "main", "attachments")
+    except Exception:
+        # Fail-safe: keep working even if brain isn't importable yet.
+        base = os.path.join(brain_tmp_root(), "brain-attachments")
     return os.path.join(base, session_id) if session_id else base
 
 

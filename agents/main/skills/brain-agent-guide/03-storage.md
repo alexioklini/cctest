@@ -553,8 +553,10 @@ indexed by design). A `.sql`/`.dbq` with ≥1 SQL symbol counts as `indexed`.
   artifacts in a multi-day chat were invisible to versioning).
 - Binary→markdown companions: `<dir>/.brain-extracted/<filename>.<ext>.md`
   with `<!-- brain-source: <abs path> -->` link back.
-- Chat attachments at upload time: `/tmp/brain-attachments/<sid>/<file>`,
-  then promoted into artifacts on send.
+- Chat attachments at upload time: `agents/main/attachments/<sid>/<file>`
+  (persistent since v9.396.0 — was `/tmp/brain-attachments/<sid>/`, which macOS
+  auto-purged after ~3 days, losing a chat's uploads; now they survive as long
+  as the chat). Path via `engine.tool_exec.brain_attachments_dir(sid)`.
 - Oversized tool results (>50KB) spill to
   `agents/main/artifacts/<YYYY-MM-DD>_<sid_prefix>/tool-results/<tool_use_id>.txt`
   (the in-context copy is truncated; full text served by

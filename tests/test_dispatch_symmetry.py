@@ -253,10 +253,14 @@ class TestDisplayResultDeanon(_SymmetryTestBase):
     """
 
     def _display(self, result_str, mapping):
+        # Since v9.395.0 the helper returns (deanon_text, occurrence_count); the
+        # text is the display copy (None when nothing changed). Return just the
+        # text here so the existing assertions read naturally.
         from engine.llm_loop import _gdpr_deanon_result_for_display
         with request_context():
             get_request_context()._gdpr_mapping_id = mapping.mapping_id
-            return _gdpr_deanon_result_for_display(result_str)
+            text, _n = _gdpr_deanon_result_for_display(result_str)
+            return text
 
     def test_result_is_deanonymised_under_mapping(self):
         m = self._mapping(("Bonnie Stark", "Logan Carter", "name"))
@@ -267,12 +271,13 @@ class TestDisplayResultDeanon(_SymmetryTestBase):
         from engine.llm_loop import _gdpr_deanon_result_for_display
         with request_context():
             get_request_context()._gdpr_mapping_id = ""
-            self.assertIsNone(_gdpr_deanon_result_for_display(
-                '{"x":"Logan Carter"}'))
+            text, n = _gdpr_deanon_result_for_display('{"x":"Logan Carter"}')
+            self.assertIsNone(text)
+            self.assertEqual(n, 0)
 
     def test_unchanged_result_returns_none(self):
         m = self._mapping(("Bonnie Stark", "Logan Carter", "name"))
-        # Nothing to reverse → None (no redundant field shipped).
+        # Nothing to reverse → (None, 0) (no redundant field shipped).
         self.assertIsNone(self._display('{"x":"nothing to reverse here"}', m))
 
 

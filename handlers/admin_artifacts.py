@@ -1466,9 +1466,12 @@ class AdminArtifactsHandlers:
         base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         agents_dir = os.path.join(base, "agents")
         cwd = os.getcwd()
-        # brain-attachments root — disk-saved chat attachments (same helper
-        # as the writers in chat.py). macOS resolves /tmp → /private/tmp, so
-        # realpath both ends to make the prefix-match work.
+        # Chat-attachments root — disk-saved chat attachments (same helper as
+        # the writers in chat.py). Since v9.396.0 this lives under agents/ (was
+        # /tmp/brain-attachments; moved so uploads survive macOS's /tmp purge),
+        # so it is ALREADY covered by `agents_dir` below — kept explicit so the
+        # allowlist stays correct if the helper's location changes again.
+        # realpath reconciles any symlink on either end for the prefix-match.
         from engine.tool_exec import brain_attachments_dir
         attach_root = os.path.realpath(brain_attachments_dir())
         allowed = [base, agents_dir, cwd, attach_root]

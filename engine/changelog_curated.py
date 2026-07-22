@@ -29,6 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.396.0",
+        "date": "2026-07-22",
+        "title": "Hochgeladene Dateien bleiben dauerhaft im Chat",
+        "body": "Bisher konnte es passieren, dass in einem älteren Chat die "
+                "ursprünglich hochgeladenen Dateien nach einigen Tagen nicht mehr "
+                "verfügbar waren — der Assistent konnte sie dann nicht erneut "
+                "lesen. Grund war ein temporärer Speicherort, den das "
+                "Betriebssystem automatisch aufräumt. Ab sofort werden Anhänge "
+                "dauerhaft neben den erzeugten Ergebnissen gespeichert und bleiben "
+                "so lange erhalten wie der Chat selbst. Sie können also auch nach "
+                "Wochen wieder in einen Chat einsteigen, und der Assistent hat "
+                "weiterhin Zugriff auf die angehängten Dokumente. (Bereits "
+                "verlorene Dateien aus alten Chats lassen sich nicht "
+                "wiederherstellen — die Verbesserung gilt ab jetzt.)",
+        "audience": "user",
+        "versions": ["9.396.0"],
+    },
+    {
         "version": "9.395.0",
         "date": "2026-07-21",
         "title": "Tool-Aufrufe zeigen an, wie viel de-anonymisiert wurde",

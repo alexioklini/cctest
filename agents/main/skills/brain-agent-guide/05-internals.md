@@ -436,7 +436,7 @@ rides the full Smart (Cloud) path — the auto-routed pick becomes the
   **Disk-routed images (v9.293.3)**: a text-only model never gets an `image_url`
   block at all — the attachment routing (`handlers/chat.py` ~6590) only inlines
   an image when the session model's `raw_formats` accept the MIME, else the
-  image goes to disk under `/tmp/brain-attachments/<sid>/`. So the wire degrade
+  image goes to disk under `agents/main/attachments/<sid>/`. So the wire degrade
   above never fires for it. Instead, the disk-notice builder runs the SAME
   deterministic pass (`_describe_image_deterministic`) on each disk-routed image
   and appends the OCR text + features to the "saved to disk" notice, so a
@@ -2454,7 +2454,7 @@ collect inputs (`ask_user_for_file`), execute the plan agentically
 - **Design-Modus comment attachments (v9.364.0)**: a design comment can carry
   an image ("insert this screenshot here"). The image rides as a NORMAL chat
   attachment (`state._pendingFiles` → GDPR scan → disk under
-  `/tmp/brain-attachments/<sid>/`, plus multimodal on vision models); the
+  `agents/main/attachments/<sid>/`, plus multimodal on vision models); the
   bytes never flow through the model. The apply prompt (and
   `_DESIGN_DECK_CONVENTION`) instruct the agent to write only a short
   `<img src="attachment://<filename-on-disk>">` reference;

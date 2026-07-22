@@ -2,8 +2,9 @@
 
 `brain._inline_attachment_refs` replaces `attachment://<name>` references in a
 just-written .html artifact with data-URIs of the matching files in the
-session's /tmp/brain-attachments/<sid>/ dir — deterministically, so image
-bytes never flow through the model. Unresolvable references stay in place and
+session's attachment dir (`brain_attachments_dir(sid)`, persistent under
+agents/ since v9.396.0) — deterministically, so image bytes never flow through
+the model. Unresolvable references stay in place and
 queue a model-visible warning that `llm_loop.dispatch_tool` drains into the
 tool result (the _gdpr_file_warnings pattern).
 
@@ -29,9 +30,12 @@ _PNG = base64.b64decode(
 class _InlineBase(unittest.TestCase):
     def setUp(self):
         import brain
+        from engine.tool_exec import brain_attachments_dir
         self.brain = brain
         self.sid = "test-design-inline"
-        self.attach_dir = os.path.join("/tmp", "brain-attachments", self.sid)
+        # Use the real helper so the test writes where the code reads (the dir
+        # moved off /tmp to a persistent agents/ location in v9.396.0).
+        self.attach_dir = brain_attachments_dir(self.sid)
         os.makedirs(self.attach_dir, exist_ok=True)
         self.tmp = tempfile.TemporaryDirectory()
 
