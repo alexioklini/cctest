@@ -1,7 +1,26 @@
 # PII-Phase-1 Handover — Attachment-Anonymisierungs-Qualitätstests
 
-**Stand:** 2026-07-22, Version 9.396.1 (deployt, committet, gepusht).
+**Stand:** 2026-07-22, Version 9.397.0 (deployt, committet auf main; gepusht mit 9.398.0).
 **Zweck:** In einer frischen Session die PII-Qualitätstests fortsetzen.
+
+## UPDATE 9.397.0 — GDPR-Politik invertiert, Race STRUKTURELL weg
+Der xlsx-Deanon-Race (Abschnitt „Was schon erledigt ist" unten, urspr. der Blocker) ist jetzt
+**durch Konstruktion gelöst** — nicht relokiert. Grundsatzentscheid des Nutzers: **"wir
+schützen NUR die Kombination PII+LLM, sonst nichts"**. Details: Memory
+`project_gdpr_pii_in_llm_only_policy`. Kurz:
+- Args-Deanon INVERTIERT: Allow-Liste → Deny-Liste `GDPR_LLM_ARG_TOOLS` (10 modell-reichende Tools behalten Fakes; ALLE anderen bekommen reale Args).
+- Datei-schreibende Tools deanonymisieren ihre Args → Dateien **real from the start**, kein On-Disk-Reverse, keine halb-geschriebene Datei → **kein Race**. Verifiziert: tx Anon AN → deanon_errs=0, deanon_calls=0, fake_leaks=0, valides xlsx.
+- Egress-BLOCK-Gate + Netzwerk-Guard + `web_egress`-Admin-Knopf GELÖSCHT (außer Scope). Result-Seam + generate_image-Egress-Scan BLEIBEN.
+- 909 Tests, 0 neue Failures. Commit 139c95d7.
+
+**NÄCHSTER SCHRITT bleibt Punkt 3 unten:** ≥3× AN + ≥3× AUS je Cluster (CoC mit MoA!), aggregieren.
+NB gefunden beim Verifizieren (SEPARAT, kein GDPR): mistral-medium transkribiert PDF-Tabellen
+manuell als Inline-CSV in python_exec statt zu parsen → 4 Iterationen für 1 Excel (Alt-Code: 12).
+Model-Verhalten; Task ist ein schlechter Stabilitäts-Benchmark → Iterations-Rauschen über ≥3 Läufe mitteln.
+
+---
+
+### Historischer Stand (vor 9.397, zur Einordnung)
 
 ---
 
