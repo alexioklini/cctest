@@ -1562,19 +1562,25 @@ preamble goes in first-user-message instead.
   de-anonymised at persist time too (`_deanonymize_text_rounds`) — it came
   raw out of the loop result, so tables in tool-using turns kept showing
   fakes even after a reload (same chat, third layer).
-- **Dispatch symmetry (9.336.0, L3)**: in anonymising sessions the tool
-  boundary is now symmetric — the model thinks in pseudonyms, the tools work
-  on raw data. (a) **Args-deanonymisation**: at tool dispatch
-  (`engine/llm_loop.py:dispatch_tool`, AFTER the web-egress gate) the
-  pseudonyms in the args of locally-executing tools
-  (`brain.GDPR_ARGS_DEANON_TOOLS`: mempalace_query, mempalace_kg_*,
-  read_document, read_file, list_directory, search_files, execute_command,
-  python_exec, ocr_*, xlsx_*, text_diff, doc_checks tools) are translated
-  back to the real values — project-memory searches find their drawers again,
-  file paths containing real names open again, scripts with value literals
-  match the real bytes. Web tools are NEVER deanonymised (that would leak);
-  shell/python strings containing network markers (curl, https://, urllib …)
-  also keep their pseudonyms. (b) **Results-anonymisation completed**:
+- **Dispatch symmetry (9.336.0, L3; POLICY INVERTED 9.397.0)**: in
+  anonymising sessions the tool boundary is symmetric — the model thinks in
+  pseudonyms, the tools work on raw data. (a) **Args-deanonymisation**: at
+  tool dispatch (`engine/llm_loop.py:dispatch_tool`) the pseudonyms in a
+  tool's args are translated back to the real values. Since 9.397.0 the policy
+  is "guard ONLY the PII+LLM combination, nothing else": EVERY tool gets real
+  args EXCEPT the small deny-list `brain.GDPR_LLM_ARG_TOOLS` — the tools that
+  forward their args into an internal/cloud MODEL (ask_llm, agent_step,
+  delegate_task, run_background_task, translate_text, translate_document,
+  generate_audio_overview, context_recall, transcribe_audio, generate_image),
+  which keep the fakes. So local tools (read/write/edit files, python_exec,
+  execute_command, r_exec, kernel_exec, xlsx_*, ocr_*, doc_checks, mempalace_*,
+  context_*, …) AND web/mail tools all run on real values — searches find
+  their drawers, file paths open, scripts match the real bytes, written files
+  carry real data from the start. The former deny-by-default network guard for
+  execute_command/python_exec and the separate web-egress BLOCK gate
+  (`_gdpr_guard_web_args`) were REMOVED (a non-LLM tool sending real data
+  outward is out of scope). Accepted trade-off: a model-authored network
+  script now runs with real values. (b) **Results-anonymisation completed**:
   `mempalace_query` + the KG tools (previously the only read path returning
   raw PII to cloud models) and inbound web content (web_fetch page content,
   SearXNG/Exa result titles+snippets, the Websuche basket prefetch) are now
@@ -1591,8 +1597,8 @@ preamble goes in first-user-message instead.
   "Bonnie M Stark", "STARK, BONNIE MARIE", the MRZ name line, the e-mail
   localpart, OCR variants — maps onto the FORM-MATCHING variant of the SAME
   fake identity, and the predictable variants are registered as real mapping
-  entries (which automatically makes the args-deanonymisation and the
-  web-egress gate entity-aware). Different real persons always get different
+  entries (which automatically makes the args-deanonymisation entity-aware).
+  Different real persons always get different
   fake surnames. Passport numbers became shape fakes (VIZ and MRZ carry the
   SAME fake number); a detected MRZ line is rebuilt completely with VALID
   ICAO-9303 check digits — DOB shifted, expiry unchanged — so check-digit
@@ -1626,8 +1632,15 @@ preamble goes in first-user-message instead.
   9.383.0 bullet above) — the MRZ values now pass through the dialog like
   any finding; `seed_identity_from_mrz` remains the reference the
   decision mint is token-stability-pinned against.
-- **Report fidelity (9.340.0, L6)**: de-anonymisation now FAILS LOUD instead
-  of lying silently. A reverse linter (`pseudonymizer.lint_residual_fakes`)
+- **Report fidelity (9.340.0, L6)**: de-anonymisation FAILS LOUD instead
+  of lying silently. NOTE (9.397.0): written files no longer need an on-disk
+  reverse pass at all — the file-writing tools de-anonymise their args, so
+  files carry REAL values from the start (see the Dispatch-symmetry bullet).
+  The racy per-write `deanonymize_file` reverse was removed; what remains for
+  files is a read-only residual-fake LINT plus a quiescent turn-end sweep
+  (`gdpr_lint_written_files_at_turn_end`) that fails loud if a delivered file
+  somehow still carries a fake. The reply-side reverse linter below is
+  unchanged. A reverse linter (`pseudonymizer.lint_residual_fakes`)
   runs on the final de-anonymised assistant reply AND on every file the
   model writes, and reports fake substance the exact-string reverse pass
   cannot restore: mangled placeholder tokens, fakes split across docx runs

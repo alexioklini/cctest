@@ -2240,6 +2240,42 @@ def _lint_written_file(path: str, ext: str, mapping) -> list:
         return []
 
 
+def _lint_written_file_safe(path: str, ext: str, mapping):
+    """Race-aware residual-fake lint. Returns `(residues, extract_ok)`.
+
+    `extract_ok` is False when the file could not be read as its own format —
+    the dominant cause during a live turn is that the model is still writing it
+    (an .xlsx mid-flush is not yet a valid zip). The per-write caller treats
+    `extract_ok=False` as "check again at turn-end" rather than a finding, so a
+    read that races an in-progress write never produces a spurious warning. The
+    authoritative pass is `gdpr_lint_written_files_at_turn_end`, which runs when
+    the loop is quiescent and every file is fully written.
+
+    Distinguishing "clean" (`([], True)`) from "not readable yet"
+    (`([], False)`) is the whole point — the old best-effort lint collapsed both
+    to `[]` and so could not tell a genuinely clean file from a mid-write one.
+    """
+    try:
+        if os.path.getsize(path) > _GDPR_LINT_MAX_BYTES:
+            return [], True  # too big to lint = treat as clean, decided
+        if ext in _GDPR_PLAIN_LINT_EXTS:
+            with open(path, "rb") as f:
+                text = f.read().decode("utf-8", errors="replace")
+        else:
+            text, kind = engine.extract_attachment_text(path)
+            if kind != "text":
+                # Not extractable as text — for a binary office format this
+                # usually means a half-written file; report not-ok so the
+                # turn-end sweep re-checks it.
+                return [], False
+            if not text:
+                return [], True
+        return pseudonymizer.lint_residual_fakes(text, mapping=mapping), True
+    except Exception:
+        # Read/parse failed — most likely mid-write. Defer to the turn-end sweep.
+        return [], False
+
+
 def _gdpr_deanonymise_filename(fname: str, mapping) -> str:
     """De-anonymise a generated artifact's FILENAME (fake → real name parts).
 
@@ -2483,6 +2519,53 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                     pass
             return
 
+        # Reversible-text formats (.docx/.xlsx/.html/.csv/.md/…): NO on-disk
+        # reverse pass anymore (2026-07-22 rework). The file-writing tools
+        # (write_file / write_document / edit_file) and the data tools
+        # (python_exec / execute_command) are now in GDPR_ARGS_DEANON_TOOLS, so
+        # their args — including the file CONTENT — are de-anonymised BEFORE the
+        # tool runs. The bytes therefore hit disk already carrying REAL values;
+        # there is nothing to reverse, and no half-written file for a reverse
+        # walker to race (the FilePseudonymizeError xlsx race is gone by
+        # construction). What remains here is a READ-ONLY safety net: lint the
+        # written file for any residual fake substance that should not exist, and
+        # fail LOUD if it does — we never silently ship fakes. Extraction that
+        # fails because the file is still mid-write is not an error: the
+        # authoritative check is the quiescent turn-end sweep
+        # (`gdpr_lint_written_files_at_turn_end`), which re-lints every file this
+        # turn wrote once the loop is done.
+        try:
+            _rc = engine.get_request_context()
+            _pending = _rc._gdpr_written_files
+            if not isinstance(_pending, dict):
+                _pending = {}
+            _pending[os.path.realpath(path)] = ext
+            _rc._gdpr_written_files = _pending
+        except Exception:
+            pass
+
+        residues, extract_ok = _lint_written_file_safe(path, ext, mapping)
+        if not extract_ok:
+            # File not readable yet (mid-write) — leave it for the turn-end
+            # sweep; do not emit a misleading error row now.
+            return
+        if not residues:
+            # Clean — the common and expected case (content was real from the
+            # start). No synthetic row: there is no de-anonymise operation to
+            # show; a clean write is just a write.
+            return
+
+        # Residual fakes survived into a delivered file — this should not happen
+        # now that content is real from the start, so surface it LOUD.
+        result = {
+            "file": fname,
+            "restored": 0,
+            "unrestored": len(residues),
+            "residues": [r.get("value", "") for r in residues[:5]],
+            "warning": (f"{fname}: enthält {len(residues)} pseudonymisierte "
+                        "Werte, die nicht in Echtwerte aufgelöst wurden."),
+            "mapping_id": mapping_id,
+        }
         if live is not None:
             try:
                 _emit_synthetic_tool_event(
@@ -2490,95 +2573,24 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                     tool_use_id=tool_use_id, phase="dispatch",
                     args={"file": fname, "mapping_id": mapping_id},
                 )
-            except Exception:
-                pass
-
-        try:
-            restored = pseudonymizer.deanonymize_file(
-                path, path, mapping=mapping)
-            status = "ok"
-            result = {
-                "file": fname,
-                "restored": int(restored),
-                "mapping_id": mapping_id,
-            }
-            err = ""
-            # Accumulate the file-reverse count on the request context so the
-            # DISPATCHING tool (write_document / python_exec / execute_command)
-            # can surface it as its tool_result's deanon_result_count → the 🔓 rN
-            # badge. A single tool call may write several files; sum them. Read
-            # + cleared by dispatch_tool after the tool returns.
-            try:
-                _rc = engine.get_request_context()
-                _prev = _rc._gdpr_file_deanon_count or 0
-                _rc._gdpr_file_deanon_count = _prev + int(restored)
-            except Exception:
-                pass
-        except Exception as e:
-            status = "error"
-            result = {
-                "file": fname,
-                "error": f"{type(e).__name__}: {str(e)[:200]}",
-                "mapping_id": mapping_id,
-            }
-            err = result["error"]
-            restored = 0
-
-        # Filename de-anonymisation (rename + alias) — DEACTIVATED (v9.396.1).
-        #
-        # v9.390.0 renamed a written artifact from its pseudonym-named path
-        # (`..._logan_edwards.html`) to the real-name path and left a hardlink/
-        # symlink/copy alias at the old path. It solved a COSMETIC problem (a
-        # file whose CONTENT is already real but whose NAME still carries a fake).
-        # But it was the source of a real DATA-safety bug: the rename bumps the
-        # file's mtime and the alias creates a second on-disk path, so the next
-        # `python_exec` change-diff (`_changed_files`, mtime/size based) re-flags
-        # the file as "modified" and fires `_after_file_write` — hence the SAME
-        # xlsx being de-anonymised THREE times in one turn (session 8709f19d),
-        # each fire another chance for the reverse walker to hit the file in a
-        # bad state and FAIL — and a failed reverse is swallowed, so a file that
-        # still held fakes could ship to the user. Content-only real values with
-        # a fake filename is the safe floor the code already fell back to; we now
-        # ALWAYS take it. The file keeps its (possibly fake-named) path with REAL
-        # content — no rename, no alias, no mtime churn, one reverse pass.
-        pass
-
-        # L6b: lint the RESTORED file's extracted text for residual fake
-        # substance the per-run walkers can't see (a fake split across docx
-        # runs, skipped xlsx formulas, reformatted dates). Fail loud in the
-        # synthetic row instead of silently delivering fake data (F6).
-        unrestored = 0
-        if status == "ok":
-            residues = _lint_written_file(path, ext, mapping)
-            if residues:
-                unrestored = len(residues)
-                result["unrestored"] = unrestored
-                result["residues"] = [r.get("value", "") for r in residues[:5]]
-
-        if live is not None:
-            try:
                 _emit_synthetic_tool_event(
                     live=live, sid=session_id, kind="deanonymise_file",
                     tool_use_id=tool_use_id, phase="done",
-                    result=result, status=status,
+                    result=result, status="error",
                     duration_ms=int((time.time() - t0) * 1000),
                 )
             except Exception:
                 pass
-
         if engine._audit_log:
             try:
                 engine._audit_log.log_action(
                     agent=agent_id, session_id=session_id,
-                    action_type="pii_deanonymise_file",
+                    action_type="pii_report_fidelity",
                     tool_name="gdpr_scanner",
                     args_summary=fname,
-                    result_summary=(f"restored={restored} "
-                                    f"unrestored={unrestored} "
-                                    f"mapping_id={mapping_id}"
-                                    if status == "ok"
-                                    else f"error={err} mapping_id={mapping_id}"),
-                    result_status=status if status == "ok" else "error",
+                    result_summary=(f"unrestored={len(residues)} "
+                                    f"mapping_id={mapping_id}"),
+                    result_status="error",
                     duration_ms=int((time.time() - t0) * 1000),
                     source="chat",
                 )
@@ -2586,6 +2598,102 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
                 pass
 
     return _cb
+
+
+def gdpr_lint_written_files_at_turn_end(*, session_id: str, agent_id: str = "main"):
+    """Authoritative, quiescent residual-fake check for every file this turn
+    wrote. Runs from `sidecar_proxy.run_turn`'s finally, AFTER the agentic loop
+    has fully returned — so every file is completely written (no mid-flush race)
+    and each is linted exactly ONCE.
+
+    Files are written with REAL data from the start now (their tools are in
+    GDPR_ARGS_DEANON_TOOLS), so this is a safety net, not a reverse pass: it
+    de-anonymises nothing. If a delivered file nonetheless still carries fake
+    substance, that is a defect we must not ship silently — it is surfaced LOUD
+    as a synthetic error row + audit entry, exactly like the per-write net, but
+    now decisive (extraction can't fail for a mid-write reason here).
+
+    No-op when no mapping is active or nothing was written. Never raises.
+    """
+    try:
+        _ctx = engine.get_request_context()
+    except Exception:
+        return
+    written = getattr(_ctx, "_gdpr_written_files", None)
+    if not isinstance(written, dict) or not written:
+        return
+    # Consume the set so a subsequent post-turn call can't double-report.
+    try:
+        _ctx._gdpr_written_files = None
+    except Exception:
+        pass
+    mapping_id = getattr(_ctx, "_gdpr_mapping_id", "") or ""
+    if not mapping_id:
+        return
+    mapping = pseudonymizer.get_mapping(mapping_id)
+    if mapping is None:
+        try:
+            mapping = pseudonymizer.load_mapping(mapping_id)
+        except Exception:
+            mapping = None
+    if mapping is None:
+        return
+
+    session = None
+    try:
+        session = sessions.peek(session_id)  # noqa: F821
+    except Exception:
+        session = None
+    live = getattr(session, "live_stream", None) if session else None
+
+    for path, ext in list(written.items()):
+        if not os.path.isfile(path):
+            continue  # deleted / moved during the turn
+        residues, extract_ok = _lint_written_file_safe(path, ext, mapping)
+        if not extract_ok or not residues:
+            continue  # unreadable-even-now or clean → nothing to report
+        fname = os.path.basename(path)
+        t0 = time.time()
+        tool_use_id = f"deanon_file_{mapping_id[:8]}_end_{len(fname) % 1000000}"
+        result = {
+            "file": fname,
+            "restored": 0,
+            "unrestored": len(residues),
+            "residues": [r.get("value", "") for r in residues[:5]],
+            "warning": (f"{fname}: enthält {len(residues)} pseudonymisierte "
+                        "Werte, die nicht in Echtwerte aufgelöst wurden."),
+            "mapping_id": mapping_id,
+        }
+        if live is not None:
+            try:
+                _emit_synthetic_tool_event(
+                    live=live, sid=session_id, kind="deanonymise_file",
+                    tool_use_id=tool_use_id, phase="dispatch",
+                    args={"file": fname, "mapping_id": mapping_id},
+                )
+                _emit_synthetic_tool_event(
+                    live=live, sid=session_id, kind="deanonymise_file",
+                    tool_use_id=tool_use_id, phase="done",
+                    result=result, status="error",
+                    duration_ms=int((time.time() - t0) * 1000),
+                )
+            except Exception:
+                pass
+        if engine._audit_log:
+            try:
+                engine._audit_log.log_action(
+                    agent=agent_id, session_id=session_id,
+                    action_type="pii_report_fidelity",
+                    tool_name="gdpr_scanner",
+                    args_summary=fname,
+                    result_summary=(f"unrestored={len(residues)} "
+                                    f"mapping_id={mapping_id}"),
+                    result_status="error",
+                    duration_ms=int((time.time() - t0) * 1000),
+                    source="chat",
+                )
+            except Exception:
+                pass
 
 
 def _btw_conversation_snapshot(session):

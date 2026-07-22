@@ -39,7 +39,7 @@ def tool_context_search(args: dict) -> str:
     # (that is the whole point of "lossless"), so replaying them into an
     # anonymising session's wire was a straight leak — these tools carried NO GDPR
     # reference at all. The matching args-deanon (so a search for a fake finds the
-    # real text) is registered in brain.GDPR_ARGS_DEANON_TOOLS.
+    # real text) is registered in brain.NOT in GDPR_LLM_ARG_TOOLS, so it de-anonymises.
     return _brain._gdpr_anon_tool_text(
         _ok({"results": results, "count": len(results), "query": query}),
         "context_search")

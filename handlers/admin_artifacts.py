@@ -645,13 +645,7 @@ class AdminArtifactsHandlers:
                             in ("swap_to_local", "abort")
                         else "swap_to_local"
                     ),
-                    # Web-egress policy for anonymising sessions (L4/L7).
-                    "web_egress": (
-                        server_config.get("gdpr_scanner", {}).get("web_egress")
-                        if server_config.get("gdpr_scanner", {}).get("web_egress")
-                            in engine._WEB_EGRESS_MODES
-                        else "refuse"
-                    ),
+                    # (web_egress knob removed 2026-07-22 with the web-egress gate.)
                     # Merge defaults UNDER saved so newly-added categories
                     # (e.g. business_id) always surface even when an older
                     # saved config predates them.

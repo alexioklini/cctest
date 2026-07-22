@@ -712,8 +712,6 @@ function collectGdprFormConfig() {
     ? [...new Set(state.gdprGenericTerms.map(t => String(t).trim().toLowerCase()).filter(Boolean))]
     : [];
 
-  const webEgress = document.getElementById('gdpr-web-egress')?.value || 'refuse';
-
   return {
     enabled, server_log: serverLog,
     confidence_lower: confLower, confidence_upper: confUpper,
@@ -721,7 +719,6 @@ function collectGdprFormConfig() {
     background_pii_action: bgPii,
     background_ask_action: bgAsk,
     background_anonymise_fail_action: bgFail,
-    web_egress: webEgress,
     categories, rule_overrides, count_points, email_allowlist,
     name_generic_terms,
   };

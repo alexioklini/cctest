@@ -1932,14 +1932,6 @@ async function _genTab_gdpr(C) {
             </select>
           </div>
           <div style="font-size:11px;color:var(--text-400);margin-top:2px">Wird für Hintergrund-LLM-Aufrufe verwendet (Next-Prompt, Chat-Zusammenfassung, Memory-Classifier, Worker-Summariser, geplante Aufgaben) und für die automatische Umleitung im Eingabefeld, wenn ein blockierender Befund auf ein Cloud-Modell trifft. ${hasLocals?'':'<span style="color:var(--warning,#b45309)">Keine lokalen Modelle konfiguriert — fügen Sie zuerst eines unter Modelle hinzu.</span>'}</div>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-            <span style="font-size:12px;color:var(--text-300);min-width:200px">Websuche in anonymisierten Chats</span>
-            <select class="form-select" id="gdpr-web-egress" style="flex:1">
-              <option value="allow" ${(gs.web_egress||'refuse')==='allow'?'selected':''}>Suchen — der echte Name geht an die Suchmaschine, Ergebnisse kommen re-anonymisiert zurück</option>
-              <option value="refuse" ${(gs.web_egress||'refuse')!=='allow'?'selected':''}>Blockieren — Suchen mit geschützten Werten werden abgelehnt</option>
-            </select>
-          </div>
-          <div style="font-size:11px;color:var(--text-400);margin-top:2px">Gilt nur für Chats mit aktiver Anonymisierung: entscheidet, ob ein geschützter Wert (Name, Geburtsdatum, …) an eine Suchmaschine gehen darf. <b>Suchen</b> setzt den echten Wert für die Anfrage ein (das Modell selbst sieht ihn nie, die Treffer werden vor der Anzeige wieder anonymisiert) — für gewollte Personen-/Firmen-Recherche. <b>Blockieren</b> lässt nichts raus. Diese Übersetzung gilt nur für Web-Suche/-Abruf; E-Mail-Versand und Bildgenerierung senden geschützte Werte nie.</div>
         </div>
 
         ${SEC('NER-Modelle (Named Entity Recognition)')}

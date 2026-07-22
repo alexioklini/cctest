@@ -47,7 +47,10 @@ class TestKernelToolWiring(unittest.TestCase):
         # Kernel-Tools gehören in KEINES (Scheduler/Workflow/Helpdesk/minimal).
         for name in KERNEL_TOOLS:
             self.assertNotIn(name, brain._WORKFLOW_STEP_TOOLS)
-            self.assertNotIn(name, brain.GDPR_ARGS_DEANON_TOOLS)
+            # Kernel tools are LOCAL executors, NOT LLM-arg tools — so under the
+            # 2026-07-22 policy they DO get real (de-anonymised) args. They must
+            # therefore NOT be on the LLM-arg deny-list.
+            self.assertNotIn(name, brain.GDPR_LLM_ARG_TOOLS)
 
     def test_refuses_outside_session(self):
         # Ohne Session-Kontext (und in sched-/bg-Kontexten) fail-loud.

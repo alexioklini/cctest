@@ -209,15 +209,19 @@ class TestFileSeamLint(unittest.TestCase):
         self.assertEqual(result.get("unrestored"), 1)
         self.assertIn(long_de, result.get("residues", []))
 
-    def test_md_clean_has_no_unrestored_field(self):
+    def test_md_clean_emits_no_row(self):
+        # New contract (2026-07-22): files are written with REAL data from the
+        # start, so the callback no longer reverses — it only lints. A clean
+        # file (real content, no residual fakes) produces NO synthetic row at
+        # all: a clean write is just a write, there is no de-anon op to show.
         cb, sess = self._cb("sid-l6-clean")
         with tempfile.TemporaryDirectory() as td:
             path = os.path.join(td, "report.md")
             with open(path, "w") as f:
                 f.write("Bericht: Bonnie Stark, geboren 05.02.1947.\n")
             cb(path, "created", "main")
-        result = json.loads(self.fake_db.rows[1]["content"])["result"]
-        self.assertNotIn("unrestored", result)
+        self.assertEqual(self.fake_db.rows, [],
+                         "a clean written file must not emit a synthetic row")
 
     def _write_pdf(self, path, text):
         import fitz
@@ -329,10 +333,13 @@ class TestFileSeamNonTree(unittest.TestCase):
             mapping_id=self.m.mapping_id, session_id=sid, agent_id="main")
         return cb, sess
 
-    def test_non_tree_md_still_reversed(self):
-        """A .md written to an arbitrary (non-artifact) absolute path is still
-        de-anonymised in place. Mutation guard: re-adding the `_is_artifact_path`
-        bail (with the stub forced False) would leave the fake token in place."""
+    def test_non_tree_file_with_residual_fake_fails_loud(self):
+        """New contract (2026-07-22): the callback no longer reverses on disk —
+        files are written real from the start. If a delivered file (tree or not)
+        nonetheless still carries a fake token, the callback must NOT silently
+        ship it: it lints, finds the residue, and emits a LOUD error row. It
+        never MODIFIES the file (no reverse). The `_is_artifact_path` gate is
+        gone — model-written files are handled everywhere."""
         import brain
         _orig = brain._is_artifact_path
         brain._is_artifact_path = lambda _p: False  # NOT in the artifact tree
@@ -347,10 +354,14 @@ class TestFileSeamNonTree(unittest.TestCase):
                     out = f.read()
         finally:
             brain._is_artifact_path = _orig
-        self.assertIn("Bonnie Stark", out)
-        self.assertNotIn("Sam Mitchell", out)
+        # The callback must NOT rewrite the file (no reverse pass anymore).
+        self.assertIn("Sam Mitchell", out)
+        # But the residual fake is surfaced LOUD, not shipped silently.
         result = json.loads(self.fake_db.rows[1]["content"])["result"]
-        self.assertEqual(result.get("restored"), 1)
+        self.assertEqual(self.fake_db.rows[1]["content"] and
+                         json.loads(self.fake_db.rows[1]["content"]).get("status"),
+                         "error")
+        self.assertGreaterEqual(result.get("unrestored", 0), 1)
 
 
 class TestFileSeamImage(unittest.TestCase):
@@ -577,12 +588,12 @@ class TestFilenameDeanon(unittest.TestCase):
         spans = ps.find_restored_spans(out, mapping=self.m)
         self.assertTrue(any(s["original"] == real_fn for s in spans))
 
-    def test_after_write_cb_reverses_content_no_rename(self):
-        # v9.396.1: the filename rename+alias was DEACTIVATED (it caused the
-        # mtime-churn / multi-fire reverse race, session 8709f19d). The callback
-        # now reverses CONTENT only — the file keeps its (possibly fake-named)
-        # path, no rename, no alias, no filename pair. Safe floor: real content,
-        # fake name.
+    def test_after_write_cb_does_not_reverse_content(self):
+        # 2026-07-22 rework: the callback NO LONGER reverses on disk. Files are
+        # written real from the start (write tools de-anonymise their args). A
+        # file that still carries a fake ("Logan Kerry Edwards") is left exactly
+        # as written — the callback only LINTS and fails loud. No rename, no
+        # alias, no content rewrite.
         import shutil
         self.m.record("Bonnie Marie Stark", "Logan Kerry Edwards", "name")
         d = tempfile.mkdtemp()
@@ -594,10 +605,10 @@ class TestFilenameDeanon(unittest.TestCase):
                 mapping_id=self.m.mapping_id, session_id="test-fn-pair",
                 agent_id="main")
             cb(fake, "write", "main")
-            # Content IS reversed to real values, in place, under the fake name.
+            # Content is NOT reversed — the file is unchanged.
             self.assertTrue(os.path.isfile(fake))
             with open(fake) as f:
-                self.assertIn("Bonnie Marie Stark", f.read())
+                self.assertIn("Logan Kerry Edwards", f.read())
             # NO rename → the real-named file must NOT exist.
             self.assertFalse(os.path.isfile(os.path.join(d, "report_bonnie_stark.html")))
             # NO filename pair recorded in the mapping.
@@ -605,10 +616,6 @@ class TestFilenameDeanon(unittest.TestCase):
             self.assertNotIn("report_bonnie_stark.html", self.m.derived)
         finally:
             shutil.rmtree(d, ignore_errors=True)
-
-    # (test_rename_alias_roundtrip_hardlink removed in v9.396.1 — the filename
-    # rename + hardlink/symlink alias it exercised was deactivated because it
-    # drove the multi-fire reverse race. The callback now reverses content only.)
 
 
 if __name__ == "__main__":

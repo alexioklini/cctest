@@ -29,6 +29,27 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.397.0",
+        "date": "2026-07-22",
+        "title": "Datenschutz greift jetzt gezielt — Werkzeuge arbeiten mit echten Daten",
+        "body": "Der Datenschutz schützt ab sofort genau dort, wo es darauf "
+                "ankommt: bei der Weitergabe Ihrer Daten an ein Sprachmodell. "
+                "Alle übrigen Werkzeuge — Dateien schreiben, Tabellen erstellen, "
+                "Skripte ausführen, Suchen, Auswerten — arbeiten wieder mit den "
+                "echten Werten. Das bringt Ihnen zwei spürbare Verbesserungen: "
+                "erzeugte Dokumente und Tabellen enthalten von Anfang an die "
+                "richtigen Werte (keine nachträgliche Rückübersetzung mehr, die "
+                "in seltenen Fällen fehlschlagen konnte), und Auswertungen "
+                "laufen zuverlässiger, weil die Werkzeuge auf den tatsächlichen "
+                "Daten rechnen. Ihr Schutz beim Versand an das Sprachmodell "
+                "bleibt vollständig erhalten. Für Administratoren: die frühere "
+                "Einstellung „Websuche in anonymisierten Chats\" entfällt — "
+                "Web- und E-Mail-Werkzeuge unterliegen nicht mehr dieser "
+                "Sperre.",
+        "audience": "user",
+        "versions": ["9.397.0"],
+    },
+    {
         "version": "9.396.1",
         "date": "2026-07-22",
         "title": "Dateinamen bleiben unverändert — mehr Verlässlichkeit beim Datenschutz",

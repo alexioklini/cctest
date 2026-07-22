@@ -286,10 +286,10 @@ streaming call, per-USER history, fixed read-only tool set. See
   9.348.0 — privacy posture is governed by ONE central rule set (Settings →
   GDPR: rule/category actions + confidence bands), identical in every chat,
   project or not. A legacy `gdpr_preset` field in project.json is ignored and
-  stripped on the next save. `POST /v1/services/server` accepts
-  `gdpr_scanner.web_egress` (`refuse|allow` — v9.386.0, legacy `ask`/
-  `block_group` normalise to `refuse` on load), surfaced back in the services
-  GET.
+  stripped on the next save. (The `gdpr_scanner.web_egress` config knob was
+  REMOVED in 9.397.0 together with the web-egress block gate — under the
+  PII-in-LLM-only policy, web/mail tools run on real data and are no longer
+  gated.)
 - `GET .../projects/<name>/notes` / `POST` — project notes
 - `GET .../projects/<name>/docs` — list ingested docs
 - `GET .../projects/<name>/sources` — flat list of the project's individual

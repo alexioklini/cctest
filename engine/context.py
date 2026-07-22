@@ -96,6 +96,15 @@ class RequestContext:
     # → _apply_bg_context.
     gdpr_turn_decided: bool = False
     _gdpr_after_file_write_cb: object = None
+    # Set of files written THIS turn under an active anonymisation mapping,
+    # `{realpath: ext}`. Populated by the after-file-write callback (per write)
+    # and consumed once by the quiescent turn-end residual-fake sweep
+    # (`handlers.chat.gdpr_lint_written_files_at_turn_end`, run from
+    # sidecar_proxy.run_turn's finally). Files are written with REAL data from
+    # the start now (the write tools are NOT in GDPR_LLM_ARG_TOOLS, so their args
+    # de-anonymise before the write), so this drives a fail-loud safety net, NOT
+    # an on-disk reverse pass. Dict or None; per-turn.
+    _gdpr_written_files: object = None
     # Per-turn GDPR outcome, surfaced to the user as a chat badge + redo control
     # (set in the chat worker at the anonymise / local-fallback decision points,
     # read when assembling the assistant turn's metadata.gdpr). Dict or None.

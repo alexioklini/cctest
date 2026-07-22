@@ -426,7 +426,11 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
         brain._is_artifact_path = self._orig_iap
         ps.close_mapping(self.mapping.mapping_id)
 
-    def test_callback_deanonymises_md_in_place_and_emits_pair(self):
+    def test_callback_fails_loud_on_residual_fake_no_reverse(self):
+        # New contract (2026-07-22): the callback does NOT reverse on disk —
+        # files are written real from the start. A file that still carries a live
+        # fake token is a defect: the callback LINTS it, finds the residue, and
+        # emits a fail-loud error row. It must NOT modify the file.
         sid = "sid-deanon-1"
         sess = _FakeSession(sid)
         self.fake_sessions.add(sid, sess)
@@ -444,18 +448,36 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
 
             cb(path, "created", "main")
 
+            # NOT reversed — the file is left exactly as written.
             with open(path) as f:
-                self.assertIn("DE89370400440532013000", f.read())
+                self.assertIn(self.token, f.read())
 
-        # One dispatch + one done event.
+        # A dispatch + done pair, done row is an ERROR flagging the residue.
         events = [t for (t, _) in sess.live_stream.events]
         self.assertEqual(events, ["synthetic_tool_use", "synthetic_tool_result"])
-        # Two persisted rows.
         roles = [r["role"] for r in self.fake_db.rows]
         self.assertEqual(roles, ["tool_use", "tool_result"])
-        result = json.loads(self.fake_db.rows[1]["content"])["result"]
-        self.assertEqual(result["restored"], 1)
-        self.assertEqual(result["file"], "report.md")
+        done = json.loads(self.fake_db.rows[1]["content"])
+        self.assertEqual(done["status"], "error")
+        self.assertGreaterEqual(done["result"]["unrestored"], 1)
+        self.assertEqual(done["result"]["file"], "report.md")
+
+    def test_callback_clean_file_emits_nothing(self):
+        # The common case: a file written with REAL data (no fake tokens) →
+        # the callback lints, finds nothing, and emits NO row (a clean write is
+        # just a write).
+        sid = "sid-deanon-clean"
+        sess = _FakeSession(sid)
+        self.fake_sessions.add(sid, sess)
+        cb = self.chat_mod.make_gdpr_after_file_write_cb(
+            mapping_id=self.mapping.mapping_id, session_id=sid, agent_id="main")
+        with tempfile.TemporaryDirectory() as td:
+            path = os.path.join(td, "report.md")
+            with open(path, "w") as f:
+                f.write("Result: IBAN = DE89370400440532013000")
+            cb(path, "created", "main")
+        self.assertEqual(sess.live_stream.events, [])
+        self.assertEqual(self.fake_db.rows, [])
 
     def test_callback_skips_unsupported_extension(self):
         sid = "sid-deanon-2"
@@ -481,12 +503,11 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
         self.assertEqual(sess.live_stream.events, [])
         self.assertEqual(self.fake_db.rows, [])
 
-    def test_callback_reverses_non_artifact_paths(self):
-        # M7/G5: a model-written file OUTSIDE the artifact tree is now reversed
-        # too — the old `_is_artifact_path` bail let a .docx for a real meeting,
-        # written to an absolute path with invented names, sail through. The
-        # callback only ever fires for model-written paths, so reversing them
-        # everywhere is correct. (Was: test_callback_skips_non_artifact_paths.)
+    def test_callback_lints_non_artifact_paths_without_modifying(self):
+        # M7/G5: a model-written file OUTSIDE the artifact tree is handled too —
+        # the callback no longer gates on `_is_artifact_path`. New contract: it
+        # LINTS (never modifies). A residual fake in a non-tree file is surfaced,
+        # and the file is NOT rewritten. (Was: test_callback_reverses_non_artifact_paths.)
         sid = "sid-deanon-3"
         sess = _FakeSession(sid)
         self.fake_sessions.add(sid, sess)
@@ -503,12 +524,17 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
             with open(path, "w") as f:
                 f.write(f"random {self.token}")
             cb(path, "created", "main")
-            # File de-anonymised in place (token restored to the original).
+            # NOT modified — the callback never reverses on disk anymore.
             with open(path) as f:
-                self.assertNotIn(self.token, f.read())
+                self.assertIn(self.token, f.read())
+        # The residual fake was surfaced as a fail-loud error row.
+        done = json.loads(self.fake_db.rows[1]["content"])
+        self.assertEqual(done["status"], "error")
 
     def test_callback_handles_missing_session_gracefully(self):
-        # No session registered — callback must not crash.
+        # No session registered — callback must not crash. It lints the file
+        # (finding the residual fake) but only SSE emission is suppressed; the
+        # file is never modified (no reverse pass anymore).
         cb = self.chat_mod.make_gdpr_after_file_write_cb(
             mapping_id=self.mapping.mapping_id,
             session_id="missing-sid",
@@ -519,11 +545,9 @@ class TestGdprAfterFileWriteCallback(unittest.TestCase):
             with open(path, "w") as f:
                 f.write(f"hello {self.token}")
             cb(path, "created", "main")
-            # File still gets de-anonymised even without a live session —
-            # the absence of `live` only suppresses SSE; the on-disk
-            # rewrite still runs.
+            # File unchanged (not reversed); the callback did not crash.
             with open(path) as f:
-                self.assertIn("DE89370400440532013000", f.read())
+                self.assertIn(self.token, f.read())
 
 
 # ---------------------------------------------------------------------------

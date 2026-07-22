@@ -799,30 +799,21 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
     # — and if so record them for the UI (see the stash after args-deanon).
     _model_args = args
 
-    # Web-egress gate (L4): in anonymising sessions, refuse web-tool calls
-    # whose args contain protected values / pseudonyms BEFORE anything leaves
-    # the machine. Never raises; no-op for non-web tools and non-anonymising
-    # sessions (the overwhelming common case). In allow mode the gate returns
-    # args in which RELEASED fakes are translated back to originals — the
-    # OUTGOING request carries the real value; the wire history keeps the fakes.
-    guard, args = engine._gdpr_guard_web_args(name, args)
-    if guard is not None:
-        return guard, True
-
-    # Args-deanonymisation (L3a, dispatch symmetry): for whitelisted LOCALLY-
-    # executing tools, translate pseudonyms back to real values so retrieval/
-    # paths/scripts work on the raw data. MUST run AFTER the web gate (the
-    # gate judges the model's own args) and NEVER touches web tools (that
-    # would be silent egress — see brain.GDPR_ARGS_DEANON_TOOLS). Returns a
-    # new structure; `args` (and thus the wire history) keeps the fakes.
+    # Args-deanonymisation (dispatch symmetry): translate pseudonyms back to REAL
+    # values so the tool runs on raw data. Policy (2026-07-22): this fires for
+    # EVERY tool EXCEPT the LLM-arg tools (GDPR_LLM_ARG_TOOLS), which must keep
+    # the model's fakes because their args reach an internal LLM. The former
+    # web-egress BLOCK gate (`_gdpr_guard_web_args`) was removed under the same
+    # PII-in-LLM-only policy — a non-LLM tool sending real data to an external
+    # service is out of scope. Returns a new structure; `args` (and thus the wire
+    # history the CHAT model sees) keeps the fakes.
     args = engine._gdpr_deanon_tool_args(name, args)
 
     # UNIFORM DISPLAY: `args` is now what the tool REALLY runs on — after the
-    # web-egress fake→original translation (allow mode) AND the local args-deanon.
-    # Record it (only when it changed from the model's fakes) so the loop can show
-    # the SAME real values in the chat + activity panel for ALL tools, web and
-    # local alike (the user's rule: tools run on originals, display them
-    # consistently). Model/wire never see this — it's display-only.
+    # args-deanon. Record it (only when it changed from the model's fakes) so the
+    # loop can show the SAME real values in the chat + activity panel for ALL
+    # tools (the user's rule: tools run on originals, display them consistently).
+    # Model/wire never see this — it's display-only.
     try:
         if args is not _model_args and args != _model_args:
             engine.get_request_context()._gdpr_dispatched_args = args

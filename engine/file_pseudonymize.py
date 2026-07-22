@@ -55,7 +55,7 @@ SUPPORTED_EXTS = frozenset({
 # value will be replaced and the JSON stays well-formed (tokens are
 # JSON-string-safe — no quotes / backslashes). SVG is text XML and reverses
 # the same way — a locally-rendered `render_diagram` .svg (M7/G6) now carries
-# REAL values (render_diagram is in GDPR_ARGS_DEANON_TOOLS), and a model-
+# REAL values (render_diagram is in NOT in GDPR_LLM_ARG_TOOLS, so it de-anonymises), and a model-
 # written .svg carries fake tokens that the same string-replace restores;
 # tokens are XML-text-safe (no `<`/`>`/`&`).
 _PLAIN_EXTS = frozenset({".txt", ".md", ".log", ".html", ".htm", ".svg"})

@@ -57,20 +57,56 @@ class _SymmetryTestBase(unittest.TestCase):
             return brain._gdpr_deanon_tool_args(tool, args)
 
 
-class TestWhitelistInvariant(unittest.TestCase):
-    def test_no_web_tool_in_deanon_whitelist(self):
-        """DIE L3-Kerninvariante: Deanon-Whitelist ∩ Web-Tools = ∅."""
-        overlap = set(brain.WEB_SEARCH_TOOLS) & set(brain.GDPR_ARGS_DEANON_TOOLS)
-        self.assertEqual(overlap, set(),
-                         f"Web-Tools in der Args-Deanon-Whitelist: {overlap} "
-                         "— das wäre stiller PII-Egress!")
+class TestLlmArgDenylistInvariant(unittest.TestCase):
+    """Policy (2026-07-22): de-anonymise EVERY tool's args EXCEPT the LLM-arg
+    tools (`GDPR_LLM_ARG_TOOLS`), which forward their args into an internal /
+    cloud model and so must keep the model's fakes. The former web-∩-whitelist
+    invariant is INVERTED: web tools now DO get real args (they are not LLM
+    tools); the only thing excluded is the LLM-arg deny-list."""
 
-    def test_whitelisted_tools_exist_in_dispatch(self):
-        """Whitelist-Namen müssen echte Tools sein (Tippfehler-Schutz)."""
-        for name in brain.GDPR_ARGS_DEANON_TOOLS:
+    def test_denylist_names_exist_in_dispatch(self):
+        """Deny-list names must be real tools (typo protection)."""
+        for name in brain.GDPR_LLM_ARG_TOOLS:
             self.assertIn(name, brain.TOOL_DISPATCH,
-                          f"{name} steht in GDPR_ARGS_DEANON_TOOLS, aber "
+                          f"{name} steht in GDPR_LLM_ARG_TOOLS, aber "
                           "nicht in TOOL_DISPATCH")
+
+    def test_llm_arg_tools_keep_fakes(self):
+        """The core invariant now: an LLM-arg tool's args are NOT
+        de-anonymised (its content would otherwise reach an internal LLM)."""
+        import pseudonymizer as ps
+        m = ps.new_mapping()
+        m.forward["Bonnie Stark"] = "Erika Muster"
+        m.reverse["Erika Muster"] = "Bonnie Stark"
+        try:
+            with request_context():
+                get_request_context()._gdpr_mapping_id = m.mapping_id
+                for name in brain.GDPR_LLM_ARG_TOOLS:
+                    out = brain._gdpr_deanon_tool_args(
+                        name, {"prompt": "Erika Muster", "text": "Erika Muster",
+                               "task": "Erika Muster", "query": "Erika Muster",
+                               "topic": "Erika Muster"})
+                    self.assertNotIn(
+                        "Bonnie Stark", json.dumps(out, ensure_ascii=False),
+                        f"{name} de-anonymised args into an LLM path")
+        finally:
+            ps.close_mapping(m.mapping_id)
+
+    def test_web_tools_now_get_real_args(self):
+        """Inversion check: a web/search tool (NOT an LLM tool) now receives
+        real values — the old 'web tools keep fakes' invariant is gone."""
+        import pseudonymizer as ps
+        m = ps.new_mapping()
+        m.forward["Bonnie Stark"] = "Erika Muster"
+        m.reverse["Erika Muster"] = "Bonnie Stark"
+        try:
+            with request_context():
+                get_request_context()._gdpr_mapping_id = m.mapping_id
+                out = brain._gdpr_deanon_tool_args(
+                    "exa_search", {"query": "Erika Muster Bank"})
+            self.assertEqual(out["query"], "Bonnie Stark Bank")
+        finally:
+            ps.close_mapping(m.mapping_id)
 
 
 class TestArgsDeanon(_SymmetryTestBase):
@@ -97,30 +133,33 @@ class TestArgsDeanon(_SymmetryTestBase):
         self.assertEqual(args["query"], "Erika Muster")
         self.assertEqual(out["query"], "Bonnie M Stark")
 
-    def test_web_tools_never_deanonymised(self):
-        """Sicherheits-Negativtest: Fake im Web-Arg bleibt Fake."""
+    def test_web_tools_now_deanonymised(self):
+        """Policy inversion (2026-07-22): web/search tools are NOT LLM tools, so
+        their args are now de-anonymised to real values like every other non-LLM
+        tool. The old 'fake im Web-Arg bleibt Fake' invariant is gone — the web
+        egress BLOCK gate was removed (PII-in-LLM-only policy)."""
         m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
         for tool in brain.WEB_SEARCH_TOOLS:
             args = {"query": "Erika Muster obituary",
                     "url": "https://x.test/Erika Muster"}
             out = self._deanon(tool, args, mapping=m)
-            self.assertEqual(out, args, f"{tool}: Args wurden verändert!")
-            self.assertNotIn("Bonnie", json.dumps(out),
-                             f"{tool}: Klarwert im Web-Arg — Egress!")
+            self.assertEqual(out["query"], "Bonnie M Stark obituary",
+                             f"{tool}: Web-Arg wurde NICHT de-anonymisiert")
 
     def test_no_mapping_no_change(self):
         out = self._deanon("read_document", {"path": "/x/Erika Muster.pdf"})
         self.assertEqual(out, {"path": "/x/Erika Muster.pdf"})
 
-    def test_execute_command_network_marker_keeps_fakes(self):
-        """curl/https im Command → Fakes bleiben (kein Seitentür-Egress)."""
+    def test_execute_command_network_marker_now_deanonymised(self):
+        """The deny-by-default network guard was removed: a curl/https command
+        now receives REAL values like any other command (accepted egress
+        trade-off — PII-in-LLM-only policy)."""
         m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
         out = self._deanon(
             "execute_command",
             {"command": 'curl "https://google.com/search?q=Erika Muster"'},
             mapping=m)
-        self.assertIn("Erika Muster", out["command"])
-        self.assertNotIn("Bonnie", out["command"])
+        self.assertIn("Bonnie M Stark", out["command"])
 
     def test_execute_command_local_deanonymised(self):
         m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
@@ -130,13 +169,13 @@ class TestArgsDeanon(_SymmetryTestBase):
             mapping=m)
         self.assertIn("Bonnie M Stark", out["command"])
 
-    def test_python_exec_network_marker_keeps_fakes(self):
+    def test_python_exec_network_marker_now_deanonymised(self):
         m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
         out = self._deanon(
             "python_exec",
             {"code": 'import urllib.request\nq = "Erika Muster"'},
             mapping=m)
-        self.assertIn("Erika Muster", out["code"])
+        self.assertIn("Bonnie M Stark", out["code"])
 
     def test_python_exec_local_deanonymised(self):
         m = self._mapping(("Bonnie M Stark", "Erika Muster", "name"))
@@ -148,32 +187,20 @@ class TestArgsDeanon(_SymmetryTestBase):
 
 
 class TestDispatchOrder(_SymmetryTestBase):
-    def test_web_gate_fires_before_deanon(self):
-        """Ein Web-Call mit Fake wird am Gate refused — die Args erreichen
-        weder Deanon noch das Tool. Modus 'refuse' explizit gesetzt: seit dem
-        allow-Fake→Original-Release (Chat faa124e1) würde 'allow' den Fake
-        stattdessen übersetzen; dieser Test prüft die DISPATCH-REIHENFOLGE
-        (Gate vor Deanon), nicht die allow-Policy, also den refusenden Modus
-        fixieren statt vom Live-web_egress abhängen."""
-        from engine import llm_loop
-        _orig_cfg = brain._get_gdpr_scanner_config
-        _cfg = dict(_orig_cfg())
-        _cfg["web_egress"] = "refuse"
-        brain._get_gdpr_scanner_config = lambda: _cfg
-        try:
-            m = self._mapping(("Bonnie M Stark", "<PERSON_1_ab12>", "name"))
-            with request_context():
-                ctx = get_request_context()
-                ctx._gdpr_mapping_id = m.mapping_id
-                ctx.current_session_id = None
-                result, is_error = llm_loop.dispatch_tool(
-                    "searxng_search", {"query": "<PERSON_1_ab12> obituary"})
-        finally:
-            brain._get_gdpr_scanner_config = _orig_cfg
-        self.assertTrue(is_error)
-        parsed = json.loads(result)
-        self.assertEqual(parsed.get("error"), "web_query_blocked_pii")
-        self.assertNotIn("Bonnie", result)
+    def test_web_call_with_fake_now_deanonymised_and_runs(self):
+        """Policy inversion: a web call carrying a fake is NO LONGER blocked.
+        The web egress BLOCK gate (_gdpr_guard_web_args) was removed — the fake
+        is de-anonymised to the real value and the tool runs on it. (We only
+        assert the args-deanon step here, not the live network call: the point
+        is that dispatch no longer short-circuits with a PII block.)"""
+        m = self._mapping(("Bonnie M Stark", "<PERSON_1_ab12>", "name"))
+        with request_context():
+            ctx = get_request_context()
+            ctx._gdpr_mapping_id = m.mapping_id
+            ctx.current_session_id = None
+            out = brain._gdpr_deanon_tool_args(
+                "searxng_search", {"query": "<PERSON_1_ab12> obituary"})
+        self.assertEqual(out["query"], "Bonnie M Stark obituary")
 
 
 class TestWebResultAnon(unittest.TestCase):

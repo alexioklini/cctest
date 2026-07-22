@@ -6,18 +6,18 @@ run inside the SAME anonymisation mapping as the chat that spawned it.
 Why this has teeth: EVERY GDPR enforcement point keys off exactly one field,
 `RequestContext._gdpr_mapping_id` —
 
-    brain._gdpr_anon_tool_text   (tool-result seam)
-    brain._gdpr_deanon_tool_args (args de-anonymiser)
-    brain._gdpr_guard_web_args   (web-egress gate)
+    brain._gdpr_anon_tool_text   (tool-result seam — anonymises results to the LLM)
+    brain._gdpr_deanon_tool_args (args de-anonymiser — real values into non-LLM tools)
 
 …and each of them NO-OPS when it is empty. Before this fix `_apply_bg_context`
 rebuilt ~20 context fields for background turns and simply omitted that one, so
-a scheduled run or a fan-out leaf could read the customer file in the clear and
-google the real name. The entry prompt was gated; the whole agentic tail was not.
+a scheduled run or a fan-out leaf could read the customer file in the clear.
+The entry prompt was gated; the whole agentic tail was not. (The former
+web-egress BLOCK gate was removed 2026-07-22 under the PII-in-LLM-only policy.)
 
 These tests would all have passed a "does it set an attribute" check. They are
 written instead against the PROPERTY that makes the difference: after the bind,
-does the gate actually fire?
+does the args-deanon seam actually fire?
 
 Bare test interpreter — no server, no spaCy, no network.
 """
@@ -124,15 +124,17 @@ class TestBuildToolContextCarriesMapping(unittest.TestCase):
             self.assertEqual(tc.get("gdpr_mapping_id"), "")
 
 
-class TestGateIsLiveInBackgroundTurn(unittest.TestCase):
-    """The payoff test — the one that actually encodes G1.
+class TestMappingIsLiveInBackgroundTurn(unittest.TestCase):
+    """The payoff test — the one that actually encodes G1: does a background
+    turn INHERIT the session's anonymisation mapping?
 
-    Not "is the field set" but: does a background turn's web-egress gate REFUSE a
-    search for a protected value? Before M1 this returned "no gate" because the
-    mapping id never reached the background context.
-    """
+    Probe (post-2026-07-22): the web-egress BLOCK gate was removed, so we probe
+    the mapping's presence through the args-deanon seam instead — a bg turn that
+    inherited the mapping de-anonymises a fake in a (web-tool) query back to the
+    real value; a bg turn without it leaves the query untouched. Before M1 the
+    mapping id never reached the background context, so no de-anon happened."""
 
-    def test_web_gate_refuses_protected_value_in_bg_turn(self):
+    def test_bg_turn_deanonymises_with_inherited_mapping(self):
         import pseudonymizer as ps
         from handlers import sidecar_proxy
 
@@ -141,43 +143,30 @@ class TestGateIsLiveInBackgroundTurn(unittest.TestCase):
         m.forward["Bonnie Stark"] = "Sam Mitchell"
         m.reverse["Sam Mitchell"] = "Bonnie Stark"
         m.categories["Bonnie Stark"] = "contact"
-
-        # Modus 'refuse' explizit: dieser Test kodiert G1 = "die Gate-MECHANIK
-        # lebt im Background-Turn" (die mapping_id erreicht den bg-Kontext, der
-        # Gate feuert). Seit dem allow-Fake→Original-Release (Chat faa124e1)
-        # LÄSST 'allow' einen geschützten Namen bei Retrieval-Tools durch — auch
-        # für Background-Turns (Nutzer-Entscheidung: allow gilt überall). Damit
-        # der Test die Mechanik prüft und nicht an der Live-Policy hängt, den
-        # refusenden Modus fixieren.
-        _orig_cfg = brain._get_gdpr_scanner_config
-        _cfg = dict(_orig_cfg())
-        _cfg["web_egress"] = "refuse"
-        brain._get_gdpr_scanner_config = lambda: _cfg
         try:
             with request_context():
                 sidecar_proxy._apply_bg_context({
                     "session_id": "", "agent_id": "main",
                     "gdpr_mapping_id": m.mapping_id,
                 })
-                err, _args = brain._gdpr_guard_web_args(
-                    "searxng_search", {"query": "Bonnie Stark obituary"})
-            self.assertIsNotNone(
-                err,
-                "background turn googled a protected real name — G1 is open")
+                out = brain._gdpr_deanon_tool_args(
+                    "searxng_search", {"query": "Sam Mitchell obituary"})
+            self.assertEqual(
+                out["query"], "Bonnie Stark obituary",
+                "background turn did NOT inherit the mapping — G1 is open")
         finally:
-            brain._get_gdpr_scanner_config = _orig_cfg
             ps.close_mapping(m.mapping_id)
 
-    def test_web_gate_inactive_without_mapping(self):
-        """Control: a non-anonymising background turn is not gated at all."""
+    def test_bg_turn_noop_without_mapping(self):
+        """Control: a non-anonymising background turn de-anonymises nothing."""
         from handlers import sidecar_proxy
         with request_context():
             sidecar_proxy._apply_bg_context({
                 "session_id": "", "agent_id": "main",
             })
-            err, _args = brain._gdpr_guard_web_args(
-                "searxng_search", {"query": "Bonnie Stark obituary"})
-        self.assertIsNone(err)
+            out = brain._gdpr_deanon_tool_args(
+                "searxng_search", {"query": "Sam Mitchell obituary"})
+        self.assertEqual(out["query"], "Sam Mitchell obituary")
 
 
 class TestDeanonFnCarriesMappingId(unittest.TestCase):

@@ -1413,7 +1413,7 @@ def tool_wiki_read(args: dict) -> str:
             if len(body) > 6000:
                 body = body[:6000] + "\n…(truncated)"
             # M3 (G9): result seam. The wiki now holds REAL values on disk
-            # (wiki_write is in GDPR_ARGS_DEANON_TOOLS), so a page read in an
+            # (wiki_write is in NOT in GDPR_LLM_ARG_TOOLS, so it de-anonymises), so a page read in an
             # anonymising session must be pseudonymised on the way to the model —
             # exactly like read_document. This is also what makes the write side
             # safe: local storage holds truth, the wire holds fakes.

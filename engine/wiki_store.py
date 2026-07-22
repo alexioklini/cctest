@@ -864,7 +864,7 @@ def wiki_from_chat(session_id, turn_ids=None, scope=None):
         #
         # The de-anon on the way back is deliberate and NOT a leak: `organized` is
         # about to be PERSISTED to the local wiki, which must hold real values (see
-        # the wiki_write entry in brain.GDPR_ARGS_DEANON_TOOLS). Storing the fakes
+        # the wiki_write entry in brain.NOT in GDPR_LLM_ARG_TOOLS, so it de-anonymises). Storing the fakes
         # here is what poisoned memory across sessions.
         _wiki_deanon = _brain._identity_deanon
         try:

@@ -430,6 +430,21 @@ def run_turn(
         except Exception:
             pass
     finally:
+        # Quiescent turn-end residual-fake sweep: the agentic loop has fully
+        # returned, so every file this turn wrote is completely written — lint
+        # each one exactly once and fail loud on any residual fake. Runs BEFORE
+        # the mapping/cb state is restored below (it reads _gdpr_mapping_id +
+        # _gdpr_written_files off the still-current context). No-op when no
+        # mapping was active or nothing was written. Never raises. This is the
+        # authoritative check that replaced the old racy per-write reverse pass.
+        if _gdpr_mid:
+            try:
+                from handlers.chat import gdpr_lint_written_files_at_turn_end
+                gdpr_lint_written_files_at_turn_end(
+                    session_id=sid or "",
+                    agent_id=tool_context.get("agent_id") or "main")
+            except Exception:
+                pass
         # Restore the worker context's callback state (reused for downstream
         # post-turn work — summariser, next-prompt, etc.).
         try:

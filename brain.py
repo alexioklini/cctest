@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.396.1"
+VERSION = "9.397.0"
 VERSION_DATE = "2026-07-22"
 CHANGELOG = [
+    ("9.397.0", "2026-07-22", "refactor(GDPR-Kernpolitik invertiert — 'wir schützen NUR die Kombination PII+LLM, sonst nichts' [Nutzer-Grundsatzentscheid]) + der xlsx-Deanon-Race strukturell beseitigt. ANLASS: der v9.396.1-Fix beseitigte EINE Race-Quelle (Rename/Alias-mtime-Churn), aber der reproduzierte Testlauf (Transaktion, mistral-medium, Anon AN) zeigte den `FilePseudonymizeError: File is not a zip file` WEITER — der Deanon feuerte 13× auf dieselbe xlsx (per-write `_after_file_write` → `_changed_files`-mtime-Diff pro python_exec-Runde), der ERSTE Fire traf die halb-geschriebene Datei (openpyxl schreibt ein Zip inkrementell). Der bisherige Fix relokierte den Reverse, statt die Ursache zu entfernen. WURZEL: die datei-schreibenden Tools (write_file/write_document/edit_file) bekamen die FAKES des Modells als Inhalt und wurden NACHTRÄGLICH auf der Platte zurückübersetzt (racy), während python_exec seine Args schon vor Ausführung deanonymisiert bekam (real from the start). Zwei Wege für dasselbe Ziel — der eine racy. ARCHITEKTUR-FIX: (1) POLITIK-INVERSION — die frühere Allow-Liste `GDPR_ARGS_DEANON_TOOLS` ist jetzt die DENY-Liste `GDPR_LLM_ARG_TOOLS`: JEDES Tool bekommt reale, deanonymisierte Args, AUSSER den Tools, die ihre Args in ein internes/Cloud-MODELL weiterreichen (ask_llm, agent_step, delegate_task, run_background_task, translate_text/_document, generate_audio_overview, context_recall, transcribe_audio, generate_image) — die behalten die Fakes, weil genau DAS die geschützte Kombination ist. Die Deny-Liste wurde durch Lesen jeder Tool-Implementierung ermittelt (Kennzeichen: Import von sidecar_proxy / gdpr_pick_model_for_background / Sub-Agent-Turn — nur in 4 Tool-Dateien). (2) DATEIEN REAL FROM THE START — write_file/write_document/edit_file/edit_document/r_exec/kernel_exec/ast_grep_replace sind NICHT auf der Deny-Liste → ihr Inhalts-Arg wird VOR dem Schreiben deanonymisiert → die Bytes landen echt auf der Platte, KEIN On-Disk-Reverse, KEINE halb-geschriebene Datei für einen Reverse-Walker zum Rennen. Der racy `deanonymize_file`-Pfad im After-File-Write-Callback ist ENTFERNT; an seine Stelle tritt ein READ-ONLY-Lint (race-tolerant: nicht-lesbare = mid-write → zum Turn-Ende vertagt) + der AUTORITATIVE quiescente Turn-End-Sweep `gdpr_lint_written_files_at_turn_end` (aus sidecar_proxy.run_turn's finally, NACH Loop-Ende → jede Datei fertig geschrieben, genau EIN Lint, Rest-Fake = fail-loud, nie stiller Ship). Neu `RequestContext._gdpr_written_files`. (3) EGRESS-BLOCK-GATE ENTFERNT — `_gdpr_guard_web_args` + Helfer (`_web_gate_*`, `_WEB_GATE_PASS_CATEGORIES`, `_web_release_translate_args`, ~490 Zeilen) GELÖSCHT: es blockierte web/mail-Calls mit geschützten Werten, aber 'ein Nicht-LLM-Tool sendet reale Daten nach außen' ist unter der Grundsatz-Politik AUßER SCOPE. Der `web_egress`-Admin-Knopf (Schema/Default/Loader + admin_config/admin_artifacts-Validierung + settings_general_tabs.js/nav.js-UI) mit-entfernt. Der Deny-by-default-Netzwerk-Guard für execute_command/python_exec (`_deanon_string_is_local_safe` + Netzwerk-Marker/Local-Command-Tabellen) ebenfalls GELÖSCHT — akzeptierter Trade-off auf Protokoll: ein modell-verfasstes netzwerk-berührendes Skript läuft jetzt mit realen Werten und KANN sie nach außen senden; das ist eine Skript-Sandbox-Frage, nicht die geschützte PII+LLM-Kombination. WAS BLEIBT: der Result-Seam `_gdpr_anon_tool_text` (anonymisiert JEDES Tool-Ergebnis auf dem Weg ZURÜCK zum Chat-LLM) — die eigentliche PII+LLM-Grenze, unverändert; und `_gdpr_scan_cloud_egress` auf generate_image (Nutzer-Entscheid: ein Cloud-BILDMODELL, das PII empfängt, IST in Scope — verweigert PII-tragende Prompts auch aus lokalen Sessions). VERIFIZIERT End-to-End (Transaktion, Anon AN, neuer Code): deanon_errs=0, deanon_calls=0, fake_leaks=0, applied=1, valide xlsx — der Race ist durch Konstruktion weg (nichts öffnet mehr eine halb-geschriebene Datei). Tests: test_dispatch_symmetry/test_gdpr_egress_gate/test_kernel_tools/test_gdpr_mapping_every_turn auf die neue Politik umgeschrieben (Web-Tools bekommen jetzt reale Args, LLM-Arg-Tools behalten Fakes, bg-Turn-Mapping-Vererbung via args-deanon geprobt); test_web_egress_gate/test_gdpr_web_matrix/test_web_auto_release (nur das gelöschte Gate) ENTFERNT; test_report_fidelity/test_chat_worker_helpers auf 'Callback lintet, reverst NICHT' umgeschrieben. Voller discover: 909 Tests, 0 neue Failures (1 pre-existing test_pii_ner-NER-FP, HEAD-verifiziert). py_compile + import brain OK. Server-Restart nötig (brain/engine/handlers). KURATIERTER Eintrag (user+admin: Werkzeuge arbeiten auf echten Daten, Schutz greift gezielt bei KI-Weitergabe; keine Fake-Dateien mehr)."),
     ("9.396.1", "2026-07-22", "fix(GDPR-Dateinamen-Manipulation KOMPLETT zurückgebaut — beseitigt den File-Deanon-Race, der Fake-tragende Dateien ausliefern konnte; zwei Nutzer-Entscheide). ANLASS: PII-Phase-1-Testlauf (Transaktion, mistral-medium-3.5, Anon AN) — `_xlsx_reverse` warf `FilePseudonymizeError: File is not a zip file`, obwohl die Datei valide war. ROOT CAUSE (reproduziert): der v9.390.0-Artefakt-Rename (`make_gdpr_after_file_write_cb` benannte eine erzeugte Datei vom Fake-Namen auf den Echtnamen um + legte Hardlink/Symlink-Alias an) bumpt die mtime UND erzeugt einen zweiten Disk-Pfad → der nächste `python_exec`-Change-Diff (`_changed_files`, mtime/size-basiert) flaggt die Datei erneut als 'modified' → `_after_file_write` (Deanon) feuert MEHRFACH auf dieselbe Datei; jedes Feuern eine neue Chance, die Datei in schlechtem Zustand zu treffen und zu SCHEITERN — und ein gescheiterter Reverse wird an ZWEI Stellen verschluckt (Callback → nur synthetisches Error-Event restored=0; `_after_file_write` bare try/except:pass), sodass eine Datei, die noch Fakes trug, an den Nutzer gehen konnte. Nutzer-Vorgabe: der File-Pseudonymizer MUSS unter ALLEN Umständen korrekte Dateien liefern, nie Fakes, nie korrupt. FIX 1 — Artefakt-Rename+Alias DEAKTIVIERT (handlers/chat.py `make_gdpr_after_file_write_cb`): der Callback rückübersetzt jetzt nur den INHALT in-place, KEIN Rename, KEIN Alias, KEINE mtime-Churn → EIN Reverse-Pass pro Datei, Race-frei. Safe floor = echter Inhalt unter (evtl. Fake-)Namen (das Fallback, das der Code eh schon hatte). Kosmetischer Verlust: eine erzeugte Datei kann einen Pseudonym-Dateinamen tragen (Inhalt echt) — akzeptiert gegen die Daten-Sicherheit. `_gdpr_renamed_path`-Konsument (brain.py) no-op't sauber (Feld nie gesetzt). FIX 2 — Attachment-Dateinamen-Pseudonymisierung (v9.394.0) KOMPLETT ENTFERNT (zweiter Nutzer-Entscheid): `pseudonymizer.pseudonymize_filename` + `_FILENAME_TOKEN_SPLIT_RE` gelöscht; Worker-Rewrites der name_block- + notice-Pfadzeilen raus; name_block-Emission + `_NAME_BLOCK_MARKER` raus. Attachments behalten ihren ORIGINALNAMEN auf der Platte UND im Wire (Notice-Pfade verbatim), werden so ans LLM übergeben — wie jeder andere Tool-Pfad. Der Attachment-Pfad war schon immer scan-exempt (`_split_attachment_notice`); nur der user-getippte Text wird weiter gescannt+anonymisiert. tests/test_attachment_neutral_names.py entfernt (testete nur die gelöschte Funktion); test_report_fidelity TestFilenameDeanon auf 'Inhalt reversed, KEIN Rename' umgeschrieben + rename_alias_roundtrip-Test entfernt. 95 Tests der 4 berührten Module grün. py_compile + Import OK. Server-Restart nötig (chat.py/pseudonymizer). KURATIERTER Eintrag (nutzersichtbar: erzeugte Dateien + Anhänge behalten konsistente, unmanipulierte Namen; Anon schützt Inhalt)."),
     ("9.396.0", "2026-07-22", "fix(Chat-Attachments PERSISTENT — überleben nicht mehr nur 3 Tage; entdeckt bei der PII-Test-Vorbereitung: von 9 Analyse-Chats hatten nur ~2 ihre hochgeladenen Dateien noch). ROOT CAUSE: Attachments lagen unter `/tmp/brain-attachments/<sid>/` (`brain_attachments_dir`, engine/tool_exec.py). `/tmp`→`/private/tmp` (macOS-Symlink), und der periodische macOS-Cleanup LÖSCHT /tmp-Dateien nach ~3 Tagen. Wer nach Wochen einen älteren Chat weiterführte, dessen Agent konnte die ursprünglich hochgeladenen Dateien nicht mehr `read_document`en — obwohl der v9.138.0-Kommentar 'the session attach dir persists ALL files for the whole chat (never cleared, accumulates)' explizit Persistenz zusagte; 'never cleared' galt aber nur BRAIN-seitig, das OS räumte trotzdem. FIX: `brain_attachments_dir(sid)` liefert jetzt `<AGENTS_DIR>/main/attachments/<sid>/` (persistent, gleicher Baum wie die Artefakte, die überleben) statt des /tmp-Pfads; Fail-Safe-Fallback auf den alten /tmp-Pfad, falls brain nicht importierbar ist (Pfad-Helfer darf nie werfen). `brain_tmp_root()` UNBERÜHRT — die anderen Scratch-Dirs (xlsx-convert, xlsx-recalc, workflow-uploads) bleiben bewusst kurzlebig in /tmp. Migration minimal, weil FAST ALLES durch den einen Helper routet (chat.py Upload/Scan-Write, _session_attachment_paths + Wire-Reminder, sessions_handler-Enumerator, brain._inline_attachment_refs, MRZ-Seed, Bild-Beschreibung, admin_artifacts._validate_file_path-Allowlist). Die JS-Notice-Parser (panels_artifacts.js, chat_render.js) matchen auf den Notice-PRÄFIX ('[User attached files saved to disk'), NICHT auf /tmp → unverändert korrekt. `.gitignore`: `agents/*/attachments/` ergänzt (wie artifacts/scheduled_attachments — Nutzer-Uploads dürfen NIE in git). Download-Allowlist deckt den neuen Pfad schon über `agents_dir` ab (Unterordner); der explizite attach_root-Eintrag bleibt via Helper korrekt. Artifact-Miner (server_daemons) walkt nur `agents/<agent>/artifacts/` → attachments/ wird NICHT gemint. BESTEHENDE Chats: ihre gespeicherten Notice-Pfade zeigen auf /tmp (Dateien eh weg) — keine Rück-Migration, nur künftige Uploads landen persistent. tests/test_design_attachment_inline.py auf `brain_attachments_dir()` umgestellt (schrieb echt auf Platte, sonst Test≠Code-Pfad); die 4 String-Literal-Tests (mrz_entity_seed/dispatch_symmetry/gdpr_egress_gate/attachment_neutral_names) nutzen /tmp/brain-attachments nur als beliebigen Pfad-String in Fixtures → bewusst NICHT geändert (Verhalten unberührt). NEBENBEI die vorbestehende 3er-Test-Regression aus v9.395.0 gefixt: TestDisplayResultDeanon erwartete `_gdpr_deanon_result_for_display`→None, seit 9.395.0 ist es `(text,count)` → Tuple entpackt. 71 Tests der 5 berührten Module grün. py_compile + Import OK. Server-Restart nötig (engine). KURATIERTER Eintrag (nutzersichtbar: Anhänge in alten Chats bleiben lesbar)."),
     ("9.395.5", "2026-07-22", "fix(Datenschutz-Block-Header im Chat — reale Ersetzungs-SUMMEN statt Block-Anzahl + korrekte Zahlen; Nutzer-Feedback an Chat 3ba2cfa5 Turn 1). Drei Befunde, alle rein Frontend: (1) Der Gruppen-Header 'Datenschutz' zählte BLÖCKE ('1 Anon'/'1 De-Anon') — unnötig, da ein Block immer entweder Anon ODER De-Anon ist. NEU: die SUMME der realen Ersetzungen als `→N` (anonymisiert, als Pseudonym gesendet) bzw. `←N` (wiederhergestellt, zurück in Klartext); Legende im Tooltip. (2) Der anonymise-chat_text-Block zeigte `findings` (Chat 3ba2cfa5: 71) — das sind ALLE entschiedenen Findings inkl. der 4 Attachments (die eigene anonymise_read-Blöcke mit eigenen `applied`-Zahlen haben). Die realen Chat-Text-Ersetzungen stehen in `user_spans` (=7). NEU: Anzeige `N Ersetzungen` aus user_spans.length (Fallback known_values_swept→findings für Alt-Rows); Header-Summe zieht user_spans für anonymise, `applied` für anonymise_read. (3) Die deanonymise_text-Row meldet `restored` als DISTINKTE Werte (4), aber der Reply zeigt sie mehrfach ('Wien' ×6) — 12 echte Vorkommen. NEU `_gdprCountRestoredInReply(text, decisions)` (chat_tools.js): zählt die Vorkommen der wiederhergestellten ECHTEN Ledger-Werte im Response-Text des Turns, value-DEDUPED (ein Wert unter mehreren rule_ids wird nicht multipliziert; nur `value`, kein fake — ein Fake-Rückstand ist keine Wiederherstellung). Der De-Anon-Header nutzt diese Vorkommen-Zahl (Fallback auf row.restored); pro Block nur EINMAL gezählt (deanonTextCounted-Guard), da die Zählung den ganzen Reply umfasst. renderTurnBody baut dazu den Turn-Response-Text (assistant + assistant_segment) einmal auf. Verifiziert am ECHTEN Turn-1-Material (Node-Gegenprobe gegen DB): Anon-Header →7 (user_spans), Chat-Text-Block '7 Ersetzungen' (statt 71), De-Anon-Header ←12 (statt 4; Wien×6+Corporate×2+Governance×2+Management×2). js_gate PASS (eslint clean; net-globals 2111→2112, +1 `_gdprCountRestoredInReply`, Baseline im selben Commit; Smoke grün). REINER FRONTEND-FIX — KEIN Server-Restart, Browser-Reload genügt. SEPARAT weiter offen: 'Wien' statt 'Wiener Privatbank SE' markiert (eigener Highlighter-Bug). KEIN kuratierter Eintrag (Anzeige-Präzisierung der bereits kuratierten Datenschutz-Transparenz)."),
@@ -3269,10 +3270,11 @@ def gdpr_bind_mapping(mapping_id: str) -> bool:
     This is the single entry point every NON-interactive turn (scheduler,
     background task, delegate, fan-out leaf) uses to join the parent session's
     fake world. Everything GDPR hangs off `_gdpr_mapping_id`: the tool-result
-    seam (`_gdpr_anon_tool_text`), the args de-anonymiser
-    (`_gdpr_deanon_tool_args`) and the egress gate (`_gdpr_guard_web_args`) all
-    read it and no-op when it's empty — which is exactly why a background turn
-    without it ran completely unprotected (G1).
+    seam (`_gdpr_anon_tool_text`, anonymises results back to the LLM) and the
+    args de-anonymiser (`_gdpr_deanon_tool_args`, real values into non-LLM
+    tools) both read it and no-op when it's empty — which is exactly why a
+    background turn without it ran completely unprotected (G1). (The former
+    web-egress BLOCK gate was removed 2026-07-22, PII-in-LLM-only policy.)
 
     The rehydration is NOT optional bookkeeping. The interactive worker calls
     `pseudonymizer.close_mapping()` in its `finally`, dropping the mapping from
@@ -3454,451 +3456,6 @@ def _gdpr_anon_tool_text(text: str, source: str) -> str:
         return text
 
 
-# ── Web-Egress-Gate (L4 Phase 1, v9.334.0) ──────────────────────────────────
-# Guards the args of every web-reaching tool (WEB_SEARCH_TOOLS) in sessions
-# with an active transparent-anonymisation mapping. Called from the ONE live
-# dispatch choke point (engine/llm_loop.py:dispatch_tool), so interactive,
-# background and scheduler turns are all covered. Without this gate the
-# combination "auto-anonymise + contact=ignore" ships the real NAME verbatim
-# to external search engines (see PII_ANALYSIS_PARITY_HANDOVER.md §5).
-
-# Opaque-token shape minted by pseudonymizer (tolerant of LLM mangling —
-# mirrors pseudonymizer's reverse regex).
-_PII_WEB_TOKEN_RE = re.compile(r"<\s*\w+_\d+_\w+\s*>")
-
-# Categories the gate does NOT act on. The gate asks "what IS PII", not "what
-# is actionable" — the session config may set contact=ignore, which would make
-# a findings-driven gate blind to the NAME, the most identifying value.
-# business_id (organisation) + network pass so technical queries ("Samsung
-# Galaxy S23 EXIF", "ICAO 9303 check digit") never trip the gate — over half
-# the queries in the reference chat (58e3c521438a) were technical.
-_WEB_GATE_PASS_CATEGORIES = {"business_id", "network"}
-
-# Zwei Modi (v9.386.0 — sauberer Schnitt, ask/block_group entfernt):
-#   refuse — geschützte Werte gehen NICHT an eine Suchmaschine (Blockieren).
-#   allow  — für Retrieval-Tools (WEB_SEARCH_TOOLS) wird der echte Wert für die
-#            Anfrage eingesetzt (Fake→Original hin-übersetzt); das Modell sieht
-#            das Original nie, die Treffer kommen re-anonymisiert zurück (Suchen).
-# 'ask' (Consent-Dialog pro Wert) + 'block_group' (Web-Tools ausblenden) waren
-# Extra-Komplexität aus der L1-L7-KYC-Serie; 'ask' hing am 9.348 ENTFERNTEN
-# kyc-Preset. Legacy-Config-Werte werden bei _validate_gdpr_scanner_config auf
-# 'refuse' bzw. 'allow' normalisiert.
-_WEB_EGRESS_MODES = ("refuse", "allow")
-
-
-def _web_gate_strings(obj, out=None) -> list:
-    """Collect every string in args, recursively through lists/dicts."""
-    if out is None:
-        out = []
-    if isinstance(obj, str):
-        out.append(obj)
-    elif isinstance(obj, dict):
-        for v in obj.values():
-            _web_gate_strings(v, out)
-    elif isinstance(obj, (list, tuple)):
-        for v in obj:
-            _web_gate_strings(v, out)
-    return out
-
-
-def _web_gate_value_variants(value: str) -> set:
-    """Normalised surface forms of a protected value for substring matching
-    against outgoing web args — lowercase, plus URL-slug separators
-    (space → -/_/+/%20; the reference chat leaked the name in a URL SLUG:
-    bizapedia.com/people/bonnie-stark.html). For multi-word values the
-    first+last token pair is added in both orders so "Bonnie M Stark"
-    still catches the slug "bonnie-stark". Values <4 chars are skipped
-    (substring noise on house numbers / short IDs)."""
-    v = re.sub(r"\s+", " ", (value or "").strip().lower())
-    if len(v) < 4:
-        return set()
-    out = {v}
-    if " " in v:
-        for sep in ("-", "_", "+", "%20"):
-            out.add(v.replace(" ", sep))
-        toks = [t for t in re.split(r"[\s,]+", v) if len(t) >= 3]
-        if len(toks) >= 2:
-            for a, b in ((toks[0], toks[-1]), (toks[-1], toks[0])):
-                for sep in ("-", "_", "+", "%20"):
-                    out.add(f"{a}{sep}{b}")
-    return out
-
-
-def _web_gate_refusal(blocked_kinds: list, *, fakes: bool) -> str:
-    """Structured, handlungsleitender Tool-Error. Contains value KINDS only —
-    the error string goes back to the model, never the values themselves."""
-    if fakes:
-        hint = (
-            "Die Query enthält pseudonymisierte Werte (Platzhalter/Shape-Fakes). "
-            "Eine Websuche damit wäre semantisch leer oder träfe echte FREMDE "
-            "Personen (Fake-Namen sind reale Namen) — deren Daten würden die "
-            "Analyse vergiften. Suche NIE mit diesen Werten. Optionen: "
-            "(1) Die Prüfung im Bericht als 'nicht prüfbar (Datenschutz)' "
-            "ausweisen — NIE als 'keine Treffer'. "
-            "(2) Die Query ohne den geschützten Wert umformulieren, falls "
-            "sinnvoll. Wiederhole den Call NICHT unverändert.")
-    else:
-        hint = (
-            "Geschützter Wert in Web-Query. Optionen: "
-            "(1) Die Prüfung im Bericht als 'nicht prüfbar (Datenschutz)' "
-            "ausweisen — NIE als 'keine Treffer'. "
-            "(2) Die Query ohne den geschützten Wert umformulieren, falls "
-            "sinnvoll. Wiederhole den Call NICHT unverändert.")
-    seen, blocked = set(), []
-    for k in blocked_kinds:
-        if k not in seen:
-            seen.add(k)
-            blocked.append({"value_kind": k, "released": False})
-    return json.dumps({
-        "error": "web_query_blocked_pii",
-        "blocked": blocked,
-        "hint": hint,
-    }, ensure_ascii=False)
-
-
-def _web_release_translate_args(args, pairs: list):
-    """Fake→Original rewrite of a web-tool's args for RELEASED values only
-    (L4 Phase 2, step (c)). The model keeps thinking in fakes — only the
-    OUTGOING request carries the real value; the L3b result seam re-anonymises
-    the response on the way back (step (d)), so the model never sees the
-    original. Returns a NEW structure — the caller uses it for dispatch only,
-    wire/history keep the fakes.
-
-    Slug/case-aware: the model may write the fake as a URL slug
-    ("sam-mitchell") — each fake surface form maps to the ALIGNED original
-    form ("bonnie-stark"), mirroring _web_gate_value_variants."""
-    reps = []
-    for fake, orig in pairs:
-        f = re.sub(r"\s+", " ", (fake or "").strip())
-        o = re.sub(r"\s+", " ", (orig or "").strip())
-        if not f or not o:
-            continue
-        reps.append((f, o))
-        if " " in f and " " in o:
-            for sep in ("-", "_", "+", "%20"):
-                reps.append((f.lower().replace(" ", sep),
-                             o.lower().replace(" ", sep)))
-            ft = [t for t in re.split(r"[\s,]+", f.lower()) if len(t) >= 3]
-            ot = [t for t in re.split(r"[\s,]+", o.lower()) if len(t) >= 3]
-            if len(ft) >= 2 and len(ot) >= 2:
-                for sep in ("-", "_", "+", "%20"):
-                    reps.append((f"{ft[0]}{sep}{ft[-1]}",
-                                 f"{ot[0]}{sep}{ot[-1]}"))
-                    reps.append((f"{ft[-1]}{sep}{ft[0]}",
-                                 f"{ot[-1]}{sep}{ot[0]}"))
-    ordered, seen = [], set()
-    for f, o in sorted(reps, key=lambda p: -len(p[0])):
-        if f.lower() in seen:
-            continue  # longest fake form wins; no prefix shadowing
-        seen.add(f.lower())
-        ordered.append((f, o))
-
-    def _tx(node):
-        if isinstance(node, str):
-            out = node
-            for f, o in ordered:
-                out = re.sub(re.escape(f), lambda m, _o=o: _o, out,
-                             flags=re.IGNORECASE)
-            return out
-        if isinstance(node, dict):
-            return {k: _tx(v) for k, v in node.items()}
-        if isinstance(node, list):
-            return [_tx(v) for v in node]
-        if isinstance(node, tuple):
-            return tuple(_tx(v) for v in node)
-        return node
-
-    return _tx(args)
-
-
-def _gdpr_guard_web_args(tool_name: str, args: dict) -> tuple[str | None, dict]:
-    """EGRESS gate: refuse a call that would hand protected session values
-    (originals), pseudonyms/tokens (fakes) or fresh person-PII to a third party.
-
-    Name kept for its L4 lineage, but the scope is no longer just the web
-    (M2/G7): it guards every tool in `EGRESS_TOOLS` — the web tools PLUS
-    email_send/email_reply (the account's SMTP/EWS server), generate_image (api.mistral.ai,
-    always, even from a local session) and every MCP tool (arbitrary, possibly
-    remote server). See `_is_egress_tool`.
-
-    Returns (refusal, args): `refusal` is an error-JSON string to send back to
-    the model (blocked) or None (proceed); `args` is the structure to DISPATCH
-    — identical to the input except in ask mode, where released fakes are
-    translated back to their originals for the outgoing request only (the
-    returned copy must never be persisted; wire/history keep the fakes).
-    NEVER raises. Inactive when no anonymisation mapping is active on the
-    current request context — non-anonymising sessions are untouched.
-
-    Primary check is against the KNOWN protected values of the session
-    (mapping.forward/reverse + pii_decisions ledger), NOT the scanner's
-    actionable findings — see _WEB_GATE_PASS_CATEGORIES. A fresh scan with a
-    gate-own category policy catches third-person PII never minted before.
-
-    Modes (config.json → gdpr_scanner.web_egress, default 'refuse'):
-      refuse — block originals + fakes: no protected value reaches a search
-        engine (Blockieren).
-      allow — for RETRIEVAL tools (WEB_SEARCH_TOOLS) the real value is put on
-        the outgoing request (fake→original translated in a dispatch-only copy
-        of the args); the model never sees the original, results come back
-        re-anonymised through the L3b seam (Suchen). Non-retrieval egress tools
-        (email_send/email_reply/generate_image/MCP) still refuse protected
-        values even in allow — those would CONTACT the protected person / ship
-        the real value to a third party, not merely retrieve.
-    (v9.386.0 — 'ask'/'block_group' entfernt; siehe _WEB_EGRESS_MODES.)
-    """
-    try:
-        # M2 (G7): every EGRESS tool, not just the web ones — email_send/reply,
-        # generate_image and any MCP tool leave the machine just as irreversibly.
-        if not _is_egress_tool(tool_name):
-            return None, args
-        try:
-            mapping_id = get_request_context()._gdpr_mapping_id or ""
-        except Exception:
-            mapping_id = ""
-        if not mapping_id:
-            # ── M10(b) / G13: AD-HOC-EGRESS-SCHUTZ OHNE PROJEKT ────────────
-            # Der Schutz hing bisher am Projekt-Preset — die Arbeit tut das
-            # nicht: die MEHRHEIT der realen KYC-/DD-/Compliance-Chats lief
-            # PROJEKTLOS (587a737dc21d, 1a830369e762, 088683fc47bc, …). Kein
-            # Preset → kein Turn-1-Auto-Anonymise → kein Mapping → und damit
-            # war dieser Gate KOMPLETT AUS: der Klarname ging in Turn 1 an die
-            # Suchmaschine, bevor irgendein Schutz greifen konnte.
-            #
-            # Ohne Mapping gibt es nichts zu über-/rückübersetzen — der
-            # FRISCH-SCAN (§3) braucht aber gar keins. Er läuft daher auch
-            # hier und refust/fragt bei Personen-PII. Die AUTO-ANONYMISIERUNG
-            # bleibt unverändert Modal-/Sticky-gesteuert (M10 ändert NICHT,
-            # wann pseudonymisiert wird — nur, wann der EGRESS gegated ist).
-            try:
-                if not (_get_gdpr_scanner_config() or {}).get("enabled"):
-                    return None, args
-            except Exception:
-                return None, args
-        # ab hier: Mapping aktiv ODER Scanner aktiv (Ad-hoc-Schutz)
-    except Exception:
-        return None, args
-    try:
-        import pseudonymizer as _ps
-        mapping = _ps.get_mapping(mapping_id) if mapping_id else None
-        cfg = _get_gdpr_scanner_config()
-        mode = cfg.get("web_egress") or "refuse"
-        if mode not in _WEB_EGRESS_MODES:
-            mode = "refuse"
-
-        raw_haystack = "\n".join(_web_gate_strings(args))
-        if not raw_haystack.strip():
-            return None, args
-        haystack = raw_haystack.lower()
-
-        known_fakes = {}   # fake value → (original or "", rule_id)
-        known_origs = {}   # original value → rule_id
-        if mapping is not None:
-            for orig, fake in mapping.forward.items():
-                rid = mapping.categories.get(orig, "unknown")
-                known_origs[orig] = rid
-                known_fakes[fake] = (orig, rid)
-        # Ledger: every value the session EVER decided on (survives restarts
-        # and mapping rehydration gaps). FP values are NOT protected — they
-        # also suppress fresh-scan re-detection below (the user already said
-        # "this is not PII"; the gate must not overrule that per web call).
-        fp_norms: set = set()
-        sid = ""
-        try:
-            from server_lib.db import ChatDB
-            sid = get_request_context().current_session_id or ""
-            if sid:
-                for rec in (ChatDB.get_session_pii_decisions(sid) or {}).values():
-                    if rec.get("false_positive"):
-                        v = re.sub(r"\s+", " ", (rec.get("value") or "").strip().lower())
-                        if v:
-                            fp_norms.add(v)
-                        continue
-                    if rec.get("value"):
-                        known_origs.setdefault(rec["value"], rec.get("rule_id") or "unknown")
-                    if rec.get("fake_value"):
-                        known_fakes.setdefault(
-                            rec["fake_value"],
-                            (rec.get("value") or "", rec.get("rule_id") or "unknown"))
-        except Exception:
-            pass  # mapping-only coverage is still correct
-
-        # ── 1) Fakes / opaque tokens ──────────────────────────────────────
-        # Default: refuse (a fake search is semantically empty or hits real
-        # strangers). allow-mode exception below: a fake whose ORIGINAL is
-        # known is translated back for the outgoing request instead.
-        fake_kinds: list = []
-        released_kinds: list = []
-        policy_released_kinds: list = []
-        translate_pairs: list = []   # (fake, original) — released only
-        for fake, (orig, rid) in known_fakes.items():
-            if not any(v in haystack for v in _web_gate_value_variants(fake)):
-                continue
-            # ── M5 (G3): AUTO-RELEASE per stehendem Policy-Consent ──────────
-            # Trägt der Fake einen Wert, dessen KATEGORIE die Policy ohnehin
-            # passieren lässt (business_id/organisation, network), dann wird er
-            # für den ausgehenden Request hin-übersetzt statt refused.
-            #
-            # Warum das nötig ist (G3 — die Komposition tötete den Use-Case):
-            # der Gate liess `organisation` beim Frisch-Scan durch (§3), aber
-            # sobald M4 den Firmennamen FAKT, kennt das Modell nur noch den
-            # Fake — und Fakes refusten in JEDEM Modus. Jede Einzelkomponente
-            # war korrekt, die Komposition machte Firmen-Recherche UNMÖGLICH:
-            # der Wert, den die Policy passieren liesse, konnte den Gate nie
-            # erreichen. Adverse-Media-, Sanktions- und Registry-Screening über
-            # Firmen IST aber der Zweck der betroffenen Projekte.
-            #
-            # Sicherheit: das Modell sieht das Original NIE — die Übersetzung
-            # lebt nur in der Dispatch-Kopie der Args (_web_release_translate_args),
-            # und die Ergebnisse kommen durch den L3b-Seam re-anonymisiert
-            # zurück. Die Suchmaschine bekommt den Firmennamen, den die Policy
-            # ihr ohnehin zugesteht. PERSONEN-Fakes sind unberührt: ihre
-            # Kategorie (contact/personal) steht nicht in den Pass-Kategorien,
-            # sie refusen weiter in jedem Modus (Regressionstest hält das fest).
-            # Der Auto-Release gilt in JEDEM Modus: die Policy hat für diese
-            # Kategorie bereits generell zugestimmt.
-            if (orig
-                    and PII_RULE_CATEGORIES.get(rid) in _WEB_GATE_PASS_CATEGORIES):
-                translate_pairs.append((fake, orig))
-                policy_released_kinds.append(rid)
-                continue
-            # ── allow-Modus: bekannter Fake → Original hin-übersetzen ────────
-            # `allow` bedeutet: der Admin hat den Egress von Klarwerten dieser
-            # Session generell freigegeben (Originale passieren in §2/§3 ohne
-            # Refusal). Ein Wert, der VORHER pseudonymisiert wurde, darf dadurch
-            # nicht schlechter stehen als ein ungefakter — sonst kippt jede
-            # Personen-Recherche in einer anonymisierenden Session (Chat
-            # faa124e1: 'suche Bilder von <Person>' → das Modell kennt nur den
-            # Fake 'Blake Young', der Gate refuste ihn, das Modell verweigerte).
-            # Der Sinn einer Fake-Suche-Refusal (sie träfe echte FREMDE
-            # Personen) entfällt hier gerade: NICHT der Fake geht raus, sondern
-            # das ORIGINAL — genau das, was `allow` für Klarwerte ohnehin
-            # zulässt. Das Modell sieht das Original NIE (Übersetzung nur in der
-            # Dispatch-Kopie der Args), Ergebnisse kommen re-anonymisiert durch
-            # den L3b-Seam zurück. In `refuse` bleibt die Personen-Fake-Refusal
-            # unberührt (dort ist Egress NICHT freigegeben).
-            #
-            # NUR für REINE RETRIEVAL-Tools (WEB_SEARCH_TOOLS): eine Suche/ein
-            # Fetch HOLT Daten, die geschützte Person wird nicht kontaktiert.
-            # email_send/email_reply (Kontaktaufnahme MIT der echten Person!) und
-            # generate_image (echter Name → Mistral) bleiben ausgenommen — dort
-            # wäre die Hin-Übersetzung kein Recherche-Egress, sondern eine
-            # Aktion GEGEN die geschützte Person; ihre Fakes refusen weiter
-            # (test_gdpr_egress_gate hält das fest).
-            if mode == "allow" and orig and tool_name in WEB_SEARCH_TOOLS:
-                translate_pairs.append((fake, orig))
-                released_kinds.append(rid)
-                continue
-            fake_kinds.append(rid)
-        # Opaque tokens not covered above (foreign mapping / LLM-mangled) can
-        # never be translated → refuse in every mode.
-        for tok in set(_PII_WEB_TOKEN_RE.findall(raw_haystack)):
-            if tok not in known_fakes:
-                fake_kinds.append("pseudonym_token")
-                break
-        if fake_kinds:
-            _web_gate_audit(tool_name, fake_kinds, mode, kind="fake")
-            return _web_gate_refusal(fake_kinds, fakes=True), args
-
-        # ── 2) Known originals → policy decides ──────────────────────────
-        orig_kinds: list = []
-        for orig, rid in known_origs.items():
-            if not any(v in haystack for v in _web_gate_value_variants(orig)):
-                continue
-            # M5: Pass-Kategorie (Firma/Netz) → stehender Policy-Consent, weder
-            # Refusal noch Rückfrage. Spiegelt die Fake-Seite oben; ohne das
-            # würde der ECHTE Firmenname (den die Policy zulässt) refused,
-            # sobald er je gemappt wurde.
-            if PII_RULE_CATEGORIES.get(rid) in _WEB_GATE_PASS_CATEGORIES:
-                policy_released_kinds.append(rid)
-                continue
-            orig_kinds.append(rid)
-
-        # ── 3) Fresh PII (third persons, never-minted values) ────────────
-        # Gate-own category policy: "what IS PII", ignoring the session's
-        # per-category actions (contact=ignore must not blind the gate to
-        # names). Pass-categories stay ignore so technical queries never
-        # trip; rule_overrides are dropped for the same reason.
-        #
-        # BEKANNTE FAKES WERDEN VORHER MASKIERT (M5): Fakes sind shape-
-        # preserving und sehen aus wie echte Werte — der Frisch-Scan
-        # klassifiziert sie sonst als FRISCHE PII. Gemessen: der Org-Fake
-        # 'Marbach Textil' wurde als PERSONEN-Name (rule=name, category=contact)
-        # wiedererkannt und der Auto-Release damit wieder zunichte gemacht. Über
-        # die Fakes ist in §1 bereits entschieden; sie hier erneut zu bewerten
-        # wäre eine Doppel-Bewertung mit der falschen Kategorie. Maskiert wird
-        # LÄNGENTREU, damit die Offsets des Scans gültig bleiben.
-        scan_text_in = raw_haystack
-        try:
-            for _fk in sorted(known_fakes, key=len, reverse=True):
-                if _fk and len(_fk) >= 4 and _fk in scan_text_in:
-                    scan_text_in = scan_text_in.replace(_fk, "\x00" * len(_fk))
-        except Exception:
-            scan_text_in = raw_haystack
-        try:
-            gate_cfg = dict(cfg)
-            gate_cfg["categories"] = {
-                cat: {"action": ("ignore" if cat in _WEB_GATE_PASS_CATEGORIES
-                                 else "warn")}
-                for cat in cfg.get("categories", {})}
-            gate_cfg["rule_overrides"] = {}
-            for f in _pii_scan_text(scan_text_in, cfg=gate_cfg):
-                if f.get("category") in _WEB_GATE_PASS_CATEGORIES:
-                    continue
-                matched_raw = raw_haystack[
-                    f.get("start", 0):f.get("end", 0)].strip()
-                matched = re.sub(r"\s+", " ", matched_raw.lower())
-                if matched and matched in fp_norms:
-                    continue  # user-declared false positive
-                rid = f.get("rule_id") or "unknown"
-                orig_kinds.append(rid)
-        except Exception:
-            pass
-
-        # ── refuse / allow: translate → execute ──────────────────────────
-        # M5: der Auto-Release gilt in JEDEM Modus — die Hin-Übersetzung muss
-        # daher auch hier laufen.
-        # WICHTIG: nur auf den DURCHLASS-Pfaden übersetzen. Ein Refusal darf
-        # die übersetzten (= echten) Args NICHT zurückgeben — der Aufrufer
-        # verwirft sie zwar, aber ein Security-Gate reicht Klarwerte nicht auf
-        # einem Pfad heraus, auf dem es gerade "nein" sagt.
-        # `allow` lässt Original-Klarwerte NUR für reine Retrieval-Tools durch
-        # (WEB_SEARCH_TOOLS). Für email_send/email_reply/generate_image/MCP
-        # bleibt der Klarwert-Egress AUCH im allow-Modus refused: ein echter
-        # Empfänger einer E-Mail = Kontaktaufnahme MIT der geschützten Person,
-        # ein echter Name an Mistral/einen MCP-Server = irreversibler Abfluss.
-        # (Vorbestehendes Leck: `mode != "allow"` ließ diese Werte pauschal
-        # durch — test_gdpr_egress_gate erwartete Refusal und war auf der
-        # Live-config 'allow' rot. Jetzt tool-abhängig statt modus-pauschal.)
-        _allow_orig = (mode == "allow" and tool_name in WEB_SEARCH_TOOLS)
-        if orig_kinds and not _allow_orig:
-            _web_gate_audit(tool_name, orig_kinds, mode, kind="original")
-            return _web_gate_refusal(orig_kinds, fakes=False), args
-        if translate_pairs:
-            args = _web_release_translate_args(args, translate_pairs)
-        if policy_released_kinds:
-            _web_gate_audit(tool_name, policy_released_kinds, mode,
-                            kind="policy_released")
-        # allow-Modus: übersetzte Fakes (Original geht raus) als Egress
-        # auditieren — Audit-Ehrlichkeit, wie policy_released. Nur hier befüllt
-        # (der ask-Zweig kehrt oben schon zurück), also mode == "allow".
-        if released_kinds:
-            _web_gate_audit(tool_name, released_kinds, mode, kind="released")
-        if orig_kinds:   # allow-Durchlass für Retrieval-Tools
-            _web_gate_audit(tool_name, orig_kinds, mode, kind="allowed")
-        return None, args
-    except Exception as e:
-        # Fail CLOSED: a mapping is active (checked above), so an unexpected
-        # gate crash must not silently open the egress path (CLAUDE.md rule 12).
-        print(f"[web_egress_gate] gate error, failing closed: {e}", flush=True)
-        return json.dumps({
-            "error": "web_query_blocked_pii",
-            "blocked": [{"value_kind": "gate_error", "released": False}],
-            "hint": "Interner Fehler im Web-Egress-Gate — Web-Zugriff für "
-                    "diesen Call vorsorglich verweigert. Weise die Prüfung im "
-                    "Bericht als 'nicht prüfbar (Datenschutz)' aus.",
-        }, ensure_ascii=False), args
-
-
 def _gdpr_scan_cloud_egress(text: str, *, tool_name: str) -> str | None:
     """M2 (G7): PII check for tools that reach the cloud REGARDLESS of the
     session model — today `generate_image` (always api.mistral.ai).
@@ -3972,243 +3529,81 @@ def _gdpr_scan_cloud_egress(text: str, *, tool_name: str) -> str | None:
     }, ensure_ascii=False)
 
 
-def _web_gate_audit(tool_name: str, kinds: list, mode: str, *, kind: str) -> None:
-    """Audit row per gate decision — kinds only, never values.
-    kind: fake/original (refused) · allowed (allow mode, original left the
-    machine) · released (allow mode, a known fake was translated fake→original
-    for the outgoing request) · policy_released (M5: the category is one the
-    policy passes anyway — auto-translated fake→original, no dialog)."""
-    # L7b: tally the decision on the request context so the worker can surface
-    # a per-turn "Datenschutz"-strip (metadata.gdpr_degradation) explaining
-    # WHY the output differs. Counts only, never values.
-    _PASSED = ("allowed", "released", "policy_released")
-    try:
-        _ctx = get_request_context()
-        _d = _ctx._gdpr_degradation
-        if _d is None:
-            _d = {}
-            _ctx._gdpr_degradation = _d
-        _key = ("web_released" if kind == "released"
-                else "web_policy_released" if kind == "policy_released"
-                else "web_allowed" if kind == "allowed"
-                else "web_denied" if kind == "denied"
-                else "web_blocked")
-        _d[_key] = int(_d.get(_key, 0)) + 1
-    except Exception:
-        pass
-    if not _audit_log:
-        return
-    try:
-        _audit_log.log_action(
-            agent=(get_request_context().current_agent.agent_id
-                   if get_request_context().current_agent else "main"),
-            action_type=("pii_web_egress" if kind in _PASSED
-                         else "pii_web_blocked"),
-            tool_name=tool_name,
-            args_summary=f"kinds={sorted(set(kinds))} mode={mode} match={kind}",
-            result_summary="",
-            result_status=("warning" if kind in _PASSED
-                           else "blocked"),
-            session_id=get_request_context().current_session_id or None,
-            source="web_egress_gate",
-        )
-    except Exception:
-        pass
-
-
-# ── Args-Deanonymisierung am Dispatch (L3a, Dispatch-Symmetrie) ─────────────
-# The model thinks in fakes, the tools work on raw data — neither must know
-# about the other. For LOCALLY-executing tools the pseudonyms/tokens in the
-# args are translated back to the real values right before execution (the
-# results re-anonymise on the way back through _gdpr_anon_tool_text). This is
-# what makes mempalace_query find drawers again, read_document open paths
-# whose filename contains the real name, and python_exec run value-literals
-# against the real bytes (failure class F3 in PII_ANALYSIS_PARITY_HANDOVER.md).
+# ── Args-Deanonymisierung am Dispatch — DEANON EVERYTHING EXCEPT LLM TOOLS ──
 #
-# THE most important invariant of L3: WEB TOOLS ARE NEVER IN THIS SET.
-# Deanonymising a web-tool arg would be silent egress of the protected value
-# — exactly what the web-egress gate (_gdpr_guard_web_args, L4) exists to
-# prevent. Guarded by tests/test_dispatch_symmetry.py.
-GDPR_ARGS_DEANON_TOOLS = frozenset({
-    "mempalace_query", "mempalace_kg_query", "mempalace_kg_search",
-    "mempalace_kg_neighbors",
-    "read_document", "read_file", "list_directory", "search_files",
-    "execute_command", "python_exec",
-    "ocr_inspect", "ocr_extract", "ocr_region", "ocr_fields", "ocr_tables",
-    "xlsx_inspect", "xlsx_query", "xlsx_create", "xlsx_edit", "xlsx_diff",
-    "text_diff", "data_query", "db_query", "rest_query",
-    "mrz_verify", "doc_dates_check", "identity_consistency",
-    # M3 (G9) — the LLM Wiki is LOCAL storage, so what lands on disk must be the
-    # REAL values, not the model's fakes.
-    #
-    # Without this, `wiki_write` persisted whatever the model typed — i.e. FAKES —
-    # into the wiki and mirrored them into the MemPalace wings. The mapping is
-    # per-SESSION, so session B later read session A's fakes as if they were facts:
-    # not reversible (B's mapping doesn't know those tokens) and not consistent
-    # with B's own fakes for the same real person. That is permanent memory
-    # poisoning, and it gets worse with every session.
-    #
-    # Writing real values also makes the READ side trivially correct: wiki_read's
-    # result seam (below) pseudonymises on the way back out, exactly like
-    # read_document. Local storage holds truth; the wire holds fakes.
-    "wiki_write",
-    # M3 (G10): the lossless-context DAG stores ORIGINAL text, so a recall must be
-    # able to look up the real value — and its result is re-anonymised by the seam.
-    "context_search", "context_detail", "context_recall",
-    # M7 / decision 2: the diagram renderer runs LOCALLY (no egress), so the
-    # rendered image should carry REAL values — matching the .docx/.html written
-    # beside it, which the after-file-write reverse already restores. Otherwise the
-    # delivered report has real text and fake diagrams: self-contradictory, with no
-    # warning. Cheapest correct fix — no lint, no warning strip; the artifact is
-    # just right.
-    "render_diagram",
+# POLICY (2026-07-22, explicit operator decision — "we only guard against PII in
+# combination with an LLM, nothing else"):
+#
+#   The PII pseudonymisation exists for exactly ONE reason: keep real PII out of
+#   an LLM's context. Therefore EVERY tool runs on REAL, de-anonymised args —
+#   local, web, mail, git, image, all of it — EXCEPT the handful of tools that
+#   forward their own arguments INTO an internal LLM text-generation call. Those,
+#   and only those, keep the model's fakes (feeding them real values would put
+#   real PII into that internal LLM — the one thing we guard).
+#
+# This inverts the former allow-list (`GDPR_ARGS_DEANON_TOOLS`). The former
+# design also carried a separate web-egress BLOCK gate (`_gdpr_guard_web_args`)
+# that refused web/mail tool calls carrying protected values; under this policy
+# that gate is GONE — a non-LLM tool sending real data to an external service is
+# out of scope (the operator's rule is PII-in-LLM only). What still protects the
+# CLOUD CHAT model is the RESULT seam (`_gdpr_anon_tool_text`), which
+# anonymises every tool result on the way BACK to the chat LLM — unchanged.
+#
+# GDPR_LLM_ARG_TOOLS = the deny-list: tools whose ARGS reach an internal LLM.
+# Authoritatively enumerated by reading every tool body (the tell-tale is an
+# import of handlers.sidecar_proxy / a call to gdpr_pick_model_for_background /
+# a sub-agent turn spawn — present in only four tool files). Keep this list in
+# sync when a tool starts/stops forwarding its args into an LLM.
+GDPR_LLM_ARG_TOOLS = frozenset({
+    "ask_llm",              # ask_tools.py — prompt/system → background_call
+    "agent_step",           # ask_tools.py — instruction/plan/… → background_call
+    "delegate_task",        # delegation_tools.py — task → sub-agent turn
+    "run_background_task",  # delegation_tools.py — prompt → background agent turn
+    "translate_text",       # translate_tools.py — text → background_call (cloud LLM)
+    "translate_document",   # translate_tools.py — doc content → background_call
+    "generate_audio_overview",  # audio_overview.py — topic/… → background_call
+    "context_recall",       # context_tools.py — query → ContextManager.recall LLM
+    # transcribe_audio is LLM-ARG only WHEN translate_to is set (transcript is
+    # chained into translate_text). Its own args are an audio FILE PATH (no PII
+    # text), so keeping it fake-side unconditionally costs nothing and is safe.
+    "transcribe_audio",
+    # generate_image forwards its PROMPT to a CLOUD image model (Mistral, via the
+    # router) — even from local sessions. A cloud generative model receiving PII
+    # is the same class of leak the policy guards (operator decision: cloud image
+    # model is IN scope). So its args keep fakes here, AND `_gdpr_scan_cloud_egress`
+    # (in engine/tools/image_gen.py) additionally refuses a prompt carrying real
+    # PII from a non-anonymising (local) session.
+    "generate_image",
 })
 
-# execute_command/python_exec hardening — DENY BY DEFAULT (M2/G7).
-#
-# These two tools get real values injected into their args (that's the point of
-# L3a: `grep <real name> file.csv` must work). But a shell command or script can
-# also reach the network itself, and then the de-anonymisation IS the leak — a
-# side door around the egress gate.
-#
-# This used to be an ALLOW-list-by-omission: deanonymise unless one of ~15 network
-# markers appeared. That is structurally lost against a creative agent, and the
-# misses were not hypothetical — session b4edbc9dc8e7 has the model reaching for
-# `mail -s "IBAN <fake>" <EMAIL_1_8d62>` and `sendmail … <<< …`. Neither `mail`
-# nor `sendmail` nor `msmtp` nor `osascript` (drives Apple Mail/Messages) nor `gh`
-# was in the blocklist. Back then it failed on zsh syntax; with L3a's args-deanon
-# in place it would have sent a REAL IBAN to a stranger.
-#
-# Inverted: a string is de-anonymised ONLY if it looks recognisably LOCAL. Anything
-# we cannot positively vouch for keeps its fakes — which can never leak, and at
-# worst means a tool sees a pseudonym (it may miss data; it cannot exfiltrate).
-#
-# The old blocklist is KEPT as a fast, loud reject (a positive network signal is
-# worth logging distinctly from "unrecognised"), but it is no longer the decision.
-_DEANON_NETWORK_MARKER_RE = re.compile(
-    r"https?://|\b(?:curl|wget|nc|ncat|socat|ssh|scp|sftp|rsync|telnet|ftp"
-    r"|nslookup|dig|ping|host)\b"
-    r"|urllib|requests\.|http\.client|socket\.|aiohttp|httpx"
-    # M2: the mail/automation side doors the blocklist never had. b4edbc9dc8e7
-    # had the model reaching for `mail -s …` and `sendmail`; neither was listed.
-    r"|smtplib|\b(?:sendmail|mail|mailx|msmtp|mutt|osascript|gh|scutil)\b"
-    r"|\bopen\s+-a\b"                       # macOS `open -a Mail` (not py open())
-    r"|smtp\.|imaplib|poplib|paramiko|ftplib|telnetlib|webbrowser"
-    # Indirect execution — a python_exec script's only remaining way out is to
-    # shell out or to resolve a module dynamically. Both are denied.
-    r"|subprocess|os\.system|os\.popen|os\.exec|commands\.|pty\.|multiprocessing"
-    r"|__import__|importlib|\beval\b|\bexec\b|compile\s*\("
-    r"|/dev/tcp|/dev/udp"                   # bash network redirection
-    , re.IGNORECASE)
-
-# A command/script is de-anonymised only when EVERY token we can see is one of
-# these — i.e. it is unambiguously a local data operation. Deliberately narrow:
-# the cost of a false negative is "the tool sees a pseudonym"; the cost of a
-# false positive is a silent, irreversible leak. Widen only with a concrete,
-# reviewed use case.
-_DEANON_LOCAL_SAFE_RE = re.compile(
-    r"^[\s\w\-./\\:~'\"=,;|()\[\]{}*+@#%^&!?$<>\n\r]*$"
-)
-
-# Commands/functions that read or transform LOCAL data. A string qualifies as
-# local-safe only if it contains no network marker AND its executable-looking
-# tokens are all in here (or it has none at all — e.g. a bare path or a value).
-_DEANON_LOCAL_COMMANDS = frozenset({
-    # shell: read/search/transform
-    "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep", "rg",
-    "awk", "sed", "cut", "sort", "uniq", "wc", "tr", "tee", "xargs", "find",
-    "ls", "stat", "file", "du", "df", "basename", "dirname", "realpath",
-    "echo", "printf", "test", "diff", "cmp", "md5", "shasum", "sha256sum",
-    "jq", "yq", "column", "paste", "join", "comm", "split", "nl", "rev",
-    "cp", "mv", "mkdir", "touch", "chmod", "ln", "pwd", "cd", "true", "false",
-    "unzip", "zip", "tar", "gzip", "gunzip", "zcat", "iconv", "base64",
-    # python: local data work
-    "python", "python3", "pandas", "pd", "numpy", "np", "json", "csv", "re",
-    "openpyxl", "pathlib", "os", "sys", "math", "statistics", "collections",
-    "datetime", "itertools", "print", "open", "len", "str", "int", "float",
-    "list", "dict", "set", "sorted", "sum", "min", "max", "range", "enumerate",
-    "zip", "map", "filter", "abs", "round", "type", "isinstance", "repr",
-})
-
-# Python `import X` / `from X import …` — the MODULE is what matters, not the
-# `import` keyword. Checked first so the shell-token pass below skips these lines.
-_DEANON_IMPORT_RE = re.compile(
-    r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", re.MULTILINE)
-
-# Tokens in COMMAND position: start of a line/string, or right after a shell
-# separator (`;` `|` `&&`). An assignment (`df = …`) is not a command, so a token
-# followed by `=` (but not `==`) is skipped.
-#
-# `\b` after the capture is load-bearing: without it the engine BACKTRACKS to a
-# shorter token to satisfy the negative lookahead — `df = …` matched as `d`, which
-# isn't in the allowlist, so every pandas script was wrongly denied.
-_DEANON_CMD_TOKEN_RE = re.compile(
-    r"(?:^|[\n;|&])\s*([A-Za-z_][\w.-]*)\b(?!\s*=[^=])", re.MULTILINE)
-
-
-def _deanon_string_is_local_safe(s: str, *, tool_name: str = "") -> bool:
-    """M2 (G7): may this execute_command/python_exec string receive REAL values?
-
-    Deny-by-default. The two tools need DIFFERENT tests, because the thing that
-    can exfiltrate is different:
-
-    * **python_exec** — a Python script. The only way out is a networked
-      module/call, so the test is: no network marker anywhere, and every `import`
-      is a known-local module. Trying to allowlist "command tokens" in Python is a
-      category error (`df = …`, `for r in …`, `print(…)` are not commands) and was
-      denying every pandas/openpyxl analysis — i.e. trading this wave's leak fix
-      for a silent quality regression, which is precisely what the wave exists to
-      prevent.
-
-    * **execute_command** — a shell line. Here the executable IS the risk, so the
-      command-position tokens must all be known-local (`grep`, `awk`, `cat`, …).
-      An unrecognised binary could be anything.
-
-    Unrecognised → False → the string keeps its fakes (safe direction: the tool may
-    miss data, it cannot leak).
-    """
-    if not s or not isinstance(s, str):
-        return False
-    # Applies to BOTH: any positive network signal is an immediate no.
-    if _DEANON_NETWORK_MARKER_RE.search(s):
-        return False
-    # Every imported module must be a known-local one (both tools: a shell line
-    # can carry `python3 -c "import smtplib"`).
-    for m in _DEANON_IMPORT_RE.finditer(s):
-        if m.group(1).split(".", 1)[0].lower() not in _DEANON_LOCAL_COMMANDS:
-            return False
-
-    if tool_name == "python_exec":
-        # Script body: the import check above + the network markers are the test.
-        # No command-token pass (see docstring).
-        return True
-
-    # execute_command (and anything unknown): the stricter shell test.
-    if not _DEANON_LOCAL_SAFE_RE.match(s):
-        return False  # exotic characters (backticks, $(), unicode pipes …)
-    for m in _DEANON_CMD_TOKEN_RE.finditer(s):
-        tok = (m.group(1) or "").strip()
-        if not tok:
-            continue
-        head = tok.split(".", 1)[0].lower()
-        if head in ("import", "from"):
-            continue  # handled by _DEANON_IMPORT_RE above
-        if head not in _DEANON_LOCAL_COMMANDS:
-            return False
-    return True
+# NOTE (2026-07-22): the execute_command/python_exec "deny-by-default" args
+# guard (`_deanon_string_is_local_safe` + its network-marker/local-command
+# tables) was REMOVED by explicit operator decision. This is a PII-for-LLM seam:
+# its sole job is to keep real PII off an LLM's context, not to sandbox a
+# model-authored script against self-exfiltration. Keeping the guard left files
+# written by network-touching scripts carrying fake values (and drove a racy
+# on-disk reverse pass); dropping it lets every non-LLM tool run on —
+# and write — real data. Accepted trade-off, on record: a script that reaches
+# the network now runs with real values and could send them off-machine. The
+# former `_gdpr_guard_web_args` egress BLOCK gate was also removed under the same
+# PII-in-LLM-only policy; the result seam (`_gdpr_anon_tool_text`) still protects
+# the chat LLM by anonymising every tool result on the way back.
 
 
 def _gdpr_deanon_tool_args(tool_name: str, args: dict):
-    """L3a: translate pseudonyms in tool args back to real values for the
-    whitelisted LOCALLY-executing tools. Returns a NEW args structure (the
-    caller's dict — and thus the wire/history — keeps the model's fakes).
+    """Translate pseudonyms in tool args back to REAL values before execution.
 
-    No-op (returns `args` unchanged) when the tool is not whitelisted, no
-    anonymisation mapping is active, or anything fails — fail direction is
-    "tool runs with fakes" (may miss data, can never leak).
+    Policy (2026-07-22): de-anonymise EVERY tool's args EXCEPT the LLM-arg tools
+    (`GDPR_LLM_ARG_TOOLS`), which forward their args into an internal LLM and so
+    must keep the model's fakes. Returns a NEW args structure — the caller's dict
+    (and thus the wire/history the CHAT model sees) keeps the fakes regardless.
+
+    No-op (returns `args` unchanged) for an LLM-arg tool, when no anonymisation
+    mapping is active, or on any failure — fail direction is "tool runs with
+    fakes" (may miss data, keeps real PII out of an LLM).
     """
     try:
-        if tool_name not in GDPR_ARGS_DEANON_TOOLS or not isinstance(args, dict):
+        if tool_name in GDPR_LLM_ARG_TOOLS or not isinstance(args, dict):
             return args
         try:
             mapping_id = get_request_context()._gdpr_mapping_id or ""
@@ -4220,16 +3615,12 @@ def _gdpr_deanon_tool_args(tool_name: str, args: dict):
         mapping = _ps.get_mapping(mapping_id)
         if mapping is None or not mapping.reverse:
             return args
-        # M2 (G7): shell/script args are DENY-BY-DEFAULT — a string only receives
-        # real values when it is recognisably a local data operation. See
-        # `_deanon_string_is_local_safe`.
-        guard_network = tool_name in ("execute_command", "python_exec")
-
+        # Unconditional for every NON-LLM tool: local, web, mail, git, image — all
+        # run on real values. The only guard is PII-in-LLM (the deny-list above +
+        # the result-anon seam); a tool sending real data to an external service
+        # is out of scope by explicit operator decision.
         def _walk(v):
             if isinstance(v, str):
-                if guard_network and not _deanon_string_is_local_safe(
-                        v, tool_name=tool_name):
-                    return v
                 out, n = _ps.deanonymize_text(v, mapping=mapping)
                 return out if n else v
             if isinstance(v, list):
@@ -11981,7 +11372,7 @@ _gdpr_scanner_cache_time: float = 0.0
 # surface over the same question: it would either go unused or be worked
 # around, and two places can contradict each other. Everything the presets
 # bundled remains reachable globally: rule_overrides (name/organisation),
-# web_egress, background_pii_action — all admin-editable in the GUI. The
+# background_pii_action — all admin-editable in the GUI. The
 # session-sticky anonymise flow (8.7.0) replaces the turn-1 standing consent.
 def _get_gdpr_scanner_config() -> dict:
     """Read gdpr_scanner config block from config.json. 30s cache.
@@ -12000,11 +11391,6 @@ def _get_gdpr_scanner_config() -> dict:
                                          # there's no user to prompt (background calls).
        "background_anonymise_fail_action": str,  # swap_to_local | abort
        "block_unscannable_on_cloud": bool,  # audio/etc → local fallback (default False)
-       "web_egress": str,                # refuse | allow — web-tool args gate in
-                                         # anonymising sessions. refuse=block,
-                                         # allow=fake→original for retrieval
-                                         # tools. Legacy 'ask'/'block_group' are
-                                         # normalised to refuse on load (v9.386.0).
        "categories": {<cat>: {"action": "ignore|warn|block"}},  # governs HIGH band only
        "rule_overrides": {<rule_id>: "ignore|warn|block"},
        "email_allowlist": [str, ...],    # full addresses or "@domain" patterns
@@ -12028,7 +11414,6 @@ def _get_gdpr_scanner_config() -> dict:
         "background_ask_action": "anonymise",
         "background_anonymise_fail_action": "swap_to_local",
         "block_unscannable_on_cloud": False,
-        "web_egress": "refuse",
         "categories": {cat: {"action": act} for cat, act in PII_DEFAULT_CATEGORY_ACTIONS.items()},
         "rule_overrides": {},
         # Legacy seed for count_points migration (no longer a detection gate).
@@ -12081,14 +11466,8 @@ def _get_gdpr_scanner_config() -> dict:
             cfg["background_ask_action"] = loaded["background_ask_action"]
         if loaded.get("background_anonymise_fail_action") in ("swap_to_local", "abort"):
             cfg["background_anonymise_fail_action"] = loaded["background_anonymise_fail_action"]
-        # Legacy 'ask'/'block_group' → 'refuse' (v9.386.0: two modes only). Both
-        # were block-by-default variants for the non-interactive/no-consent case,
-        # so refuse is the faithful fallback.
-        _we = loaded.get("web_egress")
-        if _we in ("ask", "block_group"):
-            _we = "refuse"
-        if _we in _WEB_EGRESS_MODES:
-            cfg["web_egress"] = _we
+        # (The web_egress knob was removed 2026-07-22 with the web-egress gate;
+        #  a persisted legacy value is simply ignored now.)
         cats_in = loaded.get("categories") or {}
         if isinstance(cats_in, dict):
             for cat, entry in cats_in.items():
