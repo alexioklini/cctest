@@ -5365,6 +5365,76 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             event_callback=event_callback,
                             cancel_token=session.cancel_token,
                         )
+                        # Mid-turn Retrieval-PII-Dialog → "Lokales Modell"
+                        # (PROJECT_RETRIEVAL_PII_DIALOG_PLAN Schritt 3.3): der
+                        # Dialog hat den Cloud-Loop über den Cancel-Token beendet
+                        # und dieses Kontext-Flag hinterlassen. Auf das lokale
+                        # Fallback wechseln (wie der Pre-Turn-Swap in
+                        # _handle_chat) und denselben Turn EINMAL neu fahren.
+                        # Wire-Messages bleiben unverändert: das Mapping bleibt
+                        # aktiv, das lokale Modell sieht dieselben Fakes wie die
+                        # Wire-Historie und der Antwort-Deanonymiser greift
+                        # weiter; der Retrieval-Guard selbst ist auf dem lokalen
+                        # Modell inaktiv (Rohwerte lokal erlaubt — dafür ist der
+                        # Fallback da). Strukturell max. ein Restart: der Guard
+                        # setzt das Flag auf lokalen Modellen nie erneut.
+                        _rls = False
+                        try:
+                            _rls = bool(engine.get_request_context()._dynamic.pop(
+                                "_retrieval_pii_local_switch", None))
+                        except Exception:
+                            _rls = False
+                        if _rls and _result.get("cancelled"):
+                            _fb = (engine._get_gdpr_scanner_config().get(
+                                "default_local_fallback_model") or "").strip()
+                            if _fb and engine.is_model_local(_fb):
+                                _prov = engine.resolve_provider_for_model(_fb)
+                                with session.lock:
+                                    session.model = _fb
+                                    session.api_key = _prov["api_key"]
+                                    session.base_url = _prov["base_url"]
+                                    session.max_context = engine.get_model_max_context(_fb)
+                                    session.cancel_token = engine.CancelToken()
+                                session._gdpr_local_swap = _fb
+                                engine.get_request_context()._current_model = _fb
+                                try:
+                                    if engine._audit_log:
+                                        engine._audit_log.log_action(
+                                            agent=session.agent_id, session_id=sid,
+                                            action_type="pii_local_swap",
+                                            tool_name="gdpr_scanner",
+                                            args_summary="retrieval_dialog_midturn",
+                                            result_summary=f"→ {_fb}",
+                                            result_status="success",
+                                            duration_ms=0, source="chat")
+                                except Exception:
+                                    pass
+                                _lfp = _inf_params_for(_fb)
+                                _result = sidecar_proxy.run_turn(
+                                    messages=_wire_messages,
+                                    model=_fb,
+                                    api_key=session.api_key,
+                                    base_url=session.base_url,
+                                    system_prompt=_system_prompt,
+                                    purpose="interactive",
+                                    tool_context=_tool_context,
+                                    sampling={
+                                        "temperature": _lfp.get("temperature"),
+                                        "top_p": _lfp.get("top_p"),
+                                        "top_k": _lfp.get("top_k"),
+                                        "stop_sequences": (_lfp.get("stop")
+                                                          or _lfp.get("stop_sequences")),
+                                    },
+                                    thinking_level=None,
+                                    max_tokens=int(_lfp.get("max_tokens", 16000) or 16000),
+                                    max_rounds=_max_rounds,
+                                    event_callback=event_callback,
+                                    cancel_token=session.cancel_token,
+                                )
+                            else:
+                                print("[gdpr] retrieval local switch requested, "
+                                      "but no local fallback model configured — "
+                                      "turn stays cancelled", flush=True)
                     # On sidecar error: surface the message to the client AS PART
                     # of the assistant reply, but stay on the happy path so the
                     # downstream `done` event still fires. Raising here would

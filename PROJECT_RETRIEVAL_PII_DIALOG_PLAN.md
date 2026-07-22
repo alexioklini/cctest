@@ -1,6 +1,7 @@
 # Plan: Mid-Turn PII-Dialog bei Projekt-Retrieval
 
-**Stand:** 2026-07-22. **Status:** Plan, NICHT implementiert. Umsetzung in frischer Session.
+**Stand:** 2026-07-22. **Status:** ✅ IMPLEMENTIERT in v9.398.0 (Schritte 1-4 + Unit-Tests
+`tests/test_gdpr_retrieval_dialog.py`; E2E-Test §6.2 + policies-Eval §6.3 noch offen).
 **Anlass:** PII-Phase-1 Test 2 (projektbasierte policies-Eval) deckte auf, dass **Projekt-Retrieval-PII ungeschützt ans Cloud-Chat-LLM geht.**
 
 ---

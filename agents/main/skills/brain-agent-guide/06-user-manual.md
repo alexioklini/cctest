@@ -2502,6 +2502,28 @@ Cloud-Modelle anonymisiert. Web-Suchanfragen selbst folgen dabei dem
 Web-Egress-Modus (Suchen/Blockieren, siehe oben): nur im Modus „Suchen" wird
 der echte Wert für die Anfrage eingesetzt, sonst nie.
 
+**F: Warum fragt der Assistent mitten in der Antwort nach Datenschutz-Entscheidungen?**
+A: Seit v9.398.0 sind anonymisierte Chats auch beim Zugriff auf das
+**Projektwissen** geschützt. Ihre Projektdokumente werden bewusst
+unverändert gespeichert (sonst würde die Suche darin schlechter) — die
+Anonymisierung greift erst, wenn Inhalte an ein Cloud-Modell gehen. Findet
+der Assistent beim Abruf aus Projektgedächtnis, Wissensgraph oder Wiki
+personenbezogene Daten, die in dieser Sitzung noch nicht bewertet wurden,
+hält die Antwort an und eine Frage-Karte erscheint: Sie entscheiden **pro
+Wert** („Anonymisieren" — das Cloud-Modell sieht nur einen Ersatzwert, Ihre
+Antwort zeigt wieder die echten Werte; oder „Falschtreffer" — der Wert
+bleibt im Klartext und wird nie wieder gefragt) und wählen, wie es
+weitergeht: **anonymisiert fortfahren**, auf das **lokale Modell** wechseln
+(darf die echten Werte sehen, Daten bleiben auf dem Gerät) oder die
+**Anfrage abbrechen**. Entscheidungen gelten für die ganze Sitzung und sind
+im Datenschutz-Verlauf (Schild-Symbol) einsehbar. Bereits bewertete Werte —
+auch aus früheren Anhängen oder dem Verlauf — werden nie erneut gefragt.
+Antworten Sie nicht (Zeitüberschreitung), wird der betroffene Inhalt in
+diesem Zug sicherheitshalber **nicht** an das Cloud-Modell übergeben; die
+nächste Nachricht fragt erneut. Automatische Hintergrund-Aufgaben (z. B.
+geplante Tasks) können nicht nachfragen und halten solche Inhalte dann
+ebenfalls zurück.
+
 **F: Warum ist im anonymisierten Chat dieselbe Person überall gleich benannt?**
 A: Seit v9.337.0 arbeitet die Anonymisierung auf Personen-Ebene statt auf
 Zeichenketten-Ebene. Früher bekam jede Schreibweise desselben Namens (Akte,

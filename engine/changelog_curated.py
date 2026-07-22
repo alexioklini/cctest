@@ -29,6 +29,26 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.398.0",
+        "date": "2026-07-22",
+        "title": "Datenschutz-Nachfrage bei Projektwissen",
+        "body": "Anonymisierte Chats sind jetzt auch beim Zugriff auf Ihr "
+                "Projektwissen geschützt. Ruft der Assistent mitten in einer "
+                "Antwort Inhalte aus Ihren Projektdokumenten, dem Wissensgraphen "
+                "oder dem Wiki ab, die noch nicht bewertete personenbezogene "
+                "Daten enthalten, hält er an und fragt Sie: Sie entscheiden pro "
+                "Wert (anonymisieren oder als Falschtreffer im Klartext lassen) "
+                "und wählen, wie es weitergeht — anonymisiert fortfahren, auf "
+                "das lokale Modell wechseln oder die Anfrage abbrechen. Einmal "
+                "getroffene Entscheidungen gelten für die ganze Sitzung und "
+                "sind im Datenschutz-Verlauf einsehbar; in Ihrer Antwort sehen "
+                "Sie weiterhin die echten Werte. Automatische Hintergrund-"
+                "Aufgaben geben solche Inhalte sicherheitshalber gar nicht erst "
+                "an Cloud-Modelle weiter.",
+        "audience": "user",
+        "versions": ["9.398.0"],
+    },
+    {
         "version": "9.397.0",
         "date": "2026-07-22",
         "title": "Datenschutz greift jetzt gezielt — Werkzeuge arbeiten mit echten Daten",

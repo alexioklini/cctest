@@ -1517,6 +1517,29 @@ preamble goes in first-user-message instead.
 
 ## GDPR / PII scanner
 
+- **Mid-turn retrieval-PII dialog (9.398.0)**: project retrieval
+  (`mempalace_query`, `wiki_read`, the KG tools) returns RAW knowledge —
+  drawers are stored unanonymised by design (anonymising them would change
+  the embeddings and break vector retrieval), and the apply-only result seam
+  could only rewrite values already in the session mapping. In a project
+  chat there was no seed (no attachment scan, no prior decisions), so
+  document PII went to the cloud model in the clear. Now, in anonymising
+  sessions ONLY, a retrieval result is freshly scanned (with the production
+  FP gates — ignored categories/rules and min-occurrence thresholds never
+  reach the dialog) and NEW, undecided values pause the turn on ONE batch
+  dialog: per value "Anonymisieren / Falschtreffer", plus the turn-wide
+  choice "anonymisiert fortfahren / lokales Modell / abbrechen". Confirmed
+  values are seeded into the active mapping (same fakes the pre-send path
+  would mint) and persisted as ordinary `pii_decisions` rows — sticky for
+  the session, visible in the Datenschutz history, and round-tripping
+  through the args-deanon (read_document on a pseudonymised read_path
+  works). "Lokales Modell" re-runs the same turn once on the local fallback
+  (raw values allowed there); "Abbrechen" cancels like the Stop button.
+  Non-interactive turns (scheduler/background) FAIL CLOSED: the retrieval
+  result is withheld (`retrieval_pii_withheld`), never silently leaked. A
+  dialog timeout refuses for the rest of the turn without re-prompting; the
+  next turn asks fresh. Decided values (any decision — anonymise, FP,
+  accepted cleartext) are never asked again.
 - **All checks BEFORE the decision dialog (9.383.0)**: detection runs ONCE,
   server-side, before the pre-send dialog — the dialog is the ONLY place PII
   is decided, and the chat worker APPLIES the confirmed decision set instead
