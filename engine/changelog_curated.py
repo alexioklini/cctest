@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.396.1",
+        "date": "2026-07-22",
+        "title": "Dateinamen bleiben unverändert — mehr Verlässlichkeit beim Datenschutz",
+        "body": "Bisher wurden erzeugte Dateien und Anhänge im Hintergrund teils "
+                "umbenannt, um Namen an die Anonymisierung anzupassen. Das ist "
+                "entfallen: erzeugte Dateien und hochgeladene Anhänge behalten "
+                "durchgehend ihren Namen. Wichtiger noch — dadurch ist "
+                "sichergestellt, dass eine erzeugte Datei immer korrekt in "
+                "Klartext zurückübersetzt wird und niemals versehentlich "
+                "Platzhalter-Werte enthält. Der Schutz Ihrer Daten beim Versand "
+                "an das Sprachmodell bleibt unverändert bestehen; er wirkt jetzt "
+                "nur noch auf den Inhalt, nicht auf Dateinamen.",
+        "audience": "user",
+        "versions": ["9.396.1"],
+    },
+    {
         "version": "9.396.0",
         "date": "2026-07-22",
         "title": "Hochgeladene Dateien bleiben dauerhaft im Chat",

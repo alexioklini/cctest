@@ -1392,13 +1392,12 @@ Bisher wirkte der Schutz nur im Chat-Turn selbst. Jetzt auch dort:
   einen Cloud-Dienst — auch wenn dein Chat auf einem lokalen Modell läuft.
   Personenbezogene Prompts werden dort abgelehnt. Für Diagramme mit echten Namen
   nimm **Diagramm rendern** (läuft lokal, bekommt die echten Werte).
-- **Anhang-Dateinamen werden anonymisiert wie jeder andere Text** (seit v9.394.0).
-  Lädst du `KYC_Musterfrau_Ausweis.pdf` hoch, behält die Datei ihren echten Namen
-  auf der Platte, aber gegenüber dem Cloud-Modell wird nur der Namensteil im
-  Dateinamen unkenntlich gemacht — genau wie Text in der Nachricht. In deinen
-  Antworten siehst du wieder den echten Namen, und der Agent kann die Datei ganz
-  normal lesen. (Früher wurde die Datei intern in `att_01.pdf` umbenannt; das
-  entfällt, weil der Originalname trotzdem über eine Begleitzeile mitging.)
+- **Anhang-Dateinamen bleiben unverändert** (seit v9.396.1). Lädst du
+  `KYC_Musterfrau_Ausweis.pdf` hoch, behält die Datei ihren Originalnamen — auf
+  der Platte und gegenüber dem Sprachmodell. Anonymisiert wird der **Inhalt** Ihrer
+  Nachricht und der gelesenen Dokumente, nicht der Dateiname. (Frühere Varianten,
+  die den Namen umbenannten oder unkenntlich machten, sind entfallen — sie brachten
+  keinen echten Schutz und konnten die Zuverlässigkeit beeinträchtigen.)
 - **E-Mail-Anhänge sind in anonymisierten Sitzungen gesperrt.** Die Datei auf der
   Platte enthält die echten Werte — sie zu versenden wäre ein Klartext-Leck an der
   Prüfung vorbei. Verschicke sie bewusst selbst, wenn du das willst.
@@ -2671,19 +2670,16 @@ Werte beim Zurückschreiben in die erzeugte Datei wieder in Klartext gesetzt
 wurden.
 
 **F: Ein erzeugter Report hat einen Pseudonym-Namen im Dateinamen — obwohl der
-Inhalt echt ist. Kann man das beheben?**
-A: Ja, das passiert automatisch (seit v9.390.0). Weil das Sprachmodell nur die
-Pseudonyme sieht, benennt es eine erzeugte Datei manchmal nach dem Fake-Namen
-(z. B. `..._logan_edwards.html`), während der **Inhalt** bereits in Echtwerte
-zurückübersetzt ist. Brain benennt die Datei danach auf den **echten** Namen um
-(`..._bonnie_stark.html`), sodass Name und Inhalt zusammenpassen — in der
-Artefakt-Liste und beim Download sehen Sie den echten Namen. Damit spätere
-Zugriffe des Modells nicht ins Leere laufen, bleibt der alte (Pseudonym-)Pfad
-als Verweis bestehen; die Funktion bricht also nie. Seit v9.391.0 nennt auch
-der **Antworttext** die Datei beim echten Namen: verwies die Antwort bisher
-noch auf den Pseudonym-Dateinamen („📁 `..._logan_edwards.html`"), obwohl die
-Datei längst umbenannt war, zeigen Text und Link jetzt direkt auf die echte
-Datei.
+Inhalt echt ist. Ist das ein Problem?**
+A: Nein. Weil das Sprachmodell nur die Pseudonyme sieht, benennt es eine erzeugte
+Datei manchmal nach dem Fake-Namen (z. B. `..._logan_edwards.html`), während der
+**Inhalt** korrekt in Echtwerte zurückübersetzt ist. Der Inhalt ist immer richtig
+— nur der Dateiname kann ein Pseudonym tragen. Ein früheres automatisches Umbenennen
+(v9.390.0) wurde in v9.396.1 **entfernt**, weil es in seltenen Fällen die
+zuverlässige Rückübersetzung des Datei-Inhalts stören konnte. Der Vorrang liegt auf
+der Daten-Korrektheit: lieber ein Pseudonym im Dateinamen als das Risiko einer
+Datei, die noch Platzhalter-Werte enthält. Sie können die Datei bei Bedarf selbst
+umbenennen.
 
 **F: Meine geplante Aufgabe steht ewig auf „läuft".**
 A: Entweder Timeout erreicht (im Zeitplan erhöhen) oder sie hängt an

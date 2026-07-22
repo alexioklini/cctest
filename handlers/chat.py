@@ -191,14 +191,6 @@ _ATTACH_NOTICE_PREFIXES = (
 # the split below lands it in the scannable half.
 _OCR_BLOCK_MARKER = "\n\n[Bild-Anhänge — automatisch, ohne KI erkannt "
 
-# Header of the attachment-filename block. Emitted into the SCANNABLE typed
-# half (unlike the exempt path notice) so a name inside a filename is detected,
-# decided, and minted into the mapping. The worker rewrites the lines under it
-# with the filename-aware pseudonymiser (pseudonymize_filename) — the body
-# sweeps skip underscore-joined path forms, so this marker is how the worker
-# locates the lines that still need path-safe pseudonymisation.
-_NAME_BLOCK_MARKER = "\n\n[Dateinamen der Anhänge:]"
-
 
 def _split_attachment_notice(text: str) -> tuple[str, str]:
     """Split a user message into (typed_part, attachment_notice).
@@ -2532,81 +2524,24 @@ def make_gdpr_after_file_write_cb(*, mapping_id: str, session_id: str,
             err = result["error"]
             restored = 0
 
-        # Filename de-anonymisation: the content is now real, but the model
-        # named the file from a pseudonym it saw (e.g. `..._logan_edwards.html`
-        # where the real subject is Bonnie Stark). Rename the file to the real
-        # name so the artifact is consistent (name + content), and leave an
-        # ALIAS at the old (fake) path so a later read_document/edit_document
-        # with the fake filename the model still remembers keeps resolving — the
-        # round-trip never breaks.
+        # Filename de-anonymisation (rename + alias) — DEACTIVATED (v9.396.1).
         #
-        # CROSS-PLATFORM (Windows): the alias must NOT rely on os.symlink —
-        # symlink creation on Windows needs admin / Developer Mode and typically
-        # raises. Try a HARDLINK first (os.link: works on Windows NTFS + macOS +
-        # Linux without privileges, same-volume — and the alias is in the same
-        # dir as the target, so same volume), then symlink, then a plain COPY as
-        # the final fallback. If NONE of the three can produce the alias, we do
-        # NOT commit the rename at all (revert) — leaving the fake-named file
-        # exactly as written, so the model's read round-trip can never break.
-        # Prior behaviour (fake name, real content) is the safe floor.
-        if status == "ok":
-            try:
-                new_name = _gdpr_deanonymise_filename(fname, mapping)
-                if new_name and new_name != fname:
-                    new_path = os.path.join(os.path.dirname(path), new_name)
-                    if not os.path.exists(new_path):   # never clobber
-                        os.rename(path, new_path)
-                        alias_ok = False
-                        for _mk in (
-                            lambda: os.link(new_path, path),      # hardlink
-                            lambda: os.symlink(new_path, path),   # symlink
-                            lambda: __import__("shutil").copy2(new_path, path),
-                        ):
-                            try:
-                                _mk()
-                                alias_ok = True
-                                break
-                            except Exception:
-                                continue
-                        if alias_ok:
-                            result["file"] = new_name
-                            result["renamed_from"] = fname
-                            # Chat 8de1eeb8: the model keeps REFERRING to the
-                            # fake filename in its reply text ("📁 Kunden…_
-                            # Sage_Emerson_Adams.html"), but deanonymize_text
-                            # can't restore it — the name parts are joined
-                            # with underscores, and purely-alphabetic reverse
-                            # keys replace word-bounded ('_' is a \w char, so
-                            # 'Sage' never matches inside 'Sage_Emerson').
-                            # Register the WHOLE filename as a derived
-                            # fake→real pair: the streamer re-runs
-                            # deanonymize_text per delta with this mapping, so
-                            # the reply shows the real filename live AND in
-                            # the persisted text; the forward entry re-fakes
-                            # the real name if the user types it next turn;
-                            # turn-end save_mapping persists the pair.
-                            # count=False → derived bookkeeping, not a finding.
-                            try:
-                                mapping.record(new_name, fname, "name",
-                                               count=False)
-                            except Exception:
-                                pass
-                            fname = new_name
-                            path = new_path
-                            try:
-                                engine.get_request_context()._gdpr_renamed_path = new_path
-                            except Exception:
-                                pass
-                        else:
-                            # No alias possible — revert so the model's fake path
-                            # still points at the (real-content) file.
-                            try:
-                                os.rename(new_path, path)
-                            except Exception:
-                                pass
-            except Exception as _e:
-                print(f"[gdpr-fname] rename skipped for {fname}: {_e}",
-                      flush=True)
+        # v9.390.0 renamed a written artifact from its pseudonym-named path
+        # (`..._logan_edwards.html`) to the real-name path and left a hardlink/
+        # symlink/copy alias at the old path. It solved a COSMETIC problem (a
+        # file whose CONTENT is already real but whose NAME still carries a fake).
+        # But it was the source of a real DATA-safety bug: the rename bumps the
+        # file's mtime and the alias creates a second on-disk path, so the next
+        # `python_exec` change-diff (`_changed_files`, mtime/size based) re-flags
+        # the file as "modified" and fires `_after_file_write` — hence the SAME
+        # xlsx being de-anonymised THREE times in one turn (session 8709f19d),
+        # each fire another chance for the reverse walker to hit the file in a
+        # bad state and FAIL — and a failed reverse is swallowed, so a file that
+        # still held fakes could ship to the user. Content-only real values with
+        # a fake filename is the safe floor the code already fell back to; we now
+        # ALWAYS take it. The file keeps its (possibly fake-named) path with REAL
+        # content — no rename, no alias, no mtime churn, one reverse pass.
+        pass
 
         # L6b: lint the RESTORED file's extracted text for residual fake
         # substance the per-run walkers can't see (a fake split across docx
@@ -4234,49 +4169,13 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         _pseudo, _swept_n = pseudonymizer.apply_known_values(
                             _pseudo, mapping=_mapping, categories=None)
                         _swept_n += _fuzzy_n
-                        # The name_block ('[Dateinamen der Anhänge:]\n  <base>')
-                        # sits in the SCANNED typed half so its name spans are
-                        # detected — but the body sweeps above deliberately skip
-                        # underscore-joined filename forms (path integrity), so
-                        # they leave 'STARK_Bonnie_M.pdf' untouched here too.
-                        # Rewrite those lines with the filename-aware pass, the
-                        # same one used on the notice paths below, so the typed
-                        # half never leaks the real basename either.
-                        if _NAME_BLOCK_MARKER in _pseudo and _mapping.forward:
-                            def _sub_nameblock(_m):
-                                return "  " + pseudonymizer.pseudonymize_filename(
-                                    _m.group(1), mapping=_mapping)
-                            _head, _sep, _tail = _pseudo.partition(
-                                _NAME_BLOCK_MARKER)
-                            _tail = re.sub(r"  (\S.*)", _sub_nameblock, _tail)
-                            _pseudo = _head + _sep + _tail
-                        # Pseudonymise the attachment FILENAMES in the notice
-                        # (the paths the model hands to read_document). The
-                        # files now sit on disk under their REAL names (the
-                        # att_NN disk-rename was removed — it protected only
-                        # the path while the original name leaked verbatim via
-                        # the old name_block preamble anyway). A PII-bearing
-                        # basename is a leak like any other, so it is rewritten
-                        # here with the SAME mapping the typed half uses —
-                        # path-safely: pseudonymize_filename swaps each
-                        # confirmed name token for the mapping's OPAQUE token
-                        # (substring-restorable), keeping the directory prefix +
-                        # extension intact. The already-whitelisted args-deanon
-                        # seam (read_document ∈ GDPR_ARGS_DEANON_TOOLS) turns
-                        # the token back into the real stem before dispatch, so
-                        # read_document still finds the file byte-for-byte.
-                        _notice_before = _notice
-                        if _notice and _mapping.forward:
-                            def _sub_path(_m):
-                                _dirp, _base = os.path.split(_m.group(1))
-                                _fake_base = pseudonymizer.pseudonymize_filename(
-                                    _base, mapping=_mapping)
-                                return "  - " + (
-                                    os.path.join(_dirp, _fake_base)
-                                    if _dirp else _fake_base)
-                            # Path lines in the notice are '  - <abs path>'.
-                            _notice = re.sub(r"  - (\S.*)", _sub_path, _notice)
-                        if _pseudo != _typed or _notice != _notice_before:
+                        # (v9.396.1) Attachment FILENAME pseudonymisation removed:
+                        # attachments keep their ORIGINAL names on disk and in the
+                        # notice paths, and are handed to the model as-is. The
+                        # notice half is exempt from the scan (paths must stay
+                        # verbatim for read_document); only the user-typed text is
+                        # rewritten from the mapping.
+                        if _pseudo != _typed:
                             _anonymised = _pseudo + _notice
                             if isinstance(nonlocal_user_content, str):
                                 nonlocal_user_content = _anonymised
@@ -7876,20 +7775,12 @@ class ChatHandlerMixin:
             attach_dir = brain_attachments_dir(session.id)
             os.makedirs(attach_dir, exist_ok=True)
 
-            # Files are written to disk under their REAL names. A PII-bearing
-            # filename ('CF_-_STARK_Bonnie_M_Mrs._107625_Scan.pdf') is NOT a
-            # leak here: it never rides into the wire raw. The original name is
-            # emitted just below as scanned CONTENT (the notice paths, plus the
-            # name_block), so the scanner finds the name spans, the dialog
-            # decides them, and the worker mints their fakes into the mapping.
-            # The worker then pseudonymises the FILENAME in the notice paths
-            # (pseudonymize_filename) with the same mapping — path-safely via
-            # opaque tokens — and the args-deanon seam restores the real path
-            # before read_document runs. So: real name on disk (nothing can
-            # break), pseudonymised name toward the cloud, real name back to
-            # the human. This replaced the old att_NN disk-rename, which
-            # protected only the path while the original name leaked verbatim
-            # through the name_block preamble regardless.
+            # Files are written to disk under their REAL names and handed to the
+            # model with those names in the notice paths (v9.396.1). Attachment-
+            # filename pseudonymisation (v9.394.0) was removed — attachments stay
+            # verbatim, like every other tool path. The notice half is exempt
+            # from the PII scan (paths must stay real for read_document); the
+            # user-typed text is still scanned + anonymised.
             for _i, f in enumerate(disk_files, start=1):
                 fname = f.get("name", "file")
                 safe_name = fname.replace("/", "_").replace("\\", "_")
@@ -7959,32 +7850,10 @@ class ChatHandlerMixin:
                              + "(Text via OCR + deterministische Merkmale):]\n\n"
                              + "\n\n".join(image_descs))
 
-            # The attachment filenames, as CONTENT in the SCANNABLE typed half.
-            #
-            # The notice paths (below) are EXEMPT from the PII scan
-            # (_split_attachment_notice) — so a name inside a filename would
-            # never be detected there. This block puts each basename into the
-            # scanned half so its name spans ARE detected, decided in the
-            # dialog, and minted into the mapping. The worker then uses that
-            # mapping to pseudonymise the filename in the notice paths
-            # (pseudonymize_filename) — so the model sees a fake path, and the
-            # args-deanon seam restores the real one before read_document.
-            # Also covers the sharpest specimen in the corpus: an attachment
-            # literally named `Alcuatmisi02026!.txt` — a PASSWORD.
-            #
-            # Gated on the scanner being ON: with it off there is no mapping,
-            # the notice paths stay real, and this block is pure noise.
-            name_block = ""
-            try:
-                _scanner_on = bool(
-                    engine._get_gdpr_scanner_config().get("enabled", True))
-            except Exception:
-                _scanner_on = False
-            if _scanner_on and saved_paths:
-                _lines = "\n".join(f"  {os.path.basename(p)}"
-                                   for p in saved_paths)
-                name_block = (_NAME_BLOCK_MARKER + "\n" + _lines)
-            ocr_block = ocr_block + name_block
+            # (v9.396.1) The attachment-filename block was removed together with
+            # the filename pseudonymisation: attachments keep their ORIGINAL
+            # names and are handed to the model verbatim via the notice paths, so
+            # there is nothing to seed into the scannable half.
             message = message + ocr_block + notice
             if isinstance(user_content, str):
                 user_content = user_content + ocr_block + notice

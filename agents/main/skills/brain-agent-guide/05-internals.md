@@ -2133,18 +2133,18 @@ protection existing only there.
   later sessions as facts = permanent memory poisoning). Seams added on
   `wiki_read`, `email_read/inbox/search`, `context_search/detail`, `use_skill`,
   `transcribe_audio`; gates added on `wiki_from_chat` + `audio_overview`.
-- **Attachment filenames are pseudonymised, not renamed** (v9.394.0, replaced the
-  M11 `att_NN` disk-rename). Uploads keep their REAL name on disk. The basename is
-  injected as scanned content (`[Dateinamen der Anhänge:]`) so its name spans are
-  detected + decided + minted; the worker then rewrites the filename in the wire
-  paths with `pseudonymizer.pseudonymize_filename` — OPAQUE tokens (path-safe,
-  substring-restorable through underscores, which the body sweeps deliberately
-  skip). The `read_document` args-deanon seam (it is in `GDPR_ARGS_DEANON_TOOLS`)
-  restores the real path before dispatch, and the reply-deanon shows the human the
-  real name. So: real name on disk (`read_document` byte-for-byte unchanged), fake
-  toward the cloud, real name back to the human — same contract as body-text PII.
-  Scanner off → no mapping, real path, unchanged behaviour. **Do not reintroduce
-  the `att_NN` rename** — the original name leaked through the old preamble anyway.
+- **Attachment + artifact FILENAMES are never manipulated** (v9.396.1 removed
+  both the v9.394.0 attachment-filename pseudonymisation AND the v9.390.0 artifact
+  rename+symlink). Attachments keep their ORIGINAL name on disk and in the notice
+  paths and are handed to the model verbatim; the attachment path is scan-exempt
+  (`_split_attachment_notice`), only user-typed text is anonymised. Written
+  artifacts: the after-file-write callback reverses CONTENT only, in place — no
+  rename, no alias. **Why removed:** the rename bumped mtime + created a second
+  disk path, so the next `python_exec` change-diff re-fired `_after_file_write` on
+  the same file repeatedly; a reverse pass that hit the file mid-state failed and
+  the failure was swallowed → a file still holding fakes could ship. Safe floor:
+  real content under a (possibly fake) name. **Do not reintroduce filename
+  rename/pseudonymisation** — data safety outweighs cosmetic name consistency.
 - **Never re-seam already-faked text.** Fakes are shape-preserving, real-looking
   names: a second scan classifies them as fresh PII and mints fakes-of-fakes, which
   breaks the reply de-anonymiser (the USER then sees the fake). This is why the

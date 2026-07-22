@@ -577,10 +577,12 @@ class TestFilenameDeanon(unittest.TestCase):
         spans = ps.find_restored_spans(out, mapping=self.m)
         self.assertTrue(any(s["original"] == real_fn for s in spans))
 
-    def test_after_write_cb_records_filename_pair(self):
-        # Drive the REAL callback end-to-end on a written .html: content is
-        # reversed, the file renamed real (alias at fake path), and the
-        # mapping now carries the fake→real FILENAME pair for the reply pass.
+    def test_after_write_cb_reverses_content_no_rename(self):
+        # v9.396.1: the filename rename+alias was DEACTIVATED (it caused the
+        # mtime-churn / multi-fire reverse race, session 8709f19d). The callback
+        # now reverses CONTENT only — the file keeps its (possibly fake-named)
+        # path, no rename, no alias, no filename pair. Safe floor: real content,
+        # fake name.
         import shutil
         self.m.record("Bonnie Marie Stark", "Logan Kerry Edwards", "name")
         d = tempfile.mkdtemp()
@@ -592,50 +594,21 @@ class TestFilenameDeanon(unittest.TestCase):
                 mapping_id=self.m.mapping_id, session_id="test-fn-pair",
                 agent_id="main")
             cb(fake, "write", "main")
-            real = os.path.join(d, "report_bonnie_stark.html")
-            self.assertTrue(os.path.isfile(real))
-            with open(real) as f:
+            # Content IS reversed to real values, in place, under the fake name.
+            self.assertTrue(os.path.isfile(fake))
+            with open(fake) as f:
                 self.assertIn("Bonnie Marie Stark", f.read())
-            self.assertEqual(
-                self.m.reverse.get("report_logan_edwards.html"),
-                "report_bonnie_stark.html")
-            self.assertEqual(
-                self.m.forward.get("report_bonnie_stark.html"),
-                "report_logan_edwards.html")
-            self.assertIn("report_bonnie_stark.html", self.m.derived)
+            # NO rename → the real-named file must NOT exist.
+            self.assertFalse(os.path.isfile(os.path.join(d, "report_bonnie_stark.html")))
+            # NO filename pair recorded in the mapping.
+            self.assertNotIn("report_bonnie_stark.html", self.m.forward)
+            self.assertNotIn("report_bonnie_stark.html", self.m.derived)
         finally:
             shutil.rmtree(d, ignore_errors=True)
 
-    def test_rename_alias_roundtrip_hardlink(self):
-        # The alias fallback chain (hardlink first — the Windows-safe path)
-        # leaves the fake path pointing at the renamed real file.
-        import shutil
-        d = tempfile.mkdtemp()
-        try:
-            fake = os.path.join(d, "report_logan_edwards.html")
-            with open(fake, "w") as f:
-                f.write("<html>Bonnie Marie Stark</html>")
-            new_name = self.hc._gdpr_deanonymise_filename(
-                os.path.basename(fake), self.m)
-            real = os.path.join(d, new_name)
-            os.rename(fake, real)
-            alias_ok = False
-            for mk in (lambda: os.link(real, fake),
-                       lambda: os.symlink(real, fake),
-                       lambda: shutil.copy2(real, fake)):
-                try:
-                    mk(); alias_ok = True; break
-                except Exception:
-                    continue
-            self.assertTrue(alias_ok)
-            self.assertEqual(new_name, "report_bonnie_stark.html")
-            self.assertTrue(os.path.isfile(real))
-            # The model's remembered fake path still resolves to the same bytes.
-            self.assertTrue(os.path.isfile(fake))
-            with open(fake) as a, open(real) as b:
-                self.assertEqual(a.read(), b.read())
-        finally:
-            shutil.rmtree(d, ignore_errors=True)
+    # (test_rename_alias_roundtrip_hardlink removed in v9.396.1 — the filename
+    # rename + hardlink/symlink alias it exercised was deactivated because it
+    # drove the multi-fire reverse race. The callback now reverses content only.)
 
 
 if __name__ == "__main__":
