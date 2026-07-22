@@ -748,9 +748,11 @@ function _toolEntryCard(e) {
   const gdprBadge = (typeof _buildGdprCountBadge === 'function')
     ? _buildGdprCountBadge(
         { deanon_args_count: (e.deanon_args_count != null ? e.deanon_args_count : null),
-          deanon_args: e.deanon_args || null },
+          deanon_args: e.deanon_args || null,
+          args: e.args || null },   // args.path → file-reverse fallback match
         { deanon_result_count: (e.deanon_result_count != null ? e.deanon_result_count : null),
-          deanon_result: (typeof e.deanon_result === 'string' ? e.deanon_result : null) })
+          deanon_result: (typeof e.deanon_result === 'string' ? e.deanon_result : null),
+          result: e.result })   // stored result → ledger recount fallback
     : '';
   const argsTable = (typeof renderToolArgsTable === 'function')
     ? renderToolArgsTable(e.type === 'python_exec'

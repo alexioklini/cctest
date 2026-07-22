@@ -2649,16 +2649,18 @@ im Aktivitäts-Panel (Titel, Parameter-Tabelle und Ergebnis-Box), genau wie in
 Ihrer Frage und der Antwort. Der Tooltip an jeder Markierung nennt, welcher
 Wert durch welches Pseudonym ersetzt wurde (bzw. dass ein Wert bewusst im
 Klartext blieb). Seit v9.395.0 zeigt jeder Werkzeug-Aufruf zusätzlich ein
-kleines **Zähl-Abzeichen** `🔓 a<N>/r<N>` (im Chat und im Aktivitäts-Panel):
-`a<N>` = wie viele Werte in den **Aufruf-Parametern** de-anonymisiert wurden,
-`r<N>` = wie viele im **Ergebnis** zurückübersetzt wurden. So sehen Sie auf einen
-Blick, wie viel Schutz pro Schritt gewirkt hat. Das Abzeichen erscheint **nur**
+kleines **Zähl-Abzeichen** im Format `A:R` (im Chat und im Aktivitäts-Panel):
+die **erste** Zahl = wie viele Werte in den **Aufruf-Parametern** de-anonymisiert
+wurden, die **zweite** = wie viele im **Ergebnis** (bzw. in einer geschriebenen
+Datei) zurückübersetzt wurden — also z. B. `1:99+`. So sehen Sie auf einen
+Blick, wie viel Schutz pro Schritt gewirkt hat; der Tooltip nennt beide Zahlen
+im Klartext (auch über 99). Das Abzeichen erscheint **nur**
 bei eingeschalteten Datenschutz-Details (und nicht bei lokalem Modell, weil dann
 nichts die Maschine verlässt); Null-Werte werden ausgeblendet. Seit v9.395.1
 wird das Abzeichen auch für **ältere** Chats angezeigt, die vor der Einführung
 entstanden sind — die Zahl wird dann aus den bereits gespeicherten Ersetzungen
-nachgerechnet. Seit v9.395.2 erscheint das `r`-Abzeichen auch an Werkzeugen, die
-**Dateien schreiben** (z. B. „Dokument schreiben"): dort zählt es, wie viele
+nachgerechnet. Seit v9.395.2 erscheint die zweite Zahl (`R`) auch an Werkzeugen,
+die **Dateien schreiben** (z. B. „Dokument schreiben"): dort zählt sie, wie viele
 Werte beim Zurückschreiben in die erzeugte Datei wieder in Klartext gesetzt
 wurden.
 

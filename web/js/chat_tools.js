@@ -642,22 +642,63 @@ function fallbackCopy(text, cb) {
   document.body.removeChild(ta);
 }
 // Fallback counter for LEGACY tool rows that predate the server-side
-// deanon_*_count fields (turns run before v9.395.0 carry deanon_args/
-// deanon_result but no counts). Counts total occurrences of every ledger value
-// that was de-anonymised (turn_action 'anonymise', not FP) inside `text` — the
-// same semantic the server's per-occurrence count uses. Returns 0 when the
-// ledger is unavailable or nothing matches. `text` should be the DE-anonymised
-// (real-value) surface, so the ledger's real `value` is what occurs in it.
+// deanon_*_count fields. Counts, over `text`, the occurrences of every ledger
+// value that was de-anonymised (turn_action 'anonymise', not FP) — matching
+// BOTH surface forms: the real `value` AND its `fake_value`. This matters
+// because the persisted tool surface may hold EITHER: a de-anonymised copy shows
+// the real value, but a stored `result` on an anonymising turn holds the FAKES
+// the model saw (measured: on one real read_document the stored result had 85
+// fake-value occurrences and only 68 real-value ones — counting only `value`
+// gave 0-ish; both together gives the true anonymisation footprint). Overlaps
+// per position are avoided by advancing past each match. Returns 0 when the
+// ledger is unavailable or nothing matches.
 function _gdprCountDeanonInText(text, decisions) {
   if (!text || !decisions) return 0;
   const s = String(text);
   let n = 0;
   for (const d of Object.values(decisions)) {
     if (!d || d.false_positive || d.turn_action !== 'anonymise') continue;
-    const val = d.value;
-    if (!val) continue;
-    let from = 0, idx;
-    while ((idx = s.indexOf(val, from)) !== -1) { n++; from = idx + val.length; }
+    // Count whichever surface actually occurs. A given entry's text is EITHER
+    // real or fake in a single tool surface, never both at the same spot, so
+    // taking the max of the two per-form counts avoids double-counting while
+    // still catching the form that's present.
+    let best = 0;
+    for (const surface of [d.value, d.fake_value]) {
+      if (!surface) continue;
+      let c = 0, from = 0, idx;
+      while ((idx = s.indexOf(surface, from)) !== -1) { c++; from = idx + surface.length; }
+      if (c > best) best = c;
+    }
+    n += best;
+  }
+  return n;
+}
+
+// Fallback for FILE-WRITING tools (write_document, python_exec, execute_command)
+// whose file was de-anonymised via the after-file-write reverse — the restored
+// count lives on a SEPARATE synthetic `deanonymise_file` row (the "Datenschutz ·
+// N De-Anon" line), not on the tool itself. On turns that predate the server
+// folding it into deanon_result_count (< v9.395.2) there is no count on the tool.
+// Recover it: sum the `restored` of every synthetic deanonymise_file result whose
+// `result.file` basename matches this tool's written file. Returns 0 when none
+// matches or the tool wrote nothing.
+function _gdprFileReverseCountFor(callMsg) {
+  const chat = state.activeChat;
+  if (!chat || !Array.isArray(chat.messages) || !callMsg) return 0;
+  // The written file's basename — from deanon_args.path (real) or args.path.
+  const rawPath = (callMsg.deanon_args && callMsg.deanon_args.path)
+    || (callMsg.args && callMsg.args.path) || '';
+  if (!rawPath) return 0;
+  const base = String(rawPath).split('/').pop().split('\\').pop();
+  if (!base) return 0;
+  let n = 0;
+  for (const m of chat.messages) {
+    if (!m || !m.synthetic || m.role !== 'tool_result') continue;
+    if ((m.kind || m.name) !== 'deanonymise_file') continue;
+    const res = m.result;
+    if (!res || typeof res !== 'object') continue;
+    const rf = String(res.file || '').split('/').pop().split('\\').pop();
+    if (rf && rf === base) n += Number(res.restored) || 0;
   }
   return n;
 }
@@ -670,7 +711,8 @@ function _gdprCountDeanonInText(text, decisions) {
 // AND at least one count is > 0. Shows 🔓 aN/rN: aN = values de-anonymised in
 // the args the tool ran on, rN = pseudonyms restored in the result for display.
 // The server ships exact counts (deanon_*_count); for LEGACY rows that lack
-// them we recompute from the ledger over the de-anonymised text so old sessions
+// them we recompute — from the ledger over the de-anonymised text, and for
+// file-writing tools from the sibling deanonymise_file rows — so old sessions
 // show the badge too.
 function _buildGdprCountBadge(callMsg, resultMsg) {
   if (typeof _gdprMarksVisible === 'function' && !_gdprMarksVisible()) return '';
@@ -678,25 +720,41 @@ function _buildGdprCountBadge(callMsg, resultMsg) {
   const decisions = chat && chat._piiDecisions;
   let aN = (callMsg && Number(callMsg.deanon_args_count)) || 0;
   let rN = (resultMsg && Number(resultMsg.deanon_result_count)) || 0;
-  // Legacy fallback: server count absent but a de-anonymised surface exists.
-  if (!aN && callMsg && callMsg.deanon_args_count == null && callMsg.deanon_args) {
+  // Legacy fallback: server count absent → recompute from the ledger over the
+  // tool's persisted surfaces. The args side prefers the de-anonymised copy;
+  // absent that, the model-facing args (they hold the fakes, which the ledger
+  // also matches). Guard on `== null` so a genuine server 0 never triggers it.
+  if (!aN && callMsg && callMsg.deanon_args_count == null) {
     let argsText = '';
-    try { argsText = JSON.stringify(callMsg.deanon_args); } catch (e) {}
+    try { argsText = JSON.stringify(callMsg.deanon_args || callMsg.args || {}); } catch (e) {}
     aN = _gdprCountDeanonInText(argsText, decisions);
   }
-  if (!rN && resultMsg && resultMsg.deanon_result_count == null
-      && typeof resultMsg.deanon_result === 'string') {
-    rN = _gdprCountDeanonInText(resultMsg.deanon_result, decisions);
+  if (!rN && resultMsg && resultMsg.deanon_result_count == null) {
+    // Prefer the de-anonymised copy; else the stored result itself (on an
+    // anonymising turn it carries the fakes, which the ledger matches too).
+    const resText = (typeof resultMsg.deanon_result === 'string' && resultMsg.deanon_result)
+      ? resultMsg.deanon_result
+      : (typeof resultMsg.result === 'string' ? resultMsg.result
+         : (resultMsg.result != null ? JSON.stringify(resultMsg.result) : ''));
+    rN = _gdprCountDeanonInText(resText, decisions);
+  }
+  // File-writing tools: pull the file-reverse count off the sibling
+  // deanonymise_file rows when the server didn't fold it in (legacy turns).
+  if (!rN && (!resultMsg || resultMsg.deanon_result_count == null)) {
+    rN = _gdprFileReverseCountFor(callMsg);
   }
   if (!aN && !rN) return '';
-  const parts = [];
-  if (aN) parts.push(`a${aN}`);
-  if (rN) parts.push(`r${rN}`);
-  const title = `Datenschutz: ${aN} Wert(e) in den Aufruf-Parametern de-anonymisiert`
-    + (rN ? `, ${rN} im Ergebnis` : '')
+  // Format "A:R" — digits only, no letters (user request). Because the letters
+  // are gone, BOTH numbers always show (a lone number would be ambiguous):
+  // A = values de-anonymised in the call args, R = in the result. Cap the
+  // DISPLAYED value at 99+ (a PII-dense document reaches hundreds); the exact
+  // figures stay in the tooltip.
+  const _disp = (v) => (v > 99 ? '99+' : String(v));
+  const title = `Datenschutz-Ersetzungen — Aufruf-Parameter: ${aN}, Ergebnis: ${rN}`
     + ' (Tool lief lokal auf den echten Daten; das Modell sah Pseudonyme).';
+  // No emoji: the 🔓 glyph rendered wide and crowded the digits (user report).
   return `<span class="tool-badge-gdpr" title="${esc(title)}">`
-    + `<span class="tool-badge-gdpr-ico">&#128275;</span>${esc(parts.join('/'))}</span>`;
+    + `${esc(_disp(aN))}:${esc(_disp(rN))}</span>`;
 }
 function renderToolCall(msg, idx) {
   // Transparent-anonymisation synthetic rows render distinctly — they're not
