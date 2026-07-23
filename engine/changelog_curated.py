@@ -43,9 +43,12 @@ CURATED_CHANGELOG: list[dict] = [
                 "Projekts. Neue oder geänderte Dokumente werden beim "
                 "Projekt-Abgleich automatisch mitgeprüft; neue Funde "
                 "erscheinen als „offen\" mit Hinweis-Badge und warten auf "
-                "Ihre Bewertung.",
+                "Ihre Bewertung. Eine Ampel-Statuszeile zeigt auf einen "
+                "Blick, ob noch etwas zu tun ist: grün = alles bewertet, "
+                "orange = offene Funde, rot = noch nicht gescannt — dazu "
+                "letzter Scan und letzte Bewertung.",
         "audience": "user",
-        "versions": ["9.400.0"],
+        "versions": ["9.400.0", "9.400.1"],
     },
     {
         "version": "9.399.0",

@@ -93,6 +93,13 @@ class TestLedgerDb(_ProjBase):
         self.assertNotIn("offen wert", m)
         self.assertEqual(m["fp wert"]["status"], "fp")
 
+    def test_last_scan_meta(self):
+        # 9.400.1: Ampel-Status im Panel — 0.0 = nie gescannt (rot),
+        # persistiert über die Cursor-Tabelle (überlebt Server-Neustart).
+        self.assertEqual(ChatDB.get_project_pii_last_scan(self.pid), 0.0)
+        ChatDB.set_project_pii_scan_files(self.pid, [("/tmp/a.md", "abc")])
+        self.assertGreater(ChatDB.get_project_pii_last_scan(self.pid), 0.0)
+
     def test_reset_to_open(self):
         ChatDB.upsert_project_pii_candidates(self.pid, [
             {"norm_value": "x wert", "raw_value": "X Wert",

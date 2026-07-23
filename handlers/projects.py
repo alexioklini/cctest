@@ -525,6 +525,13 @@ class ProjectsHandlerMixin:
         rows = ChatDB.get_project_pii_rows(pid) or []
         self._send_json({"project_id": pid, "rows": rows,
                          "counts": self._project_pii_counts(rows),
+                         # Panel status line (9.400.1): last scan is read from
+                         # the PERSISTENT cursor table (0 = never scanned →
+                         # red state); last decision from the rows.
+                         "last_scan_at": ChatDB.get_project_pii_last_scan(pid),
+                         "last_decided_at": max(
+                             [float(r.get("decided_at") or 0) for r in rows]
+                             or [0.0]),
                          "scan": engine.project_pii_scan_status(pid)})
 
     def _handle_project_pii_decisions_post(self, path: str):

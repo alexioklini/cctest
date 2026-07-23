@@ -3313,6 +3313,18 @@ class ChatDB:
         return {r[0]: r[1] for r in rows}
 
     @staticmethod
+    @_db_safe(default=float)
+    def get_project_pii_last_scan(project_id):
+        """Epoch of the most recent scan touch (0.0 = never scanned) —
+        PERSISTENT, unlike the in-memory scan-status registry (which resets
+        on restart). Drives the panel's red/orange/green state."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT MAX(scanned_at) FROM project_pii_scan_files "
+                "WHERE project_id = ?", (project_id,)).fetchone()
+        return float(row[0] or 0) if row else 0.0
+
+    @staticmethod
     @_db_safe(default=None)
     def set_project_pii_scan_files(project_id, entries):
         """Upsert cursor rows. `entries` is [(file_path, sha1)]."""

@@ -2545,9 +2545,12 @@ mehr aus**, und zwar für **alle Nutzer** des Projekts; eine abweichende
 Entscheidung innerhalb eines Chats hat für diesen Chat Vorrang. Neue oder
 geänderte Dokumente werden beim Projekt-Abgleich automatisch mitgescannt —
 neue Funde erscheinen als „offen" mit Badge und warten auf Bewertung (sie
-werden nie automatisch entschieden). Die Sektion ist nur für
-Projekt-Besitzer und Admins sichtbar, weil die Bewertungsliste die
-gefundenen Werte im Klartext zeigt.
+werden nie automatisch entschieden). Eine **Ampel-Statuszeile** zeigt auf
+einen Blick, ob noch etwas zu tun ist: **grün** = alles Gescannte bewertet,
+**orange** = gescannt, aber offene Funde, **rot** = noch nicht gescannt —
+darunter Fund-/Bewertungs-Zähler sowie „Letzter Scan" und „Letzte
+Bewertung". Die Sektion ist nur für Projekt-Besitzer und Admins sichtbar,
+weil die Bewertungsliste die gefundenen Werte im Klartext zeigt.
 
 **F: Warum ist im anonymisierten Chat dieselbe Person überall gleich benannt?**
 A: Seit v9.337.0 arbeitet die Anonymisierung auf Personen-Ebene statt auf

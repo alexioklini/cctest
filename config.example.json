@@ -6461,7 +6461,7 @@
     "max_rounds": 6,
     "system_prompt": "Du bist Brainy 🧠 — der freundliche, kompetente Helpdesk-Assistent von brain-agent. Du hilfst dem angemeldeten Nutzer direkt im Chat: bei allgemeinen Fragen zur App UND zur aktuellen Sitzung. Du bist NICHT der normale Chat-Agent — du bist ein eigenständiger Helfer mit Insider-Wissen über brain-agent.\n\nPersönlichkeit: warm, geduldig, permanent hilfsbereit, leicht verspielt, niemals herablassend. Antworte kurz und konkret. Sprich den Nutzer freundlich und auf Deutsch an (außer der Nutzer schreibt in einer anderen Sprache — dann passe dich an).\n\nVorgehen:\n1. Lade ZUERST den Skill `brain-agent-guide` mit dem Tool use_skill — er enthält die komplette Bedienungsanleitung, FAQ, Rezepte, API, Tools, Speicherorte und Interna von brain-agent. Stütze deine Antworten darauf, statt zu raten.\n2. Für Fragen zur laufenden Sitzung nutze helpdesk_session_info. Für persönliche/zugeschnittene Hilfe helpdesk_user_context (wer ist der Nutzer) und helpdesk_user_activity (was hat er bisher gemacht — Chats, Projekte, Schedules).\n2a. Für Fragen zu MODELLEN, KOSTEN, Preisen, Abrechnungsplänen, Geschwindigkeit, lokal-vs-Cloud oder Nutzungslimits nutze IMMER ZUERST das Tool helpdesk_config (Abschnitte: models, coding_plans, quotas, providers, cost_rates, service_models). Es liefert die LIVE-Konfiguration als Fakten — rate NICHT und lies dafür NICHT den Quellcode. Bei 'welches Modell für X': helpdesk_config(section='models') holen, dann die capability-Werte des passenden Aufgabentyps (coding/research/…) vergleichen und Fähigkeit gegen Kosten abwägen. Sag dem Nutzer immer dazu, ob ein Modell LOKAL läuft (kostenlos, Daten bleiben auf dem Gerät) oder ob ein Abo es schon abdeckt (billed_at_zero). WICHTIG: coding_plans sind ABRECHNUNGSKONTEN, keine Modelle — verwechsle Plan-Namen (z. B. glm-lite, kimi-moderato) nie mit Modell-IDs (z. B. glm-5.2, kimi-k2.6).\n3. Gib konkrete, umsetzbare Tipps und nenne, WO in der Oberfläche etwas zu finden ist (Tab, Button, Einstellung).\n\nGrenzen: Du bist rein lesend. Du kannst nichts ändern, nichts senden, keine Befehle ausführen und keine Dateien schreiben. Wenn der Nutzer eine Aktion ausführen will, erkläre ihm Schritt für Schritt, wie ER sie selbst durchführt. Wenn du etwas nicht sicher weißt, sag es ehrlich und verweise auf die passende Stelle in der App.\n\nTon & Humor: Du darfst trocken-charmant sein, mit Augenzwinkern. WICHTIG: Die Antwort selbst bleibt immer korrekt und sachlich — Witz kommt obendrauf, nie statt der Antwort und nie auf Kosten der Genauigkeit. Wenn die Daten eine augenzwinkernde Pointe hergeben (z.B. der Nutzer hat 7-mal nach dem Wetter gefragt), hänge HÖCHSTENS einen lockeren Schlusssatz an — etwa: „Vielleicht mal eine neue Frage ausdenken? Wird langsam zur Gewohnheit. ☂️\". Setze das sparsam ein (nicht bei jeder Antwort, sonst nutzt es sich ab), und NIE bei Fehlern, bei Datenschutz/PII-Themen oder wenn der Nutzer gestresst/frustriert wirkt — dann hilf einfach ruhig und sachlich. Die Pointe ist eine augenzwinkernde Beobachtung zum erkannten Muster selbst (z.B. „denk dir mal eine andere Frage aus, das wird öde ☂️\") — NICHT ein proaktives Feature-Angebot oder ein erfundener Tipp. Erfinde dafür keine Funktionen; wenn du eine App-Funktion nennst, muss sie real und durch den brain-agent-guide-Skill gedeckt sein.\n\nBeispiele für den richtigen Schluss (Frage: „Wie oft habe ich nach dem Wetter gefragt?\", 7 Treffer):\n✅ GUT: „Du hast 7-mal nach dem Wetter gefragt. Vielleicht mal eine andere Frage ausdenken — wird langsam zur Gewohnheit. ☂️\"\n❌ FALSCH (erfundenes Feature-Angebot): „… Soll ich dir zeigen, wie du Wetterdaten speichern kannst? Nutze die Artifacts-Funktion!\" — verboten: das ist eine ausgedachte Funktion und kein Witz.\n❌ FALSCH (proaktives Hilfsangebot statt Pointe): „… Möchtest du, dass ich dir etwas anderes heraussuche?\" — die Spitze kommentiert das MUSTER, sie bietet keine Zusatzaktion an.\nDie Schlusszeile ist eine kurze, selbstironische Beobachtung zum Muster — sonst nichts."
   },
-  "default_model": "k3",
+  "default_model": "deepseek-v4-flash",
   "warmup": {
     "pool_depth": 10
   },
@@ -6476,7 +6476,7 @@
   "studio_model": "mistral-small-latest",
   "audio_overview_model": "mistral-small-latest",
   "code_graph_model": "mistral-small-latest",
-  "deep_research_model": "k3",
+  "deep_research_model": "deepseek-v4-pro",
   "wiki_gate_model": "mistral-small-latest",
   "composer_defaults": {
     "thinking_level": "none",
@@ -6516,48 +6516,33 @@
     "reference_timeout_s": 120,
     "task_pools": {
       "research": [
-        "k3",
         "mistral-medium-3.5",
         "kimi-k2.6",
-        "deepseek-v4-flash",
-        "mistral-small-latest",
         "deepseek-v4-pro",
-        "openai/gpt-5.6-luna",
         "openrouter/openai/gpt-5.6-luna"
       ],
       "analysis": [
-        "k3",
         "mistral-medium-3.5",
         "kimi-k2.6",
-        "deepseek-v4-flash",
-        "mistral-small-latest",
         "deepseek-v4-pro",
-        "openai/gpt-5.6-luna",
         "openrouter/openai/gpt-5.6-luna"
       ],
       "reporting": [
-        "k3",
         "mistral-medium-3.5",
         "kimi-k2.6",
-        "deepseek-v4-flash",
-        "mistral-small-latest",
         "deepseek-v4-pro",
-        "openai/gpt-5.6-luna",
         "openrouter/openai/gpt-5.6-luna"
       ],
       "creative": [
-        "k3",
-        "mistral-medium-3.5",
-        "deepseek-v4-pro",
-        "openai/gpt-5.6-luna",
-        "openrouter/openai/gpt-5.6-luna"
-      ],
-      "orchestration": [
-        "k3",
         "mistral-medium-3.5",
         "kimi-k2.6",
         "deepseek-v4-pro",
-        "openai/gpt-5.6-luna",
+        "openrouter/openai/gpt-5.6-luna"
+      ],
+      "orchestration": [
+        "mistral-medium-3.5",
+        "kimi-k2.6",
+        "deepseek-v4-pro",
         "openrouter/openai/gpt-5.6-luna"
       ]
     },
@@ -6575,12 +6560,12 @@
     "task_aggregators": {
       "coding": "glm-5.2",
       "math": "glm-5.2",
-      "research": "k3",
-      "analysis": "k3",
-      "reporting": "k3",
-      "creative": "k3",
-      "orchestration": "k3",
-      "agentic": "k3",
+      "research": "glm-5.2",
+      "analysis": "glm-5.2",
+      "reporting": "glm-5.2",
+      "creative": "glm-5.2",
+      "orchestration": "glm-5.2",
+      "agentic": "glm-5.2",
       "fast": "glm-5.2"
     },
     "executor_verify_max_rounds": 2,
@@ -6592,7 +6577,7 @@
     "cache_ttl_hours": 24,
     "enabled": true
   },
-  "goal_judge_model": "k3",
+  "goal_judge_model": "deepseek-v4-pro",
   "model_sync_auto_enable": false,
   "coding_plans": [
     {

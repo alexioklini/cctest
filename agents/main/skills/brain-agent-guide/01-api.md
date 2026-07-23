@@ -306,7 +306,10 @@ streaming call, per-USER history, fixed read-only tool set. See
   status / start (9.400.0; start is owner/admin; incremental via sha1 cursor)
 - `GET/POST .../projects/<name>/pii-decisions` — project-PII ledger rows +
   counts / bulk decide `{decisions:[{id, status: open|anonymise|fp}]}`
-  (9.400.0; BOTH owner/admin-only — the review shows cleartext values)
+  (9.400.0; BOTH owner/admin-only — the review shows cleartext values).
+  GET also returns `last_scan_at` (persistent, from the scan-cursor table;
+  0 = never scanned) + `last_decided_at` — drives the panel's
+  red/orange/green status line (9.400.1)
 - `POST .../projects/<name>/full-resync` — wipe wing + re-mine
 - `POST .../projects/<name>/sync-cancel` — abort live sync
 - `POST .../projects/<name>/ingest` — upload files (multipart). Since 9.324.0

@@ -2097,7 +2097,9 @@ async function loadProjectPiiSection(agentId, projectName) {
   try {
     const data = await API.getProjectPiiDecisions(agentId, projectName);
     state._projPii = { agentId, projectName, rows: data.rows || [],
-                       counts: data.counts || {} };
+                       counts: data.counts || {},
+                       lastScanAt: data.last_scan_at || 0,
+                       lastDecidedAt: data.last_decided_at || 0 };
     section.style.display = '';
     _projPiiPaintSection();
     if (data.scan && data.scan.running) _projPiiPollScan();
@@ -2111,24 +2113,53 @@ function _projPiiPaintSection() {
   const p = state._projPii;
   if (!p) return;
   const c = p.counts || {};
+  const open = c.open || 0, anon = c.anonymise || 0, fp = c.fp || 0;
+  const total = open + anon + fp;
+  const scanned = !!p.lastScanAt;
   const badge = document.getElementById('project-pii-badge');
   if (badge) {
-    if (c.open > 0) {
-      badge.textContent = `${c.open} offen`;
+    if (open > 0) {
+      badge.textContent = `${open} offen`;
       badge.style.display = '';
     } else {
       badge.style.display = 'none';
     }
   }
+  // Ampel-Status: EINE Zeile beantwortet „muss ich hier noch etwas tun?" —
+  // grün = alles Gescannte bewertet, orange = gescannt mit offenen Funden,
+  // rot = noch nie gescannt.
+  const statusEl = document.getElementById('project-pii-status');
+  if (statusEl) {
+    let color, label;
+    if (!scanned) {
+      color = 'var(--error,#c62828)';
+      label = 'Noch nicht gescannt';
+    } else if (open > 0) {
+      color = 'var(--warning,#c47f00)';
+      label = `Gescannt — ${open} Funde nicht bewertet`;
+    } else {
+      color = 'var(--success,#2e7d32)';
+      label = total ? 'Alle Funde bewertet' : 'Gescannt — keine Funde';
+    }
+    statusEl.innerHTML =
+      `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="${color}" stroke-width="2.4" style="flex-shrink:0"><path d="M20 6L9 17l-5-5"/></svg>`
+      + `<span style="color:${color}">${esc(label)}</span>`;
+  }
   const counts = document.getElementById('project-pii-counts');
   if (counts) {
-    const total = (c.open || 0) + (c.anonymise || 0) + (c.fp || 0);
-    counts.textContent = total
-      ? `${total} Werte — ${c.open || 0} offen · ${c.anonymise || 0} anonymisieren · ${c.fp || 0} Falschtreffer`
-      : 'Noch keine Funde — „Jetzt scannen" durchsucht das Projektwissen.';
+    counts.textContent = scanned
+      ? `Funde: ${total} · bewertet: ${anon + fp} (${anon} anonymisieren · ${fp} Falschtreffer) · offen: ${open}`
+      : '„Jetzt scannen" durchsucht das Projektwissen nach personenbezogenen Daten.';
+  }
+  const times = document.getElementById('project-pii-times');
+  if (times) {
+    const fmt = (ts) => ts ? (formatTimeAgo(new Date(ts * 1000)) || '—') : '—';
+    times.textContent = scanned
+      ? `Letzter Scan: ${fmt(p.lastScanAt)} · Letzte Bewertung: ${fmt(p.lastDecidedAt)}`
+      : '';
   }
   const mc = document.getElementById('project-pii-modal-counts');
-  if (mc) mc.textContent = `${c.open || 0} offen · ${c.anonymise || 0} anonymisieren · ${c.fp || 0} Falschtreffer`;
+  if (mc) mc.textContent = `${open} offen · ${anon} anonymisieren · ${fp} Falschtreffer`;
 }
 
 async function projectPiiScanNow() {
@@ -2161,12 +2192,11 @@ function _projPiiPollScan() {
         _projPiiPollScan();
         return;
       }
+      // Nach Abschluss KEINE eigene Ergebnis-Zeile mehr — die Ampel-Status-
+      // Zeile + Zähler (Repaint unten) tragen den Zustand; eine zweite,
+      // schnell veraltende Textzeile war redundant/verwirrend. Fehler bleiben.
       if (statusEl) {
-        statusEl.textContent = scan.error
-          ? `Scan-Fehler: ${scan.error}`
-          : (scan.finished_at
-             ? `Scan fertig — ${scan.new_candidates || 0} neue offene Funde`
-             : '');
+        statusEl.textContent = scan.error ? `Scan-Fehler: ${scan.error}` : '';
       }
       await loadProjectPiiSection(p.agentId, p.projectName);
       if (document.getElementById('project-pii-modal').style.display !== 'none') {
@@ -2242,6 +2272,7 @@ async function projPiiDecide(id, status) {
     const row = (p.rows || []).find(r => r.id === id);
     if (row) row.status = status;
     p.counts = resp.counts || p.counts;
+    p.lastDecidedAt = Date.now() / 1000;
     _projPiiPaintSection();
     _projPiiRenderModal();
   } catch (e) {
@@ -2261,6 +2292,7 @@ async function projPiiBulk(status) {
       open.map(r => ({ id: r.id, status })));
     open.forEach(r => { r.status = status; });
     p.counts = resp.counts || p.counts;
+    p.lastDecidedAt = Date.now() / 1000;
     _projPiiPaintSection();
     _projPiiRenderModal();
   } catch (e) {
