@@ -38,7 +38,18 @@ const puppeteer = require(path.join(__dirname, 'node_modules', 'puppeteer'));
     await page.evaluate(() => (document.fonts ? document.fonts.ready : Promise.resolve()));
     const el = await page.$('svg');
     if (!el) throw new Error('no <svg> element after load');
-    await el.screenshot({ path: outPath, omitBackground: bg === 'transparent' });
+    // Chrome's compositor caps captures at 16384 physical px per side; beyond
+    // that the capture-beyond-viewport path TILES the paint and stacks the
+    // diagram twice into one PNG (seen with a tall graph at width 2800 ×
+    // scale 3 → 18918 physical px). Clamp the effective scale so BOTH sides
+    // stay under the cap, size the viewport to the whole element, and capture
+    // strictly in-viewport — a single clean paint at any diagram size.
+    const box = await el.boundingBox();
+    const cssH = Math.ceil((box && box.height) || 600);
+    const MAXPX = 16000;
+    const eff = Math.max(0.2, Math.min(scale, MAXPX / width, MAXPX / cssH));
+    await page.setViewport({ width, height: cssH, deviceScaleFactor: eff });
+    await el.screenshot({ path: outPath, omitBackground: bg === 'transparent', captureBeyondViewport: false });
   } finally {
     await browser.close();
   }

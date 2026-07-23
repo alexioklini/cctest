@@ -1540,12 +1540,15 @@ textarea { resize: none; }
   overflow-x: auto; }
 .xgrid-bar { position: sticky; top: 0; z-index: 2; display: flex; gap: 4px;
   align-items: center; padding: 6px 10px; background: var(--bg-000);
-  border-bottom: 1px solid var(--border-100); }
-.xgrid-tabs-inline { display: flex; gap: 4px; overflow-x: auto; }
+  border-bottom: 1px solid var(--border-100);
+  /* Schmales Panel: Undo/Suche brechen in eine zweite Zeile statt die
+     Sheet-Tabs zu quetschen (Screenshot-Befund: abgeschnittene Tabs). */
+  flex-wrap: wrap; row-gap: 4px; }
+.xgrid-tabs-inline { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
 .xgrid-search { font-family: var(--font-ui); font-size: 11px;
   background: var(--bg-100); color: var(--text-100);
   border: 1px solid var(--border-200); border-radius: 4px;
-  padding: 3px 8px; width: 160px; }
+  padding: 3px 8px; width: 160px; flex: 0 1 160px; min-width: 90px; }
 .xgrid-search:focus { outline: none; border-color: var(--accent-brand); }
 .xgrid-th { cursor: pointer; user-select: none; resize: horizontal;
   overflow: hidden; min-width: 40px; }
@@ -3304,6 +3307,11 @@ mark.gdpr-cleartext:hover {
   font-size: var(--font-body) !important;
 }
 #right-panel.open { display: flex; }
+/* Maximiert: das Panel übernimmt die komplette Chat-Fläche (Chat ausgeblendet,
+   Panel füllt den Rest neben der Sidebar). Toggle: toggleRightPanelMax(). */
+body.right-panel-max #main-content { display: none; }
+body.right-panel-max #right-panel { width: auto !important; max-width: none; flex: 1 1 auto; }
+body.right-panel-max .right-panel-resize-handle { display: none; }
 .right-panel-resize-handle {
   position: absolute; left: -3px; top: 0; bottom: 0; width: 6px;
   cursor: col-resize; z-index: 10; transition: background 0.15s;

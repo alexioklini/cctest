@@ -78,6 +78,14 @@ Panel wird beim Verlassen geschlossen. Tabs mit Inhalt:
   Eingabefeld und Frage-Antwort-Verlauf; stört die laufende Antwort nicht
   (siehe unten)
 
+**Maximieren** (9.405.0): Der ⤢-Knopf im Panel-Kopf (neben dem Schließen-✕)
+vergrößert das rechte Panel auf die **komplette Chat-Fläche** — ideal für
+breite Tabellen, HTML-Berichte oder Diagramme. Erneuter Klick (⤡) stellt die
+normale Ansicht wieder her; das Schließen des Panels hebt die Maximierung
+automatisch auf. Zusätzlich bricht die Werkzeugleiste der Tabellen-Ansicht
+(Blatt-Tabs, Rückgängig, Suche) in schmalen Panels jetzt mehrzeilig um, statt
+Tabs abzuschneiden.
+
 Neben dem **Panel**-Knopf erscheint zusätzlich eine kleine **Uhren-Pille mit
 Zähler**, sobald es Hintergrundaufgaben gibt — ein Klick öffnet direkt den
 Hintergrundaufgaben-Tab.

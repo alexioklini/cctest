@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.405.0",
+        "date": "2026-07-23",
+        "title": "Panel maximieren + Diagramm-Korrektur",
+        "body": "Das rechte Panel lässt sich jetzt per Knopf auf die komplette "
+                "Chat-Fläche vergrößern — ideal für breite Tabellen, "
+                "HTML-Berichte und Diagramme; die Tabellen-Werkzeugleiste "
+                "bricht in schmalen Panels sauber um, statt Blatt-Reiter "
+                "abzuschneiden. Zudem behoben: Sehr hohe Diagramme wurden im "
+                "Bild doppelt übereinander gerendert — sie erscheinen jetzt "
+                "immer einmal und vollständig.",
+        "audience": "user",
+        "versions": ["9.405.0"],
+    },
+    {
         "version": "9.404.0",
         "date": "2026-07-23",
         "title": "Symbole für alle Werkzeug-Aufrufe",

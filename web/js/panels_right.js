@@ -93,6 +93,22 @@ function toggleRightPanel() {
   else openRightPanel();
 }
 
+// Maximize: the panel takes over the FULL chat area (body class hides
+// #main-content, panel goes flex:1). Page-session state only; closing the
+// panel always un-maximizes (else the chat would stay hidden with no panel).
+function toggleRightPanelMax(force) {
+  const on = (force !== undefined) ? !!force
+    : !document.body.classList.contains('right-panel-max');
+  document.body.classList.toggle('right-panel-max', on);
+  state.rightPanelMax = on;
+  const btn = document.getElementById('right-panel-max-btn');
+  if (btn) btn.title = on ? 'Panel verkleinern' : 'Panel maximieren (volle Breite)';
+  const maxIco = document.getElementById('right-panel-max-ico');
+  const minIco = document.getElementById('right-panel-min-ico');
+  if (maxIco) maxIco.style.display = on ? 'none' : '';
+  if (minIco) minIco.style.display = on ? '' : 'none';
+}
+
 function syncRightPanelToggle() {
   const btn = document.getElementById('toggle-right-panel-btn');
   if (btn) btn.classList.toggle('active', state.rightPanelOpen);
@@ -125,6 +141,8 @@ function updateRightPanelButtonVisibility() {
 function closeRightPanel(userInitiated = false) {
   const panel = document.getElementById('right-panel');
   if (panel) panel.classList.remove('open');
+  // Never leave the chat hidden behind a closed panel.
+  if (typeof toggleRightPanelMax === 'function' && state.rightPanelMax) toggleRightPanelMax(false);
   state.rightPanelOpen = false;
   // A deliberate user close suppresses auto-open until reload. Programmatic
   // closes (e.g. switching sessions) leave the flag untouched.

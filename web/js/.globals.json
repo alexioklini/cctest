@@ -1785,6 +1785,7 @@
     "toggleRefPreview": "writable",
     "toggleResearchModeOverride": "writable",
     "toggleRightPanel": "writable",
+    "toggleRightPanelMax": "writable",
     "toggleSaveToMemory": "writable",
     "toggleSbAgentDropdown": "writable",
     "toggleSearchTool": "writable",
