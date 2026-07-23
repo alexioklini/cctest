@@ -1087,8 +1087,14 @@ write/exec tool is deliberately excluded.
   corporate palette, not the pastel Mermaid default). The ONLY opt-out is an
   explicit `theme=` arg (default/dark/forest/neutral → generic Mermaid theme).
   Chat ` ```mermaid ` blocks get the same design language client-side (app font,
-  light/dark-tuned palettes, live re-render on theme toggle). **Icons
-  (v9.402.0):** node labels may carry Font-Awesome-6 icons (`fa:fa-users Team`,
+  light/dark-tuned palettes, live re-render on theme toggle). **Gradients
+  (v9.403.0):** nodes cycle soft gradient fills + shadows (chat: the 8-slot
+  categorical palette; documents: the brand ramp — deliberately on-brand, not
+  rainbow). Mechanism: CSS paint-server fallback (`fill: url(#brainmmgN)
+  <flat>`) + injected `<defs>`; brand PNGs render svg-first and rasterize via
+  `diagram_render/rasterize.js` (puppeteer), falling back to direct mmdc (flat
+  tints) on any trouble. Single pipeline: `image_gen._run_mmdc_pipeline`.
+  **Icons (v9.402.0):** node labels may carry Font-Awesome-6 icons (`fa:fa-users Team`,
   `fa:fa-database Archiv`) — rendered in chat (vendored FA css, no CDN) AND in
   render_diagram/write_document outputs (mmdc `-C` with the self-contained
   `diagram_render/fa-inline.css`; SVG outputs get a fontTools-subset so the

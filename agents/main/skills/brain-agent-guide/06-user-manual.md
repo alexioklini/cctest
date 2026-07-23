@@ -2457,8 +2457,10 @@ schreibt oder löscht nie etwas.
 **F: Wie kommen die Diagramme im Chat und in Dokumenten zu ihrem Aussehen?**
 A: Diagramme (Ablaufpläne, Organigramme, Zeitpläne/Gantt, Torten- und
 Sequenzdiagramme) werden seit v9.401.0 überall in einem hochwertigen,
-einheitlichen Stil gezeichnet: abgerundete Formen mit dezentem Schatten,
-abgestimmte Farbpaletten und die passende Schrift. Im **Chat** folgen sie dem
+einheitlichen Stil gezeichnet: abgerundete Formen mit Schatten, seit v9.403.0
+sanfte Farbverläufe pro Knoten (im Chat bunt über die ganze Palette, in
+Dokumenten bewusst in der Farbfamilie der Dokumentvorlage) und die passende
+Schrift. Im **Chat** folgen sie dem
 Hell-/Dunkel-Modus der Oberfläche und werden beim Umschalten sofort neu
 gezeichnet. In **Dokumenten und Berichten** (write_document, Diagramm rendern,
 Deep-Research-Berichte) übernehmen sie automatisch Farben und Schrift der

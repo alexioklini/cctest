@@ -347,13 +347,13 @@ def _mix_hex(hex_a: str, hex_b: str, t: float) -> str:
 
 
 # Polish CSS injected into every themed diagram (mermaid `themeCSS`): rounded
-# node corners (SVG2 geometry via CSS — Chromium/mmdc supports it), a subtle
+# node corners (SVG2 geometry via CSS — Chromium/mmdc supports it), a soft
 # drop shadow for depth, 2px flowchart edges, dashed cluster frames, rounded
 # gantt bars + actor boxes. Selectors that don't match a diagram type are inert.
-_MERMAID_THEME_CSS = """
-.node rect, .node polygon, .node circle, .node ellipse {
+_MERMAID_BASE_CSS = """
+.node rect, .node polygon, .node circle, .node ellipse, .node path {
   stroke-width: 1.5px;
-  filter: drop-shadow(0 1.5px 2.5px rgba(15, 23, 42, 0.12));
+  filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.16));
 }
 .node rect { rx: 8px; ry: 8px; }
 .nodeLabel { font-weight: 500; }
@@ -362,7 +362,7 @@ _MERMAID_THEME_CSS = """
 .edgePath .path, .flowchart-link { stroke-width: 2px; }
 .edgeLabel { border-radius: 5px; }
 rect.actor { rx: 8px; ry: 8px; stroke-width: 1.5px;
-  filter: drop-shadow(0 1.5px 2.5px rgba(15, 23, 42, 0.12)); }
+  filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.16)); }
 text.actor > tspan { font-weight: 600; }
 .activation0, .activation1, .activation2 { rx: 3px; ry: 3px; }
 .task { rx: 4px; ry: 4px; }
@@ -370,6 +370,98 @@ text.actor > tspan { font-weight: 600; }
 .statediagram-state rect, g.stateGroup rect { rx: 8px; ry: 8px; }
 .er.entityBox { rx: 6px; ry: 6px; }
 """
+
+# Per-node gradient cycling (the infographic look): CSS paint-server fallback
+# syntax `fill: url(#brainmmgN) <flat>` — WITH the injected <defs> (SVG output +
+# the svg-first PNG pipeline) nodes get a real gradient; without them (direct
+# mmdc raster fallback) the flat tint applies. !important because mermaid's own
+# generated rules are #id-scoped (higher specificity).
+_MERMAID_GRAD_ID = "brainmmg"
+
+
+def _mermaid_cycle_css(ramp: list, heading: str) -> str:
+    n = len(ramp)
+    rules = []
+    for i, c in enumerate(ramp):
+        flat = _mix_hex(c, "#ffffff", 0.72)
+        stroke = _mix_hex(c, heading, 0.35)
+        sel = (f".nodes > .node:nth-child({n}n+{i+1}) rect, "
+               f".nodes > .node:nth-child({n}n+{i+1}) polygon, "
+               f".nodes > .node:nth-child({n}n+{i+1}) circle, "
+               f".nodes > .node:nth-child({n}n+{i+1}) ellipse, "
+               f".nodes > .node:nth-child({n}n+{i+1}) path")
+        rules.append(f"{sel} {{ fill: url(#{_MERMAID_GRAD_ID}{i}) {flat} !important; "
+                     f"stroke: {stroke} !important; }}")
+    rules.append(f"rect.actor {{ fill: url(#{_MERMAID_GRAD_ID}0) "
+                 f"{_mix_hex(ramp[0], '#ffffff', 0.72)} !important; }}")
+    return "\n".join(rules)
+
+
+def _mermaid_gradient_defs(ramp: list) -> str:
+    """<defs> with one diagonal light→base gradient per ramp color (fixed ids —
+    duplicates across several inlined SVGs on one page resolve identically)."""
+    g = []
+    for i, c in enumerate(ramp):
+        g.append(f'<linearGradient id="{_MERMAID_GRAD_ID}{i}" x1="0" y1="0" x2="1" y2="1">'
+                 f'<stop offset="0%" stop-color="{_mix_hex(c, "#ffffff", 0.82)}"/>'
+                 f'<stop offset="100%" stop-color="{_mix_hex(c, "#ffffff", 0.52)}"/>'
+                 f'</linearGradient>')
+    return "<defs>" + "".join(g) + "</defs>"
+
+
+def _inject_mermaid_defs_file(svg_path: str, ramp: list) -> bool:
+    """Insert the gradient <defs> right after the opening <svg …> tag of a
+    rendered file. Idempotent-ish (skips if our ids are already present)."""
+    try:
+        with open(svg_path, encoding="utf-8") as f:
+            svg = f.read()
+        if f'id="{_MERMAID_GRAD_ID}0"' in svg:
+            return True
+        m = re.search(r"<svg[^>]*>", svg)
+        if not m:
+            return False
+        svg = svg[:m.end()] + _mermaid_gradient_defs(ramp) + svg[m.end():]
+        with open(svg_path, "w", encoding="utf-8") as f:
+            f.write(svg)
+        return True
+    except Exception:
+        return False
+
+
+def _rasterize_svg(svg_path: str, out_path: str, width: int, scale: float,
+                   background: str, env: dict) -> bool:
+    """Rasterize a (post-processed) SVG file to PNG via the checked-in
+    diagram_render/rasterize.js (puppeteer — already a mermaid-cli dep).
+    Returns False on any trouble; the caller falls back to direct mmdc PNG."""
+    import subprocess
+    script = os.path.join(_diagram_render_dir(), "rasterize.js")
+    node = _working_node()
+    if not node or not os.path.isfile(script):
+        return False
+    try:
+        proc = subprocess.run(
+            [node, script, svg_path, out_path, str(width), str(scale), background],
+            capture_output=True, text=True, timeout=60, env=env)
+        return proc.returncode == 0 and os.path.exists(out_path)
+    except Exception:
+        return False
+
+
+def _brand_ramp(style: dict) -> list:
+    """The 6-step heading→accent→light ordinal ramp for a doc-style preset
+    (validated blend stops, see _mermaid_theme_config). Shared by the theme
+    config, the gradient-cycling CSS and the <defs> injection."""
+    colors = (style or {}).get("colors") or {}
+    accent = colors.get("accent") or colors.get("heading") or "#2E74B5"
+    heading = colors.get("heading") or accent
+    return [
+        heading,
+        _mix_hex(heading, accent, 0.5),
+        accent,
+        _mix_hex(accent, "#ffffff", 0.18),
+        _mix_hex(accent, "#ffffff", 0.34),
+        _mix_hex(accent, "#ffffff", 0.48),
+    ]
 
 
 def _mermaid_theme_config(style: dict) -> dict:
@@ -393,15 +485,7 @@ def _mermaid_theme_config(style: dict) -> dict:
     font = fonts.get("body") or "Helvetica"
     node_fill = _mix_hex(accent, "#ffffff", 0.90)
     line = _mix_hex(heading, "#ffffff", 0.28)
-    # Validated ordinal ramp, dark→light (see docstring).
-    ramp = [
-        heading,
-        _mix_hex(heading, accent, 0.5),
-        accent,
-        _mix_hex(accent, "#ffffff", 0.18),
-        _mix_hex(accent, "#ffffff", 0.34),
-        _mix_hex(accent, "#ffffff", 0.48),
-    ]
+    ramp = _brand_ramp(style)
     tv = {
         "fontFamily": f"{font}, Helvetica Neue, Helvetica, Arial, sans-serif",
         "fontSize": "16px",
@@ -480,7 +564,7 @@ def _mermaid_theme_config(style: dict) -> dict:
     return {
         "theme": "base",
         "themeVariables": tv,
-        "themeCSS": _MERMAID_THEME_CSS,
+        "themeCSS": _MERMAID_BASE_CSS + _mermaid_cycle_css(ramp, heading),
         "flowchart": {"curve": "basis", "nodeSpacing": 46, "rankSpacing": 56,
                       "padding": 12},
     }
@@ -597,6 +681,91 @@ def looks_like_mermaid(code: str) -> bool:
     return False
 
 
+def _run_mmdc_pipeline(code: str, out_path: str, *, fmt: str, theme: str,
+                       background: str, scale: float, width: int,
+                       mm_config: dict | None, ramp: list) -> tuple:
+    """SINGLE mermaid render pipeline (shared by render_mermaid_file and
+    tool_render_diagram). Returns (ok: bool, error_text: str).
+
+    Brand-themed renders get the infographic gradient treatment: the themeCSS
+    references per-node gradients with a flat-tint fallback; the <defs> that
+    make them real are injected POST-render (mmdc offers no defs hook). For
+    fmt=svg that's a file rewrite; for fmt=png the pipeline renders svg FIRST,
+    injects the defs, then rasterizes via diagram_render/rasterize.js
+    (puppeteer, already a mermaid-cli dep) — any trouble falls back to the
+    direct mmdc raster (flat tints, still colorful). pdf stays direct."""
+    import subprocess
+    import tempfile
+    mmdc = _mmdc_invocation()
+    if not mmdc:
+        return False, ("mermaid-cli not available — either it's not installed "
+                       "(run `cd diagram_render && npm install`) or no working "
+                       "Node was found")
+    tmp_in = tmp_conf = tmp_svg = None
+    fa_css, fa_tmp = None, False
+    try:
+        fd, tmp_in = tempfile.mkstemp(suffix=".mmd", prefix="brain-diagram-")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(code)
+        env = dict(os.environ)
+        # Puppeteer needs a writable home in the launchd sandbox; force the
+        # chosen node's bin dir to the FRONT of PATH for child processes.
+        env.setdefault("HOME", os.path.expanduser("~"))
+        _nodedir = os.path.dirname(mmdc[0]) if os.path.sep in mmdc[0] else ""
+        if _nodedir:
+            env["PATH"] = _nodedir + os.pathsep + env.get("PATH", "")
+        base = mmdc + ["-i", tmp_in, "-b", background]
+        if mm_config:
+            import json as _json
+            fd2, tmp_conf = tempfile.mkstemp(suffix=".json", prefix="brain-mmconf-")
+            with os.fdopen(fd2, "w", encoding="utf-8") as cf:
+                _json.dump(mm_config, cf)
+            base += ["-c", tmp_conf]
+        else:
+            base += ["-t", theme]
+        if mm_config and fmt == "png":
+            # Gradient path: svg-first (subset icon fonts embed INTO the svg,
+            # so the rasterizer sees them), inject defs, rasterize.
+            fd3, tmp_svg = tempfile.mkstemp(suffix=".svg", prefix="brain-diagram-")
+            os.close(fd3)
+            fa_css, fa_tmp = _fa_css_for(code, "svg")
+            cmd = base + ["-o", tmp_svg] + (["-C", fa_css] if fa_css else [])
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
+            if proc.returncode == 0 and os.path.exists(tmp_svg):
+                if (_inject_mermaid_defs_file(tmp_svg, ramp)
+                        and _rasterize_svg(tmp_svg, out_path, width, scale,
+                                           background, env)):
+                    return True, ""
+            if fa_tmp and fa_css:
+                try:
+                    os.remove(fa_css)
+                except OSError:
+                    pass
+            fa_css, fa_tmp = None, False
+        if fa_css is None:
+            fa_css, fa_tmp = _fa_css_for(code, fmt)
+        cmd = base + ["-o", out_path] + (["-C", fa_css] if fa_css else [])
+        if fmt in ("png", "pdf"):
+            cmd += ["-s", str(scale), "-w", str(width)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
+        if proc.returncode != 0 or not os.path.exists(out_path):
+            return False, (proc.stderr or proc.stdout or "unknown").strip()
+        if mm_config and fmt == "svg":
+            _inject_mermaid_defs_file(out_path, ramp)
+        return True, ""
+    except subprocess.TimeoutExpired:
+        return False, "render timed out (90s)"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+    finally:
+        for _tmp in (tmp_in, tmp_conf, tmp_svg, fa_css if fa_tmp else None):
+            if _tmp:
+                try:
+                    os.remove(_tmp)
+                except OSError:
+                    pass
+
+
 def render_mermaid_file(code: str, *, out_path: str, full_style: dict | None = None,
                         fmt: str = "png", theme: str | None = None,
                         background: str = "white", scale: float = 4.0,
@@ -604,57 +773,20 @@ def render_mermaid_file(code: str, *, out_path: str, full_style: dict | None = N
     """Render Mermaid `code` to `out_path` via mermaid-cli. Returns out_path on
     success, None on any failure (caller falls back). Shared by tool_render_diagram
     and the write_document auto-embed path so both render identically (same brand
-    theming, high-DPI raster, working-node PATH fix)."""
-    import subprocess
-    import tempfile
-    mmdc = _mmdc_invocation()
-    if not mmdc:
-        return None
-    _mm_config = None
+    theming + gradients, high-DPI raster, working-node PATH fix)."""
+    mm_config = None
     if not explicit_theme:
-        _mm_config = _mermaid_theme_config(full_style or {})
+        mm_config = _mermaid_theme_config(full_style or {})
     theme = (theme or "default").lower()
     if theme not in ("default", "dark", "forest", "neutral"):
         theme = "default"
     if background not in ("transparent", "white"):
         background = "white"
-    tmp_in = tmp_conf = None
-    fa_css, fa_tmp = _fa_css_for(code, fmt)
-    try:
-        fd, tmp_in = tempfile.mkstemp(suffix=".mmd", prefix="brain-diagram-")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(code)
-        cmd = mmdc + ["-i", tmp_in, "-o", out_path, "-b", background]
-        if _mm_config:
-            import json as _json
-            fd2, tmp_conf = tempfile.mkstemp(suffix=".json", prefix="brain-mmconf-")
-            with os.fdopen(fd2, "w", encoding="utf-8") as cf:
-                _json.dump(_mm_config, cf)
-            cmd += ["-c", tmp_conf]
-        else:
-            cmd += ["-t", theme]
-        if fa_css:
-            cmd += ["-C", fa_css]
-        if fmt in ("png", "pdf"):
-            cmd += ["-s", str(scale), "-w", str(width)]
-        env = dict(os.environ)
-        env.setdefault("HOME", os.path.expanduser("~"))
-        _nodedir = os.path.dirname(mmdc[0]) if mmdc and os.path.sep in mmdc[0] else ""
-        if _nodedir:
-            env["PATH"] = _nodedir + os.pathsep + env.get("PATH", "")
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
-        if proc.returncode != 0 or not os.path.exists(out_path):
-            return None
-        return out_path
-    except Exception:
-        return None
-    finally:
-        for _tmp in (tmp_in, tmp_conf, fa_css if fa_tmp else None):
-            if _tmp:
-                try:
-                    os.remove(_tmp)
-                except OSError:
-                    pass
+    ok, _err_text = _run_mmdc_pipeline(code, out_path, fmt=fmt, theme=theme,
+                                       background=background, scale=scale,
+                                       width=width, mm_config=mm_config,
+                                       ramp=_brand_ramp(full_style or {}))
+    return out_path if ok else None
 
 
 def tool_render_diagram(args: dict) -> str:
@@ -764,54 +896,16 @@ def tool_render_diagram(args: dict) -> str:
     if not args.get("theme"):
         _mm_config = _mermaid_theme_config(_full_style)
 
-    # mmdc reads a source file; spill the code to a tempfile.
-    tmp_in = None
-    tmp_conf = None
-    fa_css, fa_tmp = _fa_css_for(code, fmt)
-    try:
-        fd, tmp_in = tempfile.mkstemp(suffix=".mmd", prefix="brain-diagram-")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(code)
-        cmd = mmdc + ["-i", tmp_in, "-o", save_path, "-b", bg]
-        if _mm_config:
-            import json as _json
-            fd2, tmp_conf = tempfile.mkstemp(suffix=".json", prefix="brain-mmconf-")
-            with os.fdopen(fd2, "w", encoding="utf-8") as cf:
-                _json.dump(_mm_config, cf)
-            cmd += ["-c", tmp_conf]
-        else:
-            cmd += ["-t", theme]
-        if fa_css:
-            cmd += ["-C", fa_css]
-        # High-DPI raster (PNG); also widen PDF. SVG ignores these (vector).
-        if fmt in ("png", "pdf"):
-            cmd += ["-s", str(scale), "-w", str(width)]
-        env = dict(os.environ)
-        # Puppeteer needs a writable home for its cache in the launchd sandbox.
-        env.setdefault("HOME", os.path.expanduser("~"))
-        # Force the chosen node's own bin dir to the FRONT of PATH so any child
-        # `node`/`npm` mmdc spawns also uses the working node, not broken
-        # homebrew node (the libllhttp.9.3 dyld error).
-        _nodedir = os.path.dirname(mmdc[0]) if mmdc and os.path.sep in mmdc[0] else ""
-        if _nodedir:
-            env["PATH"] = _nodedir + os.pathsep + env.get("PATH", "")
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90, env=env)
-        if proc.returncode != 0 or not os.path.exists(save_path):
-            err = (proc.stderr or proc.stdout or "unknown").strip()
-            # Mermaid syntax errors come back here — surface them so the model
-            # can fix the diagram source and retry.
-            return _err(f"render_diagram: render failed — {err[:500]}")
-    except subprocess.TimeoutExpired:
-        return _err("render_diagram: render timed out (90s)")
-    except Exception as e:
-        return _err(f"render_diagram: {type(e).__name__}: {e}")
-    finally:
-        for _tmp in (tmp_in, tmp_conf, fa_css if fa_tmp else None):
-            if _tmp:
-                try:
-                    os.remove(_tmp)
-                except OSError:
-                    pass
+    # Shared pipeline (same as render_mermaid_file): brand theming, fa-icon css,
+    # gradient defs injection, svg-first PNG rasterization with direct fallback.
+    # Mermaid syntax errors come back in `err_text` — surfaced so the model can
+    # fix the diagram source and retry.
+    ok, err_text = _run_mmdc_pipeline(code, save_path, fmt=fmt, theme=theme,
+                                      background=bg, scale=scale, width=width,
+                                      mm_config=_mm_config,
+                                      ramp=_brand_ramp(_full_style))
+    if not ok:
+        return _err(f"render_diagram: render failed — {err_text[:500]}")
 
     brain._after_file_write(save_path, "created", agent_id_local)
     size_kb = os.path.getsize(save_path) // 1024

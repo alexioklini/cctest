@@ -1604,9 +1604,9 @@ function _ensureMermaid() {
   // Polish CSS injected into every diagram SVG. Selectors that don't match a
   // diagram type are inert. The .slice halo (paint-order stroke) keeps white
   // pie percentages readable on light AND dark slices.
-  const themeCSS = `
-    .node rect, .node polygon, .node circle, .node ellipse {
-      stroke-width: 1.5px; filter: drop-shadow(0 1.5px 2.5px ${p.shadow}); }
+  let themeCSS = `
+    .node rect, .node polygon, .node circle, .node ellipse, .node path {
+      stroke-width: 1.5px; filter: drop-shadow(0 2px 4px ${p.shadow}); }
     .node rect { rx: 8px; ry: 8px; }
     .nodeLabel { font-weight: 500; }
     .cluster rect { rx: 10px; ry: 10px; stroke-width: 1.2px; stroke-dasharray: 6 4; filter: none; }
@@ -1614,7 +1614,7 @@ function _ensureMermaid() {
     .edgePath .path, .flowchart-link { stroke-width: 2px; }
     .edgeLabel { border-radius: 5px; }
     rect.actor { rx: 8px; ry: 8px; stroke-width: 1.5px;
-      filter: drop-shadow(0 1.5px 2.5px ${p.shadow}); }
+      filter: drop-shadow(0 2px 4px ${p.shadow}); }
     text.actor > tspan { font-weight: 600; }
     .activation0, .activation1, .activation2 { rx: 3px; ry: 3px; }
     .task { rx: 4px; ry: 4px; }
@@ -1623,6 +1623,44 @@ function _ensureMermaid() {
     .er.entityBox { rx: 6px; ry: 6px; }
     .slice { paint-order: stroke; stroke: rgba(15, 23, 42, 0.55);
       stroke-width: 2.5px; stroke-linejoin: round; }`;
+  // Infographic gradients: cycle the categorical palette across flowchart/state
+  // nodes via CSS paint-server fallback (`fill: url(#id) <flat>` — gradient when
+  // the shared <defs> below exist, flat tint otherwise, e.g. old Safari).
+  // !important because mermaid's own generated rules are #id-scoped.
+  const mix = (a, b, t) => {
+    const ah = a.replace('#', ''), bh = b.replace('#', '');
+    const v = (o) => Math.round(parseInt(ah.substr(o, 2), 16) +
+      (parseInt(bh.substr(o, 2), 16) - parseInt(ah.substr(o, 2), 16)) * t);
+    return '#' + [0, 2, 4].map(o => v(o).toString(16).padStart(2, '0')).join('');
+  };
+  const gradStops = [];
+  cat.forEach((c, i) => {
+    const flat = dark ? mix(c, p.surface, 0.62) : mix(c, '#ffffff', 0.72);
+    const s0 = dark ? mix(c, p.surface, 0.40) : mix(c, '#ffffff', 0.82);
+    const s1 = dark ? mix(c, p.surface, 0.68) : mix(c, '#ffffff', 0.52);
+    gradStops.push([s0, s1]);
+    const sel = `.nodes > .node:nth-child(8n+${i + 1})`;
+    themeCSS += `
+    ${sel} rect, ${sel} polygon, ${sel} circle, ${sel} ellipse, ${sel} path {
+      fill: url(#brainmmg${i}) ${flat} !important; stroke: ${c} !important; }`;
+  });
+  themeCSS += `
+    rect.actor { fill: url(#brainmmg0) ${dark ? mix(cat[0], p.surface, 0.62) : mix(cat[0], '#ffffff', 0.72)} !important; }`;
+  // Shared document-level <defs> the url(#brainmmgN) references resolve to
+  // (one hidden svg serves every diagram on the page; rebuilt per theme).
+  try {
+    const old = document.getElementById('brain-mermaid-defs');
+    if (old) old.remove();
+    const holder = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    holder.id = 'brain-mermaid-defs';
+    holder.setAttribute('aria-hidden', 'true');
+    holder.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+    holder.innerHTML = '<defs>' + gradStops.map(([s0, s1], i) =>
+      `<linearGradient id="brainmmg${i}" x1="0" y1="0" x2="1" y2="1">` +
+      `<stop offset="0%" stop-color="${s0}"/><stop offset="100%" stop-color="${s1}"/>` +
+      '</linearGradient>').join('') + '</defs>';
+    document.body.appendChild(holder);
+  } catch (_) {}
   try {
     mermaid.initialize({
       startOnLoad: false, securityLevel: 'strict',

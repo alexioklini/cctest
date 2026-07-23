@@ -29,24 +29,24 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
-        "version": "9.402.0",
+        "version": "9.403.0",
         "date": "2026-07-23",
         "title": "Deutlich schönere Diagramme und Infografiken",
         "body": "Diagramme (Ablaufpläne, Organigramme, Zeitpläne, Torten- und "
                 "Sequenzdiagramme) sehen jetzt überall hochwertig und "
-                "professionell aus: abgerundete Formen mit dezentem Schatten, "
-                "kräftige, aufeinander abgestimmte Farben und die passende "
-                "Schrift — im Chat wie in erzeugten Dokumenten und Berichten, "
-                "die automatisch das Erscheinungsbild Ihrer Dokumentvorlage "
-                "übernehmen. Im Chat folgen Diagramme dem Hell-/Dunkel-Modus "
-                "und werden beim Umschalten sofort neu gezeichnet. Neu dazu: "
-                "Symbole in Diagrammknoten (z. B. Personen, Datenbank, "
-                "Schutzschild) und Infografik-Elemente in HTML-Berichten — "
-                "Ring-Diagramme mit Beschriftungs-Badges und Titel im Zentrum, "
-                "Trichter-Grafiken und nummerierte Prozess-Schritte, jeweils "
-                "mit Symbolen und Werten.",
+                "professionell aus: Knoten mit sanften Farbverläufen und "
+                "Schatten — im Chat in einer abwechslungsreichen, gut "
+                "unterscheidbaren Farbpalette, in Dokumenten und Berichten "
+                "automatisch in den Farben und der Schrift Ihrer "
+                "Dokumentvorlage. Im Chat folgen Diagramme dem Hell-/"
+                "Dunkel-Modus und werden beim Umschalten sofort neu "
+                "gezeichnet. Dazu: Symbole in Diagrammknoten (z. B. Personen, "
+                "Datenbank, Schutzschild) und Infografik-Elemente in "
+                "HTML-Berichten — Ring-Diagramme mit Beschriftungs-Badges und "
+                "Titel im Zentrum, Trichter-Grafiken und nummerierte "
+                "Prozess-Schritte, jeweils mit Symbolen und Werten.",
         "audience": "user",
-        "versions": ["9.401.0", "9.402.0"],
+        "versions": ["9.401.0", "9.402.0", "9.403.0"],
     },
     {
         "version": "9.400.0",
