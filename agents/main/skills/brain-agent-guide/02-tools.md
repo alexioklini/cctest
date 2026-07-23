@@ -1076,13 +1076,18 @@ write/exec tool is deliberately excluded.
   2000) and embeds in PDF, DOCX AND HTML — take the default for reports. SVG is
   available (`format=svg`) but embeds in HTML ONLY (the PDF/DOCX writers cannot
   place an SVG → emit a "render as PNG" placeholder). write_document embeds
-  `![](file)` PNG/JPG images as real pictures in docx/pptx/pdf. **Brand styling:**
-  diagrams automatically take the doc-style preset's brand colors + font (node
-  fills/borders/edges/pie palette derived from `colors.accent`/`colors.heading`,
-  font from `fonts.body`) so they match the report — even when no `style=` is
-  passed (the default preset resolves like write_document). Pass an explicit
-  `theme=` (default/dark/forest/neutral) to use a generic Mermaid theme instead,
-  or `style=""` to opt out of brand colors.
+  `![](file)` PNG/JPG images as real pictures in docx/pptx/pdf. **Brand styling
+  (premium look since v9.401.0):** diagrams automatically take the doc-style
+  preset's brand colors + font (node fills/borders/edges + a validated 6-step
+  heading→accent series palette derived from `colors.accent`/`colors.heading`,
+  font from `fonts.body`) PLUS a polish layer (rounded corners, subtle shadow,
+  weighted edges, full-opacity pie slices with white gaps, styled gantt/sequence)
+  so they match the report — even when no `style=` is passed (the default preset
+  resolves like write_document; a preset WITHOUT colors falls back to the built-in
+  corporate palette, not the pastel Mermaid default). The ONLY opt-out is an
+  explicit `theme=` arg (default/dark/forest/neutral → generic Mermaid theme).
+  Chat ` ```mermaid ` blocks get the same design language client-side (app font,
+  light/dark-tuned palettes, live re-render on theme toggle).
 
 ## Nodes (distributed compute)
 

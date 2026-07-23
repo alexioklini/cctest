@@ -1539,17 +1539,112 @@ function renderStreamingMessage(chat) {
   });
 }
 // One-time mermaid init (theme-aware, manual render — we call run() ourselves).
+// Premium look, same design language as the server-side mmdc path
+// (image_gen._mermaid_theme_config): theme 'base' + full themeVariables from
+// the app palette, themeCSS polish (rounded corners, soft shadows, weighted
+// edges), and a CVD-validated 8-slot categorical palette (fixed order) for
+// pie / timeline / mindmap / gitgraph. Dark mode is its own tuned set, not a
+// color flip. NB: the app theme lives in <html data-mode> (init.js setTheme).
 let _mermaidReady = false;
 function _ensureMermaid() {
   if (_mermaidReady || typeof mermaid === 'undefined') return _mermaidReady;
-  const dark = document.body.classList.contains('theme-dark') ||
-               document.documentElement.getAttribute('data-theme') === 'dark';
+  const dark = (document.documentElement.getAttribute('data-mode') || 'light') === 'dark';
+  const font = (getComputedStyle(document.documentElement).getPropertyValue('--font-ui') || '').trim()
+               || 'system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+  // Validated categorical slots (dataviz palette; light + dark steps).
+  const cat = dark
+    ? ['#3987e5', '#008300', '#d55181', '#c98500', '#199e70', '#d95926', '#9085e9', '#e66767']
+    : ['#2a78d6', '#008300', '#e87ba4', '#eda100', '#1baf7a', '#eb6834', '#4a3aa7', '#e34948'];
+  const accent = cat[0];
+  const p = dark ? {
+    surface: '#232327', nodeFill: '#26344a', text: '#eaeaec', muted: '#b4b4b8',
+    line: '#94a0b4', clusterBkg: '#2a2b31', clusterBorder: '#4a5468',
+    noteBkg: '#3a3320', noteBorder: '#8a7a3a', noteText: '#eaeaec',
+    grid: '#3c3d43', section: '#2a2b31', done: '#4a4d55', doneBorder: '#6a6d75',
+    activation: '#31445f', taskBorder: '#5ea0ec', shadow: 'rgba(0, 0, 0, 0.40)'
+  } : {
+    surface: '#ffffff', nodeFill: '#eaf2fc', text: '#141415', muted: '#3c3c3f',
+    line: '#5c6b81', clusterBkg: '#f6f9fd', clusterBorder: '#c9dcf3',
+    noteBkg: '#fff7dc', noteBorder: '#e3c65f', noteText: '#4a3f14',
+    grid: '#d9dee6', section: '#eef3fa', done: '#d5dbe4', doneBorder: '#9aa4b4',
+    activation: '#d4e4f7', taskBorder: '#1c5cab', shadow: 'rgba(15, 23, 42, 0.12)'
+  };
+  const tv = {
+    fontFamily: font, fontSize: '15px', background: p.surface,
+    primaryColor: p.nodeFill, primaryBorderColor: accent, primaryTextColor: p.text,
+    secondaryColor: p.clusterBkg, secondaryBorderColor: cat[6], secondaryTextColor: p.text,
+    tertiaryColor: p.section, tertiaryBorderColor: p.clusterBorder, tertiaryTextColor: p.text,
+    lineColor: p.line, textColor: p.muted, titleColor: p.text,
+    edgeLabelBackground: p.surface, nodeTextColor: p.text,
+    clusterBkg: p.clusterBkg, clusterBorder: p.clusterBorder,
+    noteBkgColor: p.noteBkg, noteBorderColor: p.noteBorder, noteTextColor: p.noteText,
+    // Sequence
+    actorBkg: p.nodeFill, actorBorder: accent, actorTextColor: p.text,
+    actorLineColor: p.line, signalColor: p.line, signalTextColor: p.muted,
+    activationBkgColor: p.activation, activationBorderColor: accent,
+    labelBoxBkgColor: p.clusterBkg, labelBoxBorderColor: p.clusterBorder,
+    labelTextColor: p.text, loopTextColor: p.text, sequenceNumberColor: '#ffffff',
+    // Gantt
+    sectionBkgColor: p.section, sectionBkgColor2: p.surface, altSectionBkgColor: p.surface,
+    taskBkgColor: accent, taskBorderColor: p.taskBorder,
+    taskTextColor: '#ffffff', taskTextLightColor: '#ffffff',
+    taskTextDarkColor: p.text, taskTextOutsideColor: p.muted,
+    activeTaskBkgColor: p.activation, activeTaskBorderColor: accent,
+    doneTaskBkgColor: p.done, doneTaskBorderColor: p.doneBorder,
+    critBkgColor: '#d03b3b', critBorderColor: '#8f2323',
+    todayLineColor: cat[7], gridColor: p.grid,
+    // Pie: full-opacity slices, surface-colored gaps (the stock 0.7 opacity
+    // is a big part of the washed-out default look).
+    pieOpacity: '1', pieStrokeColor: p.surface, pieStrokeWidth: '2px',
+    pieOuterStrokeColor: p.surface, pieOuterStrokeWidth: '2px',
+    pieTitleTextSize: '17px', pieSectionTextColor: '#ffffff',
+    pieSectionTextSize: '14px', pieLegendTextSize: '13px'
+  };
+  cat.forEach((c, i) => { tv['pie' + (i + 1)] = c; tv['cScale' + i] = c; tv['git' + i] = c; });
+  // Polish CSS injected into every diagram SVG. Selectors that don't match a
+  // diagram type are inert. The .slice halo (paint-order stroke) keeps white
+  // pie percentages readable on light AND dark slices.
+  const themeCSS = `
+    .node rect, .node polygon, .node circle, .node ellipse {
+      stroke-width: 1.5px; filter: drop-shadow(0 1.5px 2.5px ${p.shadow}); }
+    .node rect { rx: 8px; ry: 8px; }
+    .nodeLabel { font-weight: 500; }
+    .cluster rect { rx: 10px; ry: 10px; stroke-width: 1.2px; stroke-dasharray: 6 4; filter: none; }
+    .cluster-label .nodeLabel, .cluster-label span { font-weight: 700; }
+    .edgePath .path, .flowchart-link { stroke-width: 2px; }
+    .edgeLabel { border-radius: 5px; }
+    rect.actor { rx: 8px; ry: 8px; stroke-width: 1.5px;
+      filter: drop-shadow(0 1.5px 2.5px ${p.shadow}); }
+    text.actor > tspan { font-weight: 600; }
+    .activation0, .activation1, .activation2 { rx: 3px; ry: 3px; }
+    .task { rx: 4px; ry: 4px; }
+    .grid .tick line { stroke-dasharray: 3 3; }
+    .statediagram-state rect, g.stateGroup rect { rx: 8px; ry: 8px; }
+    .er.entityBox { rx: 6px; ry: 6px; }
+    .slice { paint-order: stroke; stroke: rgba(15, 23, 42, 0.55);
+      stroke-width: 2.5px; stroke-linejoin: round; }`;
   try {
-    mermaid.initialize({ startOnLoad: false, securityLevel: 'strict',
-                         theme: dark ? 'dark' : 'default' });
+    mermaid.initialize({
+      startOnLoad: false, securityLevel: 'strict',
+      theme: 'base', themeVariables: tv, themeCSS,
+      flowchart: { curve: 'basis', nodeSpacing: 46, rankSpacing: 56, padding: 12 }
+    });
     _mermaidReady = true;
   } catch (_) {}
   return _mermaidReady;
+}
+
+// Re-init + re-render all mermaid diagrams after a light/dark toggle (called
+// by setTheme, guarded). SVG colors are baked in at render time; each container
+// keeps its source in data-mermaid, so the re-render is lossless.
+function mermaidRetheme() {
+  if (typeof mermaid === 'undefined') return;
+  _mermaidReady = false;
+  document.querySelectorAll('.mermaid-diagram[data-rendered]').forEach(el => {
+    el.removeAttribute('data-rendered');
+    el.innerHTML = '';
+  });
+  renderMermaidBlocks(document);
 }
 
 // Render any .mermaid-diagram containers inside `root` into SVG. Each holds its

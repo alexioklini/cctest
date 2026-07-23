@@ -12,6 +12,9 @@ function setTheme(mode) {
   // Re-theme the code-mode terminal (xterm reads CSS vars at construct time;
   // re-apply so a live terminal follows the light/dark switch).
   if (typeof terminalRetheme === 'function') terminalRetheme();
+
+  // Re-render mermaid diagrams (SVG colors are baked in at render time).
+  if (typeof mermaidRetheme === 'function') mermaidRetheme();
 }
 
 function toggleTheme() {

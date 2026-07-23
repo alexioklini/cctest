@@ -346,68 +346,144 @@ def _mix_hex(hex_a: str, hex_b: str, t: float) -> str:
         return hex_b
 
 
-def _mermaid_theme_config(style: dict) -> dict | None:
-    """Build a Mermaid init config (theme='base' + themeVariables) from a doc-style
-    preset so diagrams carry the document's BRAND colors + font instead of
-    Mermaid's generic pastel defaults. Returns None when the preset has no usable
-    colors (caller then falls back to the named built-in theme).
+# Polish CSS injected into every themed diagram (mermaid `themeCSS`): rounded
+# node corners (SVG2 geometry via CSS — Chromium/mmdc supports it), a subtle
+# drop shadow for depth, 2px flowchart edges, dashed cluster frames, rounded
+# gantt bars + actor boxes. Selectors that don't match a diagram type are inert.
+_MERMAID_THEME_CSS = """
+.node rect, .node polygon, .node circle, .node ellipse {
+  stroke-width: 1.5px;
+  filter: drop-shadow(0 1.5px 2.5px rgba(15, 23, 42, 0.12));
+}
+.node rect { rx: 8px; ry: 8px; }
+.nodeLabel { font-weight: 500; }
+.cluster rect { rx: 10px; ry: 10px; stroke-width: 1.2px; stroke-dasharray: 6 4; filter: none; }
+.cluster-label .nodeLabel, .cluster-label span { font-weight: 700; }
+.edgePath .path, .flowchart-link { stroke-width: 2px; }
+.edgeLabel { border-radius: 5px; }
+rect.actor { rx: 8px; ry: 8px; stroke-width: 1.5px;
+  filter: drop-shadow(0 1.5px 2.5px rgba(15, 23, 42, 0.12)); }
+text.actor > tspan { font-weight: 600; }
+.activation0, .activation1, .activation2 { rx: 3px; ry: 3px; }
+.task { rx: 4px; ry: 4px; }
+.grid .tick line { stroke-dasharray: 3 3; }
+.statediagram-state rect, g.stateGroup rect { rx: 8px; ry: 8px; }
+.er.entityBox { rx: 6px; ry: 6px; }
+"""
 
-    Maps the preset's two brand colors (accent + heading) and body color/font
-    onto the Mermaid theme variables that actually move the needle: node fills/
-    borders/text, edge/line color, and a 6-step pie palette derived by blending
-    heading→accent→white so slices stay on-brand and distinguishable.
+
+def _mermaid_theme_config(style: dict) -> dict:
+    """Build a full Mermaid init config (theme='base' + themeVariables + themeCSS
+    + layout knobs) from a doc-style preset so diagrams carry the document's
+    BRAND colors + font — polished (shadows, rounded corners, weighted edges)
+    instead of Mermaid's generic pastel defaults. A preset without colors gets
+    the built-in corporate palette (navy/blue) rather than the pastel default —
+    the plain built-in themes are only reachable via an EXPLICIT theme arg.
+
+    Series palette (pie slices, timeline/mindmap sections, git branches): a
+    6-step heading→accent→light ordinal ramp; the blend stops were validated
+    (monotone lightness, adjacent ΔL ≥ 0.06, light end ≥ 2:1 on white) for the
+    corporate pair — the same stops hold structurally for other brand pairs.
     """
     colors = (style or {}).get("colors") or {}
     fonts = (style or {}).get("fonts") or {}
-    accent = colors.get("accent")
+    accent = colors.get("accent") or colors.get("heading") or "#2E74B5"
     heading = colors.get("heading") or accent
     body = colors.get("body") or "#222222"
-    if not accent and not heading:
-        return None
-    accent = accent or heading
-    heading = heading or accent
     font = fonts.get("body") or "Helvetica"
-    # Node fill: a light tint of the accent (blend toward white) so dark text reads.
-    node_fill = _mix_hex(accent, "#ffffff", 0.82)
-    node_fill2 = _mix_hex(accent, "#ffffff", 0.70)
-    node_fill3 = _mix_hex(accent, "#ffffff", 0.90)
-    # Pie/series palette: heading → accent → light, 6 steps, dark→light so a
-    # legend reads top-to-bottom and adjacent slices stay distinct.
-    pie = [
+    node_fill = _mix_hex(accent, "#ffffff", 0.90)
+    line = _mix_hex(heading, "#ffffff", 0.28)
+    # Validated ordinal ramp, dark→light (see docstring).
+    ramp = [
         heading,
+        _mix_hex(heading, accent, 0.5),
         accent,
-        _mix_hex(accent, "#ffffff", 0.35),
-        _mix_hex(accent, "#ffffff", 0.58),
-        _mix_hex(accent, "#ffffff", 0.78),
-        _mix_hex(heading, "#ffffff", 0.50),
+        _mix_hex(accent, "#ffffff", 0.18),
+        _mix_hex(accent, "#ffffff", 0.34),
+        _mix_hex(accent, "#ffffff", 0.48),
     ]
     tv = {
-        "fontFamily": f"{font}, Helvetica, Arial, sans-serif",
+        "fontFamily": f"{font}, Helvetica Neue, Helvetica, Arial, sans-serif",
         "fontSize": "16px",
+        "background": "#ffffff",
         "primaryColor": node_fill,
-        "primaryBorderColor": heading,
+        "primaryBorderColor": accent,
         "primaryTextColor": body,
-        "secondaryColor": node_fill2,
-        "secondaryBorderColor": accent,
+        "secondaryColor": _mix_hex(heading, "#ffffff", 0.88),
+        "secondaryBorderColor": heading,
         "secondaryTextColor": body,
-        "tertiaryColor": node_fill3,
-        "tertiaryBorderColor": accent,
+        "tertiaryColor": "#f5f7fa",
+        "tertiaryBorderColor": _mix_hex(accent, "#ffffff", 0.55),
         "tertiaryTextColor": body,
-        "lineColor": accent,
+        "lineColor": line,
         "textColor": body,
         "titleColor": heading,
-        # Pie-specific knobs (Mermaid reads pieN + stroke/title vars).
-        "pieStrokeColor": heading,
-        "pieStrokeWidth": "1px",
-        "pieOuterStrokeColor": heading,
-        "pieOuterStrokeWidth": "1px",
+        "edgeLabelBackground": "#ffffff",
+        "clusterBkg": _mix_hex(accent, "#ffffff", 0.955),
+        "clusterBorder": _mix_hex(accent, "#ffffff", 0.62),
+        "nodeTextColor": body,
+        # Notes (sequence/state): conventional soft yellow, brand-independent.
+        "noteBkgColor": "#fff7dc",
+        "noteBorderColor": "#e3c65f",
+        "noteTextColor": "#4a3f14",
+        # Sequence diagrams.
+        "actorBkg": node_fill,
+        "actorBorder": accent,
+        "actorTextColor": heading,
+        "actorLineColor": _mix_hex(heading, "#ffffff", 0.55),
+        "signalColor": line,
+        "signalTextColor": body,
+        "activationBkgColor": _mix_hex(accent, "#ffffff", 0.72),
+        "activationBorderColor": accent,
+        "labelBoxBkgColor": _mix_hex(accent, "#ffffff", 0.92),
+        "labelBoxBorderColor": _mix_hex(accent, "#ffffff", 0.5),
+        "labelTextColor": heading,
+        "loopTextColor": heading,
+        "sequenceNumberColor": "#ffffff",
+        # Gantt.
+        "sectionBkgColor": _mix_hex(accent, "#ffffff", 0.93),
+        "sectionBkgColor2": _mix_hex(accent, "#ffffff", 0.965),
+        "altSectionBkgColor": "#ffffff",
+        "taskBkgColor": accent,
+        "taskBorderColor": heading,
+        # In-bar text sits on the accent fill → white; active/done bars are
+        # light → mermaid switches those to taskTextDarkColor (body).
+        "taskTextColor": "#ffffff",
+        "taskTextLightColor": "#ffffff",
+        "taskTextDarkColor": body,
+        "taskTextOutsideColor": body,
+        "activeTaskBkgColor": _mix_hex(accent, "#ffffff", 0.42),
+        "activeTaskBorderColor": accent,
+        "doneTaskBkgColor": _mix_hex(heading, "#ffffff", 0.75),
+        "doneTaskBorderColor": _mix_hex(heading, "#ffffff", 0.45),
+        "critBkgColor": "#d03b3b",
+        "critBorderColor": "#8f2323",
+        "todayLineColor": "#d03b3b",
+        "gridColor": _mix_hex(heading, "#ffffff", 0.82),
+        # Pie: full-opacity slices with white gaps (the default 0.7 opacity is
+        # a big part of the washed-out stock look).
+        "pieOpacity": "1",
+        "pieStrokeColor": "#ffffff",
+        "pieStrokeWidth": "2px",
+        "pieOuterStrokeColor": "#ffffff",
+        "pieOuterStrokeWidth": "2px",
         "pieTitleTextSize": "18px",
         "pieSectionTextColor": "#ffffff",
-        "pieLegendTextSize": "15px",
+        "pieSectionTextSize": "15px",
+        "pieLegendTextSize": "14px",
     }
-    for _i, _c in enumerate(pie, start=1):
+    for _i, _c in enumerate(ramp, start=1):
         tv[f"pie{_i}"] = _c
-    return {"theme": "base", "themeVariables": tv}
+    for _i, _c in enumerate(ramp):
+        tv[f"cScale{_i}"] = _c            # timeline / mindmap sections
+        tv[f"git{_i}"] = _c               # gitgraph branches
+    return {
+        "theme": "base",
+        "themeVariables": tv,
+        "themeCSS": _MERMAID_THEME_CSS,
+        "flowchart": {"curve": "basis", "nodeSpacing": 46, "rankSpacing": 56,
+                      "padding": 12},
+    }
 
 
 _MERMAID_DIAGRAM_KEYWORDS = (
@@ -520,7 +596,8 @@ def tool_render_diagram(args: dict) -> str:
     # (default/neutral/forest) ignore brand color entirely, which is why default
     # diagrams look cheap. A preset is resolved even when none is named, so report
     # diagrams pick up the corporate look by default (mirrors write_document's
-    # _resolve_default_style); pass style="" / a non-existent name to opt out.
+    # _resolve_default_style); style=""/unknown falls back to the built-in brand
+    # palette — only an EXPLICIT theme arg opts out of the polished config.
     _style_mermaid = {}
     _full_style = {}
     try:

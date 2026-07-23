@@ -2454,6 +2454,18 @@ schreibt oder löscht nie etwas.
 
 ## FAQ
 
+**F: Wie kommen die Diagramme im Chat und in Dokumenten zu ihrem Aussehen?**
+A: Diagramme (Ablaufpläne, Organigramme, Zeitpläne/Gantt, Torten- und
+Sequenzdiagramme) werden seit v9.401.0 überall in einem hochwertigen,
+einheitlichen Stil gezeichnet: abgerundete Formen mit dezentem Schatten,
+abgestimmte Farbpaletten und die passende Schrift. Im **Chat** folgen sie dem
+Hell-/Dunkel-Modus der Oberfläche und werden beim Umschalten sofort neu
+gezeichnet. In **Dokumenten und Berichten** (write_document, Diagramm rendern,
+Deep-Research-Berichte) übernehmen sie automatisch Farben und Schrift der
+Dokumentvorlage (z. B. corporate) — ohne dass Sie etwas einstellen müssen.
+Wer bewusst einen generischen Mermaid-Look will, übergibt beim Werkzeug
+„Diagramm rendern" explizit ein `theme` (default/dark/forest/neutral).
+
 **F: Warum ist die Modellauswahl plötzlich auf lokale Modelle beschränkt?**
 A: Der GDPR-Scanner hat PII im Entwurf oder Verlauf gefunden, und für diese
 Kategorie ist „Server-Block" aktiv. Entweder die PII entfernen, auf ein

@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.401.0",
+        "date": "2026-07-23",
+        "title": "Deutlich schönere Diagramme",
+        "body": "Diagramme (Ablaufpläne, Organigramme, Zeitpläne, Torten- und "
+                "Sequenzdiagramme) sehen jetzt überall hochwertig und "
+                "professionell aus: abgerundete Formen mit dezentem Schatten, "
+                "kräftige, aufeinander abgestimmte Farben und die passende "
+                "Schrift — im Chat wie in erzeugten Dokumenten und Berichten, "
+                "die automatisch das Erscheinungsbild Ihrer Dokumentvorlage "
+                "übernehmen. Im Chat folgen Diagramme außerdem dem Hell-/"
+                "Dunkel-Modus und werden beim Umschalten sofort passend "
+                "neu gezeichnet.",
+        "audience": "user",
+        "versions": ["9.401.0"],
+    },
+    {
         "version": "9.400.0",
         "date": "2026-07-22",
         "title": "Datenschutz im Projekt einmal zentral bewerten",

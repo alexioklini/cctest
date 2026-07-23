@@ -1231,6 +1231,7 @@
     "maybeRunGdprFeedback": "writable",
     "maybeUpdateWorkflowBanner": "writable",
     "MempalaceActivityMonitor": "writable",
+    "mermaidRetheme": "writable",
     "messageUsedKnowledge": "writable",
     "MOBILE_BREAKPOINT": "writable",
     "modelDescription": "writable",
