@@ -2099,7 +2099,8 @@ async function loadProjectPiiSection(agentId, projectName) {
     state._projPii = { agentId, projectName, rows: data.rows || [],
                        counts: data.counts || {},
                        lastScanAt: data.last_scan_at || 0,
-                       lastDecidedAt: data.last_decided_at || 0 };
+                       lastDecidedAt: data.last_decided_at || 0,
+                       pendingFiles: data.pending_files || 0 };
     section.style.display = '';
     _projPiiPaintSection();
     if (data.scan && data.scan.running) _projPiiPollScan();
@@ -2127,13 +2128,19 @@ function _projPiiPaintSection() {
   }
   // Ampel-Status: EINE Zeile beantwortet „muss ich hier noch etwas tun?" —
   // grün = alles Gescannte bewertet, orange = gescannt mit offenen Funden,
-  // rot = noch nie gescannt.
+  // rot = noch nie gescannt ODER neue/geänderte Inhalte seit dem letzten
+  // Scan-Lauf (pending_files — sonst zeigte die Ampel zwischen Datei-Upload
+  // und dem nächsten Sync-Auto-Scan ein veraltetes Grün).
+  const pending = p.pendingFiles || 0;
   const statusEl = document.getElementById('project-pii-status');
   if (statusEl) {
     let color, label;
     if (!scanned) {
       color = 'var(--error,#c62828)';
       label = 'Noch nicht gescannt';
+    } else if (pending > 0) {
+      color = 'var(--error,#c62828)';
+      label = `Neue Inhalte — ${pending} ${pending === 1 ? 'Datei' : 'Dateien'} noch nicht gescannt`;
     } else if (open > 0) {
       color = 'var(--warning,#c47f00)';
       label = `Gescannt — ${open} Funde nicht bewertet`;

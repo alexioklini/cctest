@@ -45,10 +45,12 @@ CURATED_CHANGELOG: list[dict] = [
                 "erscheinen als „offen\" mit Hinweis-Badge und warten auf "
                 "Ihre Bewertung. Eine Ampel-Statuszeile zeigt auf einen "
                 "Blick, ob noch etwas zu tun ist: grün = alles bewertet, "
-                "orange = offene Funde, rot = noch nicht gescannt — dazu "
-                "letzter Scan und letzte Bewertung.",
+                "orange = offene Funde, rot = noch nicht gescannt oder neue "
+                "Inhalte seit dem letzten Scan — dazu letzter Scan und "
+                "letzte Bewertung. Kommen neue Dokumente hinzu, springt die "
+                "Anzeige sofort auf Rot, bis sie gescannt und bewertet sind.",
         "audience": "user",
-        "versions": ["9.400.0", "9.400.1"],
+        "versions": ["9.400.0", "9.400.1", "9.400.2"],
     },
     {
         "version": "9.399.0",

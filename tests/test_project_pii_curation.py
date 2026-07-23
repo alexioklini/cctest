@@ -143,6 +143,57 @@ class TestScan(_ProjBase):
                 self.assertEqual(st3.get("new_candidates"), 1)
 
 
+class TestPendingFiles(_ProjBase):
+    """9.400.2: rote 'Neue Inhalte'-Ampel — Korpus vs. letzter Scan-Lauf."""
+
+    def _patched_pm(self, pdir):
+        proj = {"id": self.pid, "name": "TestProj", "input_folders": []}
+        return (unittest.mock.patch.object(
+                    brain.ProjectManager, "get_project",
+                    staticmethod(lambda a, n: proj)),
+                unittest.mock.patch.object(
+                    brain.ProjectManager, "_project_dir",
+                    staticmethod(lambda a, n: pdir)))
+
+    def test_pending_new_touched_and_cleared_by_scan(self):
+        import time as _t
+        with tempfile.TemporaryDirectory() as pdir:
+            doc = os.path.join(pdir, "doc.md")
+            with open(doc, "w") as f:
+                f.write("Harmloser Inhalt ohne PII.\n")
+            p1, p2 = self._patched_pm(pdir)
+            with p1, p2:
+                # Nie gescannt → Datei zählt als pending.
+                self.assertEqual(
+                    brain.project_pii_pending_files("main", "TestProj"), 1)
+                brain.project_pii_scan("main", "TestProj")
+                self.assertEqual(
+                    brain.project_pii_pending_files("main", "TestProj"), 0)
+                # Neue Datei → pending.
+                with open(os.path.join(pdir, "neu.md"), "w") as f:
+                    f.write("Neuer Inhalt.\n")
+                self.assertEqual(
+                    brain.project_pii_pending_files("main", "TestProj"), 1)
+                brain.project_pii_scan("main", "TestProj")
+                self.assertEqual(
+                    brain.project_pii_pending_files("main", "TestProj"), 0)
+                # Touch OHNE Inhaltsänderung: mtime > letzter Lauf → pending;
+                # der nächste Lauf refresht den Cursor auch bei sha-Match
+                # (sonst bliebe die Datei für immer rot).
+                _t.sleep(0.01)
+                os.utime(doc, (_t.time() + 5, _t.time() + 5))
+                self.assertEqual(
+                    brain.project_pii_pending_files("main", "TestProj"), 1)
+                _t.sleep(0.01)
+                brain.project_pii_scan("main", "TestProj")
+                # Cursor-Lauf-Zeit liegt jetzt VOR der künstlichen mtime
+                # (+5s) — normalisieren, dann ist pending sauber 0.
+                os.utime(doc, None)
+                brain.project_pii_scan("main", "TestProj")
+                self.assertEqual(
+                    brain.project_pii_pending_files("main", "TestProj"), 0)
+
+
 class _GuardProjBase(_ProjBase):
     """Guard-Tests: Request-Kontext mit Projekt + gepatchtem ProjectManager."""
 

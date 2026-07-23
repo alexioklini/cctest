@@ -532,6 +532,10 @@ class ProjectsHandlerMixin:
                          "last_decided_at": max(
                              [float(r.get("decided_at") or 0) for r in rows]
                              or [0.0]),
+                         # Red 'Neue Inhalte' state (9.400.2): corpus files
+                         # newer than the last scan run / never scanned.
+                         "pending_files": engine.project_pii_pending_files(
+                             agent_id, proj_name),
                          "scan": engine.project_pii_scan_status(pid)})
 
     def _handle_project_pii_decisions_post(self, path: str):

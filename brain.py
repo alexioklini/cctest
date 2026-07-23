@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.400.1"
+VERSION = "9.400.2"
 VERSION_DATE = "2026-07-23"
 CHANGELOG = [
+    ("9.400.2", "2026-07-23", "fix(Projekt-PII-Panel — ROTER 'Neue Inhalte'-Zustand; Nutzer-Frage: 'würde die Anzeige auch berücksichtigen, wenn neue Dateien hinzukommen?' — Antwort war NEIN im Fenster zwischen Datei-Upload und dem nächsten Sync-Auto-Scan: die Ampel zeigte stale Grün). NEU: (1) `brain.project_pii_pending_files(agent, name)` zählt Korpus-Dateien OHNE Deckung durch den letzten Scan-LAUF (kein Cursor-Eintrag = neu, oder mtime > letzter Lauf = geändert; ein os.stat pro Datei, best-effort 0); GET …/pii-decisions liefert `pending_files` mit. (2) Ampel-State-Machine jetzt VIERSTUFIG: ROT 'Noch nicht gescannt' → ROT 'Neue Inhalte — N Datei(en) noch nicht gescannt' (trumpft Orange: erst scannen, dann bewerten) → ORANGE 'Gescannt — N Funde nicht bewertet' → GRÜN. (3) VORAUSSETZUNGS-FIX im Scan: der Cursor-Eintrag (scanned_at) refresht jetzt bei JEDEM Lauf auch für sha-unveränderte Dateien — vorher schrieb der Scan nur geänderte Dateien in den Cursor, wodurch eine getouchte-aber-inhaltsgleiche Datei mtime>letzter-Lauf FÜR IMMER erfüllt hätte (permanente Rot-Ampel); `last_scan_at` bedeutet damit sauber 'letzter Scan-Lauf'. Tests: test_project_pii_curation +1 (nie gescannt→pending, Scan→0, neue Datei→pending→0, Touch-ohne-Änderung→pending→Cursor-Refresh räumt), 11 grün + Guard-Suite 20 grün. js_gate GRÜN (keine neuen Globals, Smoke 5/5). py_compile OK. Kein Schema-Change. Server-Restart nötig. Kuratierter 9.400.0-Eintrag um 9.400.2 erweitert; Skill 01-api/06-user-manual im selben Commit."),
     ("9.400.1", "2026-07-23", "fix(Projekt-PII-Panel — Ampel-Status statt zweier redundanter Textzeilen; Nutzer-Feedback am Live-Panel: 'obere Zeile aktueller Stand, untere nach dem Scan — teilweise redundant und verwirrend; der User muss wissen: hat er alles bewertet oder nicht'). NEU — die Sektion beantwortet die eine Frage auf einen Blick: (1) AMPEL-STATUSZEILE (SVG-Haken, farbcodiert): GRÜN 'Alle Funde bewertet' (bzw. 'Gescannt — keine Funde'), ORANGE 'Gescannt — N Funde nicht bewertet', ROT 'Noch nicht gescannt'. (2) Zähler-Zeile 'Funde: N · bewertet: M (X anonymisieren · Y Falschtreffer) · offen: K'. (3) Zeiten-Zeile 'Letzter Scan: … · Letzte Bewertung: …' (formatTimeAgo; Bewertungen aktualisieren lastDecidedAt lokal). Der 'nie gescannt'-Zustand kommt PERSISTENT aus der Cursor-Tabelle (neu ChatDB.get_project_pii_last_scan = MAX(scanned_at), 0=nie — die In-Memory-Scan-Registry resettet beim Restart und taugt dafür nicht); GET …/pii-decisions liefert last_scan_at + last_decided_at (aus den Rows) mit. (4) Die transiente 'Scan fertig — N neue offene Funde'-Zeile ENTFÄLLT nach Abschluss (Ampel+Zähler tragen den Zustand; Fehler + Laufe-Fortschritt bleiben). Tests: test_project_pii_curation +1 (last-scan-Meta 0=nie/persistiert), 10 grün. js_gate GRÜN (keine neuen Globals, Smoke 5/5). py_compile OK. Kein Schema-Change (nur neue Leser). Server-Restart nötig (Handler-Feld). Kuratierter 9.400.0-Eintrag um 9.400.1 erweitert; Skill 01-api/06-user-manual im selben Commit."),
     ("9.400.0", "2026-07-22", "feat(GDPR — Projekt-weite PII-Vorentscheidung; Option 3 der Retrieval-Dialog-Konsolidierung, Nutzer-Entscheide: gilt für ALLE Projekt-Nutzer, neue Funde bleiben 'open', KEIN Admin-Default). IDEE: den Projekt-Korpus EINMAL kuratieren statt pro Sitzung fragen — die NER-FP-Flut aus OCR-Dokumenten (E2E: 'Systemverantwortliche'-PDF) wird einmal vom Projekt-Besitzer bewertet; kuratierte Werte lösen in anonymisierenden Chats keinen Dialog mehr aus. VIER Bausteine: (1) DB `project_pii_decisions` (chats.db; UNIQUE(project_id, norm_value); status open|anonymise|fp; occurrences+source_files; BEWUSST getrennt von der session-scoped pii_decisions: speichert ENTSCHEIDUNGEN, nie Fakes — Fakes bleiben per-Session-Salt) + `project_pii_scan_files` (inkrementeller sha1-Cursor pro Korpus-Datei, das KG-Sync-Idempotenz-Muster). ChatDB: upsert_project_pii_candidates (neu=open; entschiedene Zeilen behalten Status, mergen Quellen [Cap 20], refreshen occurrences), get_project_pii_rows, decide_project_pii (Bulk, open=Reset), get_project_pii_decided_map (NUR entschiedene — open muss weiter fragen), delete_project_pii, Scan-Cursor-Getter/Setter. (2) SCAN `brain.project_pii_scan(agent, name, force_full=)`: inkrementell über den GEMINETEN Text-Korpus (.md/.txt unter pdir inkl. .brain-extracted-Companions + web-urls + Input-Folder außerhalb pdir — exakt der Text, den Retrieval liefert; keine Neu-Extraktion), Chunking ~100k an Absatzgrenzen (PII-Test-1-Lektion: NER >200KB unzuverlässig), Datei-Cap 2MB, Production-FP-Gates via _pii_scan_text; Status-Registry _PROJECT_PII_SCAN_STATE (ein Lauf pro Projekt). AUTO-HOOK im project-sync-Daemon: nach jedem ERFOLGREICHEN veränderten Zyklus (der unchanged-Fastpath continue't vorher) läuft der Inkrement-Scan — neue Dokumente werden automatisch zu open-Kandidaten (Badge), NIE auto-entschieden; best-effort, ein Scan-Fehler markiert den Sync nie als failed. (3) ENDPOINTS (Muster input-folders; Routen in server.py GET+POST): GET/POST /v1/agents/<a>/projects/<n>/pii-scan (Status/Start, Start owner/admin) + GET/POST …/pii-decisions (Zeilen+Counts / Bulk-Decide [Cap 2000] — BEIDE require_manage: das Review zeigt KLARTEXT-Werte). (4) GUARD-INTEGRATION (~20 Zeilen): `_retrieval_project_decisions()` (per-Turn-Cache auf ctx._dynamic; Projekt-Name aus ctx.project → ProjectManager → id) wird in `_gdpr_retrieval_guard` VOR den Standing-Orders konsultiert (sonst würde die Session-Order ein Projekt-FP faken): project-anonymise → stiller LAZY-Seed via _retrieval_seed_values (choice=project, disposition=project-curated — geseedet wird die RUNTIME-Oberflächenform des Kandidaten, nicht die Projekt-Zeile: nur die steht im Tool-Text) + Session-Ledger-Write-through; project-fp → Klartext, nie fragen; open/unbekannt → Standing-Orders/Dialog wie bisher. Session-Entscheidung schlägt Projekt-Entscheidung (die Session-Filterung läuft früher — jüngere, spezifischere Absicht). NORM-BRÜCKE `_retrieval_pii_norm` (NEU, beidseitig verwendet): der Runtime-Scan sieht JSON-ENCODIERTEN Text (echte Zeilenumbrüche als literales \\n), der Projekt-Scan rohes Markdown — literale \\n/\\t/\\r-Escapes UND echte Whitespaces kollabieren zu Leerzeichen + casefold, sonst matchte eine zeilenumbruch-überspannende Projekt-Entscheidung nie (der E2E-Befund 'Infrastruktur\\nOnBASE'). (5) UI (Projekt-Panel, panels_projects.js + index.html + api.js): Sektion 'Datenschutz (PII)' (nur Besitzer/Admin — Server-403 versteckt sie) mit offen-Badge, Zählern, 'Jetzt scannen' (Poll alle 1.5s) + 'Bewerten…'-Modal (Suche, Status-Filter [Default: Offen], pro Zeile Wert mono/Regel-Label via gdprRuleLabel/×Vorkommen/Quellen, Aktionen Anonymisieren/Falschtreffer/Zurücksetzen, Bulk 'Alle offenen → …' mit confirm, Render-Cap 500). js_gate GRÜN (eslint clean, net-globals 2112→2122 [+10: loadProjectPiiSection/_projPiiPaintSection/projectPiiScanNow/_projPiiPollScan/openProjectPiiModal/closeProjectPiiModal/_PROJ_PII_RENDER_CAP/_projPiiRenderModal/projPiiDecide/projPiiBulk, Baseline angepasst], Smoke 4/5+1 flaky-retry-passed). Tests: tests/test_project_pii_curation.py NEU (9 — Upsert-Semantik/decided-Map/Reset; Scan legt open an + Cursor skippt unverändert + neue Datei = neuer Kandidat; Guard: anonymise seedet ohne Dialog + Ledger-Write-through, fp bleibt klar, open fragt weiter, Session-FP schlägt Projekt-anonymise, Norm-Brücke über JSON-Escapes); GDPR-Familie 142 grün. py_compile OK (brain/server/db/projects/server_daemons). Migration additiv (2 Tabellen). KV-Cache unberührt (Tool-Result-Pfad + neue Endpoints, kein Prompt/Schema). Server-Restart nötig. Skill 01-api/03-storage/05-internals/06-user-manual + kuratierter Eintrag (user) im selben Commit."),
     ("9.399.0", "2026-07-22", "feat(GDPR — Retrieval-PII-Dialog KONSOLIDIERT: Turn-Vererbung + Session-Standing-Order; Anlass Eval-Befund F2_kreditvergabe = 11 Dialoge in EINEM Turn, und Nutzer-Ansage 'ab nächster Woche ist PII in Produktion default an' → der Dialog trifft künftig JEDEN Projekt-Chat). ZWEI Mechanismen, ein Einhängepunkt (`_gdpr_retrieval_guard`, VOR asked-Set/Cap/Dialog): (1) TURN-VERERBUNG — die Turn-Wahl 'Anonymisiert fortfahren' des ERSTEN Dialogs wird als `_retrieval_pii_turn_policy` auf dem RequestContext zur Standing-Order für den REST des Turns: jede weitere Retrieval-Welle mit neuen Werten seedet automatisch als anonymise (gemeinsamer Helper `_retrieval_seed_values` — seed_from_decision + Ledger-Zeilen + gdpr_persist_mapping + Audit, jetzt von Dialog- UND Auto-Pfad geteilt; Audit-`choice` = dialog|turn_auto|session_auto) statt erneut zu fragen. Begründung: die Richtungsentscheidung ist gefallen, Folgedialoge lieferten nur FP-Granularität — und die bleibt RETROAKTIV korrigierbar (FP-Mark im Datenschutz-Panel → purge_value, die 9.383-Maschinerie). Trade-off dokumentiert: ein FP aus Welle 2+ wird in diesem Turn fälschlich gefakt (marginales Antwort-Risiko), der Nutzer sieht dank Deanonymisierung immer echte Werte. (2) SESSION-STANDING-ORDER — der erste Dialog trägt eine zusätzliche Frage 'Künftige neue Funde in dieser Sitzung automatisch anonymisieren (ohne erneut zu fragen)?' (Ja/Nein, VOR der Turn-Frage; unbeantwortet = Nein = konservativ weiter fragen; bindet nur bei turn_choice=proceed): Ja persistiert `sessions.retrieval_auto_anon` (additive Migration + `ChatDB.update_session_retrieval_auto_anon` + Session-Feld + Load + GET-/messages-Echo + manage-Action `retrieval_auto_anon {value}` — spiegelt allow_further_web end-to-end; Widerruf via manage-Action, kein neues UI: die Frage reitet in der bestehenden ask_user-Karte). Der Guard liest die Order über `_retrieval_auto_anon_enabled()` (live In-Memory-Session zuerst — der Dialog setzt sie mid-turn — dann DB-Fallback für Background-Turns). WICHTIGSTER NEBENEFFEKT: die Session-Order hebt das Background-fail-closed — ein Scheduler-/Hintergrund-Turn auf einer Session mit Standing-Order seedet+fakt statt `retrieval_pii_withheld` zu refusen → geplante Tasks auf Anon-Projekten werden nutzbar (der Produktions-Fall ab KW 2026-07-27). Ohne Order bleibt Background fail-closed (unverändert Plan §5.4). Eval-Harness beantwortet die Sticky-Frage explizit mit Nein (misst den Ask-Pfad). Tests: test_gdpr_retrieval_dialog 14→20 (Turn-Vererbung: 1 Dialog trotz 2. Welle + Welle-2-Wert geseedet/gefakt/im Ledger; Sticky-Frage vorhanden + Position vor Turn-Frage; Sticky-Ja persistiert + nächster Turn still + auto-gefakt; Sticky-Nein fragt nächsten Turn wieder; Background MIT Order seedet statt refuse [der Produktions-Test]; Widerruf via Setter fragt wieder; Sticky-Basis mit realer sessions-Zeile via save_session/delete_session). Bestandssuite 14/14 unverändert grün (unbeantwortete Sticky-Frage = altes Verhalten). py_compile OK (brain/server/db/sessions_handler/eval). Migration additiv. KV-Cache: Tool-Result-Pfad, kein Prompt/Schema → Prefix unberührt. Server-Restart nötig (Spalte + Session-Feld + Guard). Skill 05-internals/06-user-manual + kuratierter Eintrag (user) im selben Commit."),
@@ -3509,6 +3510,11 @@ def project_pii_scan(agent_id: str, name: str, *,
             except OSError:
                 continue
             sha = hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+            # Cursor row refreshes EVERY run (also on unchanged sha): the
+            # panel's "Neue Inhalte" state compares file mtimes against the
+            # last scan RUN (9.400.2) — without the refresh, a touched-but-
+            # unchanged file would read as pending forever.
+            scanned.append((path, sha))
             if cursor.get(path) == sha:
                 continue
             try:
@@ -3531,7 +3537,6 @@ def project_pii_scan(agent_id: str, name: str, *,
             except Exception as e:
                 print(f"[project-pii] scan failed {path}: {e}", flush=True)
                 continue
-            scanned.append((path, sha))
         new_n = ChatDB.upsert_project_pii_candidates(pid, [
             {"norm_value": k, "raw_value": v["raw_value"],
              "rule_id": v["rule_id"], "occurrences": v["occurrences"],
@@ -3545,6 +3550,38 @@ def project_pii_scan(agent_id: str, name: str, *,
         print(f"[project-pii] scan error {agent_id}/{name}: {e}", flush=True)
         _set(running=False, error=str(e)[:300])
     return dict(st)
+
+
+def project_pii_pending_files(agent_id: str, name: str) -> int:
+    """Corpus files NOT covered by the last PII scan run: new (no cursor row)
+    or modified after the last run. Drives the panel's red 'Neue Inhalte —
+    noch nicht gescannt' state (9.400.2) — without it the traffic light
+    showed a stale green between adding documents and the next sync cycle's
+    auto-scan. Cheap (one os.stat per corpus file); best-effort 0 on error."""
+    try:
+        from server_lib.db import ChatDB
+        project = ProjectManager.get_project(agent_id, name)
+        pid = (project or {}).get("id") or ""
+        if not pid:
+            return 0
+        pdir = ProjectManager._project_dir(agent_id, name)
+        cursor = ChatDB.get_project_pii_scan_map(pid) or {}
+        last = float(ChatDB.get_project_pii_last_scan(pid) or 0)
+        n = 0
+        for path in _project_pii_corpus_files(pdir, project):
+            if path not in cursor:
+                n += 1
+                continue
+            try:
+                if os.path.getmtime(path) > last:
+                    n += 1
+            except OSError:
+                pass
+        return n
+    except Exception as e:
+        print(f"[project-pii] pending check failed {agent_id}/{name}: {e}",
+              flush=True)
+        return 0
 
 
 def _retrieval_project_decisions() -> dict:

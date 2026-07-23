@@ -2547,9 +2547,10 @@ geänderte Dokumente werden beim Projekt-Abgleich automatisch mitgescannt —
 neue Funde erscheinen als „offen" mit Badge und warten auf Bewertung (sie
 werden nie automatisch entschieden). Eine **Ampel-Statuszeile** zeigt auf
 einen Blick, ob noch etwas zu tun ist: **grün** = alles Gescannte bewertet,
-**orange** = gescannt, aber offene Funde, **rot** = noch nicht gescannt —
-darunter Fund-/Bewertungs-Zähler sowie „Letzter Scan" und „Letzte
-Bewertung". Die Sektion ist nur für Projekt-Besitzer und Admins sichtbar,
+**orange** = gescannt, aber offene Funde, **rot** = noch nicht gescannt
+**oder** „Neue Inhalte — noch nicht gescannt" (Dokumente, die seit dem
+letzten Scan hinzukamen oder geändert wurden) — darunter
+Fund-/Bewertungs-Zähler sowie „Letzter Scan" und „Letzte Bewertung". Die Sektion ist nur für Projekt-Besitzer und Admins sichtbar,
 weil die Bewertungsliste die gefundenen Werte im Klartext zeigt.
 
 **F: Warum ist im anonymisierten Chat dieselbe Person überall gleich benannt?**

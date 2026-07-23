@@ -308,8 +308,9 @@ streaming call, per-USER history, fixed read-only tool set. See
   counts / bulk decide `{decisions:[{id, status: open|anonymise|fp}]}`
   (9.400.0; BOTH owner/admin-only — the review shows cleartext values).
   GET also returns `last_scan_at` (persistent, from the scan-cursor table;
-  0 = never scanned) + `last_decided_at` — drives the panel's
-  red/orange/green status line (9.400.1)
+  0 = never scanned), `last_decided_at` and `pending_files` (corpus files
+  new/changed since the last scan RUN — 9.400.2) — drives the panel's
+  red/orange/green status line (red also for pending new content)
 - `POST .../projects/<name>/full-resync` — wipe wing + re-mine
 - `POST .../projects/<name>/sync-cancel` — abort live sync
 - `POST .../projects/<name>/ingest` — upload files (multipart). Since 9.324.0
