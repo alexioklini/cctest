@@ -1087,7 +1087,17 @@ write/exec tool is deliberately excluded.
   corporate palette, not the pastel Mermaid default). The ONLY opt-out is an
   explicit `theme=` arg (default/dark/forest/neutral → generic Mermaid theme).
   Chat ` ```mermaid ` blocks get the same design language client-side (app font,
-  light/dark-tuned palettes, live re-render on theme toggle).
+  light/dark-tuned palettes, live re-render on theme toggle). **Icons
+  (v9.402.0):** node labels may carry Font-Awesome-6 icons (`fa:fa-users Team`,
+  `fa:fa-database Archiv`) — rendered in chat (vendored FA css, no CDN) AND in
+  render_diagram/write_document outputs (mmdc `-C` with the self-contained
+  `diagram_render/fa-inline.css`; SVG outputs get a fontTools-subset so the
+  file stays ~20KB). **Infographic ```chart blocks (HTML reports + Deep
+  Research, v9.402.0):** `{type: bar|line|pie|funnel|steps, title, data:
+  [{label, value, icon?}]}` renders via `engine/report_charts.py` to inline
+  SVG — pie=donut with center medallion + icon-badge callouts, funnel=staged
+  trapezoids, steps=numbered cards (value optional); `icon` = FA-solid name,
+  embedded as vector path from `web/vendor/fontawesome/solid-paths.json`.
 
 ## Nodes (distributed compute)
 

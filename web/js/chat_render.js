@@ -1655,6 +1655,19 @@ async function renderMermaidBlocks(root) {
   if (!root) return;
   const nodes = root.querySelectorAll('.mermaid-diagram:not([data-rendered])');
   if (!nodes.length || !_ensureMermaid()) return;
+  // Wait for webfonts (Font Awesome icon glyphs): mermaid measures label
+  // boxes at render time — an icon font that loads AFTER measuring clips the
+  // node text. fonts.ready alone is NOT enough (FA loads lazily on first
+  // glyph use, i.e. after measuring) — request the faces explicitly.
+  try {
+    if (document.fonts && document.fonts.load) {
+      await Promise.all([
+        document.fonts.load('900 15px "Font Awesome 6 Free"'),
+        document.fonts.load('400 15px "Font Awesome 6 Free"'),
+      ]);
+      await document.fonts.ready;
+    }
+  } catch (_) {}
   let seq = 0;
   for (const el of nodes) {
     el.setAttribute('data-rendered', '1');

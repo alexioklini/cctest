@@ -486,6 +486,96 @@ def _mermaid_theme_config(style: dict) -> dict:
     }
 
 
+# --- Font-Awesome icons in Mermaid labels ("fa:fa-user Nutzer") -------------
+# mmdc renders <i class="fa fa-user"> inside HTML labels; the glyph font must be
+# ON the page. diagram_render/fa-inline.css is the vendored FA6 css with the
+# free solid+regular woff2 embedded as data URIs (self-contained; built from
+# @fortawesome/fontawesome-free, brands dropped for size). mmdc -C embeds the
+# css INTO the output SVG — fine for raster (page-side only), too heavy for SVG
+# output (~800KB per diagram), so SVG renders get a per-use SUBSET (fontTools)
+# of just the icons the diagram references (~10-30KB).
+_FA_ICON_RE = re.compile(r'\bfa[bslrd]?:fa-([a-z0-9-]+)')
+_FA_CODEPOINTS = None
+
+
+def _diagram_render_dir() -> str:
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    return (os.environ.get("DIAGRAM_RENDER_DIR", "").strip()
+            or os.path.join(root, "diagram_render"))
+
+
+def _fa_codepoints() -> dict:
+    """{icon-name: codepoint} parsed once from the vendored fa-inline.css
+    (FA6 minified rules look like `.fa-user{--fa:"\\f007"}`)."""
+    global _FA_CODEPOINTS
+    if _FA_CODEPOINTS is None:
+        m = {}
+        try:
+            with open(os.path.join(_diagram_render_dir(), "fa-inline.css"),
+                      encoding="utf-8") as f:
+                css = f.read()
+            for name, cp in re.findall(r'\.fa-([a-z0-9-]+)\{--fa:"\\([0-9a-f]+)"', css):
+                m.setdefault(name, int(cp, 16))
+        except Exception:
+            pass
+        _FA_CODEPOINTS = m
+    return _FA_CODEPOINTS
+
+
+def _fa_css_for(code: str, fmt: str):
+    """(css_path, is_temp) to pass as mmdc -C when `code` uses fa: icons, else
+    (None, False). Raster/pdf formats reuse the full vendored css; svg gets a
+    subset tempfile (caller removes it). Fail-open: subset trouble → full css."""
+    names = set(_FA_ICON_RE.findall(code or ""))
+    if not names:
+        return None, False
+    full = os.path.join(_diagram_render_dir(), "fa-inline.css")
+    if not os.path.isfile(full):
+        return None, False
+    if fmt != "svg":
+        return full, False
+    try:
+        import base64
+        import io
+        import tempfile
+        from fontTools import subset as _fs
+        cps = sorted({_fa_codepoints()[n] for n in names if n in _fa_codepoints()})
+        if not cps:
+            return full, False
+        parts = []
+        for fname, weight in (("fa-solid-900.ttf", 900), ("fa-regular-400.ttf", 400)):
+            src = os.path.join(_diagram_render_dir(), fname)
+            if not os.path.isfile(src):
+                continue
+            opts = _fs.Options()
+            font = _fs.load_font(src, opts)
+            sub = _fs.Subsetter(options=opts)
+            sub.populate(unicodes=cps)
+            sub.subset(font)
+            buf = io.BytesIO()
+            font.save(buf)
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            parts.append('@font-face{font-family:"Font Awesome 6 Free";'
+                         f'font-style:normal;font-weight:{weight};'
+                         f'src:url(data:font/ttf;base64,{b64}) format("truetype")}}')
+        parts.append('.fa,.fas,.far,.fa-solid,.fa-regular{font-family:"Font Awesome 6 Free";'
+                     'display:inline-block;font-style:normal;font-variant:normal;'
+                     'line-height:1;text-rendering:auto}'
+                     '.fa,.fa-solid,.fas{font-weight:900}.far,.fa-regular{font-weight:400}'
+                     '.fa:before,.fas:before,.far:before,.fa-solid:before,'
+                     '.fa-regular:before{content:var(--fa)}')
+        for n in sorted(names):
+            cp = _fa_codepoints().get(n)
+            if cp:
+                parts.append('.fa-%s{--fa:"\\%x"}' % (n, cp))
+        fd, p = tempfile.mkstemp(suffix=".css", prefix="brain-facss-")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("".join(parts))
+        return p, True
+    except Exception:
+        return full, False
+
+
 _MERMAID_DIAGRAM_KEYWORDS = (
     "graph", "flowchart", "sequencediagram", "classdiagram", "statediagram",
     "erdiagram", "gantt", "pie", "journey", "gitgraph", "mindmap", "timeline",
@@ -529,6 +619,7 @@ def render_mermaid_file(code: str, *, out_path: str, full_style: dict | None = N
     if background not in ("transparent", "white"):
         background = "white"
     tmp_in = tmp_conf = None
+    fa_css, fa_tmp = _fa_css_for(code, fmt)
     try:
         fd, tmp_in = tempfile.mkstemp(suffix=".mmd", prefix="brain-diagram-")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -542,6 +633,8 @@ def render_mermaid_file(code: str, *, out_path: str, full_style: dict | None = N
             cmd += ["-c", tmp_conf]
         else:
             cmd += ["-t", theme]
+        if fa_css:
+            cmd += ["-C", fa_css]
         if fmt in ("png", "pdf"):
             cmd += ["-s", str(scale), "-w", str(width)]
         env = dict(os.environ)
@@ -556,7 +649,7 @@ def render_mermaid_file(code: str, *, out_path: str, full_style: dict | None = N
     except Exception:
         return None
     finally:
-        for _tmp in (tmp_in, tmp_conf):
+        for _tmp in (tmp_in, tmp_conf, fa_css if fa_tmp else None):
             if _tmp:
                 try:
                     os.remove(_tmp)
@@ -674,6 +767,7 @@ def tool_render_diagram(args: dict) -> str:
     # mmdc reads a source file; spill the code to a tempfile.
     tmp_in = None
     tmp_conf = None
+    fa_css, fa_tmp = _fa_css_for(code, fmt)
     try:
         fd, tmp_in = tempfile.mkstemp(suffix=".mmd", prefix="brain-diagram-")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -687,6 +781,8 @@ def tool_render_diagram(args: dict) -> str:
             cmd += ["-c", tmp_conf]
         else:
             cmd += ["-t", theme]
+        if fa_css:
+            cmd += ["-C", fa_css]
         # High-DPI raster (PNG); also widen PDF. SVG ignores these (vector).
         if fmt in ("png", "pdf"):
             cmd += ["-s", str(scale), "-w", str(width)]
@@ -710,7 +806,7 @@ def tool_render_diagram(args: dict) -> str:
     except Exception as e:
         return _err(f"render_diagram: {type(e).__name__}: {e}")
     finally:
-        for _tmp in (tmp_in, tmp_conf):
+        for _tmp in (tmp_in, tmp_conf, fa_css if fa_tmp else None):
             if _tmp:
                 try:
                     os.remove(_tmp)

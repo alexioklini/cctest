@@ -1085,6 +1085,10 @@ TOOL_DEFINITIONS = [
             "same artifact folder), then reference that file with `![title](thatfile)` in "
             "the content here. Use PNG for .docx/.pdf embedding (SVG embeds in HTML, not "
             "PDF); in .pptx an image-only slide section becomes a centered full-slide picture. "
+            "In an .html report you can ALSO emit a ```chart fenced block holding JSON "
+            "{type: bar|line|pie|funnel|steps, title, data:[{label, value, icon?}]} — it "
+            "renders as a styled infographic SVG (pie=donut with icon callouts; `icon` is a "
+            "Font-Awesome-6 solid name); only real numbers, never invented. "
             "PROFESSIONAL .docx POLISH (automatic — just write clean markdown): the tool "
             "auto-renders a cover page (from the first `# H1` + leading `Key: value` lines) and "
             "a table-of-contents for substantial reports, dark table headers with zebra rows, "
@@ -2575,7 +2579,9 @@ TOOL_DEFINITIONS = [
             "SVG is NOT embeddable in PDF or DOCX (only choose format=svg for an HTML-only "
             "report where vector zoom matters). For a quick in-CHAT diagram (no file needed) "
             "just write a ```mermaid fenced block instead — the chat renders it live. Use "
-            "render_diagram when you need a FILE (report, download, embedding)."
+            "render_diagram when you need a FILE (report, download, embedding). Node labels "
+            "may carry Font-Awesome icons ('fa:fa-users Team', 'fa:fa-database Archiv') — "
+            "they render in chat AND in rendered files; use them to enrich key nodes."
         ),
         "input_schema": {
             "type": "object",

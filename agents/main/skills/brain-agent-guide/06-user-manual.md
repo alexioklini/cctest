@@ -2463,8 +2463,13 @@ Hell-/Dunkel-Modus der Oberfläche und werden beim Umschalten sofort neu
 gezeichnet. In **Dokumenten und Berichten** (write_document, Diagramm rendern,
 Deep-Research-Berichte) übernehmen sie automatisch Farben und Schrift der
 Dokumentvorlage (z. B. corporate) — ohne dass Sie etwas einstellen müssen.
-Wer bewusst einen generischen Mermaid-Look will, übergibt beim Werkzeug
-„Diagramm rendern" explizit ein `theme` (default/dark/forest/neutral).
+Seit v9.402.0 kann der Assistent Diagrammknoten zusätzlich mit **Symbolen**
+anreichern (Personen, Datenbank, E-Mail, Schutzschild …) und in HTML-Berichten
+**Infografik-Elemente** erzeugen: Ring-Diagramme mit Titel im Zentrum und
+Symbol-Badges, Trichter-Grafiken und nummerierte Prozess-Schritte. Einfach
+danach fragen („… als Infografik mit Symbolen"). Wer bewusst einen generischen
+Mermaid-Look will, übergibt beim Werkzeug „Diagramm rendern" explizit ein
+`theme` (default/dark/forest/neutral).
 
 **F: Warum ist die Modellauswahl plötzlich auf lokale Modelle beschränkt?**
 A: Der GDPR-Scanner hat PII im Entwurf oder Verlauf gefunden, und für diese
