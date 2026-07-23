@@ -780,6 +780,7 @@ function _toolEntryCard(e) {
     <details class="bgtask-card act-tool-card" data-act="${escapeHtml(e.id)}"${hasBody ? '' : ' open'}>
       <summary class="bgtask-summary">
         <span class="bgtask-dot ${st.cls}"></span>
+        ${(typeof toolIconSvg === 'function') ? toolIconSvg(e.type) : ''}
         <span class="bgtask-title">${desc}</span>
         ${gdprBadge}
         ${cancelBtn}

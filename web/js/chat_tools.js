@@ -149,10 +149,11 @@ function toolDescribe(name, args) {
     execute_command: () => `Befehl ausführen: \`${(a.command || '').substring(0, 60)}${(a.command || '').length > 60 ? '...' : ''}\``,
     python_exec: () => `Python ausführen (${(a.code || '').split('\n').length} Zeilen)`,
     web_fetch: () => { try { return `Webseite abrufen: ${a.url ? new URL(a.url).hostname : '...'}`; } catch(e) { return `Webseite abrufen: ${a.url || '...'}`; } },
-    moa_reference: () => `🧬 Experte: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}${a.mode === 'plan' || a.mode === 'delegate' ? ' (Ansatz)' : ''}`,
-    moa_planner: () => `🧬 Plan-Orchestrator: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
-    moa_verify: () => `🧬 Ergebnis-Prüfung: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
-    moa_plan_review: () => `🧬 Plan-Review: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
+    // NB: kein 🧬 im Text — das Symbol liefert toolIconSvg (sonst doppelt).
+    moa_reference: () => `Experte: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}${a.mode === 'plan' || a.mode === 'delegate' ? ' (Ansatz)' : ''}`,
+    moa_planner: () => `Plan-Orchestrator: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
+    moa_verify: () => `Ergebnis-Prüfung: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
+    moa_plan_review: () => `Plan-Review: ${typeof modelShortName === 'function' ? modelShortName(a.model || '', false) : (a.model || '...')}`,
     exa_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     searxng_search: () => `Im Web suchen nach „${a.query || '...'}"`,
     run_background_task: () => a.title ? `Hintergrundaufgabe: ${a.title}` : 'Hintergrundaufgabe starten',
@@ -204,6 +205,101 @@ function toolDescribe(name, args) {
   };
   const fn = descs[name];
   return fn ? fn() : name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+// Per-tool glyph shown before the title — ONE seam for BOTH surfaces: the chat
+// tool-line (renderToolCall) and the Aktivitäts-Panel card
+// (panels_background.js:_toolEntryCard). Lucide-style 24×24 stroke paths at
+// 13px, stroke=currentColor so the glyph inherits the line's text colour
+// (incl. hover/dark). MoA rows keep their established 🧬 identity (matches
+// composer + Verfasser); unknown tools get the generic wrench.
+function toolIconSvg(name) {
+  const n = String(name || '');
+  if (n.startsWith('moa_')) return '<span class="tool-glyph tool-glyph-emoji">🧬</span>';
+  const P = {
+    file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+    fileplus: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/>',
+    pen: '<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/>',
+    folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+    search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+    terminal: '<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
+    code: '<polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+    mail: '<path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/>',
+    send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
+    archive: '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
+    graph: '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>',
+    book: '<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+    gitbranch: '<line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+    zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+    clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    history: '<path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/>',
+    database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>',
+    table: '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/>',
+    plug: '<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8z"/>',
+    server: '<rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/>',
+    bulb: '<path d="M9 18h6"/><path d="M10 22h4"/><path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"/>',
+    bot: '<rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8.01" y2="16"/><line x1="16" y1="16" x2="16.01" y2="16"/>',
+    user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>',
+    sparkle: '<path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/>',
+    image: '<rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+    mic: '<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/>',
+    audio: '<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>',
+    scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/>',
+    languages: '<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>',
+    clipboard: '<rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/>',
+    package: '<line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
+    lifebuoy: '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/>',
+    idcard: '<rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8" cy="11" r="2"/><path d="M5 17c0-1.5 1.3-2.5 3-2.5s3 1 3 2.5"/><line x1="14" y1="9" x2="19" y2="9"/><line x1="14" y1="13" x2="19" y2="13"/>',
+    sliders: '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
+    workflow: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h6a2 2 0 0 1 2 2V14"/>',
+    diff: '<path d="M12 3v14"/><path d="M5 10h14"/><path d="M5 21h14"/>',
+    wrench: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  };
+  const exact = {
+    read_file: 'file', read_document: 'file',
+    write_file: 'fileplus', write_document: 'fileplus',
+    edit_file: 'pen', edit_document: 'pen',
+    list_directory: 'folder',
+    search_files: 'search', exa_search: 'search', searxng_search: 'search',
+    news_search: 'search', science_search: 'search', dev_search: 'search',
+    image_search: 'search', tool_search: 'search', find_skills: 'search',
+    execute_command: 'terminal',
+    python_exec: 'code', r_exec: 'code',
+    web_fetch: 'globe',
+    email_send: 'send', email_reply: 'send',
+    save_chat_to_memory: 'archive',
+    render_diagram: 'workflow',
+    text_diff: 'diff',
+    use_skill: 'zap',
+    think: 'bulb', sequential_thinking: 'bulb',
+    delegate_task: 'bot', run_background_task: 'bot',
+    retry_background_task: 'bot', agent_step: 'bot',
+    ask_user: 'user', ask_user_for_file: 'user',
+    ask_llm: 'sparkle',
+    generate_image: 'image',
+    transcribe_audio: 'mic',
+    generate_audio_overview: 'audio',
+    get_artifact_detail: 'package',
+    list_nodes: 'server',
+    db_query: 'database', data_query: 'database', rest_query: 'database',
+    detect_language: 'languages', get_glossary: 'languages', list_glossaries: 'languages',
+    mrz_verify: 'idcard', identity_consistency: 'idcard', doc_dates_check: 'idcard',
+    calibrate: 'sliders',
+  };
+  // Prefix families for everything not listed exactly (email_*, mempalace_* …).
+  // Order matters: more specific prefixes first (mempalace_kg_ before mempalace_).
+  const prefixes = [
+    ['mempalace_kg_', 'graph'], ['mempalace_', 'archive'], ['memory_', 'archive'],
+    ['wiki_', 'book'], ['xlsx_', 'table'], ['ocr_', 'scan'], ['kernel_', 'code'],
+    ['worker_', 'bot'], ['schedule_', 'clock'], ['context_', 'history'],
+    ['helpdesk_', 'lifebuoy'], ['mcp_', 'plug'], ['ast_grep_', 'code'],
+    ['code_', 'graph'], ['git', 'gitbranch'], ['task_', 'clipboard'],
+    ['translate_', 'languages'], ['email_', 'mail'],
+  ];
+  let key = exact[n];
+  if (!key) { const hit = prefixes.find(([p]) => n.startsWith(p)); if (hit) key = hit[1]; }
+  return '<span class="tool-glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + (P[key] || P.wrench) + '</svg></span>';
 }
 function renderToolArgsTable(args) {
   if (!args || typeof args !== 'object' || Object.keys(args).length === 0) return '';
@@ -930,6 +1026,7 @@ function renderToolCall(msg, idx) {
     <div class="tool-line${hasResult ? ' has-result' : ''}" title="Im Aktivitäts-Panel öffnen"
          onclick="openActivityEntry('${esc(actId)}')">
       ${icon}
+      ${toolIconSvg(msg.name)}
       <span class="tool-name">${gdprHighlightPlain(desc)}</span>
       ${workerBadge}${parallelBadge}${backendBadge}${gdprBadge}
       ${timing}
@@ -1153,6 +1250,7 @@ function renderToolResult(msg, idx) {
     <div class="tool-block has-result" onclick="this.classList.toggle('open')">
       <div class="tool-block-header">
         <span class="tool-icon" style="color:var(--success)">&#10003;</span>
+        ${toolIconSvg(msg.name)}
         <span class="tool-name">${desc}</span>
         <span class="tool-chevron">&#9656;</span>
       </div>

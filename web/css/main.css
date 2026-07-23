@@ -2883,6 +2883,11 @@ mark.gdpr-cleartext:hover {
 .tool-line:hover { color: var(--text-300); }
 .tool-line .tool-icon { color: var(--accent-brand); font-size: 13px; flex: 0 0 auto; }
 .tool-line .tool-icon-spin { animation: tool-spin 1.5s linear infinite; }
+/* Per-tool glyph (toolIconSvg) — chat tool-line + Aktivitäts-Panel cards.
+   currentColor: erbt die Zeilenfarbe (inkl. Hover/Dark) statt eigener Tönung. */
+.tool-glyph { display: inline-flex; align-items: center; flex: 0 0 auto; }
+.tool-glyph svg { display: block; }
+.tool-glyph-emoji { font-size: 13px; line-height: 1; }
 .tool-line .tool-name { font-weight: 500; flex: 0 0 auto; }
 .tool-line .tool-timing { font-family: var(--font-mono); font-size: 11px; color: var(--text-400); flex: 0 0 auto; }
 .tool-line .tool-badge-worker,

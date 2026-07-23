@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.404.0",
+        "date": "2026-07-23",
+        "title": "Symbole für alle Werkzeug-Aufrufe",
+        "body": "Jeder Werkzeug-Aufruf trägt jetzt ein passendes Symbol — "
+                "Dokument, Stift, Lupe, Terminal, Globus, E-Mail, "
+                "Wissensspeicher u. v. m. — sowohl in der kompakten Zeile im "
+                "Chat-Verlauf als auch im Aktivitäts-Panel. So erkennen Sie "
+                "auf einen Blick, was der Assistent gerade tut; das "
+                "Experten-Gremium behält sein gewohntes 🧬.",
+        "audience": "user",
+        "versions": ["9.404.0"],
+    },
+    {
         "version": "9.403.0",
         "date": "2026-07-23",
         "title": "Deutlich schönere Diagramme und Infografiken",

@@ -1804,6 +1804,7 @@
     "TOOL_STATES": "writable",
     "toolDescribe": "writable",
     "toolGlobalState": "writable",
+    "toolIconSvg": "writable",
     "topupCodingPlan": "writable",
     "TR_DOC_EXTS": "writable",
     "TR_DOC_MAX_BYTES": "writable",

@@ -2047,8 +2047,10 @@ Der **Aktivität**-Tab im rechten Panel zeigt **alle Tool-Aufrufe dieses Chats**
 einem Ort — sowohl die synchronen (während eines normalen Turns, z.B. `web_fetch`,
 `read_document`) als auch die abgekoppelten **Hintergrundaufgaben**. Chronologisch
 sortiert (neueste oben), in zwei Bereichen **Laufend** / **Abgeschlossen**. Jeder
-Eintrag trägt seinen Typ (Tool-Name oder „Hintergrundaufgabe") und asynchrone
-Einträge zusätzlich ein **Hintergrund**-Badge.
+Eintrag trägt seinen Typ (Tool-Name oder „Hintergrundaufgabe"), ein **passendes
+Symbol je Werkzeug-Familie** (9.404.0: Dokument, Stift, Lupe, Terminal, Globus,
+E-Mail, Wissensspeicher-Schublade, Git-Verzweigung u. v. m.; das Experten-Gremium
+behält sein 🧬) und asynchrone Einträge zusätzlich ein **Hintergrund**-Badge.
 
 Außerdem erscheinen hier — im selben Karten-Stil — die **Turn-Steuerungs-Ereignisse**
 des Chats: eine **eingefügte Klarstellung** (erst „Wartet auf das nächste
@@ -2062,7 +2064,8 @@ Iteration erhalten hat.
 
 **Vollansicht, Kopieren und Herunterladen** eines Tool-Ergebnisses passieren hier
 im Panel. Im Chat selbst steht pro Tool-Aufruf nur noch eine **kompakte Zeile**
-(Name + kurze Vorschau) — ein Klick darauf öffnet den passenden Eintrag im Panel.
+(Status-Haken, Werkzeug-Symbol, Name + kurze Vorschau) — ein Klick darauf öffnet
+den passenden Eintrag im Panel.
 (Reasoning/Thinking bleibt weiterhin direkt im Chat.)
 
 ### Hintergrundaufgaben
