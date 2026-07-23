@@ -202,6 +202,67 @@ function toolDescribe(name, args) {
     worker_resume: () => `Worker fortsetzen: ${a.worker_id || ''}`,
     worker_send: () => `An Worker senden: ${a.worker_id || ''}`,
     worker_ask_user: () => `Worker fragt: ${(a.question || '').substring(0, 50)}`,
+    // v9.404.1: deutsche Bezeichnungen für die restlichen Tools (liefen vorher
+    // in den englischen Title-Case-Fallback, z.B. "Tool Search").
+    ask_llm: () => `LLM direkt fragen${a.model ? ' (' + (typeof modelShortName === 'function' ? modelShortName(a.model, false) : a.model) + ')' : ''}`,
+    agent_step: () => `Agenten-Schritt: ${String(a.instruction || '...').substring(0, 60)}`,
+    ask_user: () => `Rückfrage an Sie${a.question ? ': „' + String(a.question).substring(0, 50) + '"' : ''}`,
+    ask_user_for_file: () => `Datei von Ihnen anfordern`,
+    transcribe_audio: () => `Audio transkribieren${a.file ? ': ' + a.file : ''}`,
+    generate_audio_overview: () => `Audio-Überblick erstellen${a.topic ? ': „' + String(a.topic).substring(0, 50) + '"' : ''}`,
+    generate_image: () => `Bild erzeugen${a.prompt ? ': „' + String(a.prompt).substring(0, 50) + '"' : ''}`,
+    render_diagram: () => `Diagramm rendern${a.format ? ' (' + a.format + ')' : ''}`,
+    translate_text: () => `Text übersetzen${a.target_lang ? ' nach ' + a.target_lang : ''}`,
+    translate_document: () => `Dokument übersetzen${a.path ? ': ' + a.path : ''}${a.target_lang ? ' nach ' + a.target_lang : ''}`,
+    detect_language: () => `Sprache erkennen`,
+    list_glossaries: () => `Glossare auflisten`,
+    get_glossary: () => `Glossar lesen${a.slug ? ': ' + a.slug : ''}`,
+    r_exec: () => `R ausführen (${(a.code || '').split('\n').length} Zeilen)`,
+    kernel_exec: () => `Kernel-Code ausführen (${(a.code || '').split('\n').length} Zeilen${a.lang ? ', ' + a.lang : ''})`,
+    kernel_status: () => `Kernel-Status prüfen`,
+    kernel_restart: () => `Kernel neu starten`,
+    science_search: () => `Wissenschaftliche Literatur suchen: „${a.query || '...'}"`,
+    dev_search: () => `Entwickler-Quellen durchsuchen: „${a.query || '...'}"`,
+    image_search: () => `Bilder suchen: „${a.query || '...'}"`,
+    news_search: () => `Nachrichten suchen: „${a.query || '...'}"`,
+    wiki_read: () => a.page_id ? `Wiki-Seite lesen: ${a.page_id}` : `Wiki durchsuchen${a.query ? ': „' + String(a.query).substring(0, 50) + '"' : ''}`,
+    wiki_write: () => `Wiki-Seite schreiben: „${a.title || a.page_id || '...'}"`,
+    wiki_delete: () => `Wiki-Seite löschen: ${a.page_id || '...'}`,
+    wiki_structure: () => (a.action && a.action !== 'list') ? `Wiki-Struktur ändern (${a.action})` : `Wiki-Struktur anzeigen`,
+    xlsx_inspect: () => `Datendatei inspizieren: ${a.path || (a.paths || []).join(', ') || '...'}`,
+    xlsx_query: () => `Tabellen per SQL abfragen: ${a.path || (a.paths || []).join(', ') || '...'}`,
+    xlsx_create: () => `Excel-Datei erstellen: ${a.path || '...'}`,
+    xlsx_edit: () => `Excel-Datei bearbeiten: ${a.path || '...'}`,
+    xlsx_diff: () => `Datendateien vergleichen: ${a.path_a || '?'} ↔ ${a.path_b || '?'}`,
+    data_query: () => `Daten per SQL abfragen: ${a.path || (a.paths || []).join(', ') || '...'}`,
+    db_query: () => `Datenbank abfragen${a.source ? ' (' + a.source + ')' : ''}`,
+    rest_query: () => `REST-API abfragen${a.source ? ' (' + a.source + ')' : ''}`,
+    text_diff: () => `Textdateien vergleichen: ${a.path_a || '?'} ↔ ${a.path_b || '?'}`,
+    ocr_inspect: () => `Scan analysieren: ${a.path || '...'}`,
+    ocr_extract: () => `Text per OCR auslesen: ${a.path || '...'}`,
+    ocr_region: () => `Bildbereich per OCR auslesen: ${a.path || '...'}`,
+    ocr_fields: () => `Felder per OCR extrahieren: ${a.path || '...'}`,
+    ocr_tables: () => `Tabelle per OCR extrahieren: ${a.path || '...'}`,
+    mrz_verify: () => `Ausweis-MRZ prüfen${a.path ? ': ' + a.path : ''}`,
+    doc_dates_check: () => `Dokument-Daten prüfen`,
+    identity_consistency: () => `Identitätsdaten abgleichen`,
+    find_skills: () => `Persönliche Skills suchen${a.task ? ': „' + String(a.task).substring(0, 50) + '"' : ''}`,
+    calibrate: () => `Antwort kalibrieren`,
+    mcp_connect: () => `MCP-Server verbinden${a.name ? ': ' + a.name : ''}`,
+    mcp_disconnect: () => `MCP-Server trennen${a.name ? ': ' + a.name : ''}`,
+    mcp_servers: () => `MCP-Server auflisten`,
+    code_search: () => `Code suchen${(a.query || a.semantic_query) ? ': „' + String(a.query || a.semantic_query).substring(0, 50) + '"' : ''}`,
+    code_trace: () => `Aufrufe verfolgen: ${a.function_name || '...'}`,
+    code_query: () => `Code-Graph abfragen (Cypher)`,
+    code_snippet: () => `Code-Ausschnitt lesen: ${a.qualified_name || '...'}`,
+    ast_grep_search: () => `Struktur-Suche im Code: „${String(a.pattern || '...').substring(0, 50)}"`,
+    ast_grep_replace: () => `Struktur-Umbau im Code: „${String(a.pattern || '...').substring(0, 50)}"`,
+    git_worktree: () => `Git-Worktree: ${a.action || ''}${a.slug ? ' ' + a.slug : ''}`,
+    tool_search: () => `Werkzeuge nachladen: „${String(a.query || '...').substring(0, 50)}"`,
+    helpdesk_session_info: () => `Helpdesk: Sitzungs-Info lesen`,
+    helpdesk_user_context: () => `Helpdesk: Nutzerprofil lesen`,
+    helpdesk_config: () => `Helpdesk: Einstellungen lesen${a.section ? ' (' + a.section + ')' : ''}`,
+    helpdesk_user_activity: () => `Helpdesk: Nutzeraktivität lesen`,
   };
   const fn = descs[name];
   return fn ? fn() : name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -209,9 +270,10 @@ function toolDescribe(name, args) {
 // Per-tool glyph shown before the title — ONE seam for BOTH surfaces: the chat
 // tool-line (renderToolCall) and the Aktivitäts-Panel card
 // (panels_background.js:_toolEntryCard). Lucide-style 24×24 stroke paths at
-// 13px, stroke=currentColor so the glyph inherits the line's text colour
-// (incl. hover/dark). MoA rows keep their established 🧬 identity (matches
-// composer + Verfasser); unknown tools get the generic wrench.
+// 13px; each icon family carries a fixed mid-tone colour (inline on the span,
+// legible on light AND dark — same practice as bgtask-dot/badges). MoA rows
+// keep their established 🧬 identity (matches composer + Verfasser); unknown
+// tools get the generic wrench.
 function toolIconSvg(name) {
   const n = String(name || '');
   if (n.startsWith('moa_')) return '<span class="tool-glyph tool-glyph-emoji">🧬</span>';
@@ -296,10 +358,27 @@ function toolIconSvg(name) {
     ['code_', 'graph'], ['git', 'gitbranch'], ['task_', 'clipboard'],
     ['translate_', 'languages'], ['email_', 'mail'],
   ];
+  // Feste Familienfarbe pro Icon-Key (Mid-Tones, lesbar auf Hell UND Dunkel —
+  // gleiche Praxis wie bgtask-dot/Badges mit festen Hexwerten). Farb-WIEDER-
+  // HOLUNG über Familien ist ok: die Farbe ist ein visueller Hinweis, keine ID.
+  const C = {
+    file: '#3b82f6', fileplus: '#22c55e', pen: '#f59e0b', folder: '#eab308',
+    search: '#8b5cf6', terminal: '#64748b', code: '#06b6d4', globe: '#2563eb',
+    mail: '#0ea5e9', send: '#0284c7', archive: '#d97706', graph: '#a855f7',
+    book: '#14b8a6', gitbranch: '#f97316', zap: '#eab308', clock: '#6366f1',
+    history: '#6366f1', database: '#10b981', table: '#16a34a', plug: '#d946ef',
+    server: '#64748b', bulb: '#eab308', bot: '#0891b2', user: '#ec4899',
+    sparkle: '#7c3aed', image: '#f43f5e', mic: '#ef4444', audio: '#ef4444',
+    scan: '#0d9488', languages: '#3b82f6', clipboard: '#65a30d',
+    package: '#d97706', lifebuoy: '#ef4444', idcard: '#4f46e5',
+    sliders: '#64748b', workflow: '#a855f7', diff: '#f97316',
+    wrench: '#6b7280',
+  };
   let key = exact[n];
   if (!key) { const hit = prefixes.find(([p]) => n.startsWith(p)); if (hit) key = hit[1]; }
-  return '<span class="tool-glyph"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-    + (P[key] || P.wrench) + '</svg></span>';
+  if (!key || !P[key]) key = 'wrench';
+  return '<span class="tool-glyph" style="color:' + C[key] + '"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + P[key] + '</svg></span>';
 }
 function renderToolArgsTable(args) {
   if (!args || typeof args !== 'object' || Object.keys(args).length === 0) return '';

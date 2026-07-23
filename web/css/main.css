@@ -2884,7 +2884,7 @@ mark.gdpr-cleartext:hover {
 .tool-line .tool-icon { color: var(--accent-brand); font-size: 13px; flex: 0 0 auto; }
 .tool-line .tool-icon-spin { animation: tool-spin 1.5s linear infinite; }
 /* Per-tool glyph (toolIconSvg) — chat tool-line + Aktivitäts-Panel cards.
-   currentColor: erbt die Zeilenfarbe (inkl. Hover/Dark) statt eigener Tönung. */
+   Farbe kommt als Familien-Hex inline vom Seam (lesbar auf Hell + Dunkel). */
 .tool-glyph { display: inline-flex; align-items: center; flex: 0 0 auto; }
 .tool-glyph svg { display: block; }
 .tool-glyph-emoji { font-size: 13px; line-height: 1; }

@@ -32,14 +32,16 @@ CURATED_CHANGELOG: list[dict] = [
         "version": "9.404.0",
         "date": "2026-07-23",
         "title": "Symbole für alle Werkzeug-Aufrufe",
-        "body": "Jeder Werkzeug-Aufruf trägt jetzt ein passendes Symbol — "
-                "Dokument, Stift, Lupe, Terminal, Globus, E-Mail, "
-                "Wissensspeicher u. v. m. — sowohl in der kompakten Zeile im "
-                "Chat-Verlauf als auch im Aktivitäts-Panel. So erkennen Sie "
-                "auf einen Blick, was der Assistent gerade tut; das "
-                "Experten-Gremium behält sein gewohntes 🧬.",
+        "body": "Jeder Werkzeug-Aufruf trägt jetzt ein passendes, farbiges "
+                "Symbol — Dokument, Stift, Lupe, Terminal, Globus, E-Mail, "
+                "Wissensspeicher u. v. m., jede Werkzeug-Familie in ihrer "
+                "eigenen Farbe — sowohl in der kompakten Zeile im "
+                "Chat-Verlauf als auch im Aktivitäts-Panel. Zudem tragen "
+                "jetzt ausnahmslos alle Werkzeuge deutsche Bezeichnungen. So "
+                "erkennen Sie auf einen Blick, was der Assistent gerade tut; "
+                "das Experten-Gremium behält sein gewohntes 🧬.",
         "audience": "user",
-        "versions": ["9.404.0"],
+        "versions": ["9.404.0", "9.404.1"],
     },
     {
         "version": "9.403.0",

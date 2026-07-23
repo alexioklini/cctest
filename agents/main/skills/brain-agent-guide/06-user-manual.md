@@ -2047,10 +2047,12 @@ Der **Aktivität**-Tab im rechten Panel zeigt **alle Tool-Aufrufe dieses Chats**
 einem Ort — sowohl die synchronen (während eines normalen Turns, z.B. `web_fetch`,
 `read_document`) als auch die abgekoppelten **Hintergrundaufgaben**. Chronologisch
 sortiert (neueste oben), in zwei Bereichen **Laufend** / **Abgeschlossen**. Jeder
-Eintrag trägt seinen Typ (Tool-Name oder „Hintergrundaufgabe"), ein **passendes
-Symbol je Werkzeug-Familie** (9.404.0: Dokument, Stift, Lupe, Terminal, Globus,
-E-Mail, Wissensspeicher-Schublade, Git-Verzweigung u. v. m.; das Experten-Gremium
-behält sein 🧬) und asynchrone Einträge zusätzlich ein **Hintergrund**-Badge.
+Eintrag trägt seinen Typ (Tool-Name oder „Hintergrundaufgabe"), ein **farbiges
+Symbol je Werkzeug-Familie** (9.404.x: Dokument, Stift, Lupe, Terminal, Globus,
+E-Mail, Wissensspeicher-Schublade, Git-Verzweigung u. v. m., jede Familie in
+ihrer eigenen Farbe; das Experten-Gremium behält sein 🧬) und asynchrone
+Einträge zusätzlich ein **Hintergrund**-Badge. Alle Werkzeuge tragen dabei
+durchgängig **deutsche Bezeichnungen** (9.404.1).
 
 Außerdem erscheinen hier — im selben Karten-Stil — die **Turn-Steuerungs-Ereignisse**
 des Chats: eine **eingefügte Klarstellung** (erst „Wartet auf das nächste
