@@ -115,7 +115,11 @@ abschließen** (keine weiteren Tool-Aufrufe — der Assistent formuliert sofort
 eine Abschlussantwort aus dem bereits Gesammelten; nichts wird gekürzt oder
 zusammengefasst) oder **Abbrechen**. Ohne Antwort läuft der Auftrag nach
 5 Minuten automatisch weiter. Es wird niemals still verdichtet oder Material
-verworfen — die Entscheidung liegt immer bei Ihnen. Die **Zeitanzeige im
+verworfen — die Entscheidung liegt immer bei Ihnen. Lag der Füllstand während
+der Antwort über 80 %, trägt die fertige Antwort zusätzlich einen dauerhaften
+Warnhinweis („Kontext war zu X % gefüllt — erhöhtes Halluzinationsrisiko"),
+damit auch später erkennbar bleibt, dass das Modell nahe der Kapazitätsgrenze
+gearbeitet hat. Die **Zeitanzeige im
 Spinner** zählt ab dem echten Start der Anfrage und läuft beim Verlassen und
 Wiederöffnen des Chats korrekt weiter (springt nicht auf 0 zurück). Wird eine
 Antwort **mitten im Stream abgebrochen**,

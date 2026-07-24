@@ -1536,6 +1536,11 @@ function buildStreamCallbacks(chat, isActive) {
         if (d.gdpr && typeof d.gdpr === 'object') {
           assistantMsg.metadata.gdpr = d.gdpr;
         }
+        // Context-pressure warning (>80% peak fill this turn) — renderer shows
+        // a warning badge on the reply; reload reads the same metadata field.
+        if (d.context_pressure && typeof d.context_pressure === 'object') {
+          assistantMsg.metadata.context_pressure = d.context_pressure;
+        }
         // Persist the auto-route classification + routing/tool-gating decision
         // onto the turn metadata so the per-turn classification chip + modal
         // work on the live turn identically to a reloaded one.

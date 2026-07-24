@@ -3252,7 +3252,7 @@ def build_chat_event_callback(session, live, sid):
         "partial_tools": [],
         "partial_thinking": [],
         "thinking_summary": {},
-        "usage_totals": {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0, "cache_read_tokens": 0},
+        "usage_totals": {"tokens_in": 0, "tokens_out": 0, "last_tokens_in": 0, "cache_read_tokens": 0, "peak_prompt_tokens": 0},
         # True once any round's cost has been logged to the ledger (per-round, in
         # the `usage` handler). The success path checks this so it doesn't re-log
         # the aggregate (which would double-count). Cancel/error are covered too:
@@ -3469,6 +3469,9 @@ def build_chat_event_callback(session, live, sid):
             # show 2-3k while the real prompt was 80k+ (system prompt, tools
             # and standing history are cache hits after warmup).
             _usage_totals["last_tokens_in"] = _r_in + _r_cr
+            # Peak fill this turn — drives the >80% warning badge on the reply.
+            if _usage_totals["last_tokens_in"] > _usage_totals.get("peak_prompt_tokens", 0):
+                _usage_totals["peak_prompt_tokens"] = _usage_totals["last_tokens_in"]
             # Attach per-round actual tokens to the matching request_payload
             _ur = data.get("tool_round")
             if _ur is not None:
@@ -5573,6 +5576,19 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         msg_metadata["tokens_out"] = _usage_totals["tokens_out"]
                         msg_metadata["last_tokens_in"] = _usage_totals["last_tokens_in"]
                         msg_metadata["cache_read_tokens"] = _usage_totals.get("cache_read_tokens", 0)
+                        # Context-pressure warning (badge on the reply): the turn
+                        # peaked above 80% context fill — the model worked near
+                        # its window limit, elevated risk of degraded answers /
+                        # hallucination. Persisted in metadata (wire-stripped,
+                        # reaches the client via load_messages like web_sources).
+                        _cp_peak = _usage_totals.get("peak_prompt_tokens", 0)
+                        _cp_max = int(getattr(session, "max_context", 0) or 0)
+                        if _cp_peak and _cp_max and _cp_peak >= 0.80 * _cp_max:
+                            msg_metadata["context_pressure"] = {
+                                "peak_pct": round(_cp_peak / _cp_max * 100),
+                                "peak_tokens": int(_cp_peak),
+                                "max_context": _cp_max,
+                            }
                         if _request_payloads:
                             msg_metadata["request_payloads"] = _request_payloads
                         fb_model = engine.get_request_context()._fallback_model_used
@@ -6264,6 +6280,11 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         _gdpr_outcome_meta = msg_metadata.get("gdpr") if msg_metadata else None
                         if _gdpr_outcome_meta:
                             done_data["gdpr"] = _gdpr_outcome_meta
+                        # Context-pressure warning badge (>80% peak fill) — same
+                        # live/reload split as the gdpr badge above.
+                        _cp_meta = msg_metadata.get("context_pressure") if msg_metadata else None
+                        if _cp_meta:
+                            done_data["context_pressure"] = _cp_meta
                         # Include fallback model info if a fallback was used
                         fb_model = engine.get_request_context()._fallback_model_used
                         if fb_model:

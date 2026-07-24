@@ -40,9 +40,13 @@ CURATED_CHANGELOG: list[dict] = [
                 "behalten die Kontrolle, und ohne Antwort läuft der Auftrag "
                 "nach 5 Minuten einfach weiter. Das ersetzt den bisherigen "
                 "stillen Fehler, wenn ein sehr langer Auftrag das "
-                "Kontextfenster sprengte.",
+                "Kontextfenster sprengte. Antworten, die \u00fcber 80 % "
+                "F\u00fcllstand entstanden sind, tragen zudem dauerhaft einen "
+                "Warnhinweis (erh\u00f6htes Halluzinationsrisiko nahe der "
+                "Kapazit\u00e4tsgrenze) \u2014 wichtige Aussagen dort besser "
+                "gegenpr\u00fcfen.",
         "audience": "user",
-        "versions": ["9.407.0"],
+        "versions": ["9.407.0", "9.407.1"],
     },
     {
         "version": "9.406.0",

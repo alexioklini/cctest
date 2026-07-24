@@ -1015,6 +1015,9 @@ function renderAssistantMessage(msg, idx) {
   // Quellentreue badge: "x von y" with the full notice in the tooltip. Built
   // from validator metadata (server no longer bakes the prose into content).
   const citationWarnHtml = _buildCitationWarnBadge(msg.metadata?.citation_validation);
+  // Kontext-Druck badge: this turn peaked above 80% context fill — warn that
+  // the answer may be degraded (elevated hallucination risk near the limit).
+  const contextPressureHtml = _buildContextPressureBadge(msg.metadata?.context_pressure);
 
   // Thinking attached to a reloaded assistant message (meta.thinking). Rendered
   // inline, italic + lighter, matching the live thinking rows (no block/collapse).
@@ -1322,6 +1325,7 @@ function renderAssistantMessage(msg, idx) {
       ${thinkingHtml}
       <div class="msg-assistant msg-content${cavClass}">${rendered}${wfControlsHtml}</div>
       ${citationWarnHtml}
+      ${contextPressureHtml}
       ${citationLegendHtml}
       ${filesHtml}
       ${pinnedSourcesHtml}
@@ -2197,6 +2201,22 @@ function renderCitationPin({ file, locator, quote }, n) {
 // the full notice. Replaces the old inline markdown paragraph the server used
 // to append to the reply. Built only when the validator flagged the message
 // (warning_appended) and we have the uncited/total counts to show "x von y".
+// Context-pressure warning badge (>80% peak fill during the turn). Reuses the
+// citation-warn styling — same visual family: a per-reply quality caveat.
+function _buildContextPressureBadge(cp) {
+  if (!cp || !cp.peak_pct) return '';
+  const fmtK = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n || 0);
+  const tip = `Das Kontextfenster war während dieser Antwort zu ${cp.peak_pct}% gefüllt `
+    + `(Spitze ${fmtK(cp.peak_tokens)} von ${fmtK(cp.max_context)} Token). `
+    + `Nahe der Kapazitätsgrenze arbeiten Modelle oft nicht mehr in gewohnter Qualität — `
+    + `die Wahrscheinlichkeit für Auslassungen und Halluzinationen ist erhöht. `
+    + `Wichtige Aussagen dieser Antwort ggf. gegenprüfen.`;
+  return `
+    <div class="msg-citation-warn">
+      <span class="msg-citation-warn-badge" title="${esc(tip)}">⚠ Kontext war zu ${cp.peak_pct}% gefüllt — erhöhtes Halluzinationsrisiko</span>
+    </div>`;
+}
+
 function _buildCitationWarnBadge(validation) {
   if (!validation || !validation.warning_appended) return '';
   const uncited = Number(validation.uncited_claims || 0);
