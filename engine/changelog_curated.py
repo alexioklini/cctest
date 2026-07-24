@@ -29,6 +29,18 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.405.2",
+        "date": "2026-07-24",
+        "title": "Kostenanzeige wechselt korrekt mit",
+        "body": "Die Sitzungskosten-Anzeige in der Statusleiste zeigte nach "
+                "einem Chat-Wechsel weiterhin die Kosten des zuvor geöffneten "
+                "Chats an. Jetzt zeigt sie beim Öffnen eines Chats sofort "
+                "dessen eigene Kosten — bei einem neuen Chat bleibt das Feld "
+                "leer, bis die erste Antwort Kosten verursacht hat.",
+        "audience": "admin",
+        "versions": ["9.405.2"],
+    },
+    {
         "version": "9.405.1",
         "date": "2026-07-24",
         "title": "Aktivitätsanzeige bleibt beim Umschalten sichtbar",

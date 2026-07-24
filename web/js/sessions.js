@@ -129,6 +129,11 @@ async function openSession(sessionId, agentId) {
   chat._tokensOut = 0;
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
+  // Session cost is sticky on the chat object and WINS over the per-message
+  // scan in updateStatusBar — without this reset the prior session's cost
+  // survives the switch (the loaded messages' _cost metadata repopulates it).
+  chat._sessionCost = undefined;
+  chat._sessionCostList = undefined;
   chat._activityStates = new Map();
   chat._collapsedTurns = new Set();
   chat._expandedHints = new Set();
@@ -735,6 +740,8 @@ function newChat(opts) {
   chat._tokensOut = 0;
   chat._lastSpeed = null;
   chat._lastApiIn = 0;
+  chat._sessionCost = undefined;
+  chat._sessionCostList = undefined;
   chat._lcmState = null;
   // (GDPR/PII history-scan fields reset above via resetChatGdprState.)
   // Project binding for the fresh chat:
