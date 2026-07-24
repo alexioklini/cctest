@@ -15,6 +15,7 @@ These rules apply to every task unless explicitly overridden. Bias: caution over
 10. **Checkpoint after each step** — summarize done/verified/left; don't continue from a state you can't describe.
 11. **Match conventions even if you disagree** — conformance > taste; surface harmful conventions, don't fork silently.
 12. **Fail loud** — "completed"/"tests pass" is wrong if anything was skipped. Surface uncertainty.
+13. **Plain language** — write for a smart reader who is NOT a domain expert. Lead with the point, then the detail. Spell out an abbreviation the first time it appears (`KV-Cache` → "KV-Cache, der zwischengespeicherte Prompt-Anfang") or drop it. No unusual vocabulary, no internal shorthand the reader can't look up. Leave out background, alternatives and side-notes that don't change what the reader does next — if it isn't the main point, it doesn't go in the answer.
 
 ---
 
