@@ -102,7 +102,10 @@ Kosten und Kontext-Füllstand **aktualisieren live während der Antwort** (pro
 Runde, nicht erst am Ende). Innerhalb einer laufenden Runde tickt die
 Out-Token-Zahl zusätzlich als **Live-Schätzung** mit (mit `~` markiert,
 geschätzt aus dem Textstrom; am Rundenende durch die echte Zahl ersetzt) —
-auch der Kontext-Füllstand wächst damit sichtbar mit. Die **Zeitanzeige im
+auch der Kontext-Füllstand wächst damit sichtbar mit. Der Kontext-Füllstand
+zählt die **komplette** letzte Eingabe an das Modell — inklusive System-Prompt,
+Werkzeugen und per Cache wiederverwendeter Tokens (gecachte Tokens sind
+günstiger, belegen das Kontextfenster aber genauso). Die **Zeitanzeige im
 Spinner** zählt ab dem echten Start der Anfrage und läuft beim Verlassen und
 Wiederöffnen des Chats korrekt weiter (springt nicht auf 0 zurück). Wird eine
 Antwort **mitten im Stream abgebrochen**,

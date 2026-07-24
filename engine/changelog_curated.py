@@ -41,9 +41,13 @@ CURATED_CHANGELOG: list[dict] = [
                 "0-€-Abrechnung, was gerade verbraucht wird. Außerdem "
                 "behoben: Die Zeitanzeige der laufenden Antwort sprang beim "
                 "Verlassen und Wiederöffnen des Chats auf 0 zurück — sie "
-                "zählt jetzt korrekt ab dem Start der Anfrage weiter.",
+                "zählt jetzt korrekt ab dem Start der Anfrage weiter. Und der "
+                "Kontext-Füllstand zeigt jetzt die komplette Eingabe an das "
+                "Modell inklusive System-Prompt und wiederverwendeter "
+                "(gecachter) Tokens — vorher wurde der Cache-Anteil abgezogen "
+                "und der Füllstand deutlich zu klein angezeigt.",
         "audience": "user",
-        "versions": ["9.406.0"],
+        "versions": ["9.406.0", "9.406.1"],
     },
     {
         "version": "9.405.2",

@@ -3444,7 +3444,12 @@ def build_chat_event_callback(session, live, sid):
             _usage_totals["tokens_in"] += _r_in
             _usage_totals["tokens_out"] += _r_out
             _usage_totals["cache_read_tokens"] += _r_cr
-            _usage_totals["last_tokens_in"] = _r_in
+            # Context-fill anchor: the FULL prompt of this round (fresh + cache
+            # hit). Cached tokens occupy the context window exactly like fresh
+            # ones — stripping them (the pre-9.406.1 behavior) made the bar
+            # show 2-3k while the real prompt was 80k+ (system prompt, tools
+            # and standing history are cache hits after warmup).
+            _usage_totals["last_tokens_in"] = _r_in + _r_cr
             # Attach per-round actual tokens to the matching request_payload
             _ur = data.get("tool_round")
             if _ur is not None:
