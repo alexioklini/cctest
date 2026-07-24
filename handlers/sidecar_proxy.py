@@ -216,6 +216,7 @@ def run_turn(
     cancel_token: Any,
     timeout_s: float = 1800.0,
     disable_parallel_tool_use: bool = False,
+    context_gate: Callable[[int, int], str | None] | None = None,
 ) -> dict:
     """Drive one chat turn through the in-process OpenAI loop.
 
@@ -415,7 +416,7 @@ def run_turn(
                 tool_use_id_setter=_set_tool_use_id,
                 pause_gate=_pause_gate, drain_injections=_drain_inj,
                 progress_cb=_progress_cb, tools_refresh=_tools_refresh,
-                budget_gate=_budget_gate)
+                budget_gate=_budget_gate, context_gate=context_gate)
             final_text = summary.get("final_text", "") or ""
             if summary.get("stop_reason") == "cancelled":
                 cancelled = True

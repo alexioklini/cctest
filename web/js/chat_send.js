@@ -679,6 +679,17 @@ function buildStreamCallbacks(chat, isActive) {
         if (isActive() && typeof updateStatusBar === 'function') updateStatusBar();
         if (isActive() && typeof renderStreamingMessage === 'function') renderStreamingMessage(chat);
       },
+      // Mid-turn context-pressure gate: server waits for the user's choice.
+      context_pressure: (d) => {
+        if (isActive()) showContextPressureDialog(chat, d);
+      },
+      context_pressure_done: (d) => {
+        closeContextPressureDialog();
+        if (d && d.decision === 'no_tools' && isActive()) {
+          setStreamStatus(chat, 'label', 'Abschluss ohne weitere Tools…');
+          renderStreamingMessage(chat);
+        }
+      },
       queue_wait: (d) => {
         // Provider queue serialised this turn — show "waiting in line" hint.
         chat.queueStatus = {
@@ -1443,6 +1454,7 @@ function buildStreamCallbacks(chat, isActive) {
       },
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
+        closeContextPressureDialog();
         // Chronological interleave: if we committed 'assistant_segment' rows
         // mid-turn (text → tool → text), the final assistant message must hold
         // ONLY the trailing run (chat.streamingText) — NOT d.text (the full
@@ -1675,6 +1687,7 @@ function buildStreamCallbacks(chat, isActive) {
         try { ChatTurnControl.drainNext(chat); } catch (e) { console.error('[queue] drain failed', e); }
       },
       error: (d) => {
+        closeContextPressureDialog();
         chat.streaming = false;
         chat.streamingText = '';
         chat.thinkingText = '';
@@ -2102,6 +2115,49 @@ async function composerHandover() {
 // Decision modal shown when auto-LCM ran but the chat is STILL over threshold
 // even after maximum compaction. Three choices: retry the turn anyway, start a
 // new chat with a handover, or start a fresh empty chat.
+// Mid-turn context-pressure dialog (context_gate): the server BLOCKS the turn
+// at a round boundary and waits (5-min timeout → continue) for the user's
+// choice. Programmatically closable (closeContextPressureDialog) because the
+// server may resolve it first — showDialog() can't do that.
+function showContextPressureDialog(chat, d) {
+  closeContextPressureDialog();
+  const pct = d.fill_pct || 0;
+  const fmtK = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n || 0);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay dialog-overlay';
+  overlay.id = 'context-pressure-dialog';
+  overlay.innerHTML = `
+    <div class="dialog-card" role="dialog" aria-modal="true">
+      <div class="dialog-header"><span class="dialog-title">Kontextfenster zu ${pct}% gefüllt</span></div>
+      <div class="dialog-body">
+        <p class="dialog-message">
+          Die letzte Anfrage an das Modell umfasste ${fmtK(d.prompt_tokens)} von ${fmtK(d.max_context)} Token.
+          Weitere Tool-Runden können das Modell in Probleme treiben (Kontext-Überlauf, Halluzinationen).<br><br>
+          Ohne Antwort läuft der Turn nach 5 Minuten automatisch weiter.
+        </p>
+      </div>
+      <div class="dialog-footer">
+        <button class="dialog-btn dialog-btn-ghost" data-value="cancel">Abbrechen</button>
+        <button class="dialog-btn dialog-btn-ghost" data-value="continue">Weitermachen</button>
+        <button class="dialog-btn dialog-btn-primary" data-value="no_tools">Mit vorhandenen Infos abschließen</button>
+      </div>
+    </div>`;
+  overlay.querySelectorAll('.dialog-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const decision = btn.getAttribute('data-value');
+      closeContextPressureDialog();
+      try {
+        const r = await API.contextDecision(chat.sessionId, decision);
+        if (r && r.delivered === false) showToast('Turn lief bereits weiter (Timeout)');
+      } catch (e) { showToast('Entscheidung konnte nicht übermittelt werden', true); }
+    });
+  });
+  document.body.appendChild(overlay);
+}
+function closeContextPressureDialog() {
+  document.getElementById('context-pressure-dialog')?.remove();
+}
+
 async function showAutoLcmOverThresholdModal(chat, d) {
   const pct = d && d.after_pct ? d.after_pct : '';
   const msg = `Der Kontext ist auch nach automatischer Verdichtung noch ${pct ? pct + '% ' : ''}voll — `

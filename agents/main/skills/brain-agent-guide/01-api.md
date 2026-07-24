@@ -218,6 +218,10 @@ streaming call, per-USER history, fixed read-only tool set. See
   single terminal `done` carries `goal {status, iteration, max, reasoning}`.
   `fulfilled` auto-ends the loop (badge ✓ until the goal is cleared/replaced).
 - `POST /v1/chat/answer` — `{session_id, answer}` unblocks `AskUserQuestion`.
+- `POST /v1/chat/context-decision` — `{session_id, decision: continue|no_tools|cancel}`
+  beantwortet den Mid-Turn-Kontext-Druck-Dialog (erscheint ab 80 %/90 % Füllstand;
+  Server wartet max. 5 min, dann `continue`). Antwort `{delivered: bool}` —
+  `false` = Gate bereits aufgelöst (Timeout), der Klick kam zu spät.
   Also accepts `{task_id, answer}` (v9.312.5) to answer a BACKGROUND sub-agent
   blocked on `ask_user`: the pending slot is keyed on the task (not the session),
   so several sub-agents can ask at once without colliding with each other or with

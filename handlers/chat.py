@@ -1187,6 +1187,25 @@ def deliver_plan_review_decision(session_id: str, decision: dict) -> bool:
     return True
 
 
+# ---- Mid-turn context-pressure decisions (the loop's context_gate) ----
+# session_id -> {"event": threading.Event, "decision": str|None}. Registered by
+# the worker's gate closure while it BLOCKS waiting for the user's choice
+# (weiter / ohne Tools abschließen / abbrechen); resolved by
+# POST /v1/chat/context-decision or the gate's own 5-min timeout (→ continue).
+_context_gate_pending: dict = {}
+
+
+def deliver_context_decision(session_id: str, decision: str) -> bool:
+    """Called by POST /v1/chat/context-decision. True iff a gate was waiting
+    (False = already timed out or resolved — the turn moved on)."""
+    slot = _context_gate_pending.get(session_id)
+    if not slot:
+        return False
+    slot["decision"] = decision
+    slot["event"].set()
+    return True
+
+
 def _persist_plan_artifact(sid, session, live, plan_text, *, planner="",
                            verdict="", round_no=0, source="Planner-Entwurf"):
     """Persist the delegate plan VERSIONED into the session's artifact folder
@@ -5355,6 +5374,43 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 created_files.append(_f)
                                 _seen.add(_f.get("path"))
                     else:
+                        # Kontext-Druck-Gate (nur interaktive Turns): meldet sich
+                        # an der Rundengrenze, sobald der volle Prompt der letzten
+                        # Runde (frisch + gecached) die Schwelle reißt — der USER
+                        # entscheidet (weiter / ohne weitere Tools abschließen /
+                        # abbrechen), NIE eine stille Kompression. Schwellen 80 %
+                        # und 90 %, jede fragt höchstens einmal pro Turn; Timeout
+                        # 5 min → weiter (User-Vorgabe 2026-07-24). max_context
+                        # wird pro Aufruf frisch gelesen (Local-Swap ändert es).
+                        _ctx_gate_thresholds = [0.80, 0.90]
+
+                        def _context_gate(prompt_total, round_no):
+                            max_ctx = int(getattr(session, "max_context", 0) or 0)
+                            if max_ctx <= 0 or not _ctx_gate_thresholds:
+                                return None
+                            fill = prompt_total / max_ctx
+                            if fill < _ctx_gate_thresholds[0]:
+                                return None
+                            while (_ctx_gate_thresholds
+                                   and fill >= _ctx_gate_thresholds[0]):
+                                _ctx_gate_thresholds.pop(0)
+                            _ev = threading.Event()
+                            _context_gate_pending[sid] = {
+                                "event": _ev, "decision": None}
+                            event_callback("context_pressure", {
+                                "fill_pct": round(fill * 100),
+                                "prompt_tokens": int(prompt_total),
+                                "max_context": max_ctx,
+                                "round": round_no,
+                                "timeout_s": 300,
+                            })
+                            _ev.wait(timeout=300)
+                            _slot = _context_gate_pending.pop(sid, None) or {}
+                            _dec = _slot.get("decision") or "continue"
+                            event_callback("context_pressure_done",
+                                           {"decision": _dec})
+                            return _dec if _dec in ("no_tools", "cancel") else None
+
                         _result = sidecar_proxy.run_turn(
                             messages=_wire_messages,
                             model=session.model,
@@ -5369,6 +5425,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             max_rounds=_max_rounds,
                             event_callback=event_callback,
                             cancel_token=session.cancel_token,
+                            context_gate=_context_gate,
                         )
                         # Mid-turn Retrieval-PII-Dialog → "Lokales Modell"
                         # (PROJECT_RETRIEVAL_PII_DIALOG_PLAN Schritt 3.3): der
@@ -5435,6 +5492,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     max_rounds=_max_rounds,
                                     event_callback=event_callback,
                                     cancel_token=session.cancel_token,
+                                    context_gate=_context_gate,
                                 )
                             else:
                                 print("[gdpr] retrieval local switch requested, "
@@ -6420,6 +6478,9 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             session._discovered_tools = _have | set(_turn_discovered)
                 except Exception:
                     pass
+                # Drop any orphaned context-gate slot (turn ended while a
+                # decision dialog was pending — e.g. external cancel).
+                _context_gate_pending.pop(sid, None)
                 # If the worker died without emitting a terminal event (e.g. a
                 # bare process exit), make sure subscribers aren't left hanging.
                 if not live.done:
@@ -8511,6 +8572,29 @@ class ChatHandlerMixin:
             self._send_json({"status": "cancelling", "name": name})
         else:
             self._send_json({"error": f"Task '{name}' not running"}, 404)
+
+    def _handle_chat_context_decision(self):
+        """POST /v1/chat/context-decision — deliver the user's choice to a
+        waiting mid-turn context-pressure gate.
+
+        Body: {session_id, decision: "continue"|"no_tools"|"cancel"}.
+        Returns {delivered: bool} — False means the gate already resolved
+        (its 5-min timeout continued the turn) and the click arrived late.
+        """
+        try:
+            body = self._read_json()
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        session_id = (body.get("session_id") or "").strip()
+        decision = (body.get("decision") or "").strip()
+        if not session_id or decision not in ("continue", "no_tools", "cancel"):
+            self._send_json({"error": "session_id and decision "
+                             "(continue|no_tools|cancel) required"}, 400)
+            return
+        if self._session_access_check(session_id) is None:
+            return
+        self._send_json({"delivered": deliver_context_decision(session_id, decision)})
 
     def _handle_chat_answer(self):
         """POST /v1/chat/answer — deliver a user answer to a pending ask_user tool call.

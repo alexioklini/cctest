@@ -29,6 +29,22 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.407.0",
+        "date": "2026-07-24",
+        "title": "Sie entscheiden, wenn der Kontext knapp wird",
+        "body": "Füllt sich das Kontextfenster während eines laufenden, "
+                "werkzeuglastigen Auftrags auf 80 %, hält der Assistent an und "
+                "fragt Sie: Weitermachen, mit den vorhandenen Informationen "
+                "abschließen (keine weiteren Werkzeug-Aufrufe) oder abbrechen. "
+                "Es wird niemals still gekürzt oder zusammengefasst — Sie "
+                "behalten die Kontrolle, und ohne Antwort läuft der Auftrag "
+                "nach 5 Minuten einfach weiter. Das ersetzt den bisherigen "
+                "stillen Fehler, wenn ein sehr langer Auftrag das "
+                "Kontextfenster sprengte.",
+        "audience": "user",
+        "versions": ["9.407.0"],
+    },
+    {
         "version": "9.406.0",
         "date": "2026-07-24",
         "title": "Statusleiste tickt live, Spinner-Uhr korrekt",

@@ -191,6 +191,7 @@ class API {
   static webSearch(query) { return this.post('/v1/web/search', { query }); }
   static inspectSession(sessionId) { return this.get(`/v1/sessions/${encodeURIComponent(sessionId)}/inspect`); }
   static cancelChat(sessionId) { return this.post('/v1/chat/cancel', {session_id: sessionId}); }
+  static contextDecision(sessionId, decision) { return this.post('/v1/chat/context-decision', {session_id: sessionId, decision}); }
   // Turn-control (pause/resume a running turn, inject a mid-stream message the
   // model sees next round, ask a side question answered in a separate bubble).
   static pauseChat(sessionId)  { return this.post('/v1/chat/pause',  {session_id: sessionId}); }

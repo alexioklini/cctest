@@ -945,6 +945,7 @@ def run_loop(
     progress_cb: Callable[[dict], None] | None = None,
     tools_refresh: Callable[[], tuple[list[dict], list[str]] | None] | None = None,
     budget_gate: Callable[[], str | None] | None = None,
+    context_gate: Callable[[int, int], str | None] | None = None,
 ) -> dict:
     """Drive one turn's rounds. `emit(type, data)` fires Brain-vocabulary events;
     `is_cancelled()` is polled between rounds and after each stream drain.
@@ -970,6 +971,16 @@ def run_loop(
       is kept and returned with `stop_reason="budget"` plus `stop_detail=<reason>`;
       nothing is discarded. (An exception from the gate is swallowed: a broken
       budget check must never kill a turn that is otherwise fine.)
+    - `context_gate(last_prompt_total, round_no)` is called at each round boundary
+      (after round 1) with the FULL prompt size of the previous round (fresh +
+      cached tokens — what actually occupies the context window). It may BLOCK
+      (the interactive caller shows a decision dialog with its own timeout) and
+      returns: None/'continue' → proceed; 'no_tools' → the remaining rounds are
+      sent WITHOUT a tool array plus a wire-only instruction to finish from the
+      information already gathered (nothing is compressed or dropped — the model
+      just can't open more tool rounds); 'cancel' → graceful cancelled-stop like
+      the Stop button. No silent mid-turn compaction, by design: the USER decides
+      (see the dead `_middleware_compress_old` this replaces).
     - `tools_refresh()` is called at each round boundary (after round 1). When it
       returns `(new_tools, new_allowed)` the wire tool array + dispatch whitelist
       are REPLACED for the remaining rounds — the undefer-after-discovery hook:
@@ -1041,6 +1052,12 @@ def run_loop(
     _turn_started_at = time.time()
     _completed_tools: list[dict] = []  # [{name, elapsed_ms}] this turn
 
+    # Context-pressure state: full prompt size (fresh + cached) of the last
+    # completed round, fed to context_gate; no_more_tools flips when the user
+    # (or the caller's timeout default) chose to finish without further tools.
+    last_prompt_total = 0
+    no_more_tools = False
+
     def _report_progress(**extra):
         if progress_cb is None:
             return
@@ -1079,6 +1096,29 @@ def run_loop(
                 emit("budget_stop", {"round": round_no, "reason": final_stop_detail})
                 break
 
+        # Context-pressure gate (interactive only): when the context window
+        # nears its limit the USER decides — continue / finish without further
+        # tool rounds / cancel. The gate may block (dialog + caller-side
+        # timeout). Never compresses or drops anything silently.
+        if (context_gate is not None and round_idx > 0
+                and last_prompt_total > 0 and not no_more_tools):
+            try:
+                _cg = context_gate(last_prompt_total, round_no)
+            except Exception:
+                _cg = None  # a broken gate must not kill a healthy turn
+            if _cg == "cancel":
+                final_stop_reason = "cancelled"
+                emit("cancelled", {"round": round_no, "phase": "context_gate"})
+                break
+            if _cg == "no_tools":
+                no_more_tools = True
+                loop_messages.append({"role": "user", "content": (
+                    "[System] Das Kontextfenster ist fast voll. Beende die "
+                    "Aufgabe JETZT mit einer abschließenden Antwort aus den "
+                    "bereits vorliegenden Informationen. Weitere Tool-Aufrufe "
+                    "sind deaktiviert.")})
+                emit("context_no_tools", {"round": round_no})
+
         # --- round boundary: honour pause, then splice in any injected messages ---
         if pause_gate is not None:
             try:
@@ -1112,7 +1152,8 @@ def run_loop(
         # tool_search found something new (see docstring). Only ever REPLACES
         # when the caller signals a change, so the prompt prefix stays stable
         # on turns that discover nothing.
-        if tools_refresh is not None and round_idx > 0 and not forced_tool:
+        if (tools_refresh is not None and round_idx > 0 and not forced_tool
+                and not no_more_tools):
             try:
                 _refreshed = tools_refresh()
             except Exception:
@@ -1125,15 +1166,18 @@ def run_loop(
 
         _report_progress(round=round_no, phase="round_start", active_tool=None)
 
+        # After a 'no_tools' context-gate decision the remaining rounds carry
+        # NO tool array — the model must finish from what it already has.
+        _wire_tools = [] if no_more_tools else tools
         if _anthropic_wire:
             payload = build_anthropic_payload(
                 model=model, system_prompt=system_prompt, messages=loop_messages,
-                tools=tools, max_tokens=max_tokens, sampling=sampling,
+                tools=_wire_tools, max_tokens=max_tokens, sampling=sampling,
                 thinking_level=thinking_level, forced_tool=forced_tool)
         else:
             payload = build_openai_payload(
                 model=model, system_prompt=system_prompt, messages=loop_messages,
-                tools=tools, max_tokens=max_tokens, sampling=sampling,
+                tools=_wire_tools, max_tokens=max_tokens, sampling=sampling,
                 thinking_level=thinking_level,
                 disable_parallel_tool_use=disable_parallel_tool_use,
                 prompt_cache_key=prompt_cache_key, forced_tool=forced_tool)
@@ -1237,6 +1281,7 @@ def run_loop(
         u = rr.usage or {}
         if u:
             prompt_tokens = int(u.get("prompt_tokens", 0) or 0)
+            last_prompt_total = prompt_tokens  # context-gate anchor (full prompt)
             details = u.get("prompt_tokens_details") or {}
             cached = int(details.get("cached_tokens", 0) or 0)
             completion = int(u.get("completion_tokens", 0) or 0)

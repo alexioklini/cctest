@@ -105,7 +105,17 @@ geschätzt aus dem Textstrom; am Rundenende durch die echte Zahl ersetzt) —
 auch der Kontext-Füllstand wächst damit sichtbar mit. Der Kontext-Füllstand
 zählt die **komplette** letzte Eingabe an das Modell — inklusive System-Prompt,
 Werkzeugen und per Cache wiederverwendeter Tokens (gecachte Tokens sind
-günstiger, belegen das Kontextfenster aber genauso). Die **Zeitanzeige im
+günstiger, belegen das Kontextfenster aber genauso).
+
+**Kontext-Druck-Dialog** — füllt sich das Kontextfenster **während** eines
+laufenden, werkzeuglastigen Auftrags auf 80 % (und erneut bei 90 %), hält der
+Assistent an der nächsten Rundengrenze an und fragt Sie, wie es weitergehen
+soll: **Weitermachen** (auf eigenes Risiko), **Mit vorhandenen Infos
+abschließen** (keine weiteren Tool-Aufrufe — der Assistent formuliert sofort
+eine Abschlussantwort aus dem bereits Gesammelten; nichts wird gekürzt oder
+zusammengefasst) oder **Abbrechen**. Ohne Antwort läuft der Auftrag nach
+5 Minuten automatisch weiter. Es wird niemals still verdichtet oder Material
+verworfen — die Entscheidung liegt immer bei Ihnen. Die **Zeitanzeige im
 Spinner** zählt ab dem echten Start der Anfrage und läuft beim Verlassen und
 Wiederöffnen des Chats korrekt weiter (springt nicht auf 0 zurück). Wird eine
 Antwort **mitten im Stream abgebrochen**,
