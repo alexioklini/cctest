@@ -3032,6 +3032,18 @@ class ChatDB:
             conn.commit()
 
     @staticmethod
+    @_db_safe(default=None)
+    def get_active_turn_started_at(session_id):
+        """Unix epoch when this session's in-flight turn started — the elapsed-
+        time anchor for the client's spinner clock on re-attach. None when no
+        turn is active."""
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT started_at FROM active_turns WHERE session_id=?",
+                (session_id,)).fetchone()
+            return int(row[0]) if row and row[0] else None
+
+    @staticmethod
     @_db_safe(default="")
     def get_active_turn_id(session_id):
         """The in-flight turn_id for a session, or ''. Used by the chat-cancel

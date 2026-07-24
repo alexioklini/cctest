@@ -236,6 +236,12 @@ function updateStatusBar() {
     if (chat._liveTurnTokensOut) totalOut += chat._liveTurnTokensOut;
     if (chat._liveTurnCached) totalCached += chat._liveTurnCached;
   }
+  // Mid-round live estimate: chars streamed since the last usage event ÷ 4
+  // (text + thinking deltas, accumulated in chat_send). Real usage replaces
+  // it at every round boundary (the usage handler zeroes the char counter),
+  // so the bar keeps moving during long single rounds without double-counting.
+  const _estOut = chat.streaming ? Math.round((chat._liveRoundEstChars || 0) / 4) : 0;
+  if (_estOut) totalOut += _estOut;
 
   // Workflow-bound chat: the run's own token/cost totals (rolled up in
   // workflow_history) belong in the statusline — the run consumed those
@@ -255,7 +261,7 @@ function updateStatusBar() {
   // Combined token display: in / out / cached (no labels, no percentages).
   const tokensEl = document.getElementById('status-tokens');
   if (tokensEl) {
-    tokensEl.textContent = `${totalIn.toLocaleString()} / ${totalOut.toLocaleString()} / ${totalCached.toLocaleString()}`;
+    tokensEl.textContent = `${totalIn.toLocaleString()} / ${_estOut ? '~' : ''}${totalOut.toLocaleString()} / ${totalCached.toLocaleString()}`;
     tokensEl.style.color = totalCached > 0 ? '' : '';
     // Cache-hit context stays in the tooltip only (no on-bar percentage).
     const _promptTot = totalIn + totalCached;
@@ -283,7 +289,11 @@ function updateStatusBar() {
     }
   }
   if (chat._lastApiIn) lastApiIn = chat._lastApiIn;
-  const contextUsed = lastApiIn || chat.totalTokens || 0;
+  let contextUsed = lastApiIn || chat.totalTokens || 0;
+  // While a round streams, project the estimated fresh output on top — the
+  // generated tokens become part of the next round's prompt, and the bar
+  // keeps moving during long rounds. Corrected by real usage at round end.
+  if (_estOut && contextUsed) contextUsed += _estOut;
   const modelMaxContext = (state.modelsConfig?.models?.[chat.model]?.max_context) || 0;
   const effectiveMaxContext = modelMaxContext || chat.maxContext;
   if (contextUsed > 0 && effectiveMaxContext) {
@@ -373,9 +383,10 @@ function updateStatusBar() {
   const _listDiffers = sessionCostList !== undefined && sessionCostList > sessionCost * 1.01 + 0.0001;
   if (sawCostField) {
     costWrap.style.display = '';
-    // Effective (billed) cost only — the API list-price comparison was dropped
-    // from the status line (still available in the Plan-usage / cost breakdown).
-    costLabel.textContent = _fmt$(sessionCost);
+    // Effective (billed) cost, plus the ticking API list price when it
+    // differs — flat-plan models bill $0 every round, so without the list
+    // price the field looks frozen during long agentic turns.
+    costLabel.textContent = _fmt$(sessionCost) + (_listDiffers ? ` (API ${_fmt$(sessionCostList)})` : '');
     if (sessionCost <= 0 && !_listDiffers) {
       costLabel.style.color = 'var(--text-400)';
       costWrap.title = 'Effektive Sitzungskosten: $0.00 — für dieses Modell sind keine Preise hinterlegt. cost_input/cost_output unter Einstellungen → Modelle festlegen.';

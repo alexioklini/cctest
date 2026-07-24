@@ -674,6 +674,11 @@ class SessionsHandlerMixin:
             _st, _ = ChatDB.get_streaming_text(sid)
             if _st:
                 resp["streaming_text"] = _st
+            # Turn start (unix epoch) so the client's spinner clock resumes at
+            # the real elapsed time instead of restarting at 0 on re-attach.
+            _tsa = ChatDB.get_active_turn_started_at(sid)
+            if _tsa:
+                resp["turn_started_at"] = _tsa
         if session:
             resp["model"] = session.model or ""
             resp["max_context"] = session.max_context

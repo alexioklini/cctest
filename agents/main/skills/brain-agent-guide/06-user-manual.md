@@ -99,7 +99,13 @@ bleibt es bis zum Neuladen geschlossen.
 Geschwindigkeit, Kontextfenster-Füllstand, Sitzungskosten, Plan-Nutzung,
 Warmup-Status, Provider-Queue. Auf jedes Element klicken für Details. In/Out,
 Kosten und Kontext-Füllstand **aktualisieren live während der Antwort** (pro
-Runde, nicht erst am Ende). Wird eine Antwort **mitten im Stream abgebrochen**,
+Runde, nicht erst am Ende). Innerhalb einer laufenden Runde tickt die
+Out-Token-Zahl zusätzlich als **Live-Schätzung** mit (mit `~` markiert,
+geschätzt aus dem Textstrom; am Rundenende durch die echte Zahl ersetzt) —
+auch der Kontext-Füllstand wächst damit sichtbar mit. Die **Zeitanzeige im
+Spinner** zählt ab dem echten Start der Anfrage und läuft beim Verlassen und
+Wiederöffnen des Chats korrekt weiter (springt nicht auf 0 zurück). Wird eine
+Antwort **mitten im Stream abgebrochen**,
 bleiben die bis dahin verbrauchten Tokens **und Kosten** erhalten (sie werden
 pro Runde sofort verbucht, gehen also nicht verloren). Läuft das Modell über
 eine **Flatrate** (Coding-Plan, siehe unten), zeigt das $-Feld beide Werte:

@@ -557,6 +557,7 @@ async function sendMessage() {
   chat._liveTurnTokensIn = 0;
   chat._liveTurnTokensOut = 0;
   chat._liveTurnCached = 0;
+  chat._liveRoundEstChars = 0;
   chat.files = [];
   chat._msgSeq = chat._msgSeq || 0;
   const streamGen = (chat._streamGen = (chat._streamGen || 0) + 1);
@@ -622,7 +623,16 @@ function buildStreamCallbacks(chat, isActive) {
       },
       thinking_delta: (d) => {
         chat.thinkingText += d.text || '';
-        if (isActive()) { renderStreamingMessage(chat); scrollToBottom(); }
+        chat._liveRoundEstChars = (chat._liveRoundEstChars || 0) + (d.text || '').length;
+        if (isActive()) {
+          renderStreamingMessage(chat); scrollToBottom();
+          // Throttled status-bar repaint: the ~chars/4 output estimate only
+          // needs ~2 ticks/s, not one full updateStatusBar per delta.
+          if (Date.now() - (chat._estBarPaintedAt || 0) > 500) {
+            chat._estBarPaintedAt = Date.now();
+            if (typeof updateStatusBar === 'function') updateStatusBar();
+          }
+        }
       },
       thinking_done: (d) => {
         // Persist this round's thinking as its own message entry so it appears
@@ -658,6 +668,9 @@ function buildStreamCallbacks(chat, isActive) {
         if (typeof d.tokens_in === 'number') chat._liveTurnTokensIn = d.tokens_in;
         if (typeof d.tokens_out === 'number') chat._liveTurnTokensOut = d.tokens_out;
         if (typeof d.cache_read_tokens === 'number') chat._liveTurnCached = d.cache_read_tokens;
+        // Round boundary: the real numbers above include everything streamed
+        // so far — drop the mid-round char estimate so it isn't added twice.
+        chat._liveRoundEstChars = 0;
         if (d.cost !== undefined && d.cost !== null) chat._sessionCost = d.cost;
         if (d.cost_list !== undefined && d.cost_list !== null) chat._sessionCostList = d.cost_list;
         // last_tokens_in = the most recent round's prompt size → drives the live
@@ -718,6 +731,7 @@ function buildStreamCallbacks(chat, isActive) {
       },
       text_delta: (d) => {
         chat.streamingText += d.text || '';
+        chat._liveRoundEstChars = (chat._liveRoundEstChars || 0) + (d.text || '').length;
         if (isActive() && typeof buddyPhase === 'function') buddyPhase('writing');
         if (isActive()) {
           // Real text is flowing → clear any prior nudge label so it doesn't
@@ -726,6 +740,11 @@ function buildStreamCallbacks(chat, isActive) {
             setStreamStatus(chat, 'label', '');
           }
           renderStreamingMessage(chat); scrollToBottom();
+          // Throttled status-bar repaint for the live output-token estimate.
+          if (Date.now() - (chat._estBarPaintedAt || 0) > 500) {
+            chat._estBarPaintedAt = Date.now();
+            if (typeof updateStatusBar === 'function') updateStatusBar();
+          }
         }
       },
       tool_call: (d) => {
@@ -1483,6 +1502,7 @@ function buildStreamCallbacks(chat, isActive) {
         chat._liveTurnTokensIn = 0;
         chat._liveTurnTokensOut = 0;
         chat._liveTurnCached = 0;
+        chat._liveRoundEstChars = 0;
         assistantMsg.metadata = {
           ...(assistantMsg.metadata || {}),
           model: d.model || chat.model,
@@ -1667,6 +1687,7 @@ function buildStreamCallbacks(chat, isActive) {
         chat._liveTurnTokensIn = 0;
         chat._liveTurnTokensOut = 0;
         chat._liveTurnCached = 0;
+        chat._liveRoundEstChars = 0;
         clearInterval(chat._streamTimerInterval);
         if (isActive()) {
           updateStreamingUI(false);

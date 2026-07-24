@@ -29,6 +29,23 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.406.0",
+        "date": "2026-07-24",
+        "title": "Statusleiste tickt live, Spinner-Uhr korrekt",
+        "body": "Während der Assistent arbeitet, bewegt sich die Statusleiste "
+                "jetzt durchgehend: Die Token-Zahl tickt auch mitten in einer "
+                "langen Antwort als Schätzung mit (mit ~ markiert, am "
+                "Rundenende durch die exakte Zahl ersetzt), und bei Modellen "
+                "im Flatrate-Plan zeigt das Kosten-Feld zusätzlich den "
+                "API-Listenpreis in Klammern — so sehen Sie auch bei "
+                "0-€-Abrechnung, was gerade verbraucht wird. Außerdem "
+                "behoben: Die Zeitanzeige der laufenden Antwort sprang beim "
+                "Verlassen und Wiederöffnen des Chats auf 0 zurück — sie "
+                "zählt jetzt korrekt ab dem Start der Anfrage weiter.",
+        "audience": "user",
+        "versions": ["9.406.0"],
+    },
+    {
         "version": "9.405.2",
         "date": "2026-07-24",
         "title": "Kostenanzeige wechselt korrekt mit",

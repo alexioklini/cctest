@@ -145,6 +145,7 @@ async function openSession(sessionId, agentId) {
 
   let resumeStreaming = false;
   let resumeStreamingText = '';
+  let resumeTurnStartedAt = 0;
 
   try {
     const data = await API.getSessionMessages(sessionId);
@@ -568,6 +569,7 @@ async function openSession(sessionId, agentId) {
     if (data.streaming) {
       resumeStreaming = true;
       resumeStreamingText = data.streaming_text || '';
+      resumeTurnStartedAt = Number(data.turn_started_at || 0);
       chat.streamingText = '';
     }
 
@@ -641,7 +643,10 @@ async function openSession(sessionId, agentId) {
     chat.queueStatus = null;
     chat.files = [];
     chat._streamGen = (chat._streamGen || 0) + 1;
-    chat._streamStartTime = Date.now();
+    // Elapsed-time anchor: the turn's REAL start from the server (unix epoch,
+    // active_turns.started_at) — re-entering a chat mid-turn must not reset
+    // the spinner clock to 0. Fallback to now() if the server didn't send it.
+    chat._streamStartTime = resumeTurnStartedAt > 0 ? resumeTurnStartedAt * 1000 : Date.now();
     clearInterval(chat._streamTimerInterval);
     chat._streamTimerInterval = setInterval(() => updateStreamTimer(chat), 100);
     updateStreamingUI(true, chat);
