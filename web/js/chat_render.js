@@ -259,6 +259,16 @@ function renderMessages() {
   // baseline to animate from); persistent nodes get the class toggled, which
   // animates via CSS.
   _applyChatCollapseStates(chat, container, changedRoots);
+
+  // Re-append the live streaming bubble (spinner/thinking/partial answer) at
+  // the single choke point: any view-state toggle (PII-marks, hint expand, …)
+  // that calls renderMessages() bare changes the active turn's block hash, so
+  // the reconciler replaces that node and destroys the .msg-streaming div that
+  // renderStreamingMessage() injected into it. During a long tool call no SSE
+  // event re-appends it → spinner gone until reload. renderStreamingMessage is
+  // state-driven and idempotent (removes any existing bubble, renders nothing
+  // when idle), so calling it here keeps DOM ≡ state for every caller.
+  renderStreamingMessage(chat);
 }
 // Set/clear `cls` on `node` to match `wantOn`. If the node is freshly inserted
 // (in `freshSet`), suppress the transition for one frame so it paints directly

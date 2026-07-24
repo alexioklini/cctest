@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.405.1",
+        "date": "2026-07-24",
+        "title": "Aktivitätsanzeige bleibt beim Umschalten sichtbar",
+        "body": "Während der Assistent antwortet, blieb die Aktivitätsanzeige "
+                "(Modell, Status, Zeit) nicht mehr sichtbar, sobald Sie "
+                "währenddessen etwas an der Ansicht änderten — etwa "
+                "Datenschutz-Markierungen ein-/ausblendeten oder die "
+                "vollständige Anfrage aufklappten. Jetzt bleibt die Anzeige "
+                "bei laufender Antwort in jedem Fall stehen; ein Neuladen des "
+                "Chats ist nicht mehr nötig.",
+        "audience": "user",
+        "versions": ["9.405.1"],
+    },
+    {
         "version": "9.405.0",
         "date": "2026-07-23",
         "title": "Panel maximieren + Diagramm-Korrektur",

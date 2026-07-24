@@ -2730,6 +2730,88 @@
       "_caps_canonical": true,
       "is_local": true,
       "warmup": false
+    },
+    "nanbeige4.2": {
+      "enabled": true,
+      "shortname": "nanbeige4.2",
+      "display_name": "nanbeige4.2 (mxfp4)",
+      "icon": "🌱",
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 262144,
+      "max_output": 8192,
+      "provider": "llm-router-local",
+      "profile": "speed",
+      "is_local": true,
+      "base_model_id": "nanbeige4.2",
+      "raw_formats": [],
+      "_caps_canonical": true,
+      "priority": 0,
+      "warmup": false
+    },
+    "nanbeige4.2-fp8": {
+      "enabled": true,
+      "shortname": "nanbeige4.2-fp8",
+      "display_name": "nanbeige4.2 (mxfp8)",
+      "icon": "🌱",
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 262144,
+      "max_output": 8192,
+      "provider": "llm-router-local",
+      "profile": "speed",
+      "is_local": true,
+      "base_model_id": "nanbeige4.2-fp8",
+      "raw_formats": [],
+      "_caps_canonical": true,
+      "priority": 0,
+      "warmup": false,
+      "warmup_mode": "minimal"
+    },
+    "nanbeige4.2-8bit": {
+      "enabled": true,
+      "shortname": "nanbeige4.2-8bit",
+      "display_name": "nanbeige4.2 (8bit)",
+      "icon": "🌱",
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 262144,
+      "max_output": 8192,
+      "provider": "llm-router-local",
+      "profile": "speed",
+      "is_local": true,
+      "base_model_id": "nanbeige4.2-8bit",
+      "raw_formats": [],
+      "_caps_canonical": true,
+      "priority": 0,
+      "warmup": true,
+      "warmup_mode": "minimal"
+    },
+    "nanbeige4.2-oq6e": {
+      "enabled": true,
+      "shortname": "nanbeige4.2-oq6e",
+      "display_name": "nanbeige4.2 (oQ6e)",
+      "icon": "🌱",
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 262144,
+      "max_output": 8192,
+      "provider": "llm-router-local",
+      "profile": "speed",
+      "is_local": true,
+      "base_model_id": "nanbeige4.2-oq6e",
+      "priority": 0,
+      "warmup": false,
+      "raw_formats": [],
+      "_caps_canonical": true
     }
   },
   "nodes": {},
@@ -3260,7 +3342,11 @@
     "labs-leanstral-1-5-1",
     "labs-leanstral-1-5",
     "voxtral-mini-tts-mellon-greek-2606-solutions",
-    "voxtral-mini-realtime-mellon-greek-2606-solutions"
+    "voxtral-mini-realtime-mellon-greek-2606-solutions",
+    "llm-router/nanbeige4.2",
+    "llm-router/nanbeige4.2-fp8",
+    "llm-router/nanbeige4.2-8bit",
+    "llm-router/nanbeige4.2-oq6e"
   ],
   "gdpr_scanner": {
     "enabled": true,
