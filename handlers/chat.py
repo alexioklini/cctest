@@ -4855,16 +4855,34 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     _prev_sig, _cur_sig, len(session.messages),
                                     _prev_types, _cur_types)):
                             session._drift_checked = True
-                            # Earlier topic = the FIRST user message: it fixes what
-                            # the chat was originally about. Comparing against the
-                            # previous message would follow a slow slide instead of
-                            # catching it.
-                            _first_user = next(
-                                (m.get("content") for m in session.messages
+                            # Anchor = the PREVIOUS user message, matching what
+                            # stage 1 compares (previous turn's types + tools).
+                            # One question, one reference point.
+                            #
+                            # This used to anchor on the FIRST user message, on
+                            # the theory that it fixes what the chat was
+                            # originally about and that comparing neighbours
+                            # would follow a slow slide unnoticed. Both halves
+                            # were wrong, measured on the live classifier model:
+                            #   • Chats open with "hi" far too often, and
+                            #     "different subject than *hi*?" can only be NO —
+                            #     the one allowed confirm call per chat was spent
+                            #     on a worthless comparison (chat ef5f6afd).
+                            #   • The slow-slide worry doesn't hold: on a
+                            #     4-step DORA→…→Python chain, first-vs-last
+                            #     answered NO too. The first message never
+                            #     caught that case.
+                            # Neighbour comparison scores correctly across the
+                            # cases that matter: greeting→Python NO,
+                            # Python→DORA YES, Python→Python-detail NO,
+                            # DORA→NIS2 NO.
+                            _prev_user = next(
+                                (m.get("content") for m in reversed(
+                                    session.messages[:-1])
                                  if m.get("role") == "user"
                                  and isinstance(m.get("content"), str)), "")
-                            if _first_user and engine.drift_confirm(
-                                    _first_user, message, session_id=sid):
+                            if _prev_user and engine.drift_confirm(
+                                    _prev_user, message, session_id=sid):
                                 # Ask, then wait. No answer within 5 minutes → run
                                 # the turn here (same default as the context-pressure
                                 # gate: silence must never strand a turn).

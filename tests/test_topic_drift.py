@@ -192,6 +192,62 @@ class ThinkingSimulatedTest(unittest.TestCase):
         self.assertFalse(brain.thinking_is_simulated(""))
 
 
+class DriftAnchorTest(unittest.TestCase):
+    """The confirm call anchors on the PREVIOUS user message, not the first.
+
+    Anchoring on the first message wasted the one allowed confirm call per chat
+    whenever the chat opened with a greeting: "different subject than *hi*?" can
+    only be NO (chat ef5f6afd). Measured on the live classifier model, neighbour
+    comparison scores correctly on every case that matters — and the slow-slide
+    worry that motivated the first-message anchor doesn't hold either: on a
+    4-step chain, first-vs-last answered NO as well.
+
+    This pins the SELECTION, which is plain list logic; the model's verdict is
+    not asserted here (that needs a live call).
+    """
+
+    def _anchor(self, messages):
+        """Mirror of the worker's anchor pick (handlers/chat.py)."""
+        return next((m.get("content") for m in reversed(messages[:-1])
+                     if m.get("role") == "user"
+                     and isinstance(m.get("content"), str)), "")
+
+    def test_picks_previous_user_message_not_first(self):
+        msgs = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "Hi!"},
+            {"role": "user", "content": "kannst du python code entwickeln ?"},
+            {"role": "assistant", "content": "Ja..."},
+            {"role": "user", "content": "was weißt du über dora ?"},
+        ]
+        self.assertEqual(self._anchor(msgs),
+                         "kannst du python code entwickeln ?")
+
+    def test_skips_assistant_rows(self):
+        msgs = [
+            {"role": "user", "content": "erste"},
+            {"role": "assistant", "content": "antwort"},
+            {"role": "user", "content": "zweite"},
+        ]
+        self.assertEqual(self._anchor(msgs), "erste")
+
+    def test_no_previous_user_message_yields_empty(self):
+        """Turn 1: nothing to anchor on → empty, and the caller skips the call."""
+        self.assertEqual(self._anchor([{"role": "user", "content": "erste"}]), "")
+        self.assertEqual(self._anchor([]), "")
+
+    def test_ignores_non_string_content(self):
+        """Multimodal rows carry a list; they can't serve as a text anchor."""
+        msgs = [
+            {"role": "user", "content": "text-frage"},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": [{"type": "image"}]},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": "aktuelle"},
+        ]
+        self.assertEqual(self._anchor(msgs), "text-frage")
+
+
 class DriftConfirmTest(unittest.TestCase):
     """Stage 2 must be fail-safe: any trouble means 'no drift', never an
     exception that would break the turn it is attached to."""

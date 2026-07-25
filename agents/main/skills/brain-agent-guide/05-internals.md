@@ -239,6 +239,15 @@ Two stages, so the common case costs nothing:
    which is where topics actually jump; see chat 2bd47d4f.
 2. `drift_confirm(...)` — only for survivors: one classifier call, ~200 tokens
    in, `max_tokens=3`, thinking off, 8 s timeout, any failure → no drift.
+   **Anchored on the PREVIOUS user message**, matching what stage 1 compares.
+   It anchored on the FIRST message until 9.410.1; both arguments for that were
+   measured false: chats open with "hi" often enough that the one allowed
+   confirm call per chat was routinely spent asking "different subject than
+   *hi*?" (only ever NO — chat ef5f6afd), and the slow-slide worry that
+   motivated it doesn't hold either (on a 4-step chain, first-vs-last also
+   answered NO). Neighbour comparison scored 5/5 on the live model:
+   greeting→Python NO, Python→DORA YES, Python→Python-detail NO,
+   DORA→DORA-detail NO, DORA→NIS2 NO.
 
 `session._drift_checked` latches after the first confirm (even on NO), so a chat
 can never spend more than one call on this.
