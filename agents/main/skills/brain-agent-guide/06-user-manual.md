@@ -238,9 +238,12 @@ Chat:
   die Anfrage gehängt. Letzteres wirkt schwächer als ein echtes Budget (es
   **bittet** um Kürze, statt abzuschneiden), staffelt aber messbar. Wird das
   Denken bei einem **lokalen** Modell ein- oder ausgeschaltet, erscheint einmal
-  pro Chat ein Hinweis: die nächste Antwort startet langsamer, weil der
-  vorgewärmte Kontext des Modells neu aufgebaut werden muss. Das Durchschalten
-  der Stufen (Niedrig→Mittel→Hoch) kostet das **nicht** und meldet sich nie.
+  pro Chat ein Hinweis: die nächste Antwort **startet langsamer**, weil das
+  Modell den Prompt einmal neu vorrechnen muss. Das ist reine **Wartezeit** —
+  es entstehen dadurch keine zusätzlichen Kosten (bei lokalen Modellen rechnet
+  Ihre eigene Hardware). Das Durchschalten der Stufen (Niedrig→Mittel→Hoch)
+  löst den Hinweis nie aus, und bei Cloud-Modellen gibt es ihn gar nicht — dort
+  ändert der Regler weder Wartezeit noch Abrechnung spürbar.
 - 🔬 Recherche-Modus-Override (nur in Projekt-Chats)
 - 🔬 **Deep Research** (Mikroskop-Symbol) — wenn aktiviert, führt der **nächste
   Turn eine tiefe Web-Recherche** aus (Unterfragen → Suche → Quellen lesen →

@@ -46,9 +46,11 @@ CURATED_CHANGELOG: list[dict] = [
                 "neuen Chat vor — der alte Verlauf wird sonst bei jeder "
                 "Anfrage mitgeschickt und kann die Antwortqualität senken. "
                 "Beide Hinweise sind reine Empfehlungen; Sie können sie "
-                "übergehen und normal weiterarbeiten.",
+                "übergehen und normal weiterarbeiten. (Der Hinweis beim "
+                "Umschalten betrifft nur die Wartezeit — zusätzliche Kosten "
+                "entstehen dadurch nicht.)",
         "audience": "user",
-        "versions": ["9.408.0"],
+        "versions": ["9.408.0", "9.408.1"],
     },
     {
         "version": "9.407.0",

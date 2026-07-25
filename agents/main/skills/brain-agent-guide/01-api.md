@@ -254,11 +254,15 @@ streaming call, per-USER history, fixed read-only tool set. See
    per-session escape hatch that lifts the Websuche tool lockout.
    `caveman_mode {mode:0..3}` + `thinking_level {level:"none"|"low"|"medium"|"high"}`
    persist the per-session composer toggles (restored on reload).
-   `thinking_level` also returns `prefix_cost: bool` — true only when THAT change
-   discarded a warm KV prefix (an on↔off flip on a chat-template/oMLX provider
-   whose prefix was warm). Graduating low↔medium↔high and anything on a cloud
-   model always return false. Advisory: the change is applied either way; the
-   client uses it to warn once per chat that the next reply starts slower.
+   `thinking_level` also returns `slow_next_turn: bool` — true only when THAT
+   change discarded a local model's warm GPU prefill (an on↔off flip on a
+   chat-template/oMLX provider whose prefill was warm), so the next reply starts
+   seconds later. A LATENCY signal, not a billing one: the dial never touches a
+   provider's prompt cache (`reasoning_effort` sits outside the messages, the
+   depth suffix rides on the last user message, which differs every turn anyway),
+   so cloud models always return false — as does graduating low↔medium↔high on
+   any model. Advisory: the change is applied either way; the client shows it
+   once per chat.
    `gdpr_details_visible {value}` persists the per-chat "Datenschutz-Details
    sichtbar" shield toggle (GDPR mark overlays + detail block), restored on
    reopen; `gdpr_feedback_ask {value}` the sticky post-turn GDPR feedback opt-in.

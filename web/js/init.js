@@ -87,16 +87,17 @@ function _setThinkingLevel(level, persist) {
     API.post('/v1/sessions/manage', {
       action: 'thinking_level', session_id: chat.sessionId, level: level,
     }).then(r => {
-      // The server tells us when this change threw away a warm KV prefix —
-      // ONLY an on↔off flip on a local (chat-template) model does, and only
-      // when that prefix was actually warm. Graduating low↔medium↔high never
-      // reports true, so cycling the dial stays silent. Informational: the
-      // change is already applied, this just explains the first slow turn.
+      // LATENCY hint, not a cost one: the server reports when this change threw
+      // away the local model's warm GPU prefill, so the next reply starts later.
+      // Only an on↔off flip on a local (chat-template) model does that, and only
+      // when the prefill was actually warm — graduating low↔medium↔high never
+      // reports true, and cloud models never do either (the dial doesn't touch
+      // the provider's prompt cache, so there is no billing effect anywhere).
       // Once per chat — the second flip is a conscious choice, not a surprise.
-      if (r && r.prefix_cost && chat && !chat._prefixCostWarned) {
-        chat._prefixCostWarned = true;
+      if (r && r.slow_next_turn && chat && !chat._slowTurnWarned) {
+        chat._slowTurnWarned = true;
         showToast('Denken umgeschaltet — die nächste Antwort startet langsamer '
-                  + '(der vorgewärmte Kontext des Modells wird neu aufgebaut).');
+                  + '(das lokale Modell muss den Prompt neu vorrechnen).');
       }
     }).catch(() => {});
   }

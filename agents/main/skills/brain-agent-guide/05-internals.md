@@ -172,16 +172,28 @@ graduates natively. Three mechanisms, picked per `thinking_format`:
 - Per-model `thinking_levels: [...]` in config.json pins the level set the UI
   offers, overriding the format default (exposed via `_SAFE_FIELDS`).
 
-### Prefix-cost advisory
+### Slow-next-turn advisory (latency, NOT cost)
 
-`thinking_switch_costs_prefix(model, old, new)` answers one question: does this
-change throw away a warm KV prefix? True ONLY for an on↔off flip on a
-chat-template provider (where `enable_thinking` is rendered into the tokenised
-prompt) whose prefix is currently warm. Graduation never qualifies — the level
-is an API field or a wire suffix, so the prefix is byte-identical. Returns False
-on any uncertainty: a missed warning costs one prefill, a false one costs the
-warning's credibility. Surfaced as `prefix_cost` on the `thinking_level` manage
-action.
+Two caches are easy to conflate — keep them apart:
+
+| | What it is | What losing it costs |
+|---|---|---|
+| **Warm prefill** (local/oMLX) | tokenised prompt prefix resident on the GPU | **latency** — seconds before the next reply starts. No money: our own GPU |
+| **Provider prompt cache** (cloud) | upstream bills repeated tokens at ~0.1× | **money** — but the thinking dial never disturbs it |
+
+The dial cannot break the cloud cache: `reasoning_effort` is a top-level field
+outside `messages`, and the depth suffix is appended to the LAST user message,
+which differs every turn regardless. So there is no billing effect to warn about
+on any model.
+
+`thinking_switch_costs_prefill(model, old, new)` therefore answers only the
+latency question. True ONLY for an on↔off flip on a chat-template provider
+(where `enable_thinking` is rendered into the tokenised prompt) whose prefill is
+currently warm. Graduation never qualifies — the level is an API field, a
+router-side budget or a wire suffix, so the prefix is byte-identical. Returns
+False on any uncertainty: a missed hint costs one slower turn, a false one costs
+the hint's credibility. Surfaced as `slow_next_turn` on the `thinking_level`
+manage action.
 
 ### Topic-drift hint (context poisoning)
 
