@@ -206,8 +206,15 @@ the poisoned turn first and only then said "this was a new topic".
 Two stages, so the common case costs nothing:
 
 1. `drift_candidate(prev_sig, cur_sig, message_count)` — pure arithmetic on the
-   turn's already-resolved tool names (Jaccard ≤ 0.34, ≥ 3 messages, ≥ 2 tools
-   per side, ubiquitous tools like `ask_user_question`/`think` filtered out).
+   turn's **in-prompt** tool names (Jaccard ≤ 0.34, ≥ 3 messages, ≥ 2 tools per
+   side, ubiquitous tools like `ask_user_question`/`think` filtered out).
+   **The source must be `_tool_breakdown["in_prompt"]`, not `_active_tool_names`.**
+   The latter is everything `resolve_active_tools` resolved (~100 on a typical
+   install) and is subject-independent — its overlap sits near 100 % between any
+   two turns, so the check can never fire. Only the classifier's per-turn gating
+   tracks the topic: on chat 93e83868 the in-prompt set went 10 → 40 → 46 tools
+   across "hi" / "python code" / "DORA", giving 23 % overlap on the jump. Reading
+   the wrong list made the gate a silent no-op from 9.408.0 to 9.409.1.
    Both floors are tied to the call site: `message_count` is `len(session.messages)`
    BEFORE the turn, so it runs 1, 3, 5 … and the earliest reachable check is turn 2
    at 3. The tool floor is 2 because a single tool per side can only score 0 % or

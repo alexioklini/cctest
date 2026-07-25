@@ -4799,7 +4799,20 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # per conversation.
                 if interactive:
                     try:
-                        _cur_sig = engine._drift_tool_signature(_active_tool_names)
+                        # IN-PROMPT tools only — NOT _active_tool_names. The
+                        # latter is everything resolve_active_tools resolved
+                        # (~100 on this install) and barely moves between turns,
+                        # so its overlap sits near 100 % and the check could
+                        # never fire. The classifier's per-turn gating decides
+                        # what actually reaches the prompt, and THAT tracks the
+                        # subject: measured on chat 93e83868 — 10 tools on "hi",
+                        # 40 on "can you write python code", 25 % overlap.
+                        # Falls back to the full set when the breakdown is absent
+                        # (gating off) — then the check simply stays quiet.
+                        _bd_now = getattr(engine.get_request_context(),
+                                          "_tool_breakdown", None) or {}
+                        _cur_sig = engine._drift_tool_signature(
+                            _bd_now.get("in_prompt") or _active_tool_names)
                         _prev_sig = getattr(session, "_drift_tool_sig", None)
                         if (_prev_sig is not None
                                 and not getattr(session, "_drift_checked", False)

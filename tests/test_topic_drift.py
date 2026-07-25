@@ -73,6 +73,33 @@ class DriftCandidateTest(unittest.TestCase):
         self.assertFalse(brain.drift_candidate(
             frozenset({"read_file"}), self.CODE, 20))   # one side is enough to block
 
+    def test_real_gated_tool_sets_from_chat_93e83868(self):
+        """Real in-prompt sets from the reported chat: "hi" (10 tools) then
+        "can you write python code" (40). 23 % overlap → candidate.
+
+        This is the case the first two attempts missed. The check fed on
+        _active_tool_names — EVERYTHING resolve_active_tools resolved (~100 here)
+        — which barely moves between turns, so the overlap sat near 100 % and the
+        gate could never fire. Only the classifier-GATED in_prompt set tracks the
+        subject. Sets abbreviated to their distinguishing members; the ratio is
+        what matters."""
+        hi = frozenset({"context_detail", "context_recall", "context_search",
+                        "mempalace_kg_neighbors", "mempalace_kg_query",
+                        "mempalace_kg_search", "mempalace_query",
+                        "save_chat_to_memory"})
+        python = frozenset({"ast_grep_replace", "ast_grep_search", "code_query",
+                            "code_search", "code_snippet", "code_trace",
+                            "context_detail", "context_recall", "context_search",
+                            "data_query", "db_query", "edit_document",
+                            "python_exec", "execute_command", "read_file",
+                            "write_file", "list_directory", "grep_files",
+                            "kernel_exec", "notebook_edit"})
+        self.assertTrue(brain.drift_candidate(hi, python, 3))
+        # And the follow-up (python → DORA) must NOT: by then the tool set is
+        # broad enough that the new subject fits inside it.
+        dora = frozenset(python | {"web_fetch", "exa_search", "searxng_search"})
+        self.assertFalse(brain.drift_candidate(python, dora, 5))
+
     def test_two_tool_sides_are_compared(self):
         """Two is the smallest set where the ratio means something — and short
         chats (where drift is most common) rarely resolve more."""
