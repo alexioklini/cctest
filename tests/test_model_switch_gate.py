@@ -100,6 +100,39 @@ class PrevTurnModelTest(unittest.TestCase):
         self.assertEqual(self._prev(msgs), ("", ""))
 
 
+class GateAppliesTest(unittest.TestCase):
+    """Which turns may see the gate at all. The costly lesson (9.412.1,
+    session 426ac9f0): `auto_route` is present on virtually EVERY turn because
+    the classifier reshapes the tool surface even for user-chosen models
+    (classifier_only=True) — treating its mere presence as "auto-routed"
+    made the gate structurally dead. Only a verdict that actually PICKED the
+    model exempts the turn."""
+
+    def _applies(self, **kw):
+        args = {"interactive": True, "want_auto": False, "auto_route": None}
+        args.update(kw)
+        return chat_handlers._model_switch_gate_applies(**args)
+
+    def test_plain_interactive_turn_is_gated(self):
+        self.assertTrue(self._applies())
+
+    def test_classifier_only_auto_route_is_still_gated(self):
+        """The 426ac9f0 case: concrete model + tool-reshape classifier."""
+        self.assertTrue(self._applies(auto_route={
+            "classifier_only": True, "model": "deepseek-v4-flash"}))
+
+    def test_real_auto_route_is_exempt(self):
+        self.assertFalse(self._applies(auto_route={
+            "model": "picked-by-router", "reason": "auto"}))
+
+    def test_auto_directive_is_exempt(self):
+        self.assertFalse(self._applies(want_auto=True))
+
+    def test_non_interactive_is_exempt(self):
+        """Scheduled/background runs have nobody to ask."""
+        self.assertFalse(self._applies(interactive=False))
+
+
 class DeliverDecisionTest(unittest.TestCase):
     """The endpoint↔worker handshake: deliver into a waiting slot → True;
     nothing waiting (timeout already continued the turn) → False, so the

@@ -273,9 +273,14 @@ carries `(model=fallback, original_model=session model)`, and a session still
 sitting on `original_model` did NOT switch (the fallback did), so both compare
 as "no switch". After a Brain restart `load_from_db()` strips in-memory
 metadata → targeted one-row DB fallback. Skipped when the previous model is no
-longer configured or disabled (nothing sensible to keep). Auto/MoA turns are
-exempt because routing freezes its turn-1 pick per session precisely to keep
-the cache stable — the classifier only ever trims tools, never the model.
+longer configured or disabled (nothing sensible to keep). REAL auto/MoA turns
+are exempt (`_model_switch_gate_applies`) because routing freezes its turn-1
+pick per session precisely to keep the cache stable. **`auto_route` presence is
+NOT the signal**: the classifier runs on virtually every turn to reshape the
+tool surface and stores its analysis as auto_route with `classifier_only: True`
+while the model stays user-chosen — those turns ARE gated. Skipping on mere
+presence made the gate structurally dead (9.412.1, session 426ac9f0 — the same
+failure shape as the drift gate's wrong tool list in 9.409.2).
 
 Why it warns at all: the prompt cache is keyed to the model that answered so
 far — cloud models bill cache reads at ~0.1×, local models keep a warm prefill

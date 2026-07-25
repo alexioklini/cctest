@@ -1243,6 +1243,25 @@ def deliver_model_switch_decision(session_id: str, decision: str) -> bool:
     return True
 
 
+def _model_switch_gate_applies(interactive, want_auto, auto_route) -> bool:
+    """May the model-switch gate run for this turn at all?
+
+    Skip only when the turn's model is NOT user-chosen: non-interactive runs
+    (nobody to ask) and REAL auto/MoA routing (want_auto, or an auto_route
+    verdict that actually picked the model). `auto_route` alone is NOT a
+    routing signal: the classifier runs on virtually every turn to reshape the
+    tool surface and stores its analysis as auto_route with
+    `classifier_only: True` — the model stayed user-chosen there. Treating any
+    auto_route as "routed" made the gate structurally dead (session 426ac9f0:
+    a real mistral-small → deepseek composer switch, no dialog).
+    """
+    if not interactive or want_auto:
+        return False
+    if auto_route and not auto_route.get("classifier_only"):
+        return False
+    return True
+
+
 def _prev_turn_model(session, sid):
     """(model, original_model) of the LAST assistant reply — ('', '') when the
     session has none yet (turn 1) or nothing is recorded.
@@ -4192,13 +4211,17 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # FIRST — before GDPR/anonymise and the wire build, which all
                 # depend on the final model — and BEFORE the user message is
                 # appended, so cancel needs no rollback. INTERACTIVE ONLY
-                # (scheduled/background runs have nobody to ask). Auto/MoA
-                # turns are exempt: routing freezes its turn-1 pick per
+                # (scheduled/background runs have nobody to ask). REAL
+                # auto/MoA routing is exempt: it freezes its turn-1 pick per
                 # session precisely to keep the cache stable, so a routed
-                # switch is never user-chosen. No answer within 5 minutes →
+                # switch is never user-chosen. A classifier_only auto_route is
+                # NOT routing — the classifier reshapes tools on virtually
+                # every turn while the model stays user-chosen (see
+                # _model_switch_gate_applies). No answer within 5 minutes →
                 # run on the NEW model (same default as the drift + context
                 # gates: silence must never strand a turn).
-                if interactive and not want_auto and not auto_route:
+                if _model_switch_gate_applies(interactive, want_auto,
+                                              auto_route):
                     try:
                         _prev_model, _prev_orig = _prev_turn_model(session, sid)
                         _prev_cfg = (engine._models_config or {}).get(

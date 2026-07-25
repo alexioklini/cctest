@@ -46,7 +46,7 @@ CURATED_CHANGELOG: list[dict] = [
                 "die mitgenommene Frage zusätzlich im alten Chat stehen — sie "
                 "wird dort jetzt sauber entfernt.",
         "audience": "user",
-        "versions": ["9.412.0"],
+        "versions": ["9.412.0", "9.412.1"],
     },
     {
         "version": "9.408.0",
