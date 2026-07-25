@@ -700,9 +700,22 @@ already anonymises (see 05-internals).
 - `POST /v1/translate/live/start` → SSE `GET /v1/translate/live/<sid>` →
   `POST /v1/translate/live/<sid>/chunk` → `/stop` — mic streaming; start body
   takes optional `transcribe_model` (same semantics as media)
-- `GET /v1/translate/stt-models` — `{models:[{id,display_name,local}], default}`;
-  enabled `audio_transcription` models + the transcribe_audio default (feeds
-  the STT-Modell dropdowns in the Audio/Video + Live tabs)
+- `POST /v1/translate/live/<sid>/text` — `{text, start?, end?, lang?}`; browser-STT
+  mode (admin engine `browser`): the client recognized speech itself and posts
+  finalized TEXT segments — translated + broadcast like transcribed ones (no
+  audio upload, no STT billing)
+- `POST /v1/translate/transcribe` — multipart `{chunk, mime?, lang?}` → `{text,
+  language}`; one-shot mic dictation STT (composer mic button, server engine;
+  25MB cap, transcribe_audio default model, cost logged)
+- `GET /v1/translate/stt-models` — `{models:[{id,display_name,local}], default,
+  engines:{stt,tts}}`; enabled `audio_transcription` models + the
+  transcribe_audio default. `engines` = the admin engine choice
+  (`server`|`browser`) per direction from Settings → Service-Modelle →
+  Sprach-Engines — clients cache it (`fetchAudioEngines()`, chat_audio.js) to
+  decide between server TTS/STT and browser-native
+  speechSynthesis/SpeechRecognition. NB: the per-tab STT-Modell dropdowns in
+  the Übersetzen area were REMOVED in 9.414.0 (model is central; the server
+  still accepts `transcribe_model` on media/live for API compat)
 - `GET /v1/translate/history` / `GET /v1/translate/history/<id>/file?which=...`
 - `POST /v1/translate/glossaries` / `GET /v1/translate/glossaries[/<slug>]`
 - `GET /v1/translate/jobs/<id>` / `/result` — job poll
@@ -919,10 +932,15 @@ Once a feedback row exists, user and admin exchange short one-line messages
   KG-extraction, **goal_judge_model** (Goal-Modus Ziel-Prüfung; empty = server
   default model), TTS, transcribe) + OCR, each with a
   resolve status (`ok`/`unset`/`missing`/`disabled`) + the dropdown option
-  lists. Also returns a `conversion` block: the per-file-type extractor
-  **matrix** (`{ext, markitdown, own_extractor}`) + `markitdown_available` +
-  `pdf_engine`. `POST /v1/services/models` — save any subset (model-id strings,
-  `''` to unset, an `ocr:{engine,provider,model}` object, or a
+  lists. Also returns `audio_engines:{tts,stt}` (`server`|`browser`, 9.414.0 —
+  the Sprach-Engines section: browser-native speechSynthesis/SpeechRecognition
+  for mic/read-aloud features; stored as `engine` on the text_to_speech /
+  transcribe_audio tool-config records) and a `conversion` block: the
+  per-file-type extractor **matrix** (`{ext, markitdown, own_extractor}`) +
+  `markitdown_available` + `pdf_engine`. `POST /v1/services/models` — save any
+  subset (model-id strings, `''` to unset, an `ocr:{engine,provider,model}`
+  object, an `audio_engines:{tts,stt}` object (values validated, bad engine
+  400), or a
   `conversion:{markitdown_exts:[…], pdf_engine:'pymupdf4llm'|'markitdown'|'fitz'}`
   object — exts validated against formats with an own extractor; bad pdf_engine 400).
   **Fail-loud**: an unknown model id or OCR provider is rejected 400 — never

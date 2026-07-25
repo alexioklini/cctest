@@ -1033,6 +1033,12 @@ write/exec tool is deliberately excluded.
   cloud Voxtral-mini. Models with only the plain `audio` capability (audio-in *chat* /
   understanding — voxtral-small, gemma-4, glm) are **excluded** — they can't drive the
   `/audio/transcriptions` endpoint and would 400 at the wire.
+  NB (9.414.0): the `engine` field (`server`|`browser`) on transcribe_audio /
+  text_to_speech (edited under Settings → Service-Modelle → Sprach-Engines)
+  affects only the **mic/speech UI features** (composer dictation, live
+  translate, read-aloud) — this agent tool and file transcription ALWAYS use
+  the configured server model (browsers can't transcribe files;
+  SpeechRecognition is mic-only).
 - `generate_audio_overview(topic?, audience?, length?)` — NotebookLM-style **audio
   overview / podcast**. Generates a spoken conversation (default two hosts,
   Oliver & Jane; the engine supports 1–4 speakers with personas since v9.304.0)

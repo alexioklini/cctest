@@ -1971,6 +1971,16 @@ textarea { resize: none; }
 }
 .composer-btn:hover { background: var(--bg-200); color: var(--text-200); }
 .composer-btn svg { width: 17px; height: 17px; }
+/* Diktat läuft — roter Puls wie der Live-Übersetzungs-Aufnahmeknopf. */
+.composer-btn.dictating {
+  color: #dc2626;
+  animation: tr-live-pulse 1.6s ease-in-out infinite;
+}
+/* Diktat wird transkribiert (Server-Engine) — pulsieren bis der Text da ist. */
+.composer-btn.msg-action-generating {
+  color: var(--accent-brand);
+  animation: msg-action-pulse 1.2s ease-in-out infinite;
+}
 
 /* MemPalace activity animations on the save-to-memory button */
 @keyframes mp-pulse-store {

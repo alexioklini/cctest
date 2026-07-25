@@ -332,7 +332,7 @@ function renderToolIntegrationFields(name, cfg) {
         opts += audioEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
         return `<select id="${id}" class="form-select" style="font-size:11px;width:100%">${opts}</select>`;
       };
-      return `${lbl('Standardmodell' + helpIcon('Nur Modelle mit der Fähigkeit „Transkription“ (audio_transcription — wörtliche Sprache-zu-Text) werden aufgelistet, z. B. whisper-*, voxtral-mini-*. Modelle mit reinem „Audio“-Verständnis (Audio-Chat, z. B. voxtral-small, gemma-4) erscheinen hier bewusst NICHT — sie können nicht transkribieren. Das Tool verwendet die konfigurierte ID exakt.'))}
+      return `${lbl('Standardmodell' + helpIcon('Nur Modelle mit der Fähigkeit „Transkription“ (audio_transcription — wörtliche Sprache-zu-Text) werden aufgelistet, z. B. whisper-*, voxtral-mini-*. Modelle mit reinem „Audio“-Verständnis (Audio-Chat, z. B. voxtral-small, gemma-4) erscheinen hier bewusst NICHT — sie können nicht transkribieren. Das Tool verwendet die konfigurierte ID exakt. Die Engine-Wahl Server vs. Browser-nativ (Mikrofon-Funktionen) liegt unter Einstellungen → Service-Modelle → Sprach-Engines.'))}
         ${audioSelectHtml('tool-ta-default-model', cfg.default_model || '')}
         ${lbl('Fallback-Modell')}
         ${audioSelectHtml('tool-ta-fallback-model', cfg.fallback_model || '')}`;
@@ -344,7 +344,7 @@ function renderToolIntegrationFields(name, cfg) {
       let opts = '';
       if (sel && !ttsIds.has(sel)) opts += `<option value="${esc(sel)}" selected>${esc(sel)} (veraltet/fehlend)</option>`;
       opts += ttsEntries.map(([mid]) => modelOption(mid, {selected: mid === sel})).join('');
-      return `${lbl('Standardmodell' + helpIcon('Nur Modelle mit der Fähigkeit „tts“ werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt.'))}
+      return `${lbl('Standardmodell' + helpIcon('Nur Modelle mit der Fähigkeit „tts“ werden aufgelistet. Das Tool verwendet die konfigurierte ID exakt. Die Engine-Wahl Server vs. Browser-nativ (Vorlesen) liegt unter Einstellungen → Service-Modelle → Sprach-Engines.'))}
         <select id="tool-tts-model" class="form-select" style="font-size:11px;width:100%">${opts}</select>
         ${lbl('Stimme')}
         <input id="tool-tts-voice" type="text" value="${esc(cfg.voice||'en_paul_neutral')}" class="form-input" style="font-family:var(--font-mono);font-size:11px">
@@ -598,6 +598,9 @@ function buildToolIntegrationRec(toolName) {
       break;
     case 'transcribe_audio':
       rec = {
+        // engine wird unter Service-Modelle → Sprach-Engines gepflegt — hier
+        // nur durchreichen, damit der Save sie nicht auf 'server' zurücksetzt.
+        engine: window._toolConfigCache?.transcribe_audio?.engine || 'server',
         default_model: document.getElementById('tool-ta-default-model')?.value || '',
         fallback_model: document.getElementById('tool-ta-fallback-model')?.value || '',
       };
@@ -605,6 +608,7 @@ function buildToolIntegrationRec(toolName) {
     case 'text_to_speech':
       rec = {
         enabled: window._toolConfigCache?.text_to_speech?.enabled !== false,
+        engine: window._toolConfigCache?.text_to_speech?.engine || 'server',
         default_model: document.getElementById('tool-tts-model')?.value || '',
         voice: document.getElementById('tool-tts-voice')?.value || '',
       };

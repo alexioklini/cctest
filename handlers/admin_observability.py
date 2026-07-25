@@ -1183,8 +1183,17 @@ class AdminObservabilityHandlers:
                     "markitdown": ext in eff,
                     "own_extractor": _dc._EXTRACTORS.get(ext).__name__ if _dc._EXTRACTORS.get(ext) else "",
                 })
+            # Speech engines (mic/read-aloud features only — files always use
+            # the server model): 'server' | 'browser', stored on the tool-config
+            # records next to the models they belong to.
+            _tcfg = _brain.get_tool_config() or {}
+            audio_engines = {
+                "tts": ((_tcfg.get("text_to_speech") or {}).get("engine") or "server"),
+                "stt": ((_tcfg.get("transcribe_audio") or {}).get("engine") or "server"),
+            }
             self._send_json({
                 "slots": slots,
+                "audio_engines": audio_engines,
                 "ocr": {**ocr_block, "status": ocr_status, "why": ocr_why},
                 "conversion": {
                     "matrix": conv_matrix,
@@ -1372,6 +1381,23 @@ class AdminObservabilityHandlers:
                 # Empty is valid (lingua-only detection, no LLM fallback).
                 tr3["detection_fallback_model"] = _validate_model(body["translation_detect_fallback_model"])
                 tool_updates["translation"] = tr3
+            # Speech engines ('server'|'browser') — merged into the SAME
+            # tool-config records the model slots use (don't clobber a
+            # tts_model/transcribe_model update from this very request).
+            if "audio_engines" in body and isinstance(body["audio_engines"], dict):
+                ae = body["audio_engines"]
+                for eng_key, tool_name in (("tts", "text_to_speech"),
+                                           ("stt", "transcribe_audio")):
+                    if eng_key not in ae:
+                        continue
+                    val = str(ae[eng_key] or "server").strip()
+                    if val not in ("server", "browser"):
+                        self._send_json({"error": f"Unbekannte Engine: {val}"}, 400)
+                        return
+                    rec = dict(tool_updates.get(tool_name)
+                               or (_brain.get_tool_config().get(tool_name) or {}))
+                    rec["engine"] = val
+                    tool_updates[tool_name] = rec
 
             with open(config_path, "w") as f:
                 json.dump(cfg, f, indent=2)

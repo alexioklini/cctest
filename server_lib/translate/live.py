@@ -317,7 +317,38 @@ class LiveSession:
             return ".wav"
         return ".webm"
 
+    def add_text_segment(self, text: str, *, start: float = 0.0,
+                         end: float = 0.0, lang: str = "") -> int:
+        """Browser-STT path: the client recognized speech itself and delivers
+        finalized TEXT. Creates a segment (no audio, no speaker embedding, no
+        STT billing) and fires the same broadcast + async translation the
+        transcribed path uses."""
+        with self._segments_lock:
+            idx = len(self._segments)
+            seg = _Segment(
+                index=idx,
+                chunk_seq=-1,
+                start=start,
+                end=end,
+                text=text,
+                detected_lang=_norm_lang(lang) or _norm_lang(self.source_lang),
+            )
+            self._segments.append(seg)
+        self.updated_at = time.time()
+        self._broadcast("segment", self._segment_to_dict(seg))
+        if self.target_lang and self.target_lang != (self.source_lang or "").lower():
+            self._translate_segment_async(idx, text)
+        return idx
+
     def stop(self) -> None:
+        # Text-only sessions (browser STT) never start the audio worker — the
+        # sentinel would sit in the queue forever and subscribers would never
+        # see 'closed'. Close directly in that case.
+        if not (self._worker and self._worker.is_alive()):
+            self.closed = True
+            self.updated_at = time.time()
+            self._broadcast("closed", {"reason": "stopped"})
+            return
         # Sentinel signals the worker loop to drain + exit.
         self._chunks.put(None)
         self.updated_at = time.time()

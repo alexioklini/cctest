@@ -25,6 +25,11 @@ const trLiveState = {
   ttsPlaying: false,
   ttsAudio: null,
   ttsSpokenIdx: new Set(), // segment indices already queued/spoken (dedup re-renders)
+  // Browser-STT mode (admin engine 'browser'): SpeechRecognition instead of
+  // recorder+server-whisper; text segments POSTed to /live/<id>/text.
+  browserStt: false,
+  recognition: null,
+  lastSegEnd: 0,
 };
 
 // Normalize 'en-US' / 'EN_us' → 'en'. Same logic as backend _norm_lang.
@@ -66,6 +71,15 @@ function trLiveOnTtsToggleChange() {
 })();
 
 function _trLiveSetMicMuted(muted) {
+  // Browser-STT mode: no stream to mute — pause/resume the recognition so it
+  // doesn't transcribe the TTS playback. onend won't auto-restart while
+  // ttsPlaying is set; the unmute here restarts explicitly.
+  if (trLiveState.browserStt) {
+    const rec = trLiveState.recognition;
+    if (!rec) return;
+    try { muted ? rec.abort() : rec.start(); } catch (_) {}
+    return;
+  }
   // Toggle the MediaStreamTrack — the VAD recorder still runs but receives
   // silence, so it won't flush a chunk full of TTS playback echo. Cheaper
   // than tearing the recorder down.
@@ -81,6 +95,7 @@ function trLiveTtsStop() {
     try { trLiveState.ttsAudio.pause(); } catch (_) {}
     trLiveState.ttsAudio = null;
   }
+  try { window.speechSynthesis?.cancel(); } catch (_) {}   // browser-TTS engine
   trLiveState.ttsQueue = [];
   trLiveState.ttsPlaying = false;
   // Always restore mic when we tear playback down.
@@ -113,6 +128,23 @@ async function _trLiveTtsDrain() {
   _trLiveSetMicMuted(true);
   let blobUrl = '';
   try {
+    // Browser-TTS engine (admin, Tools tab): speak via the OS voices — no
+    // server fetch. Same mute/drain discipline as the audio-blob path.
+    const engines = await fetchAudioEngines();
+    if (engines.tts === 'browser' && 'speechSynthesis' in window) {
+      if (!trLiveState.ttsEnabled || !trLiveState.recording) {
+        trLiveState.ttsPlaying = false;
+        _trLiveSetMicMuted(false);
+        return;
+      }
+      await new Promise((resolve) => {
+        const u = new window.SpeechSynthesisUtterance(job.text);
+        if (job.lang) u.lang = job.lang;
+        u.onend = resolve;
+        u.onerror = resolve;
+        window.speechSynthesis.speak(u);
+      });
+    } else {
     blobUrl = await _trTtsFetch(job.text, job.lang);
     if (!trLiveState.ttsEnabled || !trLiveState.recording) {
       // Toggled off / stopped while fetching — bail.
@@ -129,6 +161,7 @@ async function _trLiveTtsDrain() {
       audio.play().catch(resolve);
     });
     try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+    }
   } catch (_) {
     // Silent: a single failed TTS shouldn't kill the queue.
     if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (_) {} }
@@ -160,26 +193,38 @@ function trLiveToggle() {
 }
 
 async function trLiveStart() {
-  // Browser support gate.
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    trLiveStatus('Mikrofon wird in diesem Browser nicht unterstützt.', true);
-    return;
-  }
   const mode = document.getElementById('tr-live-mode')?.value || 'translate';
   if (mode === 'translate' && !trState.targetLang) {
     trLiveStatus('Wählen Sie eine Zielsprache.', true);
     return;
   }
 
-  trLiveStatus('Mikrofonzugriff wird angefragt…');
-  let stream;
-  try {
-    stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
-    });
-  } catch (e) {
-    trLiveStatus(`Mikrofonzugriff verweigert: ${e.message}`, true);
-    return;
+  // Engine choice (admin, Tools tab): browser STT does the recognition in the
+  // browser and posts TEXT segments — no audio upload, no recorder. Falls back
+  // to server recording where SpeechRecognition is unavailable (Firefox).
+  const engines = await fetchAudioEngines();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const useBrowserStt = engines.stt === 'browser' && !!SR;
+  if (engines.stt === 'browser' && !SR) {
+    trLiveStatus('Browser-Spracherkennung nicht verfügbar — Server-Transkription wird verwendet.');
+  }
+
+  let stream = null;
+  if (!useBrowserStt) {
+    // Browser support gate (server path records raw audio itself).
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      trLiveStatus('Mikrofon wird in diesem Browser nicht unterstützt.', true);
+      return;
+    }
+    trLiveStatus('Mikrofonzugriff wird angefragt…');
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, sampleRate: 16000, echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (e) {
+      trLiveStatus(`Mikrofonzugriff verweigert: ${e.message}`, true);
+      return;
+    }
   }
 
   // Open a server session.
@@ -188,7 +233,6 @@ async function trLiveStart() {
     source_lang: (trState.sourceLangManual && trState.sourceLang) ? trState.sourceLang : '',
     glossary: trState.glossarySlug || '',
     model: trState.model || '',
-    transcribe_model: document.getElementById('tr-live-stt-model')?.value || '',
   };
   let res;
   try {
@@ -199,13 +243,15 @@ async function trLiveStart() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
   } catch (e) {
-    stream.getTracks().forEach(t => t.stop());
+    if (stream) stream.getTracks().forEach(t => t.stop());
     trLiveStatus(`Session-Start fehlgeschlagen: ${e.message}`, true);
     return;
   }
   const session = await res.json();
   trLiveState.sessionId = session.id;
   trLiveState.stream = stream;
+  trLiveState.browserStt = useBrowserStt;
+  trLiveState.lastSegEnd = 0;
   trLiveState.recording = true;
   trLiveState.segments = [];
   trLiveState.partialIndex = -1;
@@ -217,11 +263,65 @@ async function trLiveStart() {
   document.getElementById('tr-live-record-btn').innerHTML =
     '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Aufnahme stoppen';
   document.getElementById('tr-live-download-btn').disabled = true;
-  trLiveStatus('Aufnahme läuft…');
+  trLiveStatus(useBrowserStt ? 'Aufnahme läuft… (Browser-Spracherkennung)' : 'Aufnahme läuft…');
 
   trLiveStartElapsedTimer();
   trLiveSubscribe(session.id);
-  trLiveStartRecorder();
+  if (useBrowserStt) {
+    trLiveStartBrowserSTT();
+  } else {
+    trLiveStartRecorder();
+  }
+}
+
+// Browser-STT capture: SpeechRecognition recognizes locally in the browser
+// (Chrome/Edge route the audio through their vendor cloud — the admin help
+// text says so) and we POST each finalized text segment to the live session,
+// which translates + broadcasts it exactly like a transcribed one.
+function trLiveStartBrowserSTT() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const rec = new SR();
+  rec.continuous = true;
+  rec.interimResults = false;
+  const src = (trState.sourceLangManual && trState.sourceLang) ? trState.sourceLang : '';
+  rec.lang = src || navigator.language || '';
+  rec.onresult = (ev) => {
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const r = ev.results[i];
+      if (!r.isFinal) continue;
+      const text = (r[0]?.transcript || '').trim();
+      if (!text) continue;
+      // Browser STT delivers no timestamps — approximate: the segment ends
+      // now and starts where the previous one ended.
+      const end = (Date.now() - trLiveState.startedAt) / 1000;
+      const start = Math.min(trLiveState.lastSegEnd || 0, end);
+      trLiveState.lastSegEnd = end;
+      fetch(`/v1/translate/live/${encodeURIComponent(trLiveState.sessionId)}/text`, {
+        method: 'POST',
+        headers: { ...trAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, start, end, lang: _trNormLang(rec.lang) }),
+      }).catch(e => console.warn('live text post failed', e));
+    }
+  };
+  rec.onerror = (ev) => {
+    if (ev.error === 'no-speech' || ev.error === 'aborted') return;  // silence / mute — harmless
+    trLiveStatus('Spracherkennung: ' + ev.error, true);
+    if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') trLiveStop();
+  };
+  // Chrome ends recognition after pauses on its own — restart while we're
+  // still recording (unless muted for TTS playback; unmute restarts).
+  rec.onend = () => {
+    if (trLiveState.recording && trLiveState.recognition === rec && !trLiveState.ttsPlaying) {
+      try { rec.start(); } catch (_) {}
+    }
+  };
+  trLiveState.recognition = rec;
+  try {
+    rec.start();
+  } catch (e) {
+    trLiveStatus('Spracherkennung konnte nicht starten: ' + (e.message || e), true);
+    trLiveStop();
+  }
 }
 
 /* VAD parameters — tuned for spoken Banking-Meeting audio. ───────────────
@@ -427,6 +527,13 @@ function trEncodeWav(samples, sampleRate) {
 
 async function trLiveStop() {
   trLiveState.recording = false;
+  // Browser-STT: clear the ref BEFORE abort so onend can't restart it.
+  if (trLiveState.recognition) {
+    const rec = trLiveState.recognition;
+    trLiveState.recognition = null;
+    try { rec.abort(); } catch (_) {}
+  }
+  trLiveState.browserStt = false;
   // Drop any pending/queued TTS playback so we don't keep speaking after stop.
   trLiveTtsStop();
   document.getElementById('tr-live-record-btn').classList.remove('recording');

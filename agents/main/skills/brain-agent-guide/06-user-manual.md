@@ -229,6 +229,17 @@ Chat:
 
 **Eingabe-Werkzeugleiste** (über dem Textfeld, links):
 - 📎 Dateien anhängen
+- 🎤 **Diktieren** — klicken, sprechen, nochmal klicken: der erkannte Text
+  landet im Eingabefeld (Sie können ihn vor dem Senden noch bearbeiten; der
+  normale Datenschutz-Scan läuft wie bei getipptem Text). Während der Aufnahme
+  pulsiert der Knopf rot. Welche Technik erkennt, bestimmt der Administrator
+  (Einstellungen → Service-Modelle → Sprach-Engines): **Server-Modell**
+  (Standard) nimmt auf und transkribiert erst beim Beenden — mit lokalem
+  Whisper bleibt das Audio im Haus; nach 120 s endet die Aufnahme automatisch.
+  **Browser-nativ** liefert den Text schon während des Sprechens, nutzt dafür
+  aber die Spracherkennung des Browsers (Chrome/Edge senden das Audio an
+  Google/Microsoft; Firefox kann es nicht und fällt automatisch auf den
+  Server-Weg zurück).
 - 🧠 **Denk-Stufe** (Aus / Niedrig / Mittel / Hoch) — steuert, wie gründlich das
   Modell vor der Antwort nachdenkt. Die vier Stufen wirken bei **jedem** Modell,
   der Weg dahin unterscheidet sich aber: Cloud-Modelle bekommen die Stufe direkt
@@ -664,6 +675,12 @@ Audio-Knöpfe (neben Kopieren):
   Die Sprache wird **einmal zu Beginn** erkannt und für die gesamte Wiedergabe
   festgehalten — ein fremdsprachiges Zitat in einem späteren Stück lässt die
   Stimme nicht mehr umschalten. (Markdown/Code wird vor dem Vorlesen entfernt.)
+  Hat der Administrator die Vorlese-Engine auf **Browser-nativ** gestellt
+  (Einstellungen → Service-Modelle → Sprach-Engines), sprechen die
+  **Systemstimmen des Geräts**: sofortiger Start, keine Kosten, komplett lokal
+  (funktioniert auch offline). Mit **Server-Modell** (Standard) erzeugt das
+  konfigurierte TTS-Modell die Sprache — inklusive geklonter Stimmen. Podcast /
+  Audio Overview nutzt IMMER das Server-Modell (es erzeugt eine Audio-Datei).
 - **🎧 Podcast aus diesem Chat** — erzeugt einen **Audio Overview** (zwei Hosts)
   über den **gesamten bisherigen Chatverlauf** — wie der Studio-Podcast eines
   Projekts, nur aus der Unterhaltung. Dauert ~1 Minute; währenddessen **pulsiert
@@ -1544,18 +1561,24 @@ Seitenleiste → **Übersetzung**. Vier Tabs:
 ### Audio-/Video-Tab
 - Audio oder Video ablegen. Voxtral transkribiert + übersetzt.
 - **Modus**-Auswahl: Untertitel (SRT/VTT), Transkript (TXT) oder beides.
-- **STT-Modell**-Auswahl: welches Transkriptions-Modell die Spracherkennung
-  übernimmt (nur Modelle mit der Fähigkeit „Transkription“, z. B. Whisper
-  lokal/kostenlos oder Voxtral-mini in der Cloud). Vorausgewählt ist das in
-  Einstellungen → Werkzeuge → transcribe_audio hinterlegte Standardmodell.
+- Das Transkriptions-Modell wird **zentral** unter Einstellungen →
+  Service-Modelle (Slot „Transkription") gepflegt — es gibt seit 9.414.0
+  bewusst keine Modellauswahl mehr im Übersetzen-Bereich.
 - Verlaufszeile hat eigene Herunterladen-Knöpfe pro Ausgabeformat.
 
 ### Live-Mikrofon-Tab
 - Aufnahme klicken. Sprechen. Übersetzung erscheint während des Sprechens.
 - **Modus**: Live-Untertitel vs. satzweise Stücke.
-- **STT-Modell**-Auswahl wie im Audio-/Video-Tab (gilt pro Aufnahme; greift
-  ab der nächsten gestarteten Aufnahme).
 - Stopp finalisiert; als SRT/VTT/TXT herunterladbar.
+- **Sprach-Engine** (Admin, Einstellungen → Service-Modelle → Sprach-Engines):
+  steht die Spracherkennung auf **Browser-nativ**, erkennt der Browser die
+  Sprache selbst und nur der erkannte **Text** geht zur Übersetzung an den
+  Server — kein Audio-Upload, keine Transkriptionskosten, dafür keine
+  Sprechererkennung und nur ungefähre Zeitstempel. Chrome/Edge senden das
+  Audio dabei an deren Hersteller-Dienste (Firefox: automatischer Rückfall
+  auf den Server-Weg). Die **Sprachausgabe** der Live-Übersetzung folgt der
+  Vorlese-Engine: bei Browser-nativ sprechen die Systemstimmen des Geräts
+  statt des Server-TTS.
 
 ### Glossare
 - **Glossare**-Knopf oben rechts öffnet das Modal.

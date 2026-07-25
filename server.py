@@ -2343,11 +2343,16 @@ class BrainAgentHandler(
             self._handle_translate_document_upload()
         elif path == "/v1/translate/media":
             self._handle_translate_media_upload()
+        elif path == "/v1/translate/transcribe":
+            self._handle_translate_transcribe()
         elif path == "/v1/translate/live/start":
             self._handle_live_start()
         elif path.startswith("/v1/translate/live/") and path.endswith("/chunk"):
             sid = path[len("/v1/translate/live/"):-len("/chunk")]
             self._handle_live_chunk(sid)
+        elif path.startswith("/v1/translate/live/") and path.endswith("/text"):
+            sid = path[len("/v1/translate/live/"):-len("/text")]
+            self._handle_live_text(sid)
         elif path.startswith("/v1/translate/live/") and path.endswith("/stop"):
             sid = path[len("/v1/translate/live/"):-len("/stop")]
             self._handle_live_stop(sid)

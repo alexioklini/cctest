@@ -862,7 +862,68 @@ class TranslateHandlerMixin:
                 "local": bool(cfg.get("is_local")),
             })
         default = (brain._transcription_config().get("default_model") or "").strip()
-        self._send_json({"models": models, "default": default})
+        # Engine choice (admin, Tools tab): 'server' (default) or 'browser'.
+        # Browser engines only ever apply to MICROPHONE features (dictation,
+        # live translate) and the chat read-aloud — file transcription and
+        # audio-file TTS (podcast, dubbing) always run server-side.
+        tool_cfg = brain.get_tool_config()
+        engines = {
+            "stt": ((tool_cfg.get("transcribe_audio") or {}).get("engine") or "server"),
+            "tts": ((tool_cfg.get("text_to_speech") or {}).get("engine") or "server"),
+        }
+        self._send_json({"models": models, "default": default, "engines": engines})
+
+    def _handle_translate_transcribe(self):
+        """POST /v1/translate/transcribe — one-shot mic dictation STT.
+
+        Multipart {chunk: <wav>, mime?, lang?} → {text, language}. Thin shim
+        over server_lib.translate.media.transcribe_and_translate with an empty
+        target_lang (transcribe-only; cost logged there)."""
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            self._send_json({"error": "multipart/form-data required"}, 400)
+            return
+        boundary = None
+        for part in ctype.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part.split("=", 1)[1].strip('"')
+                break
+        if not boundary:
+            self._send_json({"error": "missing boundary"}, 400)
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0 or length > 25 * 1024 * 1024:
+            self._send_json({"error": "audio too large"}, 413)
+            return
+        raw = self.rfile.read(length)
+        fields, _file_name, file_bytes = _parse_multipart(raw, boundary)
+        if not file_bytes:
+            self._send_json({"error": "missing audio"}, 400)
+            return
+        import tempfile
+        from server_lib.translate.live import LiveSession
+        ext = LiveSession._ext_for_mime((fields.get("mime") or "audio/wav").strip())
+        tmp = tempfile.NamedTemporaryFile(prefix="brain-dictate-", suffix=ext, delete=False)
+        try:
+            tmp.write(file_bytes)
+            tmp.close()
+            from server_lib.translate.media import transcribe_and_translate
+            result = transcribe_and_translate(
+                tmp.name, target_lang="",
+                source_lang=(fields.get("lang") or "").strip(),
+            )
+            self._send_json({
+                "text": (result.get("transcript") or "").strip(),
+                "language": result.get("language") or "",
+            })
+        except Exception as e:
+            self._send_json({"error": str(e)}, 502)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
 
     # ─── Live microphone translation ───────────────────────────────────
 
@@ -945,6 +1006,35 @@ class TranslateHandlerMixin:
         mime = (fields.get("mime") or "audio/webm").strip()
         sess.add_chunk(seq, file_bytes, mime)
         self._send_json({"ok": True, "seq": seq, "bytes": len(file_bytes)})
+
+    def _handle_live_text(self, sess_id: str):
+        """POST /v1/translate/live/<id>/text — browser-STT text segment.
+
+        When the admin sets the STT engine to 'browser', the client does the
+        speech recognition itself and posts finalized TEXT segments instead of
+        audio chunks. Body: {text, start?, end?, lang?}. The session translates
+        and broadcasts them exactly like transcribed segments."""
+        from server_lib.translate import LIVE_REGISTRY
+        sess = LIVE_REGISTRY.get(sess_id)
+        if not sess:
+            self._send_json({"error": "session not found"}, 404)
+            return
+        if sess.closed:
+            self._send_json({"error": "session closed"}, 409)
+            return
+        body = self._read_json() or {}
+        text = (body.get("text") or "").strip()
+        if not text:
+            self._send_json({"error": "missing text"}, 400)
+            return
+        try:
+            start = float(body.get("start") or 0.0)
+            end = float(body.get("end") or start)
+        except (TypeError, ValueError):
+            start = end = 0.0
+        idx = sess.add_text_segment(text, start=start, end=end,
+                                    lang=(body.get("lang") or "").strip())
+        self._send_json({"ok": True, "index": idx})
 
     def _handle_live_stop(self, sess_id: str):
         """POST /v1/translate/live/<id>/stop — flush + close."""

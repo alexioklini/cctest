@@ -2870,6 +2870,7 @@ async function _genTab_service_models(C) {
     </div>`;
   }).join('');
 
+  const ae = d.audio_engines || { tts: 'server', stt: 'server' };
   const ocr = d.ocr || { engine: 'none', provider: '', model: '', status: 'off' };
   const engineOpts = ['none', 'mlx_ocr', 'mistral_ocr', 'local_vision', 'auto'].map(e =>
     `<option value="${e}"${e === ocr.engine ? ' selected' : ''}>${e}</option>`).join('');
@@ -2889,6 +2890,33 @@ async function _genTab_service_models(C) {
     ${SEC('Modellzuweisungen')}
     <div style="${G('12px')};padding:12px;border:1px solid var(--border-100);border-radius:8px">
       ${slotRows}
+    </div>
+
+    ${SEC('Sprach-Engines (Mikrofon & Vorlesen)')}
+    <div style="${G('10px')};padding:12px;border:1px solid var(--border-100);border-radius:8px">
+      <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+        <label style="font-size:12px;color:var(--text-300)">Vorlesen (TTS)</label>
+        <select class="form-select" id="svc-tts-engine"${dis}>
+          <option value="server"${ae.tts !== 'browser' ? ' selected' : ''}>Server-Modell (Slot „Text-to-Speech" oben)</option>
+          <option value="browser"${ae.tts === 'browser' ? ' selected' : ''}>Browser-nativ (Systemstimmen, lokal + kostenlos)</option>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center">
+        <label style="font-size:12px;color:var(--text-300)">Spracherkennung (STT)</label>
+        <select class="form-select" id="svc-stt-engine"${dis}>
+          <option value="server"${ae.stt !== 'browser' ? ' selected' : ''}>Server-Modell (Slot „Transkription" oben)</option>
+          <option value="browser"${ae.stt === 'browser' ? ' selected' : ''}>Browser-nativ (Chrome/Edge senden Audio an Google/Microsoft)</option>
+        </select>
+      </div>
+      <div style="font-size:11px;color:var(--text-400);margin-left:210px">
+        Gilt nur für <b>Mikrofon- und Vorlese-Funktionen</b> (Diktat im Chat, Live-Übersetzung,
+        Antwort vorlesen). Audio-<b>Dateien</b> (Anhänge, Medien-Übersetzung, Podcast/Audio
+        Overview) laufen immer über die Server-Modelle oben. <b>Browser-nativ</b> bei TTS ist
+        komplett lokal (Systemstimmen, sofortiger Start, keine Kosten); bei STT liefert der
+        Browser den Text schon während des Sprechens, aber Chrome/Edge senden das Audio dafür an
+        deren Hersteller-Dienste — für sensible Umgebungen Server (lokales Whisper) belassen.
+        Firefox unterstützt Browser-STT nicht und fällt automatisch auf den Server-Weg zurück.
+      </div>
     </div>
 
     ${SEC('OCR (gescannte PDFs)')}
@@ -3116,6 +3144,11 @@ async function saveServiceModels() {
   // show-conditions exactly. Omitting a key makes the server's per-key merge
   // leave the stored value untouched, instead of blanking it (which e.g. wiped
   // provider/model when engine=mlx_ocr).
+  // Speech engines (server vs. browser-native) for mic/read-aloud features.
+  body.audio_engines = {
+    tts: document.getElementById('svc-tts-engine')?.value || 'server',
+    stt: document.getElementById('svc-stt-engine')?.value || 'server',
+  };
   const _ocrEngine = document.getElementById('svc-ocr-engine')?.value || 'none';
   body.ocr = { engine: _ocrEngine };
   const _ocrText = (key, id) => {

@@ -929,14 +929,9 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
             <option value="transcribe">Nur transkribieren</option>
           </select>
         </div>
-        <div class="tr-pill-group" id="tr-toolbar-stt-group" style="display:none">
-          <label class="tr-pill-label">STT-Modell</label>
-          <select id="tr-media-stt-model" class="tr-select"></select>
-        </div>
-        <div class="tr-pill-group" id="tr-toolbar-live-stt-group" style="display:none">
-          <label class="tr-pill-label">STT-Modell</label>
-          <select id="tr-live-stt-model" class="tr-select"></select>
-        </div>
+        <!-- STT-Modell wird zentral unter Einstellungen → Service-Modelle
+             gepflegt (Slot „Transkription" + Sprach-Engines) — hier bewusst
+             KEINE Modellauswahl (v9.414.0, entfernt auf User-Wunsch). -->
       </div>
 
       <!-- Text tab content -->
@@ -2001,6 +1996,12 @@ if (window.electronAPI && window.electronAPI.platform === 'darwin') {
         </span>
         <button class="composer-btn" onclick="triggerFileUpload()" title="Dateien anhängen">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <!-- Diktat: Spracheingabe in den Composer. Engine (Server-Whisper vs.
+             Browser-Spracherkennung) wählt der Admin im Tools-Tab
+             (transcribe_audio → Engine). Logik in chat_audio.js. -->
+        <button class="composer-btn" data-id="btn-dictate" onclick="toggleDictation(this)" title="Diktieren (Spracheingabe)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
         </button>
         <button class="composer-btn" data-id="btn-thinking" data-composer-toggle="btn-thinking" onclick="cycleThinkingLevel()" title="Denk-Stufe">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2a7 7 0 017 7c0 3-2 5-2 8H7c0-3-2-5-2-8a7 7 0 017-7z"/><line x1="9" y1="21" x2="15" y2="21"/></svg>

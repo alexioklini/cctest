@@ -29,6 +29,30 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.414.0",
+        "date": "2026-07-25",
+        "title": "Diktieren im Chat + Browser-Stimmen",
+        "body": "Neben der Büroklammer gibt es jetzt ein Mikrofon: Klicken, "
+                "sprechen, und der erkannte Text landet direkt im Eingabefeld "
+                "— nochmal klicken beendet das Diktat. Außerdem kann der "
+                "Administrator für Vorlesen und Spracherkennung jetzt wählen, "
+                "ob sie über den Server laufen (wie bisher, inklusive "
+                "geklonter Stimmen und hausinterner Verarbeitung) oder direkt "
+                "im Browser: Vorlesen mit den Systemstimmen des Geräts startet "
+                "sofort, kostet nichts und funktioniert sogar offline; die "
+                "Browser-Spracherkennung liefert den Text schon während des "
+                "Sprechens — auch in der Live-Übersetzung. Die Wahl treffen "
+                "Sie unter Einstellungen → Service-Modelle → Sprach-Engines; "
+                "die frühere Modellauswahl im Übersetzen-Bereich entfällt, "
+                "das Transkriptionsmodell wird nur noch dort zentral "
+                "gepflegt. Hinweis für sensible Umgebungen: Bei der "
+                "Browser-Spracherkennung senden Chrome und Edge das Audio an "
+                "deren Hersteller-Dienste; die Einstellung steht deshalb "
+                "standardmäßig auf Server.",
+        "audience": "user",
+        "versions": ["9.414.0"],
+    },
+    {
         "version": "9.412.0",
         "date": "2026-07-25",
         "title": "Nachfrage beim Modellwechsel im laufenden Chat",

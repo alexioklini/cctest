@@ -28,10 +28,31 @@ function _chatAudioStop() {
   _chatAudioQueue = [];
   _chatAudioLang = '';
   if (_chatAudioEl) { try { _chatAudioEl.pause(); } catch (_) {} _chatAudioEl = null; }
+  try { window.speechSynthesis?.cancel(); } catch (_) {}
   if (_chatAudioBtn) {
     _chatAudioBtn.classList.remove('msg-action-active', 'msg-action-generating');
     _chatAudioBtn = null;
   }
+}
+
+// ─── audio engines (admin choice: server model vs. browser-native) ────────────
+
+// The Tools tab lets the admin pick 'server' or 'browser' per direction
+// (transcribe_audio.engine / text_to_speech.engine). Served alongside
+// /v1/translate/stt-models; cached per page load. Browser engines only apply
+// to mic/speech features — audio FILES always go through the server model.
+let _audioEnginesCache = null;
+async function fetchAudioEngines() {
+  if (_audioEnginesCache) return _audioEnginesCache;
+  try {
+    const data = await API.get('/v1/translate/stt-models');
+    _audioEnginesCache = (data && data.engines) || {};
+  } catch (_) {
+    _audioEnginesCache = {};
+  }
+  if (!_audioEnginesCache.stt) _audioEnginesCache.stt = 'server';
+  if (!_audioEnginesCache.tts) _audioEnginesCache.tts = 'server';
+  return _audioEnginesCache;
 }
 
 // ─── read an assistant reply aloud ────────────────────────────────────────────
@@ -122,6 +143,28 @@ async function _playChatQueue() {
   audio.play().catch(() => { /* autoplay/gesture issues — surface quietly */ });
 }
 
+// Browser-native playback (engine 'browser'): OS voices via speechSynthesis —
+// no server call, no cost, works offline. Same queue/stop/button state as the
+// server path; speechSynthesis queues utterances natively but we feed them one
+// at a time so stop() stays a single cancel().
+function _speakChatQueueBrowser() {
+  if (_chatAudioStopped || !_chatAudioQueue.length) {
+    if (!_chatAudioStopped && _chatAudioBtn) {
+      _chatAudioBtn.classList.remove('msg-action-active', 'msg-action-generating');
+    }
+    if (!_chatAudioStopped) _chatAudioBtn = null;
+    return;
+  }
+  const u = new window.SpeechSynthesisUtterance(_chatAudioQueue.shift());
+  if (_chatAudioLang) u.lang = _chatAudioLang;
+  u.onstart = () => { if (!_chatAudioStopped) _chatAudioBtnState('playing'); };
+  u.onend = () => { _speakChatQueueBrowser(); };
+  // cancel() fires onerror ('interrupted') in some engines — _chatAudioStop is
+  // idempotent, so routing every error through it is safe.
+  u.onerror = () => { _chatAudioStop(); };
+  window.speechSynthesis.speak(u);
+}
+
 async function readMessageAloud(idx, btn) {
   // Toggle off if this same button is already playing.
   if (_chatAudioBtn === btn) { _chatAudioStop(); return; }
@@ -134,6 +177,9 @@ async function readMessageAloud(idx, btn) {
   _chatAudioQueue = _chunkForTts(speech, 3000);
   _chatAudioBtn = btn;
   _chatAudioBtnState('generating');   // pulsate while we detect lang + fetch audio
+  const engines = await fetchAudioEngines();
+  if (_chatAudioStopped) return;      // user toggled off during the engines fetch
+  const useBrowserTts = engines.tts === 'browser' && 'speechSynthesis' in window;
   // Detect the language ONCE on the full text and pin it for every chunk, so
   // the voice can't switch mid-playback (a foreign quote in a later chunk must
   // not flip the voice). Best-effort: on failure we fall back to per-chunk
@@ -144,7 +190,7 @@ async function readMessageAloud(idx, btn) {
     if (_chatAudioStopped) return;   // user toggled off during detection
     _chatAudioLang = (det && det.lang ? String(det.lang) : '').slice(0, 2);
   } catch (_) { /* fall back to auto_voice per chunk */ }
-  _playChatQueue();
+  if (useBrowserTts) { _speakChatQueueBrowser(); } else { _playChatQueue(); }
 }
 
 // ─── generate a podcast (Audio Overview) from this chat ───────────────────────
@@ -326,5 +372,170 @@ async function _openChatPodcastModal(artifactId, filename) {
     mount.innerHTML = `<audio controls autoplay preload="metadata" style="width:100%" src="${url}"></audio>`;
   } catch (e) {
     mount.innerHTML = `<div style="color:var(--error)">Audio konnte nicht geladen werden: ${esc(e.message || e)}</div>`;
+  }
+}
+
+// ─── dictation (composer mic button) ──────────────────────────────────────────
+//
+// Two backends behind the one button, chosen by the admin engine setting:
+//  - 'server':  record raw mic samples, encode ONE wav on stop (encoder shared
+//    with translation_live.js), POST /v1/translate/transcribe (whisper/voxtral;
+//    with local whisper the audio never leaves the house).
+//  - 'browser': webkitSpeechRecognition — recognized text streams into the
+//    composer while speaking. NB: Chrome/Edge run this via Google/Microsoft
+//    cloud; the admin help text says so. Unsupported (Firefox) → server path.
+
+let _dictState = null;   // {btn, input, mode, rec?, ctx?, proc?, stream?, chunks?, sampleRate?, finalized?}
+
+function _dictSetBtn(btn, active, busy) {
+  btn.classList.toggle('dictating', !!active);
+  btn.classList.toggle('msg-action-generating', !!busy);
+  btn.title = active ? 'Diktat läuft — klicken zum Beenden'
+    : busy ? 'Wird transkribiert…' : 'Diktieren (Spracheingabe)';
+}
+
+function _dictInsert(text) {
+  const s = _dictState;
+  if (!s || !s.input || !text) return;
+  const sep = s.input.value && !/\s$/.test(s.input.value) ? ' ' : '';
+  s.input.value += sep + text;
+  try { autoResizeInput(s.input); updateSendButton(); } catch (_) {}
+}
+
+async function toggleDictation(btn) {
+  if (_dictState) { _stopDictation(); return; }
+  const box = btn.closest('[data-composer-box]');
+  const input = box && box.querySelector('.composer-input');
+  if (!input) { showToast('Kein Eingabefeld gefunden', true); return; }
+  const engines = await fetchAudioEngines();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const wantBrowser = engines.stt === 'browser';
+  if (wantBrowser && SR) {
+    _dictState = { btn, input, mode: 'browser' };
+    _startDictationBrowser(SR);
+  } else {
+    if (wantBrowser && !SR) showToast('Browser-Spracherkennung nicht verfügbar — Server-Transkription wird verwendet');
+    _dictState = { btn, input, mode: 'server' };
+    _startDictationServer();
+  }
+}
+
+function _startDictationBrowser(SR) {
+  const s = _dictState;
+  const rec = new SR();
+  rec.continuous = true;
+  rec.interimResults = false;
+  rec.lang = navigator.language || 'de-DE';
+  rec.onresult = (ev) => {
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      if (ev.results[i].isFinal) _dictInsert(ev.results[i][0].transcript.trim());
+    }
+  };
+  rec.onerror = (ev) => {
+    // 'no-speech' fires on silence — harmless, onend restarts. Real errors end
+    // the dictation with a toast (e.g. 'not-allowed' = mic permission denied).
+    if (ev.error && ev.error !== 'no-speech' && ev.error !== 'aborted') {
+      showToast('Spracherkennung fehlgeschlagen: ' + ev.error, true);
+      _stopDictation();
+    }
+  };
+  // Chrome ends recognition after pauses on its own — keep going until the
+  // user explicitly stops.
+  rec.onend = () => { if (_dictState === s) { try { rec.start(); } catch (_) {} } };
+  s.rec = rec;
+  try { rec.start(); } catch (e) { showToast('Start fehlgeschlagen: ' + (e.message || e), true); _dictState = null; return; }
+  _dictSetBtn(s.btn, true, false);
+}
+
+async function _startDictationServer() {
+  const s = _dictState;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    showToast('Mikrofon wird in diesem Browser nicht unterstützt.', true);
+    _dictState = null;
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+    });
+  } catch (e) {
+    showToast('Mikrofonzugriff verweigert: ' + (e.message || e), true);
+    _dictState = null;
+    return;
+  }
+  if (_dictState !== s) { stream.getTracks().forEach(t => t.stop()); return; }
+  // Same capture path as the live translation (ScriptProcessor → Float32
+  // samples), but ONE take: everything is buffered and encoded on stop.
+  let ctx;
+  try {
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+  } catch (e) {
+    stream.getTracks().forEach(t => t.stop());
+    showToast('AudioContext fehlgeschlagen: ' + (e.message || e), true);
+    _dictState = null;
+    return;
+  }
+  const source = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  s.stream = stream; s.ctx = ctx; s.proc = proc;
+  s.chunks = []; s.sampleRate = ctx.sampleRate;
+  const MAX_S = 120;   // hard cap so a forgotten mic doesn't buffer forever
+  let total = 0;
+  proc.onaudioprocess = (ev) => {
+    if (_dictState !== s) return;
+    const d = ev.inputBuffer.getChannelData(0);
+    s.chunks.push(new Float32Array(d));
+    total += d.length;
+    if (total > s.sampleRate * MAX_S) {
+      showToast(`Diktat nach ${MAX_S} s automatisch beendet`);
+      _stopDictation();
+    }
+  };
+  source.connect(proc);
+  proc.connect(ctx.destination);
+  _dictSetBtn(s.btn, true, false);
+}
+
+async function _stopDictation() {
+  const s = _dictState;
+  if (!s) return;
+  _dictState = null;
+  if (s.mode === 'browser') {
+    try { s.rec && s.rec.stop(); } catch (_) {}
+    _dictSetBtn(s.btn, false, false);
+    return;
+  }
+  // Server path: tear down capture, encode one WAV, transcribe.
+  try { s.proc && s.proc.disconnect(); } catch (_) {}
+  try { s.ctx && s.ctx.close(); } catch (_) {}
+  try { s.stream && s.stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+  const total = (s.chunks || []).reduce((n, c) => n + c.length, 0);
+  if (total < (s.sampleRate || 16000) * 0.4) {   // <0.4s — nothing worth sending
+    _dictSetBtn(s.btn, false, false);
+    return;
+  }
+  const samples = new Float32Array(total);
+  let off = 0;
+  for (const c of s.chunks) { samples.set(c, off); off += c.length; }
+  _dictSetBtn(s.btn, false, true);
+  try {
+    const wav = trEncodeWav(samples, s.sampleRate);   // shared encoder (translation_live.js)
+    const fd = new FormData();
+    fd.append('chunk', wav, 'dictation.wav');
+    fd.append('mime', 'audio/wav');
+    const resp = await fetch('/v1/translate/transcribe', {
+      method: 'POST', headers: API._headers(), body: fd,
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    _dictState = s;          // _dictInsert reads the input off the state
+    _dictInsert((data.text || '').trim());
+    _dictState = null;
+    if (!(data.text || '').trim()) showToast('Keine Sprache erkannt');
+  } catch (e) {
+    showToast('Transkription fehlgeschlagen: ' + (e.message || e), true);
+  } finally {
+    _dictSetBtn(s.btn, false, false);
   }
 }
