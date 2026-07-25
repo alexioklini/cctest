@@ -206,8 +206,14 @@ the poisoned turn first and only then said "this was a new topic".
 Two stages, so the common case costs nothing:
 
 1. `drift_candidate(prev_sig, cur_sig, message_count)` — pure arithmetic on the
-   turn's already-resolved tool names (Jaccard ≤ 0.34, ≥ 6 messages, ≥ 3 tools,
-   ubiquitous tools like `ask_user_question`/`think` filtered out).
+   turn's already-resolved tool names (Jaccard ≤ 0.34, ≥ 3 messages, ≥ 2 tools
+   per side, ubiquitous tools like `ask_user_question`/`think` filtered out).
+   Both floors are tied to the call site: `message_count` is `len(session.messages)`
+   BEFORE the turn, so it runs 1, 3, 5 … and the earliest reachable check is turn 2
+   at 3. The tool floor is 2 because a single tool per side can only score 0 % or
+   100 %. Both were too high in 9.409.0 (6 and 3 — the message floor was calibrated
+   while the check still ran AFTER the reply) and silently excluded short chats,
+   which is where topics actually jump; see chat 2bd47d4f.
 2. `drift_confirm(...)` — only for survivors: one classifier call, ~200 tokens
    in, `max_tokens=3`, thinking off, 8 s timeout, any failure → no drift.
 

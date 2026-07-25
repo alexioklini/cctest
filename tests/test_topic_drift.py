@@ -43,12 +43,19 @@ class DriftCandidateTest(unittest.TestCase):
     def test_disjoint_tool_sets_in_a_long_chat_are_candidates(self):
         self.assertTrue(brain.drift_candidate(self.DOCS, self.CODE, 10))
 
-    def test_short_chat_never_triggers(self):
-        """Below the message floor a chat is still establishing its topic —
-        an early tool swing is normal, not drift."""
-        for n in (0, 1, 4, 5):
+    def test_first_turn_never_triggers(self):
+        """Turn 1 has nothing to compare against. The count is taken BEFORE the
+        turn (user message in, reply not), so it runs 1, 3, 5 … — a chat can
+        first be checked on turn 2, at 3 messages."""
+        for n in (0, 1, 2):
             with self.subTest(messages=n):
                 self.assertFalse(brain.drift_candidate(self.DOCS, self.CODE, n))
+
+    def test_drift_right_after_the_first_exchange_is_caught(self):
+        """The regression from chat 2bd47d4f: DORA → Python at 3 messages. The
+        old floor of 6 (set while the check still ran AFTER the reply) meant the
+        gate never fired on short chats — exactly where topics jump."""
+        self.assertTrue(brain.drift_candidate(self.DOCS, self.CODE, 3))
 
     def test_same_tools_never_trigger(self):
         self.assertFalse(brain.drift_candidate(self.DOCS, self.DOCS, 20))
@@ -58,13 +65,20 @@ class DriftCandidateTest(unittest.TestCase):
         nearly = frozenset(self.DOCS | {"write_file"})
         self.assertFalse(brain.drift_candidate(self.DOCS, nearly, 20))
 
-    def test_tiny_tool_sets_never_trigger(self):
-        """With one or two tools the overlap ratio is noise, not signal."""
+    def test_single_tool_sides_never_trigger(self):
+        """At one tool per side the ratio can only be 0 % or 100 % — noise. A
+        lone differing tool would read as a total topic change."""
         self.assertFalse(brain.drift_candidate(
             frozenset({"read_file"}), frozenset({"git_status"}), 20))
         self.assertFalse(brain.drift_candidate(
-            frozenset({"read_file", "write_file"}),
-            frozenset({"git_status", "execute_command"}), 20))
+            frozenset({"read_file"}), self.CODE, 20))   # one side is enough to block
+
+    def test_two_tool_sides_are_compared(self):
+        """Two is the smallest set where the ratio means something — and short
+        chats (where drift is most common) rarely resolve more."""
+        self.assertTrue(brain.drift_candidate(
+            frozenset({"read_document", "mempalace_query"}),
+            frozenset({"python_exec", "execute_command"}), 20))
 
     def test_empty_sides_never_trigger(self):
         self.assertFalse(brain.drift_candidate(frozenset(), self.CODE, 20))

@@ -595,14 +595,20 @@ anhängen.
 **Ohne Antwort läuft die Anfrage nach fünf Minuten** einfach im bisherigen Chat
 weiter; es geht nichts verloren.
 
-Der Dialog erscheint **höchstens einmal pro Chat** und erst ab dem sechsten
-Beitrag. Erkannt wird der Wechsel daran, dass die Anfrage ganz andere Werkzeuge
-braucht als der bisherige Chat (z. B. Dokumenten-Recherche → Code und Shell);
-erst wenn das zutrifft, prüft eine kurze Zusatzabfrage, ob es wirklich ein
-anderes Thema ist. Ein Themenwechsel **innerhalb** derselben Werkzeuge (etwa von
-einem Rechtsgebiet zu einem anderen) wird bewusst **nicht** erkannt — das würde
-bei jeder Anfrage eine Zusatzabfrage kosten. In geplanten Aufgaben gibt es den
-Dialog nicht (dort ist niemand, der antworten könnte).
+Der Dialog erscheint **höchstens einmal pro Chat**, frühestens bei Ihrer zweiten
+Frage (vorher gibt es nichts zu vergleichen). Erkannt wird der Wechsel daran,
+dass die Anfrage ganz andere Werkzeuge braucht als der bisherige Chat (z. B.
+Dokumenten-Recherche → Code und Shell); erst wenn das zutrifft, prüft eine kurze
+Zusatzabfrage, ob es wirklich ein anderes Thema ist.
+
+**Nicht erkannt** werden zwei Fälle, beide bewusst: ein Themenwechsel
+**innerhalb** derselben Werkzeuge (etwa von einem Rechtsgebiet zu einem anderen)
+— das zu fangen hieße, bei jeder Anfrage eine Zusatzabfrage zu bezahlen. Und
+Anfragen, bei denen nur ein einziges Werkzeug im Spiel ist: dort wäre jede
+Abweichung sofort ein „Totalwechsel", das ergäbe zu viele Fehlalarme.
+
+In geplanten Aufgaben gibt es den Dialog nicht (dort ist niemand, der antworten
+könnte).
 
 ---
 

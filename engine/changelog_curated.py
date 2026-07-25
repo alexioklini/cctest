@@ -52,11 +52,13 @@ CURATED_CHANGELOG: list[dict] = [
                 "sonst bei jeder Anfrage mitgeschickt, kostet Kontext und kann "
                 "die Antwortqualität senken. Beide Hinweise sind reine "
                 "Empfehlungen; ohne Antwort läuft die Anfrage nach fünf "
-                "Minuten einfach im bisherigen Chat weiter. (Der Hinweis beim "
+                "Minuten einfach im bisherigen Chat weiter. Die Nachfrage "
+                "kommt frühestens bei Ihrer zweiten Frage — also auch dann, "
+                "wenn Sie das Thema schon früh wechseln. (Der Hinweis beim "
                 "Umschalten der Denk-Stufe betrifft nur die Wartezeit — "
                 "zusätzliche Kosten entstehen dadurch nicht.)",
         "audience": "user",
-        "versions": ["9.408.0", "9.408.1", "9.409.0"],
+        "versions": ["9.408.0", "9.408.1", "9.409.0", "9.409.1"],
     },
     {
         "version": "9.407.0",
