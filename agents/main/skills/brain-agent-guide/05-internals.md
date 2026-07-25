@@ -195,7 +195,13 @@ False on any uncertainty: a missed hint costs one slower turn, a false one costs
 the hint's credibility. Surfaced as `slow_next_turn` on the `thinking_level`
 manage action.
 
-### Topic-drift hint (context poisoning)
+### Topic-drift gate (context poisoning)
+
+Runs **before the model call** — the point of the whole thing. It sits right
+after `_build_prefix_for` in the chat worker: the earliest moment the resolved
+tool names exist (stage 1 needs them) and still ahead of
+`sidecar_proxy.run_turn`. Checking after the reply (the 9.408.0 version) billed
+the poisoned turn first and only then said "this was a new topic".
 
 Two stages, so the common case costs nothing:
 
@@ -203,13 +209,26 @@ Two stages, so the common case costs nothing:
    turn's already-resolved tool names (Jaccard ≤ 0.34, ≥ 6 messages, ≥ 3 tools,
    ubiquitous tools like `ask_user_question`/`think` filtered out).
 2. `drift_confirm(...)` — only for survivors: one classifier call, ~200 tokens
-   in, `max_tokens=3`, thinking off, 8 s timeout, any failure → no hint.
+   in, `max_tokens=3`, thinking off, 8 s timeout, any failure → no drift.
 
 `session._drift_checked` latches after the first confirm (even on NO), so a chat
-can never spend more than one call on this. Result rides as
-`msg_metadata.topic_drift` → a blue badge + "Neuer Chat" button on the reply.
+can never spend more than one call on this.
+
+On a confirmed drift the worker opens a blocking dialog — the second instance of
+the 9.407.0 context-gate pattern: registry `_drift_gate_pending`, event
+`topic_drift {timeout_s, prompt}` out, `threading.Event` wait (300 s → default
+`continue`), `topic_drift_done {decision}` out. `new_chat` rolls the pending user
+message back out (`_rollback_messages`) and ends the turn with
+`done{cancelled:true, reason:"topic_drift"}` — the message belongs to the new
+chat, where the client pre-fills it UNSENT along with the current model and
+composer settings.
+
+**Interactive turns only** (`if interactive:`) — scheduled and background runs
+have nobody to ask and must never block on a dialog. The orphan slot is cleared
+in the worker's `finally`, next to the context gate's.
+
 Blind to drift that keeps the same tools — catching that would mean an LLM call
-every turn.
+every turn, which is exactly the cost this design avoids.
 
 ## Provider routing
 

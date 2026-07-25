@@ -1018,7 +1018,6 @@ function renderAssistantMessage(msg, idx) {
   // Kontext-Druck badge: this turn peaked above 80% context fill — warn that
   // the answer may be degraded (elevated hallucination risk near the limit).
   const contextPressureHtml = _buildContextPressureBadge(msg.metadata?.context_pressure);
-  const topicDriftHtml = _buildTopicDriftBadge(msg.metadata?.topic_drift);
 
   // Thinking attached to a reloaded assistant message (meta.thinking). Rendered
   // inline, italic + lighter, matching the live thinking rows (no block/collapse).
@@ -1327,7 +1326,6 @@ function renderAssistantMessage(msg, idx) {
       <div class="msg-assistant msg-content${cavClass}">${rendered}${wfControlsHtml}</div>
       ${citationWarnHtml}
       ${contextPressureHtml}
-      ${topicDriftHtml}
       ${citationLegendHtml}
       ${filesHtml}
       ${pinnedSourcesHtml}
@@ -2216,27 +2214,6 @@ function _buildContextPressureBadge(cp) {
   return `
     <div class="msg-citation-warn">
       <span class="msg-citation-warn-badge" title="${esc(tip)}">⚠ Kontext war zu ${cp.peak_pct}% gefüllt — erhöhtes Halluzinationsrisiko</span>
-    </div>`;
-}
-
-// Topic drift ("context poisoning"): the chat moved to an unrelated subject, so
-// every turn still carries the old topic's history — stale context the model
-// weighs, and a tool set resolved for the previous subject. Advisory only, with
-// the fix one click away. Server-side this survived a tool-set comparison AND a
-// confirm call, and fires at most once per chat, so it stays rare by
-// construction rather than by a dismiss-counter here.
-function _buildTopicDriftBadge(drift) {
-  if (!drift) return '';
-  const tip = 'Dieser Chat scheint das Thema gewechselt zu haben. Der bisherige '
-    + 'Verlauf wird trotzdem bei jeder Anfrage mitgeschickt — das kostet Kontext '
-    + 'und kann die Antwortqualität senken, weil das Modell alte Inhalte mitgewichtet. '
-    + 'Für ein neues Thema ist ein neuer Chat meist besser. Sie können hier aber '
-    + 'ohne Weiteres weiterarbeiten.';
-  return `
-    <div class="msg-citation-warn">
-      <span class="msg-citation-warn-badge is-info" title="${esc(tip)}">ⓘ Neues Thema erkannt</span>
-      <button class="msg-drift-newchat" onclick="newChat()"
-              title="Neuen Chat für dieses Thema starten">Neuer Chat</button>
     </div>`;
 }
 

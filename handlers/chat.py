@@ -1206,6 +1206,23 @@ def deliver_context_decision(session_id: str, decision: str) -> bool:
     return True
 
 
+# session_id -> {event, decision} while a TOPIC-DRIFT dialog is open. Same
+# shape as _context_gate_pending; resolved by POST /v1/chat/drift-decision or
+# the gate's own timeout (→ continue, i.e. run the turn here).
+_drift_gate_pending: dict = {}
+
+
+def deliver_drift_decision(session_id: str, decision: str) -> bool:
+    """Called by POST /v1/chat/drift-decision. True iff a dialog was waiting
+    (False = already timed out or resolved — the turn moved on)."""
+    slot = _drift_gate_pending.get(session_id)
+    if not slot:
+        return False
+    slot["decision"] = decision
+    slot["event"].set()
+    return True
+
+
 def _persist_plan_artifact(sid, session, live, plan_text, *, planner="",
                            verdict="", round_no=0, source="Planner-Entwurf"):
     """Persist the delegate plan VERSIONED into the session's artifact folder
@@ -4763,6 +4780,82 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
 
                 _system_prompt, _active_tools, _active_tool_names = (
                     _build_prefix_for(session.model, inf_params))
+
+                # ── TOPIC DRIFT (context poisoning) ─────────────────────────
+                # The chat wandered to an unrelated subject: every prompt still
+                # drags the old topic's history, and the tool set was resolved
+                # for the PREVIOUS subject. Checked HERE — after the tools are
+                # resolved (we need their names) but BEFORE the model call, so
+                # the user can still avoid the poisoned turn. Checking after the
+                # reply would bill the expensive turn first and only then say
+                # "this was a new topic".
+                #
+                # INTERACTIVE ONLY: scheduled/background runs have nobody to ask
+                # and must never block on a dialog.
+                #
+                # Two stages, cheapest first: a free tool-set comparison gates a
+                # ~200-token confirm call. At most ONE confirm per chat
+                # (_drift_checked latches even on a NO) — a hard cost ceiling
+                # per conversation.
+                if interactive:
+                    try:
+                        _cur_sig = engine._drift_tool_signature(_active_tool_names)
+                        _prev_sig = getattr(session, "_drift_tool_sig", None)
+                        if (_prev_sig is not None
+                                and not getattr(session, "_drift_checked", False)
+                                and engine.drift_candidate(
+                                    _prev_sig, _cur_sig, len(session.messages))):
+                            session._drift_checked = True
+                            # Earlier topic = the FIRST user message: it fixes what
+                            # the chat was originally about. Comparing against the
+                            # previous message would follow a slow slide instead of
+                            # catching it.
+                            _first_user = next(
+                                (m.get("content") for m in session.messages
+                                 if m.get("role") == "user"
+                                 and isinstance(m.get("content"), str)), "")
+                            if _first_user and engine.drift_confirm(
+                                    _first_user, message, session_id=sid):
+                                # Ask, then wait. No answer within 5 minutes → run
+                                # the turn here (same default as the context-pressure
+                                # gate: silence must never strand a turn).
+                                _dev = threading.Event()
+                                _drift_gate_pending[sid] = {
+                                    "event": _dev, "decision": None}
+                                # `prompt` lets the client pre-fill the new chat's
+                                # composer with this question (unsent — the user
+                                # may want to reword it or attach a file first).
+                                event_callback("topic_drift", {
+                                    "timeout_s": 300,
+                                    "prompt": message or "",
+                                })
+                                _dev.wait(timeout=300)
+                                _dslot = _drift_gate_pending.pop(sid, None) or {}
+                                _ddec = _dslot.get("decision") or "continue"
+                                event_callback("topic_drift_done", {"decision": _ddec})
+                                if _ddec == "new_chat":
+                                    # The user takes this elsewhere. Roll the
+                                    # pending user message back out of this chat
+                                    # — it belongs to the new one, and the client
+                                    # pre-fills it into that composer (unsent, so
+                                    # it can still be reworded or get attachments).
+                                    _rollback_messages(session, sid, _msg_count_before)
+                                    live.emit("done", {"cancelled": True,
+                                                       "reason": "topic_drift"})
+                                    return
+                        # Baseline = what this chat has been about, not just the last
+                        # turn: keep the current tools plus a few that dropped out, so
+                        # one odd turn can't redefine it. Capped so an old subject ages
+                        # out — an uncapped union would eventually overlap everything
+                        # and silence the check for good.
+                        session._drift_tool_sig = (
+                            _cur_sig if _prev_sig is None
+                            else frozenset(list(_cur_sig)
+                                           + [t for t in _prev_sig
+                                              if t not in _cur_sig][:6]))
+                    except Exception:
+                        pass   # advisory only — never break a turn over it
+
                 # Snapshot the request context into the tool_context dict —
                 # the SAME shared builder the scheduler uses, so the
                 # sidecar's per-tool-call context rebuild is identical in
@@ -5608,47 +5701,6 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 "peak_tokens": int(_cp_peak),
                                 "max_context": _cp_max,
                             }
-                        # TOPIC DRIFT (context poisoning): the chat wandered to an
-                        # unrelated subject, so every prompt still drags the old
-                        # topic's history and a tool set resolved for it. Advisory
-                        # only — a badge on the reply with a "new chat" button;
-                        # the user decides.
-                        # Two stages, cheapest first: a free tool-set comparison
-                        # gates a ~200-token confirm call. At most ONE call per
-                        # chat (_drift_checked latches even on a NO), so the
-                        # feature has a hard cost ceiling per conversation.
-                        try:
-                            _cur_sig = engine._drift_tool_signature(_active_tool_names)
-                            _prev_sig = getattr(session, "_drift_tool_sig", None)
-                            if (_prev_sig is not None
-                                    and not getattr(session, "_drift_checked", False)
-                                    and engine.drift_candidate(
-                                        _prev_sig, _cur_sig, len(session.messages))):
-                                session._drift_checked = True
-                                # Earlier topic = the first user message; it fixes
-                                # what the chat was ORIGINALLY about. Comparing
-                                # against the previous message would follow a slow
-                                # slide instead of catching it.
-                                _first_user = next(
-                                    (m.get("content") for m in session.messages
-                                     if m.get("role") == "user"
-                                     and isinstance(m.get("content"), str)), "")
-                                if _first_user and engine.drift_confirm(
-                                        _first_user, message, session_id=sid):
-                                    msg_metadata["topic_drift"] = True
-                            # Baseline = what this chat has been about, not just
-                            # the last turn: union with the previous signature so
-                            # a single odd turn can't redefine it. Capped so an
-                            # old subject eventually ages out — without the cap
-                            # the union only grows and would eventually overlap
-                            # everything, silencing the check for good.
-                            session._drift_tool_sig = (
-                                _cur_sig if _prev_sig is None
-                                else frozenset(list(_cur_sig)
-                                               + [t for t in _prev_sig
-                                                  if t not in _cur_sig][:6]))
-                        except Exception:
-                            pass   # advisory only — never break a turn over it
                         if _request_payloads:
                             msg_metadata["request_payloads"] = _request_payloads
                         fb_model = engine.get_request_context()._fallback_model_used
@@ -6559,9 +6611,10 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             session._discovered_tools = _have | set(_turn_discovered)
                 except Exception:
                     pass
-                # Drop any orphaned context-gate slot (turn ended while a
-                # decision dialog was pending — e.g. external cancel).
+                # Drop any orphaned gate slots (turn ended while a decision
+                # dialog was pending — e.g. external cancel).
                 _context_gate_pending.pop(sid, None)
+                _drift_gate_pending.pop(sid, None)
                 # If the worker died without emitting a terminal event (e.g. a
                 # bare process exit), make sure subscribers aren't left hanging.
                 if not live.done:
@@ -8676,6 +8729,33 @@ class ChatHandlerMixin:
         if self._session_access_check(session_id) is None:
             return
         self._send_json({"delivered": deliver_context_decision(session_id, decision)})
+
+    def _handle_chat_drift_decision(self):
+        """POST /v1/chat/drift-decision — deliver the user's choice to a waiting
+        topic-drift dialog (asked BEFORE the model call, so the poisoned turn can
+        still be avoided).
+
+        Body: {session_id, decision: "continue"|"new_chat"}.
+        `continue` runs the turn in this chat; `new_chat` rolls the pending user
+        message back out and ends the turn — the client opens a fresh chat with
+        the same model/settings and the question pre-filled but UNSENT.
+        Returns {delivered: bool} — False means the dialog already resolved (its
+        5-min timeout continued the turn) and the click arrived late.
+        """
+        try:
+            body = self._read_json()
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        session_id = (body.get("session_id") or "").strip()
+        decision = (body.get("decision") or "").strip()
+        if not session_id or decision not in ("continue", "new_chat"):
+            self._send_json({"error": "session_id and decision "
+                             "(continue|new_chat) required"}, 400)
+            return
+        if self._session_access_check(session_id) is None:
+            return
+        self._send_json({"delivered": deliver_drift_decision(session_id, decision)})
 
     def _handle_chat_answer(self):
         """POST /v1/chat/answer — deliver a user answer to a pending ask_user tool call.

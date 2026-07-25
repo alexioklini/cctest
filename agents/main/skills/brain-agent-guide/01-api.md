@@ -228,6 +228,18 @@ streaming call, per-USER history, fixed read-only tool set. See
   the chat's own question. ACL is still checked against the task's session. The
   open question itself is exposed on `GET /v1/background-tasks/running` as
   `pending_question` (the poller the subagent tree already uses).
+- `POST /v1/chat/drift-decision` — `{session_id, decision: continue|new_chat}`
+  beantwortet den Themenwechsel-Dialog. Anders als alle anderen Mid-Turn-Gates
+  erscheint dieser **vor** dem Modellaufruf (direkt nach dem Auflösen der Tools),
+  damit der Turn überhaupt vermieden werden kann statt hinterher kommentiert zu
+  werden. `new_chat` nimmt die schwebende User-Message aus dem Chat zurück
+  (`_rollback_messages`) und beendet den Turn mit
+  `done{cancelled:true, reason:"topic_drift"}`; der Client öffnet dann einen
+  neuen Chat mit gleichem Modell + Composer-Einstellungen und der Frage im
+  Eingabefeld — **ungesendet**. Server wartet max. 5 min, dann `continue`.
+  Antwort `{delivered: bool}` — `false` = Timeout war schneller, der Turn läuft
+  im bisherigen Chat (der Client öffnet dann KEINEN neuen Chat). Nur bei
+  interaktiven Turns; geplante/Hintergrund-Läufe erreichen das Gate nie.
 - `POST /v1/chat/plan-review` — `{session_id, action: approve|clarify, plan?,
   executor?, message?}` resolves a pending MoA delegate-plan review (9.285.0;
   fired only on `body.interactive=true` turns; SSE `moa_plan_review` /

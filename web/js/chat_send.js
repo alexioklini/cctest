@@ -690,6 +690,15 @@ function buildStreamCallbacks(chat, isActive) {
           renderStreamingMessage(chat);
         }
       },
+      topic_drift: (d) => {
+        if (isActive()) showTopicDriftDialog(chat, d);
+      },
+      topic_drift_done: (d) => {
+        // Server resolved it (our click, or the 5-min timeout). The dialog is
+        // usually already gone — this closes it after a timeout or when a second
+        // tab answered first.
+        closeTopicDriftDialog();
+      },
       queue_wait: (d) => {
         // Provider queue serialised this turn — show "waiting in line" hint.
         chat.queueStatus = {
@@ -1455,6 +1464,7 @@ function buildStreamCallbacks(chat, isActive) {
       done: (d) => {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
         closeContextPressureDialog();
+        closeTopicDriftDialog();
         // Chronological interleave: if we committed 'assistant_segment' rows
         // mid-turn (text → tool → text), the final assistant message must hold
         // ONLY the trailing run (chat.streamingText) — NOT d.text (the full
@@ -1693,6 +1703,7 @@ function buildStreamCallbacks(chat, isActive) {
       },
       error: (d) => {
         closeContextPressureDialog();
+        closeTopicDriftDialog();
         chat.streaming = false;
         chat.streamingText = '';
         chat.thinkingText = '';
@@ -2161,6 +2172,94 @@ function showContextPressureDialog(chat, d) {
 }
 function closeContextPressureDialog() {
   document.getElementById('context-pressure-dialog')?.remove();
+}
+
+// Topic drift: asked BEFORE the model call, so the poisoned turn can still be
+// avoided. Choosing "new chat" rolls the pending question back out of this chat
+// and opens a fresh one carrying it over — pre-filled but UNSENT, so it can
+// still be reworded or given attachments. Model and composer settings come from
+// the current chat, so the new one starts configured the same way.
+function showTopicDriftDialog(chat, d) {
+  closeTopicDriftDialog();
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay dialog-overlay';
+  overlay.id = 'topic-drift-dialog';
+  overlay.innerHTML = `
+    <div class="dialog-card" role="dialog" aria-modal="true">
+      <div class="dialog-header"><span class="dialog-title">Neues Thema erkannt</span></div>
+      <div class="dialog-body">
+        <p class="dialog-message">
+          Diese Frage scheint zu einem anderen Thema zu gehören als der bisherige Chat.
+          Der komplette Verlauf wird trotzdem bei jeder Anfrage mitgeschickt — das kostet
+          Kontext und kann die Antwortqualität senken.<br><br>
+          Ein neuer Chat übernimmt Ihre Frage und die Einstellungen dieses Chats.
+          Abgeschickt wird sie erst, wenn Sie es möchten.<br><br>
+          Ohne Antwort läuft die Anfrage nach 5 Minuten hier weiter.
+        </p>
+      </div>
+      <div class="dialog-footer">
+        <button class="dialog-btn dialog-btn-ghost" data-value="continue">Hier weitermachen</button>
+        <button class="dialog-btn dialog-btn-primary" data-value="new_chat">Neuer Chat</button>
+      </div>
+    </div>`;
+  overlay.querySelectorAll('.dialog-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const decision = btn.getAttribute('data-value');
+      closeTopicDriftDialog();
+      // Capture BEFORE the new chat replaces state.activeChat.
+      const carry = {
+        prompt: (d && d.prompt) || '',
+        model: chat.model || '',
+        thinkingLevel: chat.thinkingLevel || '',
+        cavemanMode: chat.cavemanMode,
+        memoryMode: chat.memoryMode,
+      };
+      try {
+        const r = await API.driftDecision(chat.sessionId, decision);
+        if (r && r.delivered === false) {
+          showToast('Anfrage lief bereits weiter (Timeout)');
+          return;   // the turn is running here — opening a new chat would strand it
+        }
+      } catch (e) {
+        showToast('Entscheidung konnte nicht übermittelt werden', true);
+        return;
+      }
+      if (decision === 'new_chat') _openDriftChat(carry);
+    });
+  });
+  document.body.appendChild(overlay);
+}
+function closeTopicDriftDialog() {
+  document.getElementById('topic-drift-dialog')?.remove();
+}
+
+// Open a fresh chat that inherits the current one's settings and carries the
+// question into the composer WITHOUT sending it.
+function _openDriftChat(carry) {
+  try {
+    newChat();
+    const c = state.activeChat;
+    if (c) {
+      if (carry.model) c.model = carry.model;
+      if (carry.thinkingLevel) c.thinkingLevel = carry.thinkingLevel;
+      if (carry.cavemanMode !== undefined) c.cavemanMode = carry.cavemanMode;
+      if (carry.memoryMode !== undefined) c.memoryMode = carry.memoryMode;
+    }
+    const input = document.getElementById('chat-input')
+                  || document.getElementById('welcome-input');
+    if (input && carry.prompt) {
+      input.value = carry.prompt;
+      input.dispatchEvent(new Event('input', { bubbles: true }));  // autosize + button state
+      input.focus();
+      // Caret at the end so typing continues the question instead of prefixing it.
+      try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
+    }
+    if (typeof updateStatusBar === 'function') updateStatusBar();
+    if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
+    showToast('Neuer Chat — Ihre Frage steht im Eingabefeld, noch nicht gesendet');
+  } catch (e) {
+    showToast('Neuer Chat konnte nicht geöffnet werden', true);
+  }
 }
 
 async function showAutoLcmOverThresholdModal(chat, d) {

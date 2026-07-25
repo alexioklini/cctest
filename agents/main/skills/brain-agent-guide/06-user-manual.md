@@ -575,19 +575,34 @@ wenn in der Anfrage tatsächlich eine Quelle abgerufen wurde (Datei gelesen,
 gesucht, Web abgerufen oder Gedächtnis abgefragt) — eine reine Wissensantwort
 ohne Abruf zeigt es nicht.
 
-**Themenwechsel-Hinweis (Badge)**: Ist ein Chat erkennbar zu einem ganz anderen
-Thema gewandert, erscheint unter der Antwort ein blaues Badge **„ⓘ Neues Thema
-erkannt"** samt Knopf **Neuer Chat**. Hintergrund: Der bisherige Verlauf wird bei
-jeder Anfrage mitgeschickt — bei einem echten Themenwechsel kostet das Kontext
-und kann die Antwortqualität senken, weil das Modell alte Inhalte mitgewichtet.
-Der Hinweis ist eine **Empfehlung**, keine Sperre; Sie können im selben Chat
-weiterarbeiten. Er erscheint **höchstens einmal pro Chat** und erst ab dem
-sechsten Beitrag. Erkannt wird der Wechsel daran, dass die Anfrage ganz andere
-Werkzeuge braucht als der bisherige Chat (z. B. Dokumenten-Recherche → Code und
-Shell); erst wenn das zutrifft, prüft eine kurze Zusatzabfrage, ob es wirklich
-ein anderes Thema ist. Ein Themenwechsel **innerhalb** derselben Werkzeuge (etwa
-von einem Rechtsgebiet zu einem anderen) wird bewusst **nicht** erkannt — das
-würde bei jeder Anfrage eine Zusatzabfrage kosten.
+**Themenwechsel-Dialog**: Gehört Ihre Frage erkennbar zu einem ganz anderen
+Thema als der bisherige Chat, fragt der Assistent nach — **bevor** die Anfrage
+losgeschickt wird:
+
+> **Neues Thema erkannt** · [Hier weitermachen] [Neuer Chat]
+
+Warum vorher: Der bisherige Verlauf wird bei jeder Anfrage mitgeschickt. Bei
+einem echten Themenwechsel kostet das Kontext und kann die Antwortqualität
+senken, weil das Modell alte Inhalte mitgewichtet. Die Frage vorab erspart Ihnen
+genau diese Anfrage — nachträglich wäre sie schon bezahlt.
+
+Wählen Sie **Neuer Chat**, wird Ihre Frage aus dem alten Chat herausgenommen und
+in einen neuen übertragen: **Modell und Einstellungen** (Denk-Stufe, Caveman,
+Gedächtnis) kommen mit, die Frage steht im Eingabefeld — **abgeschickt wird sie
+erst auf Ihren Klick**. So können Sie sie noch umformulieren oder eine Datei
+anhängen.
+
+**Ohne Antwort läuft die Anfrage nach fünf Minuten** einfach im bisherigen Chat
+weiter; es geht nichts verloren.
+
+Der Dialog erscheint **höchstens einmal pro Chat** und erst ab dem sechsten
+Beitrag. Erkannt wird der Wechsel daran, dass die Anfrage ganz andere Werkzeuge
+braucht als der bisherige Chat (z. B. Dokumenten-Recherche → Code und Shell);
+erst wenn das zutrifft, prüft eine kurze Zusatzabfrage, ob es wirklich ein
+anderes Thema ist. Ein Themenwechsel **innerhalb** derselben Werkzeuge (etwa von
+einem Rechtsgebiet zu einem anderen) wird bewusst **nicht** erkannt — das würde
+bei jeder Anfrage eine Zusatzabfrage kosten. In geplanten Aufgaben gibt es den
+Dialog nicht (dort ist niemand, der antworten könnte).
 
 ---
 

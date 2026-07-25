@@ -41,16 +41,22 @@ CURATED_CHANGELOG: list[dict] = [
                 "Hinweise ergänzen das: Schalten Sie das Nachdenken bei "
                 "einem lokalen Modell ein oder aus, werden Sie einmalig "
                 "darauf hingewiesen, dass die nächste Antwort langsamer "
-                "startet. Und wenn ein Chat erkennbar zu einem ganz anderen "
-                "Thema gewandert ist, schlägt Ihnen der Assistent einen "
-                "neuen Chat vor — der alte Verlauf wird sonst bei jeder "
-                "Anfrage mitgeschickt und kann die Antwortqualität senken. "
-                "Beide Hinweise sind reine Empfehlungen; Sie können sie "
-                "übergehen und normal weiterarbeiten. (Der Hinweis beim "
-                "Umschalten betrifft nur die Wartezeit — zusätzliche Kosten "
-                "entstehen dadurch nicht.)",
+                "startet. Und wenn Ihre Frage erkennbar zu einem ganz anderen "
+                "Thema gehört als der bisherige Chat, fragt der Assistent "
+                "nach — **bevor** die Anfrage losgeschickt wird: Hier "
+                "weitermachen oder neuer Chat? Entscheiden Sie sich für einen "
+                "neuen Chat, wird Ihre Frage samt Modell und Einstellungen "
+                "übernommen und steht im Eingabefeld bereit, abgeschickt aber "
+                "erst auf Ihren Klick — Sie können sie also noch umformulieren "
+                "oder eine Datei anhängen. Der Nutzen: Der alte Verlauf wird "
+                "sonst bei jeder Anfrage mitgeschickt, kostet Kontext und kann "
+                "die Antwortqualität senken. Beide Hinweise sind reine "
+                "Empfehlungen; ohne Antwort läuft die Anfrage nach fünf "
+                "Minuten einfach im bisherigen Chat weiter. (Der Hinweis beim "
+                "Umschalten der Denk-Stufe betrifft nur die Wartezeit — "
+                "zusätzliche Kosten entstehen dadurch nicht.)",
         "audience": "user",
-        "versions": ["9.408.0", "9.408.1"],
+        "versions": ["9.408.0", "9.408.1", "9.409.0"],
     },
     {
         "version": "9.407.0",
