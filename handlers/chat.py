@@ -1212,27 +1212,6 @@ def deliver_context_decision(session_id: str, decision: str) -> bool:
 _drift_gate_pending: dict = {}
 
 
-def _remember_drift_types(session, analysis) -> None:
-    """Keep the last TWO turns' classifier task types on the session, as
-    (previous, current), for the topic-drift gate's second signal.
-
-    Called wherever the classifier's analysis becomes available — which is AFTER
-    the drift check runs in the same turn, hence the two-slot history: the gate
-    compares the two stored values, so the type signal simply lags the tool
-    signal by one exchange. Best-effort; a failure here must never affect the
-    turn.
-    """
-    try:
-        types = frozenset(t for t in ((analysis or {}).get("task_types") or []) if t)
-        if not types:
-            return
-        prev = getattr(session, "_drift_types", None) or (None, None)
-        with session.lock:
-            session._drift_types = (prev[1], types)
-    except Exception:
-        pass
-
-
 def deliver_drift_decision(session_id: str, decision: str) -> bool:
     """Called by POST /v1/chat/drift-decision. True iff a dialog was waiting
     (False = already timed out or resolved — the turn moved on)."""
@@ -4803,95 +4782,76 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     _build_prefix_for(session.model, inf_params))
 
                 # ── TOPIC DRIFT (context poisoning) ─────────────────────────
-                # The chat wandered to an unrelated subject: every prompt still
+                # The chat moved to an unrelated subject: every prompt still
                 # drags the old topic's history, and the tool set was resolved
-                # for the PREVIOUS subject. Checked HERE — after the tools are
-                # resolved (we need their names) but BEFORE the model call, so
-                # the user can still avoid the poisoned turn. Checking after the
-                # reply would bill the expensive turn first and only then say
-                # "this was a new topic".
+                # for the PREVIOUS subject. Asked HERE — before the model call —
+                # so the user can still avoid the poisoned turn. Checking after
+                # the reply would bill the expensive turn first and only then
+                # say "this was a new topic".
+                #
+                # ONE cheap LLM call decides, no arithmetic pre-filter. There
+                # used to be one (tool-set overlap + task-type change) as a cost
+                # gate, and it was wrong three times running: it read the full
+                # resolved tool list instead of the in-prompt one (overlap
+                # always ~100 %), its message/tool floors were calibrated for a
+                # different call site, and its `fast` exemption plus a one-turn
+                # lag in the type signal silently cancelled the rest. Chat
+                # 644c5800 failed on all of them at once. The filter guarded
+                # ~0.00003 USD per chat — far less than it cost in missed
+                # detections and debugging.
+                #
+                # Cost ceiling is `_drift_checked`, which latches once the user
+                # has actually been ASKED — not on the first check. Latching on
+                # a NO silenced chats that opened with a greeting before their
+                # real topic jump ever arrived.
                 #
                 # INTERACTIVE ONLY: scheduled/background runs have nobody to ask
                 # and must never block on a dialog.
-                #
-                # Two stages, cheapest first: a free tool-set comparison gates a
-                # ~200-token confirm call. At most ONE confirm per chat
-                # (_drift_checked latches even on a NO) — a hard cost ceiling
-                # per conversation.
-                if interactive:
+                if (interactive
+                        and not getattr(session, "_drift_checked", False)
+                        and len(session.messages) >= engine._DRIFT_MIN_MESSAGES):
                     try:
-                        # IN-PROMPT tools only — NOT _active_tool_names. The
-                        # latter is everything resolve_active_tools resolved
-                        # (~100 on this install) and barely moves between turns,
-                        # so its overlap sits near 100 % and the check could
-                        # never fire. The classifier's per-turn gating decides
-                        # what actually reaches the prompt, and THAT tracks the
-                        # subject: measured on chat 93e83868 — 10 tools on "hi",
-                        # 40 on "can you write python code", 25 % overlap.
-                        # Falls back to the full set when the breakdown is absent
-                        # (gating off) — then the check simply stays quiet.
-                        _bd_now = getattr(engine.get_request_context(),
-                                          "_tool_breakdown", None) or {}
-                        _cur_sig = engine._drift_tool_signature(
-                            _bd_now.get("in_prompt") or _active_tool_names)
-                        _prev_sig = getattr(session, "_drift_tool_sig", None)
-                        # Classifier task types are the SECOND signal — a direct
-                        # statement about the KIND of question, where the tool
-                        # set is only a by-product. Both must agree before we
-                        # ask, which is what keeps false positives low enough to
-                        # justify a blocking dialog.
-                        #
-                        # This turn's classification runs LATER in the worker, so
-                        # we compare the last TWO stored types (both written at
-                        # turn end, see _drift_types below). That means the type
-                        # signal lags one turn behind the tool signal — the check
-                        # simply needs one more exchange before it can use it.
-                        # Until two are stored, the tool overlap decides alone.
-                        _prev_types, _cur_types = (
-                            getattr(session, "_drift_types", None) or (None, None))
-                        if (_prev_sig is not None
-                                and not getattr(session, "_drift_checked", False)
-                                and engine.drift_candidate(
-                                    _prev_sig, _cur_sig, len(session.messages),
-                                    _prev_types, _cur_types)):
-                            session._drift_checked = True
-                            # Anchor = the PREVIOUS user message, matching what
-                            # stage 1 compares (previous turn's types + tools).
-                            # One question, one reference point.
+                        # Anchor = the PREVIOUS user message. Anchoring on the
+                        # FIRST one wasted the single allowed call whenever a
+                        # chat opened with a greeting ("different subject than
+                        # *hi*?" can only be NO), and the slow-slide worry that
+                        # motivated it doesn't hold — on a 4-step chain,
+                        # first-vs-last answered NO as well.
+                        _prev_user = next(
+                            (m.get("content") for m in reversed(
+                                session.messages[:-1])
+                             if m.get("role") == "user"
+                             and isinstance(m.get("content"), str)), "")
+                        if _prev_user:
+                            # The check may run on EVERY turn until it fires
+                            # once. Latching on the first NO was the bug behind
+                            # four failed attempts: a chat opening with "hi"
+                            # spent its single allowed check on
+                            # "hi" vs "can you write python code" — correctly NO
+                            # — and was then permanently silenced, so the real
+                            # DORA jump one turn later never got looked at
+                            # (chat 644c5800, reproduced on a869d9ad).
                             #
-                            # This used to anchor on the FIRST user message, on
-                            # the theory that it fixes what the chat was
-                            # originally about and that comparing neighbours
-                            # would follow a slow slide unnoticed. Both halves
-                            # were wrong, measured on the live classifier model:
-                            #   • Chats open with "hi" far too often, and
-                            #     "different subject than *hi*?" can only be NO —
-                            #     the one allowed confirm call per chat was spent
-                            #     on a worthless comparison (chat ef5f6afd).
-                            #   • The slow-slide worry doesn't hold: on a
-                            #     4-step DORA→…→Python chain, first-vs-last
-                            #     answered NO too. The first message never
-                            #     caught that case.
-                            # Neighbour comparison scores correctly across the
-                            # cases that matter: greeting→Python NO,
-                            # Python→DORA YES, Python→Python-detail NO,
-                            # DORA→NIS2 NO.
-                            _prev_user = next(
-                                (m.get("content") for m in reversed(
-                                    session.messages[:-1])
-                                 if m.get("role") == "user"
-                                 and isinstance(m.get("content"), str)), "")
-                            if _prev_user and engine.drift_confirm(
-                                    _prev_user, message, session_id=sid):
-                                # Ask, then wait. No answer within 5 minutes → run
-                                # the turn here (same default as the context-pressure
-                                # gate: silence must never strand a turn).
+                            # Cost stays bounded because the dialog is the end
+                            # state: once the user has been asked, _drift_checked
+                            # latches and this chat never checks again. Worst
+                            # case is one ~30-token call per turn on a chat that
+                            # never drifts — cheaper than the pre-filter that was
+                            # supposed to prevent it (removed in 9.411.0).
+                            if engine.drift_confirm(_prev_user, message,
+                                                    session_id=sid):
+                                session._drift_checked = True
+                                # Ask, then wait. No answer within 5 minutes →
+                                # run the turn here (same default as the
+                                # context-pressure gate: silence must never
+                                # strand a turn).
                                 _dev = threading.Event()
                                 _drift_gate_pending[sid] = {
                                     "event": _dev, "decision": None}
-                                # `prompt` lets the client pre-fill the new chat's
-                                # composer with this question (unsent — the user
-                                # may want to reword it or attach a file first).
+                                # `prompt` lets the client pre-fill the new
+                                # chat's composer with this question (unsent —
+                                # the user may want to reword it or attach a
+                                # file first).
                                 event_callback("topic_drift", {
                                     "timeout_s": 300,
                                     "prompt": message or "",
@@ -4899,27 +4859,19 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 _dev.wait(timeout=300)
                                 _dslot = _drift_gate_pending.pop(sid, None) or {}
                                 _ddec = _dslot.get("decision") or "continue"
-                                event_callback("topic_drift_done", {"decision": _ddec})
+                                event_callback("topic_drift_done",
+                                               {"decision": _ddec})
                                 if _ddec == "new_chat":
                                     # The user takes this elsewhere. Roll the
                                     # pending user message back out of this chat
-                                    # — it belongs to the new one, and the client
-                                    # pre-fills it into that composer (unsent, so
-                                    # it can still be reworded or get attachments).
-                                    _rollback_messages(session, sid, _msg_count_before)
+                                    # — it belongs to the new one, where the
+                                    # client pre-fills it (unsent, so it can
+                                    # still be reworded or get attachments).
+                                    _rollback_messages(session, sid,
+                                                       _msg_count_before)
                                     live.emit("done", {"cancelled": True,
                                                        "reason": "topic_drift"})
                                     return
-                        # Baseline = what this chat has been about, not just the last
-                        # turn: keep the current tools plus a few that dropped out, so
-                        # one odd turn can't redefine it. Capped so an old subject ages
-                        # out — an uncapped union would eventually overlap everything
-                        # and silence the check for good.
-                        session._drift_tool_sig = (
-                            _cur_sig if _prev_sig is None
-                            else frozenset(list(_cur_sig)
-                                           + [t for t in _prev_sig
-                                              if t not in _cur_sig][:6]))
                     except Exception:
                         pass   # advisory only — never break a turn over it
 
@@ -7744,7 +7696,6 @@ class ChatHandlerMixin:
                     "complexity": _frozen_ta.get("complexity", ""),
                     "reasoning": _frozen_ta.get("reasoning", ""),
                 }
-                _remember_drift_types(session, _frozen_ta)
             # MoA on a frozen session: model + tool set stay pinned (prefix
             # byte-stable, cache pricing intact) but the classifier still runs —
             # ONLY to decide the fan-out (gate + reference pick), never to
@@ -7832,7 +7783,6 @@ class ChatHandlerMixin:
                         "complexity": _analysis.get("complexity", ""),
                         "reasoning": _analysis.get("reasoning", ""),
                     }
-                    _remember_drift_types(session, _analysis)
             # Show the (frozen) working model in the spinner, same as a fresh route.
             live.emit("auto_route", auto_route)
         elif not model_override and (want_auto or auto_by_agent):
@@ -7862,7 +7812,6 @@ class ChatHandlerMixin:
                         "complexity": auto_analysis.get("complexity", ""),
                         "reasoning": auto_analysis.get("reasoning", ""),
                     }
-                    _remember_drift_types(session, auto_analysis)
             # MoA: the auto pick above IS the aggregator; the plan adds the
             # classification-gated reference fan-out (None = degrade to a plain
             # Smart turn — gate miss / keyword fallback / pool collapsed).

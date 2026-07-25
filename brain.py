@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.410.1"
+VERSION = "9.411.1"
 VERSION_DATE = "2026-07-25"
 CHANGELOG = [
+    ("9.411.1", "2026-07-25", "fix(Themenwechsel-Gate): `_drift_checked` latcht jetzt erst, wenn der Nutzer TATSAECHLICH GEFRAGT wurde — nicht schon beim ersten Check. DAS war die eigentliche Ursache hinter vier fehlgeschlagenen Anlaeufen, und sie sass eine Ebene tiefer als jede meiner bisherigen Diagnosen. ERSTMALS REPRODUZIERT statt aus Metadaten rekonstruiert (scratchpad/verify_drift_live.py: legt eine Session an, schickt 'hi' → 'kannst du python code schreiben' → 'was weisst du ueber dora' und lauscht auf das SSE-Event): der Confirm-Call lief bei TURN 1 mit nur 22 Tokens — Anker war 'hi'. Die Antwort NEIN war korrekt (eine Begruessung hat kein Thema), aber die Sperre griff trotzdem und legte den Chat still, BEVOR der echte Wechsel bei Turn 2 ueberhaupt betrachtet wurde. Das cost_log zeigte genau eine drift_check-Zeile pro Chat, immer zu frueh, immer 22-118 Tokens — ich hatte das dreimal als 'Vorfilter blockiert' fehlgedeutet und die Schwellen nachjustiert, statt die Sperre selbst zu pruefen. FIX: `session._drift_checked = True` wandert IN den True-Zweig von drift_confirm. Die Pruefung darf damit auf JEDEM Turn laufen, bis sie einmal ausloest; ist der Dialog gezeigt worden, ist Schluss fuer diesen Chat. KOSTEN bleiben gedeckelt, weil der Dialog der Endzustand ist: schlimmster Fall ist ein ~30-Token-Call pro Turn in einem Chat, der nie driftet — billiger als der Vorfilter, der genau das verhindern sollte (entfernt in 9.411.0). LIVE VERIFIZIERT nach Restart: der gemeldete Ablauf loest den Dialog bei Turn 2 aus, `topic_drift {timeout_s:300, prompt:'was weisst du ueber dora'}` im Stream — die Frage reist mit, damit der Client sie in den neuen Chat vorbelegen kann. Beide Test-Sessions geloescht ([[feedback_cleanup_test_sessions]]). LEHRE: vier Runden lang habe ich aus persistierten Metadaten rekonstruiert statt den Ablauf einmal echt durchzuspielen — der Live-Nachbau brauchte 20 Zeilen und zeigte die Ursache sofort. py_compile OK. Server-Restart noetig. Skill 05 (Latch-Semantik) + SKILL.md 1.290.0. Kuratiert: kein neuer Eintrag."),
+    ("9.411.0", "2026-07-25", "change(Themenwechsel-Gate): der arithmetische VORFILTER ist ERSATZLOS ENTFERNT — ein Confirm-Call entscheidet, sonst nichts (User-Entscheid nach dem vierten Fehlschlag, Chat 644c5800: 'noch immer kein dialog'). BEFUND fuer diesen Chat, lueckenlos aus den Turn-Metadaten: Turn 0 ('hi') loeste nach Abzug der ubiquitaeren Tools GENAU EIN Tool auf (ask_user) → `_DRIFT_MIN_TOOLS = 2` sperrte Turn 1; bei Turn 2 war das Typ-Signal durch die `fast`-Ausnahme deaktiviert (der Ein-Turn-Versatz aus 9.410.0 verglich noch fast→coding statt coding→research) UND die Tools ueberlappten zu 64%. Drei meiner eigenen Schutzmassnahmen blockierten in Summe alles; das cost_log bestaetigt: KEIN drift_check-Aufruf fuer diesen Chat. GESAMTBILANZ des Vorfilters ueber vier Versionen: 9.408.0 eingefuehrt, 9.409.1 Floors korrigiert, 9.409.2 falsche Tool-Liste korrigiert, 9.410.0 Typ-Signal ergaenzt — er hat in KEINER dieser Fassungen je korrekt ausgeloest und kostete vier Runden Fehlersuche, waehrend er ~0,00003 USD pro Chat einsparen sollte. ENTFERNT: `drift_candidate`, `_drift_tool_signature`, `_DRIFT_MAX_OVERLAP`, `_DRIFT_MIN_TOOLS`, `_DRIFT_IGNORED_TOOLS`, `_DRIFT_NEUTRAL_TYPES` (brain.py) sowie `_remember_drift_types` + die drei Aufrufe an den auto_route['analysis']-Stellen und die Session-Felder `_drift_tool_sig`/`_drift_types` (handlers/chat.py). GEBLIEBEN sind genau zwei mechanische Teile: `_DRIFT_MIN_MESSAGES = 3` (frueheste erreichbare Pruefung = Turn 2; darunter existiert keine vorherige User-Nachricht als Anker) und der Anker-Pick (vorherige User-Nachricht, 9.410.1). KOSTENDECKEL ist jetzt allein `_drift_checked`: latcht beim ERSTEN Check, Antwort egal → maximal EIN Call pro Konversation, ~0,00003 USD auf mistral-small-latest. Bei 100 Chats/Tag rund 0,003 USD/Tag — weniger als der Vorfilter an Debugging gekostet hat. LEHRE, im Code festgehalten (Kommentar an der Konstanten + Testklassen-Docstring): eine Optimierung, die eine Funktion in vier Anlaeufen nie ausloesen liess, ist keine Optimierung; der teure Pfad war die ganze Zeit billig genug. Tests: die beiden Vorfilter-Klassen (DriftSignatureTest, DriftCandidateTest, zusammen 14 Faelle) durch DriftMinMessagesTest ersetzt; Anker- und Confirm-Tests unveraendert; 16/16 gruen. py_compile OK. Server-Restart noetig. Skill 05 (Stufe-1-Absatz raus, Ein-Call-Beschreibung rein) + SKILL.md 1.289.0 im selben Commit. Kuratiert: kein neuer Eintrag (nutzersichtbares Verhalten unveraendert — es tritt jetzt erstmals zuverlaessig ein)."),
     ("9.410.1", "2026-07-25", "fix(Themenwechsel-Gate): der Confirm-Call verglich gegen die ERSTE Chat-Nachricht statt gegen die vorherige — bei Chats, die mit einer Begruessung starten, war die eine erlaubte Pruefung damit systematisch wertlos (User-Report Chat ef5f6afd, dritter Anlauf: 'noch immer nox'; dann die richtige Frage: 'warum nicht einfach die vorherige frage mit der aktuellen vergleichen — genau das passiert ja auch mit auswertung des klassifikators, warum hier anders?'). DIAGNOSE (am LAUFENDEN Server, nicht nachgebaut — eine erste Nachbildung schlug mit 'unknown url type' fehl, weil handgesetztes server_config keine base_url hat, s. [[feedback_never_probe_server_config_via_import]]): das cost_log beweist, dass die Kette VOLLSTAENDIG lief — Zeile purpose=drift_check, in=118, out=2. Vorfilter, Aufruf, Parsing: alles korrekt. Das Modell antwortete schlicht NO, und zwar ZU RECHT: verglichen wurde 'hi' (die erste Nachricht) gegen 'kannst du python code entwickeln?'. Auf 'anderes Thema als *hi*?' ist NO die einzig richtige Antwort — eine Begruessung hat kein Thema, von dem etwas abweichen koennte. Da `_drift_checked` auch bei NO latcht, wurde die EINE erlaubte Pruefung pro Chat am nutzlosesten aller Vergleiche verbraucht. INKONSEQUENZ, die der User benannte: Stufe 1 vergleicht gegen den VORHERIGEN Turn (Typen + Tools), Stufe 2 gegen die ERSTE Nachricht — zwei Bezugspunkte fuer dieselbe Frage. FIX: Anker ist jetzt die vorherige User-Nachricht (`reversed(session.messages[:-1])`), passend zu Stufe 1. MEINE URSPRUENGLICHE BEGRUENDUNG WAR IN BEIDEN HAELFTEN FALSCH, live widerlegt: (a) 'die erste Nachricht fixiert das Thema' — nur wenn sie eines HAT; (b) 'Nachbarvergleich folgt einem langsamen Abdriften unbemerkt' — gemessen an einer 4-Schritt-Kette (DORA-Fristen → Doku → Format → Python-Template) antwortete auch ANFANG-gegen-ENDE mit NO; die erste Nachricht fing diesen Fall also nie, ich habe eine Schwaeche behauptet, die es nicht gibt, und dafuer einen echten Nachteil in Kauf genommen. MESSREIHE gegen mistral-small-latest (der classifier_model, der die Pruefung faehrt), Nachbarvergleich: Begruessung→Python NO (korrekt, Gespraechsbeginn — der Sonderfall loest sich damit von selbst, keine fast-Ausnahme noetig), Python→DORA YES (der gemeldete Fall), Python→Python-Detail NO, DORA→DORA-Detail NO, DORA→NIS2 NO (verwandtes Gebiet). 5/5 richtig. 4 neue Tests pinnen die ANKER-WAHL (Listenlogik: nimmt die vorherige User-Zeile, ueberspringt Assistant-Zeilen und multimodale Nicht-String-Inhalte, liefert '' auf Turn 1 → Aufrufer skippt). 29/29 gruen. py_compile OK. Server-Restart noetig. Skill 05 (Anker + die widerlegte Begruendung, damit sie nicht zurueckkehrt) + SKILL.md 1.288.0 im selben Commit. Kuratiert: kein neuer Eintrag (Erkennungs-Detail hinter dem 9.408.0-Verhalten)."),
     ("9.410.0", "2026-07-25", "feat(Themenwechsel-Gate): Stufe 1 wertet jetzt den AUFGABENTYP des Klassifikators aus, nicht nur die Tool-Menge (User-Vorschlag: 'waere es nicht besser den aufgabentyp und die benoetigten tools zu vergleichen anstelle der reinen tools?'). Der Aufgabentyp ist eine DIREKTE Aussage ueber die Art der Frage — die Tool-Menge nur ein Nebenprodukt davon. Im gemeldeten Chat 93e83868 wechselte er sauber ueber alle drei Turns (fast → coding → research), waehrend die in_prompt-Tools zwischen Turn 2 und 3 zu 83% ueberlappten: der reine Tool-Vergleich (9.409.2) haette den zweiten Wechsel verpasst. MECHANIK: `drift_candidate` nimmt zwei neue optionale Argumente (prev_types, cur_types) und feuert bei ENTWEDER Signal — Typwechsel ODER geringe Tool-Ueberlappung. WICHTIG (User-Einwand 'kommt da nicht eh noch ein llm call der fp aufloest?'): Stufe 1 ist eine KOSTENBREMSE, kein Urteil — was durchkommt, geht an drift_confirm (ein ~200-Token-Call auf dem classifier_model, liest die ECHTE erste und aktuelle Nachricht, ist angewiesen im Zweifel NEIN zu sagen, max. 1x pro Chat). Ein falsches Ja kostet also einmalig ~0,00003 USD, ein falsches Nein bedeutet, dass das Feature nie ausloest — genau der Fehlermodus von 9.408.0 bis 9.409.2. Deshalb ODER statt UND: mein erster Entwurf verlangte BEIDE Signale, was den gemeldeten Chat komplett stillgestellt haette (Turn0→1 durch die fast-Ausnahme, Turn1→2 durch 83% Tool-Ueberlappung). `fast` bleibt als VORGAENGER-Typ ausgenommen (Small-Talk-Klasse: 'hi' verlassen ist Gespraechsbeginn, kein Themenwechsel — sonst zahlt fast jeder Chat mit Begruessung beim zweiten Beitrag einen Confirm-Call); die Ausnahme deaktiviert nur die TYP-Abkuerzung, das Tool-Signal greift dort weiter. Fehlen Typdaten (Klassifikator aus), entscheidet die Tool-Ueberlappung allein. DATENFLUSS: die Klassifikation dieses Turns entsteht im Worker ERST NACH der Gate-Stelle (Zeile ~7690 vs ~4820), deshalb NEU `_remember_drift_types(session, analysis)` — haelt die letzten ZWEI Typmengen als (vorher, jetzt) auf der Session, geschrieben an allen drei Stellen, an denen auto_route['analysis'] entsteht (frozen / MoA-frozen / auto-route). Folge, bewusst in Kauf genommen und dokumentiert: das Typ-Signal laeuft dem Tool-Signal EINEN Turn hinterher — die Pruefung braucht einen Austausch mehr, bevor sie es nutzen kann. NACHGERECHNET an den echten Daten des Chats: Turn0→1 (fast→coding, Tools 0%) True ueber das Tool-Signal; Turn1→2 (coding→research, Tools 83%) True ueber den Typwechsel — beide Uebergaenge greifen jetzt, vorher keiner. Gegenproben still: gleicher Typ + gleiche Tools, zu frueh (1 Nachricht). 5 neue Tests (Typwechsel allein genuegt, gleicher Typ faellt auf Tools zurueck, fast-Ausnahme trifft nur die Typ-Abkuerzung, fehlende Typdaten degradieren sauber); 25/25 gruen. MODELL der Pruefung unveraendert = `classifier_model` (hier mistral-small-latest, ohnehin warm vom Klassifikator; ~0,000027 USD pro Pruefung). py_compile OK. Server-Restart noetig. Skill 05 (beide Signale + der Ein-Turn-Versatz) + SKILL.md 1.287.0 im selben Commit. Kuratiert: kein neuer Eintrag (der 9.408.0-Eintrag beschreibt das Verhalten; dies ist die Erkennung dahinter)."),
     ("9.409.2", "2026-07-25", "fix(Themenwechsel-Gate): die Pruefung las die FALSCHE Tool-Liste — deshalb konnte sie strukturell nie ausloesen (User-Report Chat 93e83868, zweiter Anlauf nach 9.409.1: 'noch immer kein dialog'; dann der entscheidende Hinweis 'moment im turn 1 waren es 10 tools, im turn 2 40 — wo ist das problem'). ROOT CAUSE: Stufe 1 fuetterte `_active_tool_names` = ALLES, was resolve_active_tools aufloest (auf dieser Installation ~100 Tools). Diese Menge ist themen-UNABHAENGIG und bewegt sich zwischen Turns kaum → Jaccard-Ueberschneidung dauerhaft ~100%, Schwelle ist <=34%: der Vorfilter war seit 9.408.0 ein No-op, unabhaengig von den Schwellen. Die 9.409.1-Korrektur der beiden Floors war daher Symptomkosmetik am falschen Objekt. Die THEMEN-tragende Groesse ist das per-Turn-GATING des Klassifikators — `tool_resolution.in_prompt`, also was tatsaechlich ins Prompt geht: im gemeldeten Chat 10 Tools bei 'hi', 40 bei 'can you write python code', 46 bei 'was weisst du ueber dora'. FIX: der Check liest jetzt `get_request_context()._tool_breakdown['in_prompt']` (wird 40 Zeilen vorher gesetzt, Reihenfolge verifiziert) und faellt nur auf `_active_tool_names` zurueck, wenn keine Aufschluesselung vorliegt (Gating aus) — dann bleibt er still statt falsch zu rechnen. AN DEN ECHTEN DATEN DES CHATS NACHGERECHNET: Turn1→Turn2 9 vs 39 Tools, 23% Ueberschneidung, bei 3 Nachrichten → candidate=True (haette also ausgeloest); Turn2→Turn3 39 vs 45, 87% → False (korrekt: nach der Python-Frage ist der Satz breit genug, dass DORA darin aufgeht — und die Ein-Check-pro-Chat-Sperre haette ohnehin gegriffen). EIGENER FEHLER, benannt: meine Tests verglichen ERFUNDENE Vier-Tool-Mengen und waren deshalb gruen, waehrend das Feature in der Praxis tot war — die Kernannahme ('ein Themenwechsel zieht andere Tools nach sich') wurde nie am laufenden System geprueft. Zwischendurch habe ich das mit einer Fehlmessung sogar 'bewiesen' (resolve_active_tools direkt aufgerufen, ohne die Gating-Stufe → 74 Tools, Ueberschneidung 100%) und daraus faelschlich geschlossen, der Ansatz sei prinzipiell untauglich; der User-Hinweis auf die echten Zahlen hat das widerlegt. NEU test_real_gated_tool_sets_from_chat_93e83868 mit den ECHTEN in_prompt-Mengen (beide Richtungen: der Wechsel loest aus, das Follow-up nicht) — waere vorher rot gewesen. 21/21 gruen. Schwellen aus 9.409.1 (3 Nachrichten, 2 Tools) unveraendert und weiterhin korrekt. py_compile OK. Server-Restart noetig. Skill 05 (die Quelle ist in_prompt, nicht die volle Tool-Liste — mit der Begruendung) + SKILL.md 1.286.0 im selben Commit. Kuratiert: kein neuer Eintrag noetig (der 9.408.0-Eintrag beschreibt das Verhalten, das jetzt erstmals tatsaechlich eintritt)."),
@@ -14964,89 +14966,27 @@ def turn_has_retrieval_tools(active_tool_names) -> bool:
 # Numbers below are deliberately conservative: they under-warn.
 # Counted on len(session.messages) BEFORE the turn runs — the new user message
 # is already in, the reply is not. So the sequence is 1, 3, 5, … and the check
-# needs a previous signature, which only exists after turn 1:
-#     turn 1 → 1 message, no _prev_sig yet   → never reachable
-#     turn 2 → 3 messages, _prev_sig from turn 1 → EARLIEST possible check
+# needs a previous user message to compare against, which exists from turn 2 on:
+#     turn 1 → 1 message  → nothing to compare → never reachable
+#     turn 2 → 3 messages → EARLIEST possible check
 # 3 is therefore "drift right after the first exchange", the earliest honest
-# value; anything lower would just be a no-op floor. (Was 6 while the check
-# still ran AFTER the reply — with the gate moved before the model call that
-# silently became "8 messages" and never fired on short chats, which is exactly
-# where topics jump. Found on chat 2bd47d4f: DORA → Python at 3 messages.)
+# value; anything lower would just be a no-op floor.
 _DRIFT_MIN_MESSAGES = 3
-_DRIFT_MAX_OVERLAP = 0.34      # tool sets sharing ≤1/3 → candidate
-# Both sides need at least this many subject-bearing tools. At ONE tool per side
-# the overlap can only be 0 % or 100 % — pure noise, and a single differing tool
-# would read as a total topic change. Two is the smallest set where the ratio
-# says anything. (Was 3, which silently excluded short chats: in chat 2bd47d4f
-# turn 1 resolved a single tool, so the DORA → Python jump could never be seen.)
-_DRIFT_MIN_TOOLS = 2
 
-# Tools present on nearly every turn. They say nothing about the subject, so
-# counting them would wash out the very difference we're looking for.
-_DRIFT_IGNORED_TOOLS = frozenset({
-    "ask_user_question", "tool_search", "think", "sequential_thinking",
-})
-
-# Task types that carry no subject of their own. Leaving them is the
-# conversation getting started, not a change of topic — a chat opening with
-# "hi" (→ `fast`) must not raise the dialog on its second message. Only checked
-# on the PREVIOUS type: arriving at `fast` from real work is a real change.
-_DRIFT_NEUTRAL_TYPES = frozenset({"fast"})
-
-
-def _drift_tool_signature(active_tool_names) -> frozenset:
-    """The subject-bearing part of a turn's tool set."""
-    return frozenset(set(active_tool_names or []) - _DRIFT_IGNORED_TOOLS)
-
-
-def drift_candidate(prev_sig, cur_sig, message_count: int,
-                    prev_types=None, cur_types=None) -> bool:
-    """Stage 1: could this turn have changed the subject? Arithmetic only.
-
-    THIS IS A COST FILTER, NOT A VERDICT. Whatever survives here goes to
-    `drift_confirm` — one ~200-token call that reads the actual first and current
-    message and is instructed to answer NO when unsure. That call resolves false
-    positives; this function only has to keep the obvious non-drifts from paying
-    for it. So it errs GENEROUS: a wrong yes costs ~200 tokens once per chat, a
-    wrong no means the feature never fires (the 9.408.0–9.409.2 failure mode).
-
-    EITHER signal is enough:
-
-      1. The classifier's TASK TYPE changed (coding → research → …) — a direct
-         statement about the KIND of question, not a by-product of it.
-      2. The needed tools barely overlap (Jaccard ≤ _DRIFT_MAX_OVERLAP).
-
-    Requiring both was too strict: on chat 93e83868 the type changed on every
-    turn while the tool sets stayed 83 % similar, so an AND would have stayed
-    silent through an obvious DORA → Python → DORA sequence.
-
-    `fast` is EXEMPT as a previous type: it is the small-talk / one-liner class
-    ("hi"), so leaving it is the conversation starting, not a change of subject.
-    This one exemption stays even though it costs a real detection, because
-    otherwise nearly every chat that opens with a greeting pays for a confirm
-    call on its second message.
-
-    Still blind to drift that moves neither signal (law → different law) —
-    catching that would mean a confirm call on EVERY turn, the cost the user
-    ruled out.
-    """
-    if message_count < _DRIFT_MIN_MESSAGES:
-        return False
-
-    prev_types = frozenset(prev_types or ())
-    cur_types = frozenset(cur_types or ())
-    if prev_types and cur_types and not (prev_types <= _DRIFT_NEUTRAL_TYPES):
-        if prev_types != cur_types:
-            return True          # signal 1: the kind of question changed
-
-    # Signal 2: the tool sets barely overlap.
-    prev_sig, cur_sig = frozenset(prev_sig or ()), frozenset(cur_sig or ())
-    if len(prev_sig) < _DRIFT_MIN_TOOLS or len(cur_sig) < _DRIFT_MIN_TOOLS:
-        return False
-    union = prev_sig | cur_sig
-    if not union:
-        return False
-    return (len(prev_sig & cur_sig) / len(union)) <= _DRIFT_MAX_OVERLAP
+# NOTE — there is deliberately NO arithmetic pre-filter any more. One existed
+# (tool-set overlap + task-type change, `drift_candidate`) to save the ~0.00003
+# USD confirm call on turns that clearly hadn't drifted. It was wrong three
+# times running and each fix uncovered the next layer:
+#   9.409.2  it read the FULL resolved tool list instead of the in-prompt one,
+#            so the overlap sat near 100 % and it could never fire at all;
+#   9.409.1  its message/tool floors were calibrated for the old call site
+#            (post-reply) and silently excluded every short chat once the gate
+#            moved before the model call;
+#   9.410.0  its `fast` exemption plus a one-turn lag in the type signal
+#            cancelled the remaining cases — chat 644c5800 hit all of them.
+# The filter guarded a fraction of a cent per chat and cost three rounds of
+# missed detections. `_drift_checked` (latches on the first check, answer either
+# way) is the real cost ceiling: at most ONE call per conversation.
 
 
 _DRIFT_CONFIRM_SYSTEM = (

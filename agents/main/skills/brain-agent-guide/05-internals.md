@@ -203,54 +203,36 @@ tool names exist (stage 1 needs them) and still ahead of
 `sidecar_proxy.run_turn`. Checking after the reply (the 9.408.0 version) billed
 the poisoned turn first and only then said "this was a new topic".
 
-Two stages, so the common case costs nothing:
+ONE cheap LLM call decides — no arithmetic pre-filter:
 
-1. `drift_candidate(prev_sig, cur_sig, message_count, prev_types, cur_types)` —
-   arithmetic only, no LLM. Fires on **either** of two signals:
+`drift_confirm(previous_user_message, current_message)` — a classifier-model
+call, ~200 tokens in, `max_tokens=3`, thinking off, 8 s timeout, any failure →
+no drift. **Anchored on the PREVIOUS user message**, not the first: anchoring on
+the first wasted the single allowed call whenever a chat opened with a greeting
+("different subject than *hi*?" can only be NO — chat ef5f6afd), and the
+slow-slide worry that motivated it doesn't hold (on a 4-step chain, first-vs-last
+answered NO too). Measured 5/5 on the live model: greeting→Python NO,
+Python→DORA YES, Python→Python-detail NO, DORA→DORA-detail NO, DORA→NIS2 NO.
 
-   - **Task type changed** (`coding` → `research` → …): a direct statement about
-     the KIND of question. `fast` is exempt as the PREVIOUS type — leaving
-     small talk is the conversation starting, not a topic change.
-   - **Tool overlap ≤ 0.34** (Jaccard), with ≥ 3 messages and ≥ 2 tools per side.
+A tool-overlap + task-type pre-filter guarded this call from 9.408.0 to 9.410.1
+and **never fired correctly in any of those four versions** — full tool list
+instead of in-prompt (overlap always ~100 %), floors calibrated for the old
+post-reply call site, then a `fast` exemption plus a one-turn type lag that
+cancelled the rest (chat 644c5800 hit all three at once). It was removed in
+9.411.0: it saved ~0.00003 USD per chat and cost four rounds of debugging. Don't
+reintroduce one without measuring that the call it guards is actually expensive.
 
-   OR, not AND: stage 1 is a **cost filter, not a verdict** — everything that
-   passes goes to the confirm call, which reads the real messages and answers NO
-   when unsure. A wrong yes costs ~200 tokens once per chat; a wrong no means the
-   feature never fires. Requiring both signals would have kept chat 93e83868
-   silent through an obvious `fast → coding → research` sequence, because its
-   tool sets stayed 83 % similar after the first turn.
+Two mechanical parts remain: `_DRIFT_MIN_MESSAGES = 3` (earliest reachable check
+is turn 2 — below that no previous user message exists to anchor on) and the
+anchor pick.
 
-   **The tool source must be `_tool_breakdown["in_prompt"]`, not
-   `_active_tool_names`.** The latter is everything `resolve_active_tools`
-   resolved (~100 on a typical install), is subject-independent, and its overlap
-   sits near 100 % between any two turns — reading it made the gate a silent
-   no-op from 9.408.0 to 9.409.1.
-
-   **The type signal lags one turn.** This turn's classification is produced
-   *after* the gate runs, so `_remember_drift_types(session, analysis)` stores
-   the last two type sets at turn end (written at all three sites that build
-   `auto_route["analysis"]`) and the gate compares those. The check therefore
-   needs one extra exchange before the type signal is usable.
-   Both floors are tied to the call site: `message_count` is `len(session.messages)`
-   BEFORE the turn, so it runs 1, 3, 5 … and the earliest reachable check is turn 2
-   at 3. The tool floor is 2 because a single tool per side can only score 0 % or
-   100 %. Both were too high in 9.409.0 (6 and 3 — the message floor was calibrated
-   while the check still ran AFTER the reply) and silently excluded short chats,
-   which is where topics actually jump; see chat 2bd47d4f.
-2. `drift_confirm(...)` — only for survivors: one classifier call, ~200 tokens
-   in, `max_tokens=3`, thinking off, 8 s timeout, any failure → no drift.
-   **Anchored on the PREVIOUS user message**, matching what stage 1 compares.
-   It anchored on the FIRST message until 9.410.1; both arguments for that were
-   measured false: chats open with "hi" often enough that the one allowed
-   confirm call per chat was routinely spent asking "different subject than
-   *hi*?" (only ever NO — chat ef5f6afd), and the slow-slide worry that
-   motivated it doesn't hold either (on a 4-step chain, first-vs-last also
-   answered NO). Neighbour comparison scored 5/5 on the live model:
-   greeting→Python NO, Python→DORA YES, Python→Python-detail NO,
-   DORA→DORA-detail NO, DORA→NIS2 NO.
-
-`session._drift_checked` latches after the first confirm (even on NO), so a chat
-can never spend more than one call on this.
+`session._drift_checked` latches once the user has actually been ASKED — **not**
+on the first check. Latching on a NO was the bug behind four failed attempts: a
+chat opening with "hi" spent its single check on `"hi"` vs the first real
+question (correctly NO) and was then silenced before the actual topic jump
+arrived. The check may now run every turn until it fires once; cost stays bounded
+because the dialog is the end state. Worst case is one ~30-token call per turn in
+a chat that never drifts.
 
 On a confirmed drift the worker opens a blocking dialog — the second instance of
 the 9.407.0 context-gate pattern: registry `_drift_gate_pending`, event
@@ -265,8 +247,9 @@ composer settings.
 have nobody to ask and must never block on a dialog. The orphan slot is cleared
 in the worker's `finally`, next to the context gate's.
 
-Blind to drift that keeps the same tools — catching that would mean an LLM call
-every turn, which is exactly the cost this design avoids.
+No longer blind to drift that keeps the same tools — that limitation belonged to
+the removed pre-filter. The confirm call reads the two messages, so any subject
+change it can recognise is now reachable.
 
 ## Provider routing
 
