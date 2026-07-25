@@ -699,6 +699,25 @@ function buildStreamCallbacks(chat, isActive) {
         // tab answered first.
         closeTopicDriftDialog();
       },
+      // Model-switch gate: the session moved to a different model than the one
+      // that answered the previous turn — the server waits for the user's
+      // choice before running the turn (the prompt cache is keyed to the old
+      // model; a switch re-prefills the whole history).
+      model_switch: (d) => {
+        if (isActive()) showModelSwitchDialog(chat, d);
+      },
+      model_switch_done: (d) => {
+        closeModelSwitchDialog();
+        if (d && d.decision === 'keep_old' && d.model) {
+          // The server put the session back on the previous model — mirror it
+          // in the composer so the next send doesn't re-trigger the gate.
+          chat.model = d.model;
+          setStreamStatus(chat, 'model', modelShortName(d.model));
+          if (isActive() && typeof updateModelSelectorDisplay === 'function') {
+            updateModelSelectorDisplay(d.model);
+          }
+        }
+      },
       queue_wait: (d) => {
         // Provider queue serialised this turn — show "waiting in line" hint.
         chat.queueStatus = {
@@ -1465,6 +1484,42 @@ function buildStreamCallbacks(chat, isActive) {
         console.log('[SSE] done event received', {textLen: (d.text||'').length, tokens: d.tokens, model: d.model, msgCount: chat.messages.length});
         closeContextPressureDialog();
         closeTopicDriftDialog();
+        closeModelSwitchDialog();
+        // Pre-model cancels (topic-drift "Neuer Chat", model-switch
+        // "Abbrechen"): the turn never ran — no assistant reply exists and the
+        // server rolled the pending user message back out (drift) or never
+        // appended it (model switch). Drop the optimistic user bubble from the
+        // local state too, else the moved/cancelled question lingers in this
+        // chat as a turn that never happened (the 9.411.3 bug). On a
+        // model-switch cancel the text goes back into the composer so nothing
+        // typed is lost (the drift hand-off pre-fills the NEW chat instead).
+        if (d && d.cancelled && (d.reason === 'topic_drift' || d.reason === 'model_switch')) {
+          const _lastIdx = chat.messages.map(m => m.role).lastIndexOf('human');
+          let _lastText = '';
+          if (_lastIdx >= 0) {
+            const _c = chat.messages[_lastIdx].content;
+            _lastText = (typeof _c === 'string') ? _c : '';
+            chat.messages.splice(_lastIdx, 1);
+          }
+          chat.streaming = false;
+          chat.streamingText = '';
+          chat.thinkingText = '';
+          chat.thinkingSummary = null;
+          clearInterval(chat._streamTimerInterval);
+          if (isActive()) {
+            if (d.reason === 'model_switch' && _lastText) {
+              const _inp = _composerInputEl();
+              if (_inp && !_inp.value) {
+                _inp.value = _lastText;
+                try { autoResizeInput(_inp); updateSendButton(); } catch (e) {}
+              }
+            }
+            try { renderMessages(); } catch (e) {}
+            try { updateStreamingUI(false); } catch (e) {}
+            try { updateStatusBar(); } catch (e) {}
+          }
+          return;
+        }
         // Chronological interleave: if we committed 'assistant_segment' rows
         // mid-turn (text → tool → text), the final assistant message must hold
         // ONLY the trailing run (chat.streamingText) — NOT d.text (the full
@@ -2231,6 +2286,57 @@ function showTopicDriftDialog(chat, d) {
 }
 function closeTopicDriftDialog() {
   document.getElementById('topic-drift-dialog')?.remove();
+}
+
+// Model switch: asked BEFORE the turn runs. From turn 2 on the prompt cache
+// (provider cache-read discount on cloud models, warm prefill on local ones)
+// is keyed to the model that answered so far — switching re-processes the
+// whole history once at full price/latency. The user decides: continue on the
+// new model, keep the old one, or cancel the send (the question returns to
+// the composer via the done-cancelled branch above).
+function showModelSwitchDialog(chat, d) {
+  closeModelSwitchDialog();
+  const fromName = modelShortName((d && d.from) || '');
+  const toName = modelShortName((d && d.to) || '');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay dialog-overlay';
+  overlay.id = 'model-switch-dialog';
+  overlay.innerHTML = `
+    <div class="dialog-card" role="dialog" aria-modal="true">
+      <div class="dialog-header"><span class="dialog-title">Modellwechsel erkannt</span></div>
+      <div class="dialog-body">
+        <p class="dialog-message">
+          Dieser Chat lief bisher mit <b>${escapeHtml(fromName)}</b>, diese Anfrage würde mit
+          <b>${escapeHtml(toName)}</b> laufen. Beim Wechsel geht der zwischengespeicherte
+          Verlauf (Prompt-Cache) verloren — die gesamte bisherige Unterhaltung wird einmal
+          neu verarbeitet, diese Antwort wird dadurch teurer bzw. startet langsamer.<br><br>
+          Ohne Antwort läuft die Anfrage nach 5 Minuten mit dem neuen Modell weiter.
+        </p>
+      </div>
+      <div class="dialog-footer">
+        <button class="dialog-btn dialog-btn-ghost" data-value="cancel">Abbrechen</button>
+        <button class="dialog-btn dialog-btn-ghost" data-value="keep_old">Altes Modell behalten</button>
+        <button class="dialog-btn dialog-btn-primary" data-value="continue">Mit neuem Modell weiter</button>
+      </div>
+    </div>`;
+  overlay.querySelectorAll('.dialog-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const decision = btn.getAttribute('data-value');
+      closeModelSwitchDialog();
+      try {
+        const r = await API.modelSwitchDecision(chat.sessionId, decision);
+        if (r && r.delivered === false) {
+          showToast('Anfrage lief bereits mit dem neuen Modell weiter (Timeout)');
+        }
+      } catch (e) {
+        showToast('Entscheidung konnte nicht übermittelt werden', true);
+      }
+    });
+  });
+  document.body.appendChild(overlay);
+}
+function closeModelSwitchDialog() {
+  document.getElementById('model-switch-dialog')?.remove();
 }
 
 // Open a fresh chat that inherits the current one's settings and carries the

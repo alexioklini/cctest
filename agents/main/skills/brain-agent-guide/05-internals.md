@@ -251,6 +251,49 @@ No longer blind to drift that keeps the same tools — that limitation belonged 
 the removed pre-filter. The confirm call reads the two messages, so any subject
 change it can recognise is now reachable.
 
+The `new_chat` rollback removes exactly the pending user message: the worker
+re-snapshots `_msg_count_before` AFTER appending it (so cancel/error rollbacks
+keep it, by design) — rolling back to that value verbatim was a no-op and the
+moved question stayed in the old chat as a turn that never ran (fixed 9.412.0,
+rollback target is `_msg_count_before - 1`; the client's done-cancelled branch
+drops its optimistic bubble too).
+
+### Model-switch gate (prompt-cache loss, 9.412.0)
+
+Third instance of the 9.407.0 context-gate pattern, and the EARLIEST of the
+three: it sits at the very top of the worker `try` — before GDPR/anonymise
+(they depend on the final model) and before the user message is appended, so
+`cancel` needs no server-side rollback at all.
+
+Trigger: interactive turn, NOT auto/MoA-routed, and the session model differs
+from the model that answered the previous turn. `_prev_turn_model(session,
+sid)` reads `metadata.model` off the newest assistant row (the model that
+ACTUALLY answered) plus `metadata.original_model` — a quota/GDPR fallback turn
+carries `(model=fallback, original_model=session model)`, and a session still
+sitting on `original_model` did NOT switch (the fallback did), so both compare
+as "no switch". After a Brain restart `load_from_db()` strips in-memory
+metadata → targeted one-row DB fallback. Skipped when the previous model is no
+longer configured or disabled (nothing sensible to keep). Auto/MoA turns are
+exempt because routing freezes its turn-1 pick per session precisely to keep
+the cache stable — the classifier only ever trims tools, never the model.
+
+Why it warns at all: the prompt cache is keyed to the model that answered so
+far — cloud models bill cache reads at ~0.1×, local models keep a warm prefill
+on the GPU. A switch re-processes the whole history once at full price (cloud)
+or full latency (local).
+
+Mechanics mirror the drift gate: registry `_model_gate_pending` +
+`deliver_model_switch_decision` + `POST /v1/chat/model-decision`; event
+`model_switch {timeout_s, from, to}` out, `threading.Event` wait (300 s →
+default `continue`), `model_switch_done {decision, model}` out. `keep_old`
+puts the session back on the previous model — including `api_key`/`base_url`
+(they were re-resolved for the NEW model on request entry) and `max_context` —
+and persists it; the client mirrors the restored model into the composer so
+the next send doesn't re-trigger the gate. `cancel` ends the turn with
+`done{cancelled:true, reason:"model_switch"}`; the client removes its
+optimistic user bubble and puts the text back into the composer. Orphan slot
+cleared in the worker `finally`, next to the context + drift gates.
+
 ## Provider routing
 
 `resolve_provider_for_model(model)` is the **single source of truth** for

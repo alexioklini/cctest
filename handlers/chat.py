@@ -1223,6 +1223,63 @@ def deliver_drift_decision(session_id: str, decision: str) -> bool:
     return True
 
 
+# session_id -> {event, decision} while a MODEL-SWITCH dialog is open (the
+# composer moved the session to a different model than the one that answered
+# the previous turn — the prompt cache is keyed to the old model, so the
+# switch re-prefills the whole history at full price/latency). Same shape as
+# _drift_gate_pending; resolved by POST /v1/chat/model-decision or the gate's
+# own timeout (→ continue, i.e. run on the NEW model).
+_model_gate_pending: dict = {}
+
+
+def deliver_model_switch_decision(session_id: str, decision: str) -> bool:
+    """Called by POST /v1/chat/model-decision. True iff a dialog was waiting
+    (False = already timed out or resolved — the turn moved on)."""
+    slot = _model_gate_pending.get(session_id)
+    if not slot:
+        return False
+    slot["decision"] = decision
+    slot["event"].set()
+    return True
+
+
+def _prev_turn_model(session, sid):
+    """(model, original_model) of the LAST assistant reply — ('', '') when the
+    session has none yet (turn 1) or nothing is recorded.
+
+    In-memory first: the worker appends assistant rows with metadata.model =
+    the model that ACTUALLY answered; metadata.original_model is set when a
+    mid-turn fallback swapped models (then session.model still equals
+    original_model — the FALLBACK switched, not the user, so the gate treats
+    both as "no switch"). After a Brain restart load_from_db() strips
+    metadata off the in-memory rows, so fall back to one targeted DB read.
+    """
+    try:
+        for m in reversed(session.messages or []):
+            if m.get("role") != "assistant":
+                continue
+            meta = m.get("metadata") or {}
+            if meta.get("model"):
+                return (str(meta.get("model")),
+                        str(meta.get("original_model") or ""))
+            break   # newest assistant row carries no metadata → DB fallback
+        else:
+            return "", ""   # no assistant reply at all — turn 1, no gate
+    except Exception:
+        return "", ""
+    try:
+        with _db_conn() as conn:
+            row = conn.execute(
+                "SELECT metadata FROM messages WHERE session_id = ? AND "
+                "role = 'assistant' ORDER BY id DESC LIMIT 1",
+                (sid,)).fetchone()
+        meta = json.loads(row[0]) if row and row[0] else {}
+        return (str(meta.get("model") or ""),
+                str(meta.get("original_model") or ""))
+    except Exception:
+        return "", ""
+
+
 def _persist_plan_artifact(sid, session, live, plan_text, *, planner="",
                            verdict="", round_no=0, source="Planner-Entwurf"):
     """Persist the delegate plan VERSIONED into the session's artifact folder
@@ -4126,6 +4183,79 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
             engine.turn_control_register(sid)
 
             try:
+                # ── MODEL SWITCH (prompt-cache loss) ───────────────────────
+                # From turn 2 on the prompt cache is keyed to the model that
+                # answered so far — provider cache-read discounts on cloud,
+                # warm prefill on local. Switching models re-prefills the
+                # WHOLE history at full price (cloud) / full latency (local),
+                # so the user gets to confirm before the turn runs. Asked
+                # FIRST — before GDPR/anonymise and the wire build, which all
+                # depend on the final model — and BEFORE the user message is
+                # appended, so cancel needs no rollback. INTERACTIVE ONLY
+                # (scheduled/background runs have nobody to ask). Auto/MoA
+                # turns are exempt: routing freezes its turn-1 pick per
+                # session precisely to keep the cache stable, so a routed
+                # switch is never user-chosen. No answer within 5 minutes →
+                # run on the NEW model (same default as the drift + context
+                # gates: silence must never strand a turn).
+                if interactive and not want_auto and not auto_route:
+                    try:
+                        _prev_model, _prev_orig = _prev_turn_model(session, sid)
+                        _prev_cfg = (engine._models_config or {}).get(
+                            _prev_model) or {}
+                        if (_prev_model
+                                and session.model != _prev_model
+                                and session.model != _prev_orig
+                                and _prev_cfg
+                                and _prev_cfg.get("enabled", True)):
+                            _mev = threading.Event()
+                            _model_gate_pending[sid] = {
+                                "event": _mev, "decision": None}
+                            event_callback("model_switch", {
+                                "timeout_s": 300,
+                                "from": _prev_model,
+                                "to": session.model,
+                            })
+                            _mev.wait(timeout=300)
+                            _mslot = _model_gate_pending.pop(sid, None) or {}
+                            _mdec = _mslot.get("decision") or "continue"
+                            if _mdec == "keep_old":
+                                # Restore the previous turn's model as the
+                                # session model for this and later turns —
+                                # provider creds and context window included
+                                # (they were re-resolved for the NEW model on
+                                # request entry).
+                                _kp = engine.resolve_provider_for_model(
+                                    _prev_model)
+                                with session.lock:
+                                    session.model = _prev_model
+                                    session.api_key = _kp.get("api_key", "")
+                                    session.base_url = _kp.get("base_url", "")
+                                    session.max_context = (
+                                        engine.get_model_max_context(
+                                            _prev_model))
+                                engine.get_request_context()._current_model = (
+                                    session.model)
+                                ChatDB.save_session(
+                                    sid, session.agent_id, session.model,
+                                    session.title, session.status,
+                                    session.created_at, session.last_active,
+                                    session.project or "",
+                                    user_id=session.user_id)
+                            event_callback("model_switch_done",
+                                           {"decision": _mdec,
+                                            "model": session.model})
+                            if _mdec == "cancel":
+                                # Nothing to roll back — the user message is
+                                # appended AFTER this gate. The client drops
+                                # its optimistic bubble on this done and puts
+                                # the text back into the composer.
+                                live.emit("done", {"cancelled": True,
+                                                   "reason": "model_switch"})
+                                return
+                    except Exception:
+                        pass   # advisory only — never break a turn over it
+
                 # ── Transparent anonymisation (worker-side) ──
                 # If the client requested anonymise, this is where it runs.
                 # We're inside the SSE response, so synthetic events + the
@@ -4867,8 +4997,16 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     # — it belongs to the new one, where the
                                     # client pre-fills it (unsent, so it can
                                     # still be reworded or get attachments).
+                                    # `_msg_count_before` was RE-snapshotted
+                                    # after the user message was appended (so
+                                    # the cancel/error rollbacks keep it, by
+                                    # design) — rolling back to it verbatim was
+                                    # a no-op and the moved question stayed in
+                                    # this chat as a turn that never ran
+                                    # (9.411.3). One less removes exactly the
+                                    # pending user message, memory + DB.
                                     _rollback_messages(session, sid,
-                                                       _msg_count_before)
+                                                       _msg_count_before - 1)
                                     live.emit("done", {"cancelled": True,
                                                        "reason": "topic_drift"})
                                     return
@@ -6634,6 +6772,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                 # dialog was pending — e.g. external cancel).
                 _context_gate_pending.pop(sid, None)
                 _drift_gate_pending.pop(sid, None)
+                _model_gate_pending.pop(sid, None)
                 # If the worker died without emitting a terminal event (e.g. a
                 # bare process exit), make sure subscribers aren't left hanging.
                 if not live.done:
@@ -8775,6 +8914,36 @@ class ChatHandlerMixin:
         if self._session_access_check(session_id) is None:
             return
         self._send_json({"delivered": deliver_drift_decision(session_id, decision)})
+
+    def _handle_chat_model_decision(self):
+        """POST /v1/chat/model-decision — deliver the user's choice to a waiting
+        model-switch dialog (asked BEFORE the turn runs: from turn 2 on a model
+        switch throws away the prompt cache keyed to the previous model, so the
+        whole history gets re-prefilled at full price/latency).
+
+        Body: {session_id, decision: "continue"|"keep_old"|"cancel"}.
+        `continue` runs the turn on the NEW model, `keep_old` puts the session
+        back on the model that answered the previous turn and runs there,
+        `cancel` ends the turn without any model call (the client returns the
+        question to the composer). Returns {delivered: bool} — False means the
+        dialog already resolved (its 5-min timeout continued on the new model)
+        and the click arrived late.
+        """
+        try:
+            body = self._read_json()
+        except Exception:
+            self._send_json({"error": "invalid JSON body"}, 400)
+            return
+        session_id = (body.get("session_id") or "").strip()
+        decision = (body.get("decision") or "").strip()
+        if not session_id or decision not in ("continue", "keep_old", "cancel"):
+            self._send_json({"error": "session_id and decision "
+                             "(continue|keep_old|cancel) required"}, 400)
+            return
+        if self._session_access_check(session_id) is None:
+            return
+        self._send_json(
+            {"delivered": deliver_model_switch_decision(session_id, decision)})
 
     def _handle_chat_answer(self):
         """POST /v1/chat/answer — deliver a user answer to a pending ask_user tool call.

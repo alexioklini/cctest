@@ -2305,6 +2305,8 @@ class BrainAgentHandler(
             self._handle_chat_context_decision()
         elif path == "/v1/chat/drift-decision":
             self._handle_chat_drift_decision()
+        elif path == "/v1/chat/model-decision":
+            self._handle_chat_model_decision()
         elif path == "/v1/chat/plan-review":
             self._handle_chat_plan_review()
         elif path == "/v1/chat/gdpr-recovery":

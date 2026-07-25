@@ -608,6 +608,33 @@ ebenfalls nicht aus: Wo vorher kein Thema war, kann keines gewechselt haben.
 In geplanten Aufgaben gibt es den Dialog nicht (dort ist niemand, der antworten
 könnte).
 
+**Modellwechsel-Dialog**: Wechseln Sie ab der zweiten Frage eines Chats das
+Modell im Eingabefeld, fragt der Assistent nach — ebenfalls **bevor** die
+Anfrage losläuft:
+
+> **Modellwechsel erkannt** · [Abbrechen] [Altes Modell behalten] [Mit neuem Modell weiter]
+
+Warum: Der bisherige Verlauf ist für das bisherige Modell zwischengespeichert
+(Prompt-Cache — bereits verarbeitete Eingaben werden bei Cloud-Modellen stark
+rabattiert abgerechnet, bei lokalen Modellen liegen sie vorberechnet bereit).
+Ein Modellwechsel verwirft diesen Speicher: Die gesamte bisherige Unterhaltung
+wird einmal komplett neu verarbeitet — die Antwort wird dadurch teurer
+(Cloud) bzw. startet spürbar langsamer (lokal).
+
+- **Mit neuem Modell weiter** führt die Anfrage wie geplant aus.
+- **Altes Modell behalten** setzt den Chat auf das bisherige Modell zurück und
+  führt die Anfrage dort aus — die Modellauswahl im Eingabefeld springt mit.
+- **Abbrechen** verwirft die Anfrage; Ihre Frage bleibt im Eingabefeld
+  erhalten, es geht nichts verloren.
+
+**Ohne Antwort läuft die Anfrage nach fünf Minuten** einfach mit dem neuen
+Modell weiter.
+
+Der Dialog erscheint nur bei einem von Ihnen gewählten Wechsel: Die
+Automatik-Modi (Smart/Experten-Gremium) wählen ihr Modell einmal pro Chat und
+behalten es genau aus diesem Grund bei — dort gibt es nichts zu warnen. Auch
+in geplanten Aufgaben gibt es diesen Dialog nicht.
+
 ---
 
 ## Chats

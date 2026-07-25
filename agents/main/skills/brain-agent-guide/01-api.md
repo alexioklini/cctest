@@ -240,6 +240,20 @@ streaming call, per-USER history, fixed read-only tool set. See
   Antwort `{delivered: bool}` — `false` = Timeout war schneller, der Turn läuft
   im bisherigen Chat (der Client öffnet dann KEINEN neuen Chat). Nur bei
   interaktiven Turns; geplante/Hintergrund-Läufe erreichen das Gate nie.
+- `POST /v1/chat/model-decision` — `{session_id, decision:
+  continue|keep_old|cancel}` beantwortet den Modellwechsel-Dialog (9.412.0):
+  wechselt der Composer die Session ab Turn 2 auf ein anderes Modell als das,
+  das den vorherigen Turn beantwortet hat, fragt der Worker **vor** dem
+  Modellaufruf nach — der Prompt-Cache (Cloud: Cache-Read-Rabatt, lokal: warmer
+  Prefill) ist an das bisherige Modell gebunden, ein Wechsel verarbeitet den
+  ganzen Verlauf einmal neu. `continue` läuft mit dem neuen Modell (auch der
+  5-min-Timeout-Default), `keep_old` setzt die Session auf das bisherige Modell
+  zurück (inkl. Provider-Zugang + Kontextfenster, persistiert), `cancel` beendet
+  den Turn ohne Modellaufruf mit `done{cancelled:true, reason:"model_switch"}`
+  — die Frage geht clientseitig zurück ins Eingabefeld. Antwort
+  `{delivered: bool}` wie beim Drift-Gate. Nur interaktive Turns; Auto/MoA-Turns
+  sind ausgenommen (Routing friert seinen Turn-1-Pick pro Session ein — ein
+  geroutetes Modell ist nie vom Nutzer gewechselt).
 - `POST /v1/chat/plan-review` — `{session_id, action: approve|clarify, plan?,
   executor?, message?}` resolves a pending MoA delegate-plan review (9.285.0;
   fired only on `body.interactive=true` turns; SSE `moa_plan_review` /

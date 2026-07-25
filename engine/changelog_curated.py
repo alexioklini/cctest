@@ -29,6 +29,26 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.412.0",
+        "date": "2026-07-25",
+        "title": "Nachfrage beim Modellwechsel im laufenden Chat",
+        "body": "Wechseln Sie ab der zweiten Frage eines Chats das Modell, "
+                "fragt der Assistent jetzt nach, bevor die Anfrage losläuft: "
+                "Der bisherige Verlauf ist für das bisherige Modell "
+                "zwischengespeichert — ein Wechsel verarbeitet ihn einmal "
+                "komplett neu, die Antwort wird dadurch teurer bzw. startet "
+                "spürbar langsamer. Sie entscheiden: mit dem neuen Modell "
+                "fortfahren, beim bisherigen Modell bleiben oder die Anfrage "
+                "abbrechen — Ihre Frage bleibt dabei im Eingabefeld erhalten. "
+                "Ohne Antwort läuft die Anfrage nach fünf Minuten einfach mit "
+                "dem neuen Modell weiter. Außerdem behoben: Entschieden Sie "
+                "sich beim Themenwechsel-Hinweis für einen neuen Chat, blieb "
+                "die mitgenommene Frage zusätzlich im alten Chat stehen — sie "
+                "wird dort jetzt sauber entfernt.",
+        "audience": "user",
+        "versions": ["9.412.0"],
+    },
+    {
         "version": "9.408.0",
         "date": "2026-07-25",
         "title": "Denk-Intensität wirkt jetzt bei jedem Modell",

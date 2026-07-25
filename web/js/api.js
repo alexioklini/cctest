@@ -193,6 +193,7 @@ class API {
   static cancelChat(sessionId) { return this.post('/v1/chat/cancel', {session_id: sessionId}); }
   static contextDecision(sessionId, decision) { return this.post('/v1/chat/context-decision', {session_id: sessionId, decision}); }
   static driftDecision(sessionId, decision) { return this.post('/v1/chat/drift-decision', {session_id: sessionId, decision}); }
+  static modelSwitchDecision(sessionId, decision) { return this.post('/v1/chat/model-decision', {session_id: sessionId, decision}); }
   // Turn-control (pause/resume a running turn, inject a mid-stream message the
   // model sees next round, ask a side question answered in a separate bubble).
   static pauseChat(sessionId)  { return this.post('/v1/chat/pause',  {session_id: sessionId}); }
