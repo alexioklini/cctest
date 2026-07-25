@@ -29,6 +29,28 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.408.0",
+        "date": "2026-07-25",
+        "title": "Denk-Intensität wirkt jetzt bei jedem Modell",
+        "body": "Der Regler im Eingabefeld (Aus / Niedrig / Mittel / Hoch) "
+                "steuert ab sofort bei allen Modellen, wie gründlich "
+                "nachgedacht wird — bisher waren die Zwischenstufen bei "
+                "einigen Modellen wirkungslos, obwohl sie anwählbar waren. "
+                "Niedrig antwortet spürbar schneller und günstiger, Hoch "
+                "denkt so lange nach, wie das Modell braucht. Zwei neue "
+                "Hinweise ergänzen das: Schalten Sie das Nachdenken bei "
+                "einem lokalen Modell ein oder aus, werden Sie einmalig "
+                "darauf hingewiesen, dass die nächste Antwort langsamer "
+                "startet. Und wenn ein Chat erkennbar zu einem ganz anderen "
+                "Thema gewandert ist, schlägt Ihnen der Assistent einen "
+                "neuen Chat vor — der alte Verlauf wird sonst bei jeder "
+                "Anfrage mitgeschickt und kann die Antwortqualität senken. "
+                "Beide Hinweise sind reine Empfehlungen; Sie können sie "
+                "übergehen und normal weiterarbeiten.",
+        "audience": "user",
+        "versions": ["9.408.0"],
+    },
+    {
         "version": "9.407.0",
         "date": "2026-07-24",
         "title": "Sie entscheiden, wenn der Kontext knapp wird",

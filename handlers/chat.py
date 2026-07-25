@@ -4644,16 +4644,23 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     _model_cfg = engine._models_config.get(model, {}) or {}
                     _tfmt = _model_cfg.get("thinking_format", "none")
                     if thinking_level and thinking_level != "none" and _tfmt != "none":
-                        _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32768}
                         p["thinking"] = True
-                        p["thinking_budget"] = _THINKING_BUDGETS.get(thinking_level, 8192)
                         # Provider-facing reasoning toggle. Engine's _apply_inference_to_payload maps this
                         # per thinking_format: reasoning_effort for mistral_blocks/reasoning_field/openai_opaque,
                         # chat_template_kwargs.enable_thinking for oMLX inline_tags variants, etc.
                         p["thinking_level"] = thinking_level
+                        # NB: this used to also set p["thinking_budget"] from a
+                        # {low:2048, medium:8192, high:32768} table. That value was
+                        # DEAD — thinking_budget is in none of the three key sets
+                        # _apply_inference_to_payload forwards
+                        # (_INFERENCE_STANDARD/OPENAI/OMLX_KEYS), so it never
+                        # reached a provider. The real reasoning cap now lives in
+                        # the llm-router (canonical.thinking_budget_for), which
+                        # sets it per level for chat-template providers. Don't
+                        # reintroduce a second, silently-ignored copy here.
                     else:
                         p.pop("thinking", None)
-                        p.pop("thinking_budget", None)
+                        p.pop("thinking_budget", None)   # legacy configs may carry one
                         p.pop("thinking_level", None)
                     return p
 
@@ -5314,6 +5321,18 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     if _cav_eff and _cav_eff in engine.CAVEMAN_CHAT_PROMPTS:
                         _wire_messages = _append_to_wire_user(
                             _wire_messages, engine.CAVEMAN_CHAT_PROMPTS[_cav_eff])
+                    # SIMULATED thinking level: the composer offers four steps for
+                    # every model, but mistral_blocks accepts only none|high (400s
+                    # on low/medium) and thinking_format 'none' has no reasoning at
+                    # all. For those two, Low/Medium ride as a wire-only instruction
+                    # — same mechanism as caveman above, so the KV prefix stays
+                    # byte-stable and nothing enters history. Models that graduate
+                    # natively (cloud reasoning_effort, oMLX router thinking_budget)
+                    # are skipped: they already have a working dial.
+                    if (thinking_level in ("low", "medium")
+                            and engine.thinking_is_simulated(session.model)):
+                        _wire_messages = _append_to_wire_user(
+                            _wire_messages, engine.THINKING_SIM_PROMPTS[thinking_level])
                     # SCRATCHPAD ("Spickzettel") forcing (per-model): append a
                     # wire-only request to use the scratchpad tool — only when that
                     # tool is actually in-prompt this turn (else the request points at
@@ -5589,6 +5608,47 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 "peak_tokens": int(_cp_peak),
                                 "max_context": _cp_max,
                             }
+                        # TOPIC DRIFT (context poisoning): the chat wandered to an
+                        # unrelated subject, so every prompt still drags the old
+                        # topic's history and a tool set resolved for it. Advisory
+                        # only — a badge on the reply with a "new chat" button;
+                        # the user decides.
+                        # Two stages, cheapest first: a free tool-set comparison
+                        # gates a ~200-token confirm call. At most ONE call per
+                        # chat (_drift_checked latches even on a NO), so the
+                        # feature has a hard cost ceiling per conversation.
+                        try:
+                            _cur_sig = engine._drift_tool_signature(_active_tool_names)
+                            _prev_sig = getattr(session, "_drift_tool_sig", None)
+                            if (_prev_sig is not None
+                                    and not getattr(session, "_drift_checked", False)
+                                    and engine.drift_candidate(
+                                        _prev_sig, _cur_sig, len(session.messages))):
+                                session._drift_checked = True
+                                # Earlier topic = the first user message; it fixes
+                                # what the chat was ORIGINALLY about. Comparing
+                                # against the previous message would follow a slow
+                                # slide instead of catching it.
+                                _first_user = next(
+                                    (m.get("content") for m in session.messages
+                                     if m.get("role") == "user"
+                                     and isinstance(m.get("content"), str)), "")
+                                if _first_user and engine.drift_confirm(
+                                        _first_user, message, session_id=sid):
+                                    msg_metadata["topic_drift"] = True
+                            # Baseline = what this chat has been about, not just
+                            # the last turn: union with the previous signature so
+                            # a single odd turn can't redefine it. Capped so an
+                            # old subject eventually ages out — without the cap
+                            # the union only grows and would eventually overlap
+                            # everything, silencing the check for good.
+                            session._drift_tool_sig = (
+                                _cur_sig if _prev_sig is None
+                                else frozenset(list(_cur_sig)
+                                               + [t for t in _prev_sig
+                                                  if t not in _cur_sig][:6]))
+                        except Exception:
+                            pass   # advisory only — never break a turn over it
                         if _request_payloads:
                             msg_metadata["request_payloads"] = _request_payloads
                         fb_model = engine.get_request_context()._fallback_model_used

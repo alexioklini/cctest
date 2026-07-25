@@ -2171,11 +2171,27 @@ class SessionsHandlerMixin:
             lvl = str(body.get("level", "") or "").lower().strip()
             if lvl not in ("", "none", "low", "medium", "high"):
                 lvl = ""
-            ChatDB.update_session_thinking_level(sid, lvl)
             s = sessions.get(sid)
+            # Does this change abandon a warm KV prefix? Only an on↔off flip on
+            # a chat-template provider (oMLX) does — graduation between
+            # low/medium/high never does, nor anything on a cloud model. The
+            # client uses this to warn ONCE before a costly flip; it is
+            # informational only, the change is applied either way (the user
+            # already clicked). Answered here because this is the one place
+            # that knows both the old and the new level.
+            _prefix_cost = False
+            try:
+                _old = getattr(s, "thinking_level", "") or "" if s else ""
+                _mdl = getattr(s, "model", "") or "" if s else ""
+                if _mdl:
+                    _prefix_cost = engine.thinking_switch_costs_prefix(_mdl, _old, lvl)
+            except Exception:
+                _prefix_cost = False   # never let the advisory break the write
+            ChatDB.update_session_thinking_level(sid, lvl)
             if s:
                 s.thinking_level = lvl
-            self._send_json({"status": "ok", "thinking_level": lvl, "session_id": sid})
+            self._send_json({"status": "ok", "thinking_level": lvl, "session_id": sid,
+                             "prefix_cost": _prefix_cost})
         elif action == "allow_further_web":
             allow = bool(body.get("value"))
             ChatDB.update_session_allow_further_web(sid, allow)

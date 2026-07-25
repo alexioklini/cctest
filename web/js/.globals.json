@@ -3,6 +3,7 @@
   "globals": {
     "_activeAttachmentIndex": "writable",
     "_activeCitationPopover": "writable",
+    "_activeComposerLevels": "writable",
     "_activeHelpPopover": "writable",
     "_activePanelTurn": "writable",
     "_activeSessPollTimer": "writable",
@@ -93,6 +94,7 @@
     "_buildCitationWarnBadge": "writable",
     "_buildContextPressureBadge": "writable",
     "_buildGdprCountBadge": "writable",
+    "_buildTopicDriftBadge": "writable",
     "_cellAt": "writable",
     "_changelogCache": "writable",
     "_chatAudioBtn": "writable",
@@ -700,6 +702,7 @@
     "_terminalXtermTheme": "writable",
     "_termOpenInPane": "writable",
     "_thinkingIconSeq": "writable",
+    "_thinkingLevelsForModel": "writable",
     "_thinkingOptionsForFormat": "writable",
     "_thinkingOptionsForModel": "writable",
     "_toggleAllMcp": "writable",

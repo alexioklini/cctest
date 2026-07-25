@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.407.1"
-VERSION_DATE = "2026-07-24"
+VERSION = "9.408.0"
+VERSION_DATE = "2026-07-25"
 CHANGELOG = [
+    ("9.408.0", "2026-07-25", "feat(Denkstufen überall + zwei Hinweise): die vier Composer-Stufen (Aus/Niedrig/Mittel/Hoch) wirken jetzt auf JEDEM Modell — vorher waren sie auf zwei von drei Modellgruppen wirkungslos oder gelogen. ANLASS (User): 'kann man sowas wie den Opus-5-Effort-Dial auch für beliebige Modelle einbauen' → nach Messung: 'bei gemma musst du den llmrouter anpassen, der ruft omlx auf, das hat denkstufen — ich denke da fehlt was in der kette'. Der Verdacht war RICHTIG. BEFUND (alles live gemessen, nicht vermutet): (a) LOKAL/oMLX — llm-router pipeline.py:195 warf `reasoning_effort` weg und schickte nur `chat_template_kwargs.enable_thinking` an/aus (das Chat-Template kennt nichts anderes); die Abstufung ging genau dort verloren. oMLX selbst kann aber deckeln: mlx_vlm zählt Denk-Tokens und bricht bei `thinking_budget` ab — der Schalter existiert auch in der oMLX-GUI (User-Screenshot). Kalibriert an gemma-4-12B (je 3 Läufe, Median Reasoning-Zeichen, leichte/schwere Aufgabe): budget 96 → 224/272, budget 384 → 606/924, ohne Deckel → 975/2140. Das Budget ist eine ABSOLUTE Grenze, kein Anteil (gleiches Budget ≈ gleiche Denkmenge unabhängig von der Aufgabenschwere) und deckelt NUR das Reasoning, nie die sichtbare Antwort. (b) MISTRAL — die API lehnt low/medium mit HTTP 400 ab ('supported values: high, none', live verifiziert) und weist JEDES Budget-Feld mit 422 ab; die Stufe kann dort nicht über die Leitung. (c) GEGENPROBE — GLM/Mistral laufen im Router als `passthrough` (Anfrage-Protokoll geprüft): der Router verfälscht dort nichts, die Mistral-Ablehnung kommt vom Anbieter. UMSETZUNG: (1) llm-router (eigenes Repo, 3 Dateien): NEU `canonical.thinking_budget_for(model_cfg, level)` + `THINKING_BUDGETS_DEFAULT {low:96, medium:384}` ('high' fehlt bewusst = ungedeckelt), pro Modell überschreibbar via `models.extras.thinking_budgets` (Merge, kein Ersatz; Wert <=0 = kein Deckel); pipeline.py (passthrough) UND wire/openai.py (translate) setzen den Deckel identisch, ein vom Client selbst gesendetes `thinking_budget` gewinnt. KV-prefix-neutral (reines Zahlenfeld, nur enable_thinking geht in den Prefix). 36 Router-Tests grün (2 neu, 18 Assertions inkl. kaputter extras). E2E durch den Router nach Restart: low 272 / medium 959 / high 2593 Reasoning-Zeichen (vorher alle drei gleich). (2) BRAIN — NEU `THINKING_SIM_PROMPTS` + `thinking_is_simulated(model)`: für mistral_blocks und thinking_format='none' reiten Low/Medium als WIRE-ONLY-Suffix auf der letzten User-Message (exakt der Caveman-Mechanismus `_append_to_wire_user`, v9.121.0) — System-Prompt und Tool-Beschreibungen bleiben byte-identisch, der Warm-Pool-KV-Prefix überlebt jeden Stufenwechsel, nichts landet in der History. Gemessen an mistral-medium-3.5 (je 4 Läufe, Wire-Wert IMMER high, nur der Suffix variiert): low 34% / medium 66% / high 100%. WICHTIG: die erste Medium-Formulierung ('keep the reasoning proportionate') maß 109% = WIRKUNGSLOS — ein vager Regler gibt dem Modell kein Ziel; erst die explizite Schrittzahl ('at most about six reasoning steps') wirkt. DER TEXT IST DER MECHANISMUS, nach jeder Umformulierung neu messen (scratchpad-Harness verify_sim.py). Modelle, die ECHT staffeln (Cloud reasoning_effort, oMLX Router-Budget), bekommen den Suffix NICHT — sonst läge ein überflüssiger Hinweis auf einem funktionierenden Regler. Verdrahtet in handlers/chat.py (interaktiv) UND engine/scheduler.py (geplante Läufe, gleiche Wire-only-Stelle). `_validate_thinking_level_for_model` akzeptiert low/medium jetzt für mistral_blocks + 'none' (inline_tags bleibt on/off). (3) UI — NEU per-Modell `thinking_levels` (in _SAFE_FIELDS aufgenommen, sonst erreicht es die UI nicht) überschreibt die Format-Ableitung; `_thinkingLevelsForModel` + `_activeComposerLevels` (+2 Globals, Baseline 2128→2130); Composer/Modelle-Tab/Zeitplan lesen alle dieselbe Quelle; Modelle ohne Reasoning melden neu das Pseudo-Format 'simulated' (Knopf aktiv statt ausgegraut). (4) TOTER CODE ENTFERNT: handlers/chat.py setzte `p['thinking_budget']` aus einer {low:2048,medium:8192,high:32768}-Tabelle — der Wert stand in KEINEM der drei Key-Sets, die `_apply_inference_to_payload` weiterreicht, erreichte also nie einen Provider. Der echte Deckel lebt jetzt im Router. (5) NEU Cache-Warnung: `thinking_switch_costs_prefix(model, old, new)` meldet nur den EINEN teuren Fall — an↔aus auf einem chat-template-Provider MIT warmem Prefix; Stufenwechsel (low↔medium↔high) und alles Cloud-seitige melden nie, bei Unsicherheit ebenfalls nie (eine verpasste Warnung kostet einen Prefill, eine falsche die Glaubwürdigkeit aller weiteren). Antwort reist als `prefix_cost` auf der bestehenden manage-Action `thinking_level`, Client toastet einmal pro Chat. 5 Tests. (6) NEU Themenwechsel-Hinweis (Context Poisoning, User-Wunsch 'aber auch nicht nervt mit false positives'): ZWEISTUFIG — Stufe 1 `drift_candidate` vergleicht die Tool-Signatur des Turns mit der etablierten des Chats (Jaccard <=0.34, ab 6 Nachrichten, min. 3 Tools, ubiquitäre Tools wie ask_user_question/think ausgefiltert) = reine Arithmetik auf Daten, die der Turn ohnehin hat, kostenlos, jede Runde; Stufe 2 `drift_confirm` nur für die Überlebenden: EIN Aufruf über den Klassifikator (~200 Token rein, max_tokens=3, ein Wort raus, thinking aus, 8s Timeout, jeder Fehler = kein Hinweis), HÖCHSTENS EINMAL pro Chat (`_drift_checked` latcht auch bei NEIN → harte Kostenobergrenze pro Konversation). Ergebnis als `msg_metadata.topic_drift` → blauer Hinweis-Badge 'ⓘ Neues Thema erkannt' + Knopf 'Neuer Chat' an der Antwort (msg-citation-warn-Familie, neue .is-info-Variante + .msg-drift-newchat im CSS; +1 Global, Baseline 2130→2131). Blind für Drift OHNE Tool-Wechsel — das zu fangen hieße ein LLM-Call pro Turn, was der User ausgeschlossen hat. VERIFIZIERT: 18 neue Brain-Tests (unittest, bare interpreter) grün; py_compile aller geänderten Module; js_gate GRÜN (eslint clean, Baselines im Commit, Smoke 5/5); Router-Restart + Brain-Restart (SIGTERM, graceful) sauber. GEFUNDEN+GEFIXT bei der Live-Prüfung: `thinking_is_simulated` las ein fehlendes Config-Entry als thinking_format='none' → bei nicht geladener Config galt JEDES Modell als simuliert (auch GLM/Gemma hätten den überflüssigen Suffix bekommen); unbekanntes Modell liefert jetzt False, 2 Tests decken es ab. Server-Restart nötig. KURATIERTER Eintrag (user)."),
     ("9.407.1", "2026-07-24", "feat(Kontext-Druck-Badge): dauerhafter Warnhinweis AN DER ANTWORT, wenn der Turn irgendwann \u00fcber 80% Kontext-F\u00fcllstand lag (User: 'in jedem fall am ende eines turns den hinweis im response als badge \u00e4hnlich wie nicht vollst\u00e4ndige zitate \u2026 wahrscheinlichkeit f\u00fcr halluzination erh\u00f6ht'). Erg\u00e4nzt das 9.407.0-Gate: der Dialog ist die Entscheidung IM Turn, der Badge die dauerhafte Kennzeichnung DANACH \u2014 auch f\u00fcr 'Weitermachen'-Turns und den 5-min-Timeout-Fall. MECHANIK: usage-Branch trackt peak_prompt_tokens (max \u00fcber alle Runden von frisch+cached, dem 9.406.1-Anker); beim Persistieren msg_metadata.context_pressure {peak_pct, peak_tokens, max_context} wenn peak >= 0.80*max_context (session.max_context zur Persist-Zeit); done_data spiegelt es f\u00fcr den Live-Pfad (gleicher live/reload-Split wie der gdpr-Badge). Client: done-Handler \u00fcbernimmt d.context_pressure in die Turn-Metadata; chat_render._buildContextPressureBadge (+1 Global, Baseline 2127\u21922128) rendert im msg-citation-warn-Stil (gleiche visuelle Familie: per-Antwort-Qualit\u00e4tsvorbehalt) '\u26a0 Kontext war zu X% gef\u00fcllt \u2014 erh\u00f6htes Halluzinationsrisiko' mit Detail-Tooltip (Spitze/Fenster, Empfehlung gegenpr\u00fcfen); Reload liest dieselbe Metadata (load_messages filtert metadata nicht \u2014 das web_sources-Muster). Kein neues CSS. js_gate GR\u00dcN (Smoke 5/5, Baseline im Commit); py_compile OK. Skill 06 (Badge-Satz) + SKILL.md 1.281.0 im selben Commit. Server-Restart n\u00f6tig. Kuratiert: an 9.407.0-Eintrag angeh\u00e4ngt."),
     ("9.407.0", "2026-07-24", "feat(Kontext-Druck-Gate): Mid-Turn-Schutz vor Kontext-\u00dcberlauf als USER-ENTSCHEIDUNG statt Automatismus \u2014 die 9.406.1-Analyse zeigte, dass seit der In-Process-Migration (9.247.0) KEIN Mid-Turn-Schutz mehr existiert (_middleware_compress_old + context_safety_ratio-Preflight = toter Code ohne Aufrufer; \u00dcberlauf endet als Provider-400). User-DESIGN (explizit): 'keinen Automatismus der stillschweigend das Ergebnis manipuliert' \u2014 stattdessen Dialog ab Schwelle mit drei Optionen. MECHANIK: (1) neuer optionaler context_gate-Callback in run_loop (engine/llm_loop.py, vierte Instanz des budget_gate/pause_gate/is_cancelled-Musters): an jeder Rundengrenze ab Runde 2 mit dem VOLLEN Prompt der Vorrunde (frisch+cached, der 9.406.1-Anker) aufgerufen; R\u00fcckgabe None/'no_tools'/'cancel'. 'no_tools' \u2192 Restrunden OHNE Tool-Array + wire-only [System]-Anweisung 'beende JETZT aus vorhandenen Infos' (nichts wird komprimiert/verworfen \u2014 alle Tool-Results bleiben w\u00f6rtlich im Kontext; tools_refresh w\u00e4hrend no_more_tools unterdr\u00fcckt); 'cancel' \u2192 graceful cancelled-Stop wie der Stopp-Knopf; Gate-Exception \u2192 ignoriert (kaputter Check darf keinen gesunden Turn killen). (2) Worker-Closure (handlers/chat.py, NUR interaktive Turns \u2014 Scheduler/Background unber\u00fchrt): Schwellen 80%+90% (je einmal pro Turn), emittiert context_pressure {fill_pct, prompt_tokens, max_context, timeout_s} \u00fcber den LiveStream, BLOCKIERT auf threading.Event mit 300s-Timeout \u2192 Default 'continue' (explizite User-Vorgabe: bei Nicht-Antwort MIT Tools weitermachen), emittiert context_pressure_done {decision}; max_context pro Aufruf frisch gelesen (Local-Swap); an BEIDEN run_turn-Sites verdrahtet (auch Retrieval-PII-Local-Rerun); Pending-Slot im Worker-finally ger\u00e4umt. (3) Endpoint POST /v1/chat/context-decision {session_id, decision} \u2192 deliver_context_decision (Registry _context_gate_pending, Muster deliver_plan_review_decision), access-checked, {delivered:bool} (false = Timeout war schneller). (4) Client: context_pressure-Handler \u2192 eigener programmatisch schlie\u00dfbarer Dialog (showContextPressureDialog/closeContextPressureDialog, +2 Globals Baseline 2125\u21922127 \u2014 showDialog() kann nicht von au\u00dfen geschlossen werden, das Server-Timeout muss den Dialog aber wegr\u00e4umen); drei Buttons \u2192 API.contextDecision; Schlie\u00dfen auf context_pressure_done/done/error; 'no_tools' setzt Stream-Label 'Abschluss ohne weitere Tools\u2026'; Reattach-Replay zeigt einen noch offenen Dialog erneut. VERIFIZIERT: 5 neue Verhaltenstests gegen den ECHTEN run_loop (tests/test_loop_brakes.ContextGateTests: no_tools strippt Tool-Array + injiziert Anweisung + Tool-Results bleiben w\u00f6rtlich + Gate sieht vollen Prompt; cancel graceful; continue/broken-gate unver\u00e4ndert; Runde 1 ungegated) \u2014 Suite 12/12; Client-Dialog per Playwright (Dialog rendert, Klick liefert delivered:false-Toast bei aufgel\u00f6stem Gate); Endpoint-Validierung curl (400 bei invalid decision, delivered:false ohne pending). js_gate GR\u00dcN (Baseline 2127 im Commit, Smoke 4/5+1 flaky-retry-passed). py_compile OK. Skill 01 (Endpoint) + 06 (Dialog-Absatz) + SKILL.md 1.280.0 im selben Commit. Server-Restart n\u00f6tig. KURATIERTER Eintrag (user)."),
     ("9.406.1", "2026-07-24", "fix(Kontext-F\u00fcllstand): die Anzeige zeigte nur die FRISCHEN (nicht gecachten) Prompt-Tokens der letzten Runde \u2014 User-Report Chat 486bcedc: '2-3k w\u00e4hrend des Laufs, 8.5k nach Ende, m\u00fcsste der System-Prompt (5-6k) nicht immer dabei sein?'. BEFUND: handlers/chat.py usage-Branch setzte last_tokens_in = _r_in (= prompt_tokens MINUS cached_tokens, der v9.245.0-Kosten-Split); nach Warmup sind System-Prompt + Tools + stehender Verlauf aber praktisch immer Cache-TREFFER \u2014 der echte Prompt der Session war zuletzt ~81k (8.185 frisch + 72.960 cached), angezeigt wurden 2-3k; der 'Sprung' nach Turn-Ende war schlicht die letzte Runde mit 8.185 frischen Tokens (persistiertes msg_metadata.last_tokens_in, gleiche frisch-only-Quelle). Der Kosten-Split ist f\u00fcrs BILLING korrekt, f\u00fcrs KONTEXTFENSTER falsch: gecachte Tokens belegen den Kontext genauso. FIX am Choke-Point: last_tokens_in = _r_in + _r_cr (voller Prompt der Runde); alle Downstream-Sites (Live-usage-Event, done-Event, msg_metadata, Termchat) lesen dieselbe _usage_totals-Quelle \u2014 ein Fix, \u00fcberall konsistent, Live- und Nach-Turn-Anzeige stimmen jetzt \u00fcberein. Deep-Research-Pfad (Z.5337, _dr_meta ohne Cache-Aufschl\u00fcsselung) bewusst unver\u00e4ndert (N\u00e4herung). Altdaten: persistierte last_tokens_in-Metadaten bleiben frisch-only (historisch, zur Lesezeit nicht rekonstruierbar). VERIFIZIERT live (SSE-Mitschnitt nach Restart, frische Mini-Session): last_tokens_in=1447 = 999 frisch + 448 cached (vorher hätte die Anzeige 999 gezeigt); Live- und Nach-Turn-Wert speisen sich aus derselben Summe. py_compile OK. Skill 06 (Kontext-F\u00fcllstand-Satz) + SKILL.md 1.279.0 im selben Commit. Server-Restart n\u00f6tig. Kuratiert: an 9.406.0-Eintrag angeh\u00e4ngt."),
@@ -1414,6 +1415,70 @@ CAVEMAN_CHAT_PROMPTS = {
 # was removed in v9.120.0. Caveman no longer compresses the system prompt or tool
 # descriptions — it is OUTPUT-style only (CAVEMAN_CHAT_PROMPTS, appended) plus an
 # input-side compression of the REFINED query text during refinement.
+
+# ── Simulated thinking levels for models the API can't graduate ──────────────
+# The composer always offers four levels (Off/Low/Medium/High). Most models
+# graduate natively: cloud reasoners take reasoning_effort verbatim, and oMLX
+# models are capped by the router's thinking_budget. TWO groups can't:
+#
+#   • mistral_blocks — the API accepts ONLY none|high and 400s on low/medium
+#     ("reasoning_effort low is not supported for this model", verified live).
+#   • thinking_format == "none" — no reasoning machinery at all.
+#
+# For those, the level becomes an INSTRUCTION instead of an API field. This is
+# strictly weaker than a real budget (it asks the model to be brief rather than
+# cutting it off) — an honest four-step dial, not an equivalent one.
+#
+# WIRE-ONLY, appended to the last user message (the caveman mechanism,
+# _append_to_wire_user): the system prompt and tool descriptions stay
+# byte-identical, so the warm-pool KV prefix survives every level change and
+# nothing enters the stored history. Injecting this into the system prompt
+# instead would re-prime the prefix on every toggle — the thing v9.121.0 fixed.
+#
+# "high" is absent on purpose: High = the model's own unconstrained depth.
+THINKING_SIM_PROMPTS = {
+    "low": (
+        "\n\nREASONING DEPTH — BRIEF: Think only as far as the question needs. "
+        "Skip alternatives you have already ruled out. State the conclusion and "
+        "the one or two steps that carry it. Do not re-derive what you know.\n"
+    ),
+    "medium": (
+        "\n\nREASONING DEPTH — MODERATE: Use at most about six reasoning steps, "
+        "then answer. Verify the steps that could change the result; skip the "
+        "rest. Do not restate the question or re-check work already done.\n"
+    ),
+}
+# Measured on mistral-medium-3.5 (4 runs each, median reasoning chars, wire
+# reasoning_effort="high" in every arm — only the suffix differs):
+#     high (no suffix)  8248   100%
+#     medium            5408    66%
+#     low               2837    34%
+# NB on wording: the first "medium" draft said "keep the reasoning
+# proportionate" and measured 109% — no effect. A vague dial gives the model
+# nothing to aim at; the explicit step count does. THIS TEXT IS THE MECHANISM —
+# re-measure with scratchpad/verify_sim.py after any edit, a reworded nudge is
+# a behaviour change, not a comment change.
+
+
+def thinking_is_simulated(model: str) -> bool:
+    """Does this model need the prompt-level fallback for Low/Medium?
+
+    True when the provider cannot express a graduated level: mistral_blocks
+    (API takes only none|high) or no thinking machinery at all. False for cloud
+    reasoners (native reasoning_effort) and for oMLX (router thinking_budget) —
+    those graduate for real and must NOT also get the instruction, or the turn
+    would carry a redundant nudge on top of a working dial.
+
+    An UNKNOWN model returns False. Reading a missing entry as
+    thinking_format='none' would make every model look simulated whenever the
+    config isn't loaded yet (a bare `import brain` has an empty
+    `_models_config`) — and a stray depth instruction on a model that graduates
+    natively is the one outcome this function exists to prevent.
+    """
+    cfg = _models_config.get(model)
+    if not cfg:
+        return False
+    return cfg.get("thinking_format", "none") in ("mistral_blocks", "none")
 
 # FORCE-THINK — a per-model "force_think" flag appends this request (wire-only, on
 # the last user message, same mechanism as caveman) so the model reliably uses the
@@ -8510,6 +8575,37 @@ def prefix_thinking_relevant(model: str) -> bool:
     return _provider_supports_chat_template_kwargs(prov.get("provider_name", ""))
 
 
+def thinking_switch_costs_prefix(model: str, old_level: str, new_level: str) -> bool:
+    """Would changing the thinking level from `old_level` to `new_level` throw
+    away a warm KV prefix for this model?
+
+    Only ONE case does: an on↔off flip on a provider whose chat template renders
+    `enable_thinking` INTO the tokenised prompt (oMLX/vLLM). There the two states
+    are different prefixes, so the warm one is abandoned and the next turn pays a
+    full prefill.
+
+    Everything else is free and must NOT warn, or the dial becomes annoying:
+      • low↔medium↔high on ANY model — graduation is an API field
+        (reasoning_effort) or a wire-only suffix; the prefix is byte-identical.
+      • any change on a cloud model — same reason.
+      • a flip on a model whose prefix isn't warm — nothing to lose.
+
+    Returns False on any uncertainty (unknown model, prefix id unavailable):
+    a missed warning costs one prefill, a false warning costs the user's trust
+    in the dial.
+    """
+    old_on = bool(old_level and old_level not in ("none", "off"))
+    new_on = bool(new_level and new_level not in ("none", "off"))
+    if old_on == new_on:
+        return False            # graduation only — prefix unchanged
+    if not prefix_thinking_relevant(model):
+        return False            # cloud: thinking is an API field, not prompt text
+    # Only warn when there is actually a warm prefix to lose. The prefix we'd
+    # abandon is the one matching the CURRENT (old) thinking state.
+    pid = _bare_full_prefix_id(model, thinking_in_prefix=old_on)
+    return bool(pid and prefix_is_warm(model, pid))
+
+
 # --- Provider Concurrency Queue ---
 #
 # Local LLM gateways (oMLX, cliproxyapi) typically cannot process multiple
@@ -14835,6 +14931,108 @@ def turn_has_retrieval_tools(active_tool_names) -> bool:
     return bool(set(active_tool_names or []) & _RETRIEVAL_TOOLS)
 
 
+# ── Topic-drift detection (context poisoning) ────────────────────────────────
+# A chat that wandered to an unrelated subject carries the old topic's history
+# into every prompt: stale context the model still weighs, plus a tool set
+# resolved for the PREVIOUS subject. The fix is a new chat — but only the user
+# can judge that, so we advise and never act.
+#
+# TWO-STAGE by design, because a wrong warning is expensive (the user learns to
+# dismiss it) while a missed one costs nothing:
+#   1. Tool-set overlap — pure arithmetic on data the turn already computed.
+#      Zero cost, runs every turn, filters out the ~99% that clearly didn't
+#      drift.
+#   2. A confirm call — only for the survivors. A few hundred tokens in, ONE
+#      token out. Never more than once per chat.
+#
+# Numbers below are deliberately conservative: they under-warn.
+_DRIFT_MIN_MESSAGES = 6        # below this a chat is still finding its topic
+_DRIFT_MAX_OVERLAP = 0.34      # tool sets sharing ≤1/3 → candidate
+_DRIFT_MIN_TOOLS = 3           # tiny tool sets swing wildly; ignore them
+
+# Tools present on nearly every turn. They say nothing about the subject, so
+# counting them would wash out the very difference we're looking for.
+_DRIFT_IGNORED_TOOLS = frozenset({
+    "ask_user_question", "tool_search", "think", "sequential_thinking",
+})
+
+
+def _drift_tool_signature(active_tool_names) -> frozenset:
+    """The subject-bearing part of a turn's tool set."""
+    return frozenset(set(active_tool_names or []) - _DRIFT_IGNORED_TOOLS)
+
+
+def drift_candidate(prev_sig, cur_sig, message_count: int) -> bool:
+    """Stage 1: could this turn have changed the subject? Arithmetic only.
+
+    Compares the turn's tool set against the chat's established one (Jaccard
+    overlap). A real subject change usually drags a different tool set along —
+    tax questions pull documents, a deploy question pulls git and shell.
+
+    Deliberately blind to a drift that keeps the same tools (law → different
+    law). Stage 2 cannot run without a stage-1 hit, so that case is simply not
+    covered. Catching it would mean an LLM call on EVERY turn — the cost the
+    user explicitly ruled out.
+    """
+    if message_count < _DRIFT_MIN_MESSAGES:
+        return False
+    prev_sig, cur_sig = frozenset(prev_sig or ()), frozenset(cur_sig or ())
+    if len(prev_sig) < _DRIFT_MIN_TOOLS or len(cur_sig) < _DRIFT_MIN_TOOLS:
+        return False
+    union = prev_sig | cur_sig
+    if not union:
+        return False
+    return (len(prev_sig & cur_sig) / len(union)) <= _DRIFT_MAX_OVERLAP
+
+
+_DRIFT_CONFIRM_SYSTEM = (
+    "You judge whether a chat has moved to an unrelated subject. "
+    "Answer with exactly one word: YES if the new message belongs to a "
+    "different subject than the earlier ones and would be better asked in a "
+    "fresh chat, NO otherwise. A follow-up, a clarification, a related "
+    "sub-question or a natural next step is NO. Only a genuinely unrelated "
+    "subject is YES. When unsure, answer NO."
+)
+
+
+def drift_confirm(earlier_topic: str, new_message: str, *,
+                  model: str = "", session_id: str = "") -> bool:
+    """Stage 2: one cheap call to confirm a stage-1 candidate.
+
+    Sends a few hundred tokens and asks for a single word. No tools, no
+    thinking, hard timeout. Any failure — timeout, bad model, odd answer —
+    returns False: the warning is a nicety, it must never delay or break a turn.
+    """
+    if not earlier_topic.strip() or not new_message.strip():
+        return False
+    try:
+        from handlers import sidecar_proxy as _sp
+        # Via _server_config(), never a bare `import server` — under launchd that
+        # yields a second module whose config is empty (the v9.45.1 footgun).
+        _sc = _server_config()
+        mdl = model or _sc.get("classifier_model") or _sc.get("default_model")
+        if not mdl:
+            return False
+        prompt = (f"Earlier in this chat:\n{earlier_topic[:1200]}\n\n"
+                  f"New message:\n{new_message[:600]}\n\nDifferent subject?")
+        res = _sp.background_call(
+            messages=[{"role": "user", "content": prompt}],
+            model=mdl,
+            system_prompt=_DRIFT_CONFIRM_SYSTEM,
+            purpose="transform",
+            cost_purpose="drift_check",
+            session_id=session_id,
+            max_tokens=3,          # one word; never let it write an essay
+            max_rounds=1,
+            thinking_level="none",
+            timeout_s=8.0,         # a slow answer is a dropped answer
+        )
+        reply = ((res or {}).get("reply") or "").strip().upper()
+        return reply.startswith("YES")
+    except Exception:
+        return False
+
+
 def classifier_is_llm() -> bool:
     """True when the auto-route classifier runs in LLM-driven mode ('llm' or
     'hybrid'). In that mode the DYNAMIC effective-tools citation discipline is
@@ -15870,7 +16068,12 @@ def _apply_inference_to_payload(payload: dict, params: dict, provider: str = "",
         _fmt = _models_config.get(_scoped_id, {}).get("thinking_format", "none")
         if _fmt == "mistral_blocks":
             # Mistral accepts only "none" and "high" on reasoning_effort; any non-none
-            # UI level maps to "high".
+            # UI level maps to "high". (Verified live: low/medium 400 with
+            # "supported values: high, none".) The Low/Medium DISTINCTION is not
+            # lost — it rides as a wire-only instruction on the user message
+            # (THINKING_SIM_PROMPTS, appended in handlers/chat.py). Wire value
+            # stays "high" so the request never 400s; the depth nudge does the
+            # graduating.
             payload["reasoning_effort"] = "high"
         elif _fmt in ("reasoning_field", "openai_opaque"):
             # OpenAI / Gemini via cliproxy / DeepSeek all accept low|medium|high.

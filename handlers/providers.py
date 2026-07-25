@@ -498,6 +498,11 @@ class ProvidersHandlerMixin:
             "display_name", "description", "shortname", "enabled", "priority",
             "provider", "base_model_id", "is_local", "thinking_format",
             "max_context", "max_output", "capabilities", "caveman_system",
+            # Per-model level set for the thinking dial. Without this the
+            # composer derives the steps from thinking_format alone and offers
+            # levels the model silently ignores (the gemma case: format says
+            # reasoning_field → four steps shown, but the local path is on/off).
+            "thinking_levels",
         )
 
         models = {}

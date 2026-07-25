@@ -590,6 +590,22 @@ function _thinkingOptionsForModel(modelId) {
 // Format-driven option set, but for the Models tab (no "Inherit" entry —
 // this dropdown IS the per-model default). Returns null when format='none'
 // so the caller can disable the control.
+// Per-model override of the level set. A model may support fewer steps than
+// its thinking_format implies — gemma-4-12B is reasoning_field (→ four steps)
+// but reaches oMLX, where the chat template knows only on/off; without the
+// router's thinking_budget it would silently coerce Medium to High. Set
+// models.<id>.thinking_levels in config.json to pin the honest set.
+// Returns null when the model has no override (→ fall back to the format).
+function _thinkingLevelsForModel(mid) {
+  const lv = (state.modelsConfig?.models?.[mid] || {}).thinking_levels;
+  if (!Array.isArray(lv) || !lv.length) return null;
+  const LABELS = {none: 'Off', low: 'Low', medium: 'Medium', high: 'High'};
+  const opts = lv.filter(v => LABELS[v]).map(v => ({value: v, label: LABELS[v]}));
+  if (!opts.length) return null;
+  if (!opts.some(o => o.value === 'none')) opts.unshift({value: 'none', label: 'Off'});
+  return {options: opts};
+}
+
 function _thinkingOptionsForFormat(fmt) {
   if (fmt === 'none' || !fmt) return null;
   if (fmt === 'auto') {
@@ -607,8 +623,26 @@ function _thinkingOptionsForFormat(fmt) {
             note: "Nur Denken an/aus — keine abgestuften Stufen."};
   }
   if (fmt === 'mistral_blocks') {
-    return {options: [{value:'none',label:'Off'},{value:'high',label:'High'}],
-            note: "Mistral akzeptiert nur Off / High."};
+    // The API takes only none|high (low/medium 400), but Low/Medium still
+    // graduate: they ride as a wire-only depth instruction on the user message.
+    // Measured on mistral-medium-3.5: low 34% / medium 66% / high 100% of the
+    // unconstrained reasoning volume.
+    return {options: [
+      {value:'none',label:'Off'},
+      {value:'low',label:'Low'},
+      {value:'medium',label:'Medium'},
+      {value:'high',label:'High'},
+    ], note: "Low/Medium werden als Tiefen-Hinweis mitgegeben (die API kennt nur Off/High)."};
+  }
+  if (fmt === 'simulated') {
+    // No reasoning machinery at all — every non-off level is a depth
+    // instruction. Weaker than a real budget, hence the note.
+    return {options: [
+      {value:'none',label:'Off'},
+      {value:'low',label:'Low'},
+      {value:'medium',label:'Medium'},
+      {value:'high',label:'High'},
+    ], note: "Modell hat kein eigenes Reasoning — die Stufen wirken als Hinweis auf die Antworttiefe."};
   }
   return {options: [
     {value:'none',label:'Off'},
@@ -619,10 +653,12 @@ function _thinkingOptionsForFormat(fmt) {
 }
 
 // Render a Models-tab Thinking Level <select> for a given format. selectedValue
-// is the current saved level ('' = unset/inherit-API-default).
-function _mdlPopulateThinkingLevel(fmt, levelSel, selectedValue) {
+// is the current saved level ('' = unset/inherit-API-default). `mid` is
+// optional — when given, a per-model thinking_levels override wins over the
+// format default (see _thinkingLevelsForModel).
+function _mdlPopulateThinkingLevel(fmt, levelSel, selectedValue, mid) {
   if (!levelSel) return;
-  const info = _thinkingOptionsForFormat(fmt);
+  const info = (mid && _thinkingLevelsForModel(mid)) || _thinkingOptionsForFormat(fmt);
   if (!info) {
     levelSel.innerHTML = `<option value="" selected>(nicht unterstützt)</option>`;
     levelSel.disabled = true;
@@ -650,7 +686,8 @@ function _mdlRefreshThinkingLevel(fmtSelectEl) {
   const grid = fmtSelectEl.closest('div[style*="grid-template-columns"]');
   const levelSel = grid?.querySelector('.mdl-thinking-level');
   if (!levelSel) return;
-  _mdlPopulateThinkingLevel(fmtSelectEl.value || 'none', levelSel, levelSel.value || '');
+  _mdlPopulateThinkingLevel(fmtSelectEl.value || 'none', levelSel, levelSel.value || '',
+                            levelSel.dataset.mid || '');
 }
 
 // Re-render a schedule-modal thinking dropdown when the model selector

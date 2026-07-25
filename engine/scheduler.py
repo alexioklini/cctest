@@ -110,14 +110,15 @@ def _validate_thinking_level_for_model(model: str | None, level: str) -> str | N
         return None
     cfg = _brain._models_config.get(model) or {}
     fmt = cfg.get("thinking_format", "none")
-    if fmt == "none":
-        if level == "none":
-            return None  # explicit off on a non-thinking model is harmless
-        return f"Model '{model}' does not support reasoning (thinking_format=none)"
+    # mistral_blocks and thinking_format='none' USED to reject low/medium here:
+    # the API takes only none|high (Mistral) or has no reasoning at all. Both now
+    # graduate via a wire-only depth instruction instead of an API field
+    # (brain.THINKING_SIM_PROMPTS, appended in handlers/chat.py) — measured on
+    # mistral-medium-3.5 at low 34% / medium 66% / high 100% of unconstrained
+    # reasoning volume. So every level is valid for them; the wire value stays
+    # within what the provider accepts.
     if fmt == "inline_tags" and level in ("low", "medium"):
         return f"Model '{model}' supports thinking on/off only — use 'none' or 'high'"
-    if fmt == "mistral_blocks" and level in ("low", "medium"):
-        return f"Model '{model}' (Mistral) accepts only 'none' or 'high'"
     return None
 
 
@@ -1270,6 +1271,16 @@ class Scheduler:
                     sched_inf = dict(sched_inf)
                     sched_inf.pop("thinking_level", None)
                     sched_inf["thinking"] = False
+                # SIMULATED level for models the API can't graduate (Mistral:
+                # none|high only; thinking_format 'none': no reasoning at all).
+                # Mirrors the chat worker — appended to the task's user message,
+                # never the system prompt, so the KV prefix stays byte-stable.
+                # messages[] is built from task_message BELOW, so amend it here.
+                if (_task_thinking in ("low", "medium")
+                        and _brain.thinking_is_simulated(model)):
+                    messages = [{"role": "user",
+                                 "content": task_message
+                                 + _brain.THINKING_SIM_PROMPTS[_task_thinking]}]
                 # Sidecar path. Brain resolves provider, builds the tool list +
                 # sampling, dispatches tools via /v1/tools/call, and persists the
                 # final reply. The agentic loop itself runs in the sidecar process.

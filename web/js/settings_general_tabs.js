@@ -471,7 +471,8 @@ async function _genTab_models(C) {
     // that re-renders its sibling level <select> via _mdlRefreshThinkingLevel.
     C.querySelectorAll('.mdl-thinking-level').forEach(sel => {
       const fmtSel = sel.closest('div').parentElement.querySelector('.mdl-thinking-format');
-      if (fmtSel) _mdlPopulateThinkingLevel(fmtSel.value || 'none', sel, sel.dataset.current || '');
+      if (fmtSel) _mdlPopulateThinkingLevel(fmtSel.value || 'none', sel,
+                                            sel.dataset.current || '', sel.dataset.mid || '');
     });
     // Attach to a benchmark that is already running (page reload / tab
     // switch mid-run) — silent no-op when idle.

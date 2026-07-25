@@ -25,6 +25,13 @@ function toggleTheme() {
 /* ═══════════════════════════════════════════════════════════
    THINKING LEVEL
    ═══════════════════════════════════════════════════════════ */
+// Levels valid for the ACTIVE chat's model — the composer's four call sites
+// all want this pair (format + model id), so resolve it in one place.
+function _activeComposerLevels() {
+  return _composerLevelsForFormat(getActiveThinkingFormat(),
+                                  state.activeChat?.model || '');
+}
+
 function getActiveThinkingFormat() {
   const mid = state.activeChat?.model || '';
   if (!mid) return 'none';
@@ -36,15 +43,25 @@ function getActiveThinkingFormat() {
   // → verbatim) in run_session_turn.
   if (typeof isAutoModel === 'function' && isAutoModel(mid)) return 'auto';
   const cfg = state.modelsConfig?.models?.[mid];
-  return (cfg && cfg.thinking_format) || 'none';
+  const fmt = (cfg && cfg.thinking_format) || 'none';
+  // Models with no reasoning machinery at all still get the four-step dial:
+  // Low/Medium ride as a wire-only depth instruction (brain.THINKING_SIM_PROMPTS,
+  // appended in handlers/chat.py) instead of an API field. Weaker than a real
+  // budget — it asks for brevity rather than cutting the model off — but the
+  // dial does something at every step, so the button stays live instead of
+  // being disabled. Reported as 'simulated' so the tooltip can say so.
+  if (fmt === 'none' && cfg) return 'simulated';
+  return fmt;
 }
 
-// Levels the composer cycles through for a given thinking_format. Mirrors
-// the schedule + Models-tab logic so the UI never offers a setting the
-// provider would silently coerce. Returns ['none'] when format='none' so
-// callers can short-circuit.
-function _composerLevelsForFormat(fmt) {
-  const info = _thinkingOptionsForFormat(fmt);
+// Levels the composer cycles through. Mirrors the schedule + Models-tab logic
+// so the UI never offers a setting the provider would silently coerce.
+// Returns ['none'] when format='none' so callers can short-circuit.
+// The per-model override (thinking_levels) wins over the format default —
+// pass mid where the active model is known; omitting it keeps the old
+// format-only behaviour for callers that have no model at hand.
+function _composerLevelsForFormat(fmt, mid) {
+  const info = (mid && _thinkingLevelsForModel(mid)) || _thinkingOptionsForFormat(fmt);
   if (!info) return ['none'];  // unsupported
   // info.options is [{value,label}, ...] — extract values, ensure 'none' is first.
   const vals = info.options.map(o => o.value);
@@ -69,6 +86,18 @@ function _setThinkingLevel(level, persist) {
   if (persist && chat && chat.sessionId) {
     API.post('/v1/sessions/manage', {
       action: 'thinking_level', session_id: chat.sessionId, level: level,
+    }).then(r => {
+      // The server tells us when this change threw away a warm KV prefix —
+      // ONLY an on↔off flip on a local (chat-template) model does, and only
+      // when that prefix was actually warm. Graduating low↔medium↔high never
+      // reports true, so cycling the dial stays silent. Informational: the
+      // change is already applied, this just explains the first slow turn.
+      // Once per chat — the second flip is a conscious choice, not a surprise.
+      if (r && r.prefix_cost && chat && !chat._prefixCostWarned) {
+        chat._prefixCostWarned = true;
+        showToast('Denken umgeschaltet — die nächste Antwort startet langsamer '
+                  + '(der vorgewärmte Kontext des Modells wird neu aufgebaut).');
+      }
     }).catch(() => {});
   }
 }
@@ -79,7 +108,7 @@ function cycleThinkingLevel() {
     showToast('Das gewählte Modell unterstützt kein Denken', true);
     return;
   }
-  const levels = _composerLevelsForFormat(fmt);
+  const levels = _activeComposerLevels();
   // If the saved level isn't in this format's set, jump to the first non-off
   // level. Otherwise advance one step.
   const cur = getThinkingLevel();
@@ -105,7 +134,7 @@ function _ensureValidThinkingLevel() {
     // model. The button is disabled in this state regardless.
     return;
   }
-  const levels = _composerLevelsForFormat(fmt);
+  const levels = _activeComposerLevels();
   if (!levels.includes(cur)) {
     _setThinkingLevel('none', true);
     refreshThinkingButton();
@@ -144,7 +173,7 @@ function refreshThinkingButton() {
   // anyway, so the saved level can stay around for when the user switches
   // back to a thinking-capable model).
   if (supported) {
-    const valid = _composerLevelsForFormat(fmt);
+    const valid = _activeComposerLevels();
     if (!valid.includes(getThinkingLevel())) {
       _setThinkingLevel('none', true);
     }
@@ -167,7 +196,7 @@ function refreshThinkingButton() {
       btn.style.color = colorMap[level] || '';
       // Show the levels this model accepts so the user knows what cycling
       // does. e.g. mistral_blocks → "Thinking: off · cycle: off → high".
-      const valid = _composerLevelsForFormat(fmt);
+      const valid = _activeComposerLevels();
       const cycleHint = valid.length > 1 ? ' · Wechsel: ' + valid.join(' → ') : '';
       btn.title = fmt === 'auto'
         ? `Denken: ${level} · best-effort auf das vom Auto-Router gewählte Modell${cycleHint}`

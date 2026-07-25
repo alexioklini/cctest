@@ -229,7 +229,18 @@ Chat:
 
 **Eingabe-Werkzeugleiste** (über dem Textfeld, links):
 - 📎 Dateien anhängen
-- 🧠 Thinking-Level (off / low / medium / high — nur bei Modellen, die es können)
+- 🧠 **Denk-Stufe** (Aus / Niedrig / Mittel / Hoch) — steuert, wie gründlich das
+  Modell vor der Antwort nachdenkt. Die vier Stufen wirken bei **jedem** Modell,
+  der Weg dahin unterscheidet sich aber: Cloud-Modelle bekommen die Stufe direkt
+  als API-Feld; lokale Modelle (oMLX) werden über den llm-router mit einem
+  Denk-Budget gedeckelt; Modelle, deren API nur „an/aus" kennt (Mistral) oder die
+  gar kein Reasoning haben, bekommen für Niedrig/Mittel eine Tiefen-Anweisung an
+  die Anfrage gehängt. Letzteres wirkt schwächer als ein echtes Budget (es
+  **bittet** um Kürze, statt abzuschneiden), staffelt aber messbar. Wird das
+  Denken bei einem **lokalen** Modell ein- oder ausgeschaltet, erscheint einmal
+  pro Chat ein Hinweis: die nächste Antwort startet langsamer, weil der
+  vorgewärmte Kontext des Modells neu aufgebaut werden muss. Das Durchschalten
+  der Stufen (Niedrig→Mittel→Hoch) kostet das **nicht** und meldet sich nie.
 - 🔬 Recherche-Modus-Override (nur in Projekt-Chats)
 - 🔬 **Deep Research** (Mikroskop-Symbol) — wenn aktiviert, führt der **nächste
   Turn eine tiefe Web-Recherche** aus (Unterfragen → Suche → Quellen lesen →
@@ -560,6 +571,20 @@ Weiterverwendung gegen die Originalquellen prüfen). Das Badge erscheint **nur**
 wenn in der Anfrage tatsächlich eine Quelle abgerufen wurde (Datei gelesen,
 gesucht, Web abgerufen oder Gedächtnis abgefragt) — eine reine Wissensantwort
 ohne Abruf zeigt es nicht.
+
+**Themenwechsel-Hinweis (Badge)**: Ist ein Chat erkennbar zu einem ganz anderen
+Thema gewandert, erscheint unter der Antwort ein blaues Badge **„ⓘ Neues Thema
+erkannt"** samt Knopf **Neuer Chat**. Hintergrund: Der bisherige Verlauf wird bei
+jeder Anfrage mitgeschickt — bei einem echten Themenwechsel kostet das Kontext
+und kann die Antwortqualität senken, weil das Modell alte Inhalte mitgewichtet.
+Der Hinweis ist eine **Empfehlung**, keine Sperre; Sie können im selben Chat
+weiterarbeiten. Er erscheint **höchstens einmal pro Chat** und erst ab dem
+sechsten Beitrag. Erkannt wird der Wechsel daran, dass die Anfrage ganz andere
+Werkzeuge braucht als der bisherige Chat (z. B. Dokumenten-Recherche → Code und
+Shell); erst wenn das zutrifft, prüft eine kurze Zusatzabfrage, ob es wirklich
+ein anderes Thema ist. Ein Themenwechsel **innerhalb** derselben Werkzeuge (etwa
+von einem Rechtsgebiet zu einem anderen) wird bewusst **nicht** erkannt — das
+würde bei jeder Anfrage eine Zusatzabfrage kosten.
 
 ---
 

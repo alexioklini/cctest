@@ -140,6 +140,65 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
   payload's `thinking:{type}` field (`disabled` off / `enabled`+`budget_tokens`
   on), built by `build_anthropic_payload` — `reasoning_effort` never applies.
 
+### Four levels on every model (9.408.0)
+
+The composer offers Off/Low/Medium/High for every model, but only one group
+graduates natively. Three mechanisms, picked per `thinking_format`:
+
+| Group | How Low/Medium/High differ |
+|---|---|
+| `reasoning_field`/`openai_opaque` cloud | `reasoning_effort` verbatim — the provider does it |
+| oMLX / chat-template providers | the **llm-router** caps reasoning via `thinking_budget` |
+| `mistral_blocks`, `thinking_format:"none"` | wire-only depth instruction on the user message |
+
+- **oMLX**: the chat template knows only `enable_thinking` on/off, so the router
+  (`canonical.thinking_budget_for`, defaults `{low:96, medium:384}`, `high` =
+  uncapped) adds a token cap that mlx_vlm enforces by stopping the reasoning.
+  Per-model override lives in the ROUTER's `models.extras.thinking_budgets`, not
+  in brain's config. Measured on gemma-4-12B end-to-end: 272 / 959 / 2593
+  reasoning chars.
+- **Mistral / no-reasoning models**: the API takes only `none|high` (low/medium
+  → HTTP 400) and rejects every budget field (422). `brain.THINKING_SIM_PROMPTS`
+  therefore appends a depth instruction to the LAST USER MESSAGE — wire-only, via
+  the caveman mechanism `_append_to_wire_user`, so the system prompt and tool
+  descriptions stay byte-identical and the warm KV prefix survives every level
+  change. Measured on mistral-medium-3.5: 34 % / 66 % / 100 %. `thinking_is_simulated(model)`
+  gates it; models that graduate for real never get the suffix. **The prompt text
+  IS the mechanism** — the first "keep the reasoning proportionate" wording
+  measured 109 % (no effect); the explicit step count works. Re-measure after any
+  rewording.
+- `_validate_thinking_level_for_model` accepts low/medium for those two formats
+  since 9.408.0 (`inline_tags` remains on/off).
+- Per-model `thinking_levels: [...]` in config.json pins the level set the UI
+  offers, overriding the format default (exposed via `_SAFE_FIELDS`).
+
+### Prefix-cost advisory
+
+`thinking_switch_costs_prefix(model, old, new)` answers one question: does this
+change throw away a warm KV prefix? True ONLY for an on↔off flip on a
+chat-template provider (where `enable_thinking` is rendered into the tokenised
+prompt) whose prefix is currently warm. Graduation never qualifies — the level
+is an API field or a wire suffix, so the prefix is byte-identical. Returns False
+on any uncertainty: a missed warning costs one prefill, a false one costs the
+warning's credibility. Surfaced as `prefix_cost` on the `thinking_level` manage
+action.
+
+### Topic-drift hint (context poisoning)
+
+Two stages, so the common case costs nothing:
+
+1. `drift_candidate(prev_sig, cur_sig, message_count)` — pure arithmetic on the
+   turn's already-resolved tool names (Jaccard ≤ 0.34, ≥ 6 messages, ≥ 3 tools,
+   ubiquitous tools like `ask_user_question`/`think` filtered out).
+2. `drift_confirm(...)` — only for survivors: one classifier call, ~200 tokens
+   in, `max_tokens=3`, thinking off, 8 s timeout, any failure → no hint.
+
+`session._drift_checked` latches after the first confirm (even on NO), so a chat
+can never spend more than one call on this. Result rides as
+`msg_metadata.topic_drift` → a blue badge + "Neuer Chat" button on the reply.
+Blind to drift that keeps the same tools — catching that would mean an LLM call
+every turn.
+
 ## Provider routing
 
 `resolve_provider_for_model(model)` is the **single source of truth** for
