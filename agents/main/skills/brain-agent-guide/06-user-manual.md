@@ -596,16 +596,17 @@ anhängen.
 weiter; es geht nichts verloren.
 
 Der Dialog erscheint **höchstens einmal pro Chat**, frühestens bei Ihrer zweiten
-Frage (vorher gibt es nichts zu vergleichen). Erkannt wird der Wechsel daran,
-dass die Anfrage ganz andere Werkzeuge braucht als der bisherige Chat (z. B.
-Dokumenten-Recherche → Code und Shell); erst wenn das zutrifft, prüft eine kurze
-Zusatzabfrage, ob es wirklich ein anderes Thema ist.
+Frage (vorher gibt es nichts zu vergleichen). Ein Verdacht entsteht, wenn sich
+**die Art der Aufgabe** ändert (etwa Recherche → Programmieren) **oder** die
+Anfrage ganz andere Werkzeuge braucht als der bisherige Chat. Trifft eines davon
+zu, entscheidet eine kurze Zusatzabfrage, ob es wirklich ein anderes Thema ist —
+im Zweifel lautet die Antwort „nein", damit Sie nicht grundlos gefragt werden.
 
-**Nicht erkannt** werden zwei Fälle, beide bewusst: ein Themenwechsel
-**innerhalb** derselben Werkzeuge (etwa von einem Rechtsgebiet zu einem anderen)
-— das zu fangen hieße, bei jeder Anfrage eine Zusatzabfrage zu bezahlen. Und
-Anfragen, bei denen nur ein einziges Werkzeug im Spiel ist: dort wäre jede
-Abweichung sofort ein „Totalwechsel", das ergäbe zu viele Fehlalarme.
+**Nicht erkannt** werden zwei Fälle, beide bewusst: ein Themenwechsel, bei dem
+sich **weder** die Aufgabenart **noch** die Werkzeuge ändern (etwa von einem
+Rechtsgebiet zu einem anderen) — das zu fangen hieße, bei jeder Anfrage eine
+Zusatzabfrage zu bezahlen. Und der Übergang von einer Begrüßung oder Kurzfrage
+zur ersten echten Frage: das ist der normale Gesprächsbeginn, kein Themenwechsel.
 
 In geplanten Aufgaben gibt es den Dialog nicht (dort ist niemand, der antworten
 könnte).

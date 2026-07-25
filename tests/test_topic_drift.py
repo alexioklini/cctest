@@ -100,6 +100,45 @@ class DriftCandidateTest(unittest.TestCase):
         dora = frozenset(python | {"web_fetch", "exa_search", "searxng_search"})
         self.assertFalse(brain.drift_candidate(python, dora, 5))
 
+    # ── signal 2: classifier task types ──────────────────────────────────
+    # The stage-1 filter is a COST gate, not a verdict: whatever passes goes to
+    # one ~200-token confirm call that reads the real messages and answers NO
+    # when unsure. So EITHER signal suffices — a wrong yes costs tokens once per
+    # chat, a wrong no means the feature never fires at all.
+
+    CODING = frozenset({"coding"})
+    RESEARCH = frozenset({"research"})
+    FAST = frozenset({"fast"})
+
+    def test_task_type_change_alone_is_enough(self):
+        """The case an AND-of-both-signals missed: on chat 93e83868 the type
+        changed every turn while the tool sets stayed 83 % similar."""
+        similar = frozenset(self.CODE | {"web_fetch", "exa_search"})
+        self.assertTrue(brain.drift_candidate(
+            self.CODE, similar, 5, self.CODING, self.RESEARCH))
+
+    def test_same_task_type_falls_back_to_tools(self):
+        """Same kind of question → signal 1 is silent, but a genuinely different
+        tool set still qualifies."""
+        self.assertFalse(brain.drift_candidate(
+            self.CODE, self.CODE, 5, self.CODING, self.CODING))
+        self.assertTrue(brain.drift_candidate(
+            self.CODE, self.DOCS, 5, self.CODING, self.CODING))
+
+    def test_leaving_fast_does_not_trigger_on_type_alone(self):
+        """`fast` is the small-talk class — leaving it is the conversation
+        starting. Without this, every chat opening with "hi" would pay for a
+        confirm call on its second message. (The tool signal may still fire;
+        this only disables the TYPE shortcut.)"""
+        # Same tools on both sides, so only the type signal could trigger.
+        self.assertFalse(brain.drift_candidate(
+            self.CODE, self.CODE, 3, self.FAST, self.CODING))
+
+    def test_missing_task_types_fall_back_to_tools(self):
+        """Classifier off → tool overlap decides alone, degraded but not wrong."""
+        self.assertTrue(brain.drift_candidate(self.DOCS, self.CODE, 5, None, None))
+        self.assertFalse(brain.drift_candidate(self.DOCS, self.DOCS, 5, None, None))
+
     def test_two_tool_sides_are_compared(self):
         """Two is the smallest set where the ratio means something — and short
         chats (where drift is most common) rarely resolve more."""

@@ -1212,6 +1212,27 @@ def deliver_context_decision(session_id: str, decision: str) -> bool:
 _drift_gate_pending: dict = {}
 
 
+def _remember_drift_types(session, analysis) -> None:
+    """Keep the last TWO turns' classifier task types on the session, as
+    (previous, current), for the topic-drift gate's second signal.
+
+    Called wherever the classifier's analysis becomes available — which is AFTER
+    the drift check runs in the same turn, hence the two-slot history: the gate
+    compares the two stored values, so the type signal simply lags the tool
+    signal by one exchange. Best-effort; a failure here must never affect the
+    turn.
+    """
+    try:
+        types = frozenset(t for t in ((analysis or {}).get("task_types") or []) if t)
+        if not types:
+            return
+        prev = getattr(session, "_drift_types", None) or (None, None)
+        with session.lock:
+            session._drift_types = (prev[1], types)
+    except Exception:
+        pass
+
+
 def deliver_drift_decision(session_id: str, decision: str) -> bool:
     """Called by POST /v1/chat/drift-decision. True iff a dialog was waiting
     (False = already timed out or resolved — the turn moved on)."""
@@ -4814,10 +4835,25 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         _cur_sig = engine._drift_tool_signature(
                             _bd_now.get("in_prompt") or _active_tool_names)
                         _prev_sig = getattr(session, "_drift_tool_sig", None)
+                        # Classifier task types are the SECOND signal — a direct
+                        # statement about the KIND of question, where the tool
+                        # set is only a by-product. Both must agree before we
+                        # ask, which is what keeps false positives low enough to
+                        # justify a blocking dialog.
+                        #
+                        # This turn's classification runs LATER in the worker, so
+                        # we compare the last TWO stored types (both written at
+                        # turn end, see _drift_types below). That means the type
+                        # signal lags one turn behind the tool signal — the check
+                        # simply needs one more exchange before it can use it.
+                        # Until two are stored, the tool overlap decides alone.
+                        _prev_types, _cur_types = (
+                            getattr(session, "_drift_types", None) or (None, None))
                         if (_prev_sig is not None
                                 and not getattr(session, "_drift_checked", False)
                                 and engine.drift_candidate(
-                                    _prev_sig, _cur_sig, len(session.messages))):
+                                    _prev_sig, _cur_sig, len(session.messages),
+                                    _prev_types, _cur_types)):
                             session._drift_checked = True
                             # Earlier topic = the FIRST user message: it fixes what
                             # the chat was originally about. Comparing against the
@@ -7690,6 +7726,7 @@ class ChatHandlerMixin:
                     "complexity": _frozen_ta.get("complexity", ""),
                     "reasoning": _frozen_ta.get("reasoning", ""),
                 }
+                _remember_drift_types(session, _frozen_ta)
             # MoA on a frozen session: model + tool set stay pinned (prefix
             # byte-stable, cache pricing intact) but the classifier still runs —
             # ONLY to decide the fan-out (gate + reference pick), never to
@@ -7777,6 +7814,7 @@ class ChatHandlerMixin:
                         "complexity": _analysis.get("complexity", ""),
                         "reasoning": _analysis.get("reasoning", ""),
                     }
+                    _remember_drift_types(session, _analysis)
             # Show the (frozen) working model in the spinner, same as a fresh route.
             live.emit("auto_route", auto_route)
         elif not model_override and (want_auto or auto_by_agent):
@@ -7806,6 +7844,7 @@ class ChatHandlerMixin:
                         "complexity": auto_analysis.get("complexity", ""),
                         "reasoning": auto_analysis.get("reasoning", ""),
                     }
+                    _remember_drift_types(session, auto_analysis)
             # MoA: the auto pick above IS the aggregator; the plan adds the
             # classification-gated reference fan-out (None = degrade to a plain
             # Smart turn — gate miss / keyword fallback / pool collapsed).

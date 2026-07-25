@@ -205,16 +205,32 @@ the poisoned turn first and only then said "this was a new topic".
 
 Two stages, so the common case costs nothing:
 
-1. `drift_candidate(prev_sig, cur_sig, message_count)` — pure arithmetic on the
-   turn's **in-prompt** tool names (Jaccard ≤ 0.34, ≥ 3 messages, ≥ 2 tools per
-   side, ubiquitous tools like `ask_user_question`/`think` filtered out).
-   **The source must be `_tool_breakdown["in_prompt"]`, not `_active_tool_names`.**
-   The latter is everything `resolve_active_tools` resolved (~100 on a typical
-   install) and is subject-independent — its overlap sits near 100 % between any
-   two turns, so the check can never fire. Only the classifier's per-turn gating
-   tracks the topic: on chat 93e83868 the in-prompt set went 10 → 40 → 46 tools
-   across "hi" / "python code" / "DORA", giving 23 % overlap on the jump. Reading
-   the wrong list made the gate a silent no-op from 9.408.0 to 9.409.1.
+1. `drift_candidate(prev_sig, cur_sig, message_count, prev_types, cur_types)` —
+   arithmetic only, no LLM. Fires on **either** of two signals:
+
+   - **Task type changed** (`coding` → `research` → …): a direct statement about
+     the KIND of question. `fast` is exempt as the PREVIOUS type — leaving
+     small talk is the conversation starting, not a topic change.
+   - **Tool overlap ≤ 0.34** (Jaccard), with ≥ 3 messages and ≥ 2 tools per side.
+
+   OR, not AND: stage 1 is a **cost filter, not a verdict** — everything that
+   passes goes to the confirm call, which reads the real messages and answers NO
+   when unsure. A wrong yes costs ~200 tokens once per chat; a wrong no means the
+   feature never fires. Requiring both signals would have kept chat 93e83868
+   silent through an obvious `fast → coding → research` sequence, because its
+   tool sets stayed 83 % similar after the first turn.
+
+   **The tool source must be `_tool_breakdown["in_prompt"]`, not
+   `_active_tool_names`.** The latter is everything `resolve_active_tools`
+   resolved (~100 on a typical install), is subject-independent, and its overlap
+   sits near 100 % between any two turns — reading it made the gate a silent
+   no-op from 9.408.0 to 9.409.1.
+
+   **The type signal lags one turn.** This turn's classification is produced
+   *after* the gate runs, so `_remember_drift_types(session, analysis)` stores
+   the last two type sets at turn end (written at all three sites that build
+   `auto_route["analysis"]`) and the gate compares those. The check therefore
+   needs one extra exchange before the type signal is usable.
    Both floors are tied to the call site: `message_count` is `len(session.messages)`
    BEFORE the turn, so it runs 1, 3, 5 … and the earliest reachable check is turn 2
    at 3. The tool floor is 2 because a single tool per side can only score 0 % or
