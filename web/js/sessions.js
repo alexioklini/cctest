@@ -705,17 +705,27 @@ function newChat(opts) {
   chat.workflowRunId = '';
   // The per-agent chat object is reused across conversations, so a fresh chat
   // must reset the composer back to defaults instead of inheriting the previous
-  // conversation's choices. Model → the agent's standard/default model (never
-  // the last picked one); caveman/memory → their defaults (never reused).
-  chat.model = state.defaultModelForAgent(state.activeAgentId);
+  // conversation's choices. Model → the agent's standard/default model (not the
+  // last picked one); caveman/memory → their defaults. The ONE exception is
+  // opts.carrySettings below.
+  // opts.carrySettings — keep the CURRENT chat's composer choices instead of
+  // resetting to defaults. Only for hand-offs that continue the same work in a
+  // fresh chat (topic-drift "Neuer Chat"): the user picked these deliberately a
+  // moment ago, so re-defaulting them would be a surprise. Must be applied HERE,
+  // inside the reset block — a caller that sets chat.* before calling newChat()
+  // has its values overwritten two lines later.
+  const _carry = opts.carrySettings || null;
+  chat.model = _carry?.model || state.defaultModelForAgent(state.activeAgentId);
   chat.autoPicked = null;
   chat.autoReason = '';
   if (typeof updateModelSelectorDisplay === 'function') updateModelSelectorDisplay(chat.model);
   const _def = state.defaultComposerModes();
-  chat.cavemanMode = _def.cavemanMode;
+  chat.cavemanMode = _carry && _carry.cavemanMode !== undefined
+    ? _carry.cavemanMode : _def.cavemanMode;
   chat.saveToMemory = _def.saveToMemory;
-  chat.memoryMode = _def.memoryMode;
-  chat.thinkingLevel = _def.thinkingLevel;
+  chat.memoryMode = _carry && _carry.memoryMode !== undefined
+    ? _carry.memoryMode : _def.memoryMode;
+  chat.thinkingLevel = _carry?.thinkingLevel || _def.thinkingLevel;
   if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
   // Fresh chat → Deep Research always OFF (never inherited from the prior
   // conversation, project or projectless). Reset the per-chat flag + repaint the
@@ -772,8 +782,19 @@ function newChat(opts) {
   try {
     const _input = _composerInputEl();
     if (_input) {
-      _input.value = '';
+      // opts.prefill — carry a question into the fresh chat WITHOUT sending it
+      // (topic-drift hand-off). Set HERE rather than by the caller: this block
+      // clears the composer unconditionally, so anything written beforehand
+      // would be wiped. Caret goes to the end so typing continues the question
+      // instead of prefixing it.
+      _input.value = opts.prefill || '';
       try { autoGrow(_input); } catch (e) {}
+      if (opts.prefill) {
+        try {
+          _input.focus();
+          _input.setSelectionRange(_input.value.length, _input.value.length);
+        } catch (e) {}
+      }
     }
     state._pendingFiles = [];
     state._pendingImages = [];

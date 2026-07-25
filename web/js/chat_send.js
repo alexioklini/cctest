@@ -2235,27 +2235,22 @@ function closeTopicDriftDialog() {
 
 // Open a fresh chat that inherits the current one's settings and carries the
 // question into the composer WITHOUT sending it.
+//
+// Both go through newChat()'s own options rather than being set afterwards:
+// newChat resets the composer to defaults and clears the input as part of its
+// job, so anything assigned around the call is silently overwritten (the bug
+// this replaced — the new chat opened empty with default settings).
 function _openDriftChat(carry) {
   try {
-    newChat();
-    const c = state.activeChat;
-    if (c) {
-      if (carry.model) c.model = carry.model;
-      if (carry.thinkingLevel) c.thinkingLevel = carry.thinkingLevel;
-      if (carry.cavemanMode !== undefined) c.cavemanMode = carry.cavemanMode;
-      if (carry.memoryMode !== undefined) c.memoryMode = carry.memoryMode;
-    }
-    const input = document.getElementById('chat-input')
-                  || document.getElementById('welcome-input');
-    if (input && carry.prompt) {
-      input.value = carry.prompt;
-      input.dispatchEvent(new Event('input', { bubbles: true }));  // autosize + button state
-      input.focus();
-      // Caret at the end so typing continues the question instead of prefixing it.
-      try { input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
-    }
-    if (typeof updateStatusBar === 'function') updateStatusBar();
-    if (typeof refreshThinkingButton === 'function') refreshThinkingButton();
+    newChat({
+      prefill: carry.prompt || '',
+      carrySettings: {
+        model: carry.model || '',
+        thinkingLevel: carry.thinkingLevel || '',
+        cavemanMode: carry.cavemanMode,
+        memoryMode: carry.memoryMode,
+      },
+    });
     showToast('Neuer Chat — Ihre Frage steht im Eingabefeld, noch nicht gesendet');
   } catch (e) {
     showToast('Neuer Chat konnte nicht geöffnet werden', true);
