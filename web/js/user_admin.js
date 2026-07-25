@@ -728,6 +728,13 @@ function renderUserSettingsMemory(body) {
         cavemanOpts,
         'Knappheit der Antworten in neuen Chats.')}
       <hr style="border:none;border-top:1px solid var(--border-light);margin:18px 0">
+      <h3 style="margin:0 0 4px 0;font-size:15px">Rückfragen</h3>
+      <div style="font-size:12px;color:var(--text-400);margin-bottom:12px">
+        Dialoge, die der Assistent vor dem Ausführen einer Anfrage stellen kann.
+      </div>
+      ${_us_checkbox('Bei Modellwechsel nicht mehr fragen', 'us-model-switch-no-ask', !!prefs.model_switch_no_ask,
+        'Wechseln Sie mitten im Chat das Modell, fragt der Assistent normalerweise nach (der zwischengespeicherte Verlauf geht beim Wechsel verloren — die Antwort wird teurer bzw. langsamer). Wenn aktiv, wird der Wechsel immer ohne Rückfrage akzeptiert. Entspricht der Checkbox „Nicht mehr fragen“ im Dialog selbst. Standard: aus.')}
+      <hr style="border:none;border-top:1px solid var(--border-light);margin:18px 0">
       <h3 style="margin:0 0 4px 0;font-size:15px">Memory aus dem Chat-Verlauf</h3>
       <div style="font-size:12px;color:var(--text-400);margin-bottom:12px">
         Brain liest Ihre Chats und pflegt ein einziges Profil, das Ihre Arbeit, Interessen und das beschreibt, was Sie aktuell beschäftigt. Der Agent lädt dieses in der ersten Runde jedes Chats.
@@ -863,6 +870,7 @@ async function saveUserSettingsMemory() {
     memory_sched_default: memSched === '' ? null : parseInt(memSched, 10),
     thinking_level_default: thinkDef === '' ? null : thinkDef,
     caveman_mode_default: cavemanDef === '' ? null : parseInt(cavemanDef, 10),
+    model_switch_no_ask: !!document.getElementById('us-model-switch-no-ask')?.checked,
     daily_summary_enabled: dailyEnabled,
     daily_summary_hour_local: dailyHour,
   };

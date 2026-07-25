@@ -282,6 +282,14 @@ while the model stays user-chosen — those turns ARE gated. Skipping on mere
 presence made the gate structurally dead (9.412.1, session 426ac9f0 — the same
 failure shape as the drift gate's wrong tool list in 9.409.2).
 
+Per-user opt-out (9.413.0): `users.preferences → model_switch_no_ask` (default
+false) suppresses the dialog entirely — a switch is always accepted on the new
+model. Set via the dialog's "Nicht mehr fragen" checkbox (applied only together
+with "Mit neuem Modell weiter" — it contradicts keep_old/cancel), reset in the
+user settings (Memory tab → Rückfragen). `_model_switch_no_ask(user_id)` is
+fail-safe (any read trouble → ask) and is checked LAST in the trigger condition
+so the one DB read is only paid when a real switch was detected.
+
 Why it warns at all: the prompt cache is keyed to the model that answered so
 far — cloud models bill cache reads at ~0.1×, local models keep a warm prefill
 on the GPU. A switch re-processes the whole history once at full price (cloud)

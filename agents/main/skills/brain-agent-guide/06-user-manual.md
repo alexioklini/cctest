@@ -630,6 +630,15 @@ wird einmal komplett neu verarbeitet — die Antwort wird dadurch teurer
 **Ohne Antwort läuft die Anfrage nach fünf Minuten** einfach mit dem neuen
 Modell weiter.
 
+**Nicht mehr fragen**: Der Dialog enthält eine Checkbox „Nicht mehr fragen —
+Modellwechsel künftig immer akzeptieren". Haken Sie sie an und wählen **Mit
+neuem Modell weiter**, wird die Einstellung in Ihrem Benutzerkonto gespeichert
+und künftige Modellwechsel laufen ohne Rückfrage. Zurücksetzen können Sie das
+jederzeit unter **Einstellungen → Memory → Rückfragen** (Checkbox „Bei
+Modellwechsel nicht mehr fragen" abwählen). Standardmäßig ist die Rückfrage
+aktiv. Bei „Altes Modell behalten" oder „Abbrechen" wird die Checkbox
+ignoriert — sie widerspräche der Entscheidung.
+
 Der Dialog erscheint nur bei einem von Ihnen gewählten Wechsel: Die
 Automatik-Modi (Smart/Experten-Gremium) wählen ihr Modell einmal pro Chat und
 behalten es genau aus diesem Grund bei — dort gibt es nichts zu warnen. Auch

@@ -2312,6 +2312,10 @@ function showModelSwitchDialog(chat, d) {
           neu verarbeitet, diese Antwort wird dadurch teurer bzw. startet langsamer.<br><br>
           Ohne Antwort läuft die Anfrage nach 5 Minuten mit dem neuen Modell weiter.
         </p>
+        <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;color:var(--text-300);cursor:pointer">
+          <input type="checkbox" id="ms-no-ask" style="margin:0">
+          Nicht mehr fragen — Modellwechsel künftig immer akzeptieren
+        </label>
       </div>
       <div class="dialog-footer">
         <button class="dialog-btn dialog-btn-ghost" data-value="cancel">Abbrechen</button>
@@ -2322,6 +2326,11 @@ function showModelSwitchDialog(chat, d) {
   overlay.querySelectorAll('.dialog-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const decision = btn.getAttribute('data-value');
+      // Read BEFORE closing — the checkbox leaves the DOM with the overlay.
+      // The opt-out only makes sense together with accepting the switch:
+      // "keep_old"/"cancel" contradict "always accept", so it is ignored there.
+      const noAsk = decision === 'continue'
+        && !!document.getElementById('ms-no-ask')?.checked;
       closeModelSwitchDialog();
       try {
         const r = await API.modelSwitchDecision(chat.sessionId, decision);
@@ -2330,6 +2339,19 @@ function showModelSwitchDialog(chat, d) {
         }
       } catch (e) {
         showToast('Entscheidung konnte nicht übermittelt werden', true);
+      }
+      if (noAsk) {
+        // Persist the per-user opt-out (resettable in the user settings,
+        // Memory tab → Rückfragen). Best-effort — a failed save just means
+        // the dialog asks again next time.
+        try {
+          const r = await API.post('/v1/auth/preferences',
+            {preferences: {model_switch_no_ask: true}});
+          if (r && r.user) state.authUser = r.user;
+          showToast('Gespeichert — bei Modellwechsel wird nicht mehr gefragt');
+        } catch (e) {
+          showToast('Einstellung konnte nicht gespeichert werden', true);
+        }
       }
     });
   });

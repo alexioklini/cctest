@@ -133,6 +133,29 @@ class GateAppliesTest(unittest.TestCase):
         self.assertFalse(self._applies(interactive=False))
 
 
+class NoAskPreferenceTest(unittest.TestCase):
+    """Per-user opt-out (`model_switch_no_ask`, 9.413.0). The helper must be
+    fail-SAFE: any trouble reading the preference means ASK — silently
+    skipping the dialog is the opt-in, never the fallback."""
+
+    def test_no_user_id_means_ask(self):
+        self.assertFalse(chat_handlers._model_switch_no_ask(""))
+
+    def test_unwired_auth_means_ask_not_crash(self):
+        """Bare import (tests, tools) has no injected _auth_mod — the helper
+        must swallow that and default to asking."""
+        self.assertFalse(chat_handlers._model_switch_no_ask("some-user"))
+
+    def test_preference_is_registered_with_default_off(self):
+        from server_lib import auth as auth_mod
+        self.assertIn("model_switch_no_ask", auth_mod.PREFERENCE_KEYS)
+        self.assertIs(auth_mod.PREFERENCE_DEFAULTS["model_switch_no_ask"],
+                      False)
+        self.assertIs(auth_mod._coerce_pref("model_switch_no_ask", 1), True)
+        self.assertIs(auth_mod._coerce_pref("model_switch_no_ask", None),
+                      False)
+
+
 class DeliverDecisionTest(unittest.TestCase):
     """The endpoint↔worker handshake: deliver into a waiting slot → True;
     nothing waiting (timeout already continued the turn) → False, so the

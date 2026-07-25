@@ -41,12 +41,15 @@ CURATED_CHANGELOG: list[dict] = [
                 "fortfahren, beim bisherigen Modell bleiben oder die Anfrage "
                 "abbrechen — Ihre Frage bleibt dabei im Eingabefeld erhalten. "
                 "Ohne Antwort läuft die Anfrage nach fünf Minuten einfach mit "
-                "dem neuen Modell weiter. Außerdem behoben: Entschieden Sie "
-                "sich beim Themenwechsel-Hinweis für einen neuen Chat, blieb "
-                "die mitgenommene Frage zusätzlich im alten Chat stehen — sie "
-                "wird dort jetzt sauber entfernt.",
+                "dem neuen Modell weiter. Wer die Rückfrage nicht möchte, "
+                "hakt im Dialog „Nicht mehr fragen“ an — Modellwechsel werden "
+                "dann immer akzeptiert; zurücksetzen lässt sich das jederzeit "
+                "unter Einstellungen → Memory → Rückfragen. Außerdem behoben: "
+                "Entschieden Sie sich beim Themenwechsel-Hinweis für einen "
+                "neuen Chat, blieb die mitgenommene Frage zusätzlich im alten "
+                "Chat stehen — sie wird dort jetzt sauber entfernt.",
         "audience": "user",
-        "versions": ["9.412.0", "9.412.1"],
+        "versions": ["9.412.0", "9.412.1", "9.413.0"],
     },
     {
         "version": "9.408.0",

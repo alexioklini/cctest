@@ -29,7 +29,11 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8420/v1/sessions
   `thinking_level_default` (null|none|low|medium|high),
   `caveman_mode_default` (null|0..3) — per-user new-chat composer defaults,
   null = inherit the global `composer_defaults`,
-  `daily_summary_enabled`, `daily_summary_hour_local`)
+  `daily_summary_enabled`, `daily_summary_hour_local`,
+  `model_switch_no_ask` (bool, default false) — Modellwechsel-Dialog nie
+  zeigen, Wechsel immer akzeptieren; gesetzt über die „Nicht mehr
+  fragen“-Checkbox im Dialog, rücksetzbar unter Einstellungen → Memory →
+  Rückfragen)
 - `GET /v1/auth/me` — current user
 - `GET /v1/auth/users` — admin: list all users
 - `POST /v1/auth/users` — admin: create/update/delete

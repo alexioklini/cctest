@@ -1262,6 +1262,21 @@ def _model_switch_gate_applies(interactive, want_auto, auto_route) -> bool:
     return True
 
 
+def _model_switch_no_ask(user_id: str) -> bool:
+    """Per-user opt-out of the model-switch dialog (users.preferences →
+    `model_switch_no_ask`, set via the dialog's "nicht mehr fragen" checkbox,
+    resettable in the user-settings GUI). Default False. Fail-SAFE: any
+    trouble (no user id, auth not wired in tests, unknown user) means ASK —
+    the dialog is the safe default, silently skipping it is the opt-in."""
+    if not user_id:
+        return False
+    try:
+        u = _auth_mod.AuthDB.get_user(user_id) or {}
+        return bool((u.get("preferences") or {}).get("model_switch_no_ask"))
+    except Exception:
+        return False
+
+
 def _prev_turn_model(session, sid):
     """(model, original_model) of the LAST assistant reply — ('', '') when the
     session has none yet (turn 1) or nothing is recorded.
@@ -4226,11 +4241,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                         _prev_model, _prev_orig = _prev_turn_model(session, sid)
                         _prev_cfg = (engine._models_config or {}).get(
                             _prev_model) or {}
+                        # Pref lookup LAST — one DB read, paid only when a
+                        # real switch was detected.
                         if (_prev_model
                                 and session.model != _prev_model
                                 and session.model != _prev_orig
                                 and _prev_cfg
-                                and _prev_cfg.get("enabled", True)):
+                                and _prev_cfg.get("enabled", True)
+                                and not _model_switch_no_ask(
+                                    session.user_id or "")):
                             _mev = threading.Event()
                             _model_gate_pending[sid] = {
                                 "event": _mev, "decision": None}

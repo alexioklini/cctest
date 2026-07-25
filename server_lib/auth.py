@@ -83,6 +83,11 @@ PREFERENCE_DEFAULTS = {
     "caveman_mode_default": None,     # None | 0|1|2|3
     "daily_summary_enabled": False,
     "daily_summary_hour_local": 6,
+    # Model-switch gate opt-out (9.413.0): when True the mid-chat model-switch
+    # dialog ("Modellwechsel erkannt") never opens for this user — a switch is
+    # always accepted on the NEW model. Default False = ask. Resettable in the
+    # user-settings GUI.
+    "model_switch_no_ask": False,
     # Cosmetic ASCII companion shown in the chat spinner + welcome screen.
     # Purely client-side — the server only stores/validates the choice.
     #   ""           — default-on: client auto-picks a species (deterministic
@@ -156,7 +161,7 @@ def _coerce_pref(key: str, value):
         if s and s != "off" and s not in BUDDY_SPECIES:
             raise ValueError(f"buddy_species must be ''|'off'|{'|'.join(BUDDY_SPECIES)}")
         return s
-    if key == "daily_summary_enabled":
+    if key in ("daily_summary_enabled", "model_switch_no_ask"):
         return bool(value)
     if key == "daily_summary_hour_local":
         try:
