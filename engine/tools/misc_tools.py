@@ -121,8 +121,13 @@ def tool_use_skill(args: dict) -> str:
     # them — but skills can now be GENERATED FROM A CHAT ("SKILL.md aus Chat
     # generieren", v9.294), and such a SKILL.md can quote real names/values from
     # the conversation it was distilled from. Cheap insurance; no-op without an
-    # active mapping.
-    return _brain._gdpr_anon_tool_text(_ok(out), f"use_skill:{skill_name}")
+    # active mapping. classify=False: skill bodies are Brain's own curated
+    # instruction text, not user documents — the ARL keyword heuristic
+    # false-positives on them (e.g. "ad-hoc HTML" matched the strict keyword
+    # "Ad-hoc" and made the skill unloadable on cloud models).
+    return _brain._gdpr_anon_tool_text(
+        _ok(out), f"use_skill:{skill_name}", classify=False
+    )
 
 
 def _current_user_for_skills():

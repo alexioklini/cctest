@@ -1810,7 +1810,12 @@ preamble goes in first-user-message instead.
   ledger no longer rewrites values inside attachment-notice disk paths, so
   follow-up document reads keep working. Non-anonymising sessions are
   unaffected; the document-classification gate now also covers mempalace
-  and web reads (consistent with file reads).
+  and web reads (consistent with file reads). Exempt from that gate (9.414.1):
+  `use_skill` — skill bodies are Brain's own curated instruction text, not
+  user documents, and the ARL keyword heuristic false-positived on them
+  (e.g. "ad-hoc HTML" in a skill matched the strict keyword "Ad-hoc" and
+  made the skill unloadable on cloud models). The GDPR pseudonymisation
+  sweep still applies to skill output (chat-generated skills can quote PII).
 - **Entity-consistent pseudonymisation (9.337.0, L2)**: the mapping works on
   PERSON level, not string level. One fake identity per person
   (`Mapping.entities` in `pseudonymizer.py`; matching/rendering in
