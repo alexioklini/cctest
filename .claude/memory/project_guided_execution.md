@@ -1,0 +1,17 @@
+---
+name: Guided Prompt Execution
+description: Guided execution feature — decompose prompt into sequential subtasks; granularity knob (coarse/fine) + needs_prior flag added 2026-05-12
+type: project
+originSessionId: e089248f-7683-4bf7-b506-8f99f4ba87b4
+---
+Guided Prompt Execution (built 2026-05-11): for models with `guided_execution: true` in config, `run_guided_execution()` in brain.py decomposes the user message into ordered subtasks, runs each sequentially via `_run_delegate`, last task is always a tools-off synthesis whose result IS the final answer. Triggered in `handlers/chat.py` before `send_message_with_fallback`. SSE: `guided_task_start` / `guided_task_progress` / `guided_task_done`. Inter-task hand-off: results ≤800 chars inline, larger ones filed to MemPalace (room `guided_task_results`, source `session/<sid>#guided/<i>`) with a head-stub pointer; synthesis task always gets full untruncated results. No DAG — strictly linear by design (user explicitly decided against a DAG).
+
+**2026-05-12 additions:**
+- **Granularity knob**: `run_guided_execution(granularity=...)` — `"coarse"` (2–5 self-contained subtasks, `_GUIDED_DECOMPOSE_SYSTEM`) vs `"fine"` (up to 12 tiny atomic one-action subtasks, `_GUIDED_DECOMPOSE_SYSTEM_FINE` — keeps small local models on track / reduces hallucination). Per-model `guided_execution_granularity` in config wins; else `handlers/chat.py` defaults `"fine"` when `engine.is_model_local(model)` else `"coarse"`.
+- **`needs_prior` flag**: planner may emit objects `{"task": str, "needs_prior": bool}` instead of bare strings (bare string = `needs_prior=True`, legacy linear chain). A task with `needs_prior=False` (and not the synthesis task) runs with NO prior-results block — lean prompt for independent fan-out steps (e.g. "summarize doc A" / "summarize doc B" in parallel, only the final "compare" needs both). Win is correctness + token cost on local models, not wall-clock (one local model = serialized regardless). `_build_guided_prior_results_block(..., needs_prior=...)` returns `""` early when `not needs_prior and not is_last_task`.
+
+**Why:** User asked for (a) aggressive variant for small local models, (b) parallel-but-sequentially-run tasks where only the final needs all inputs. Chose granularity *knob* (not a fork) + lightweight `needs_prior` *flag* (not a DAG) — user said "i do not think we need a dag at all".
+
+**UI (2026-05-12, post-commit-1b3bea0):** `guided_execution_granularity` is now exposed in Settings → Models per-model row — a "Guided Granularity" dropdown next to the "Guided Execution" checkbox (`web/js/settings.js`): `(auto)` (empty = server default: fine for local, coarse for cloud) / `coarse (2–5 subtasks)` / `fine (≤12 atomic)`. Read in the save loop (`.mdl-guided-granularity` → `mc[mid].guided_execution_granularity`, deleted when empty). No new endpoint / no validation change — the models-config save path (`handlers/providers.py` `action=save`) takes the whole `models` dict wholesale. `needs_prior` still not surfaced in UI (cosmetic, deferred).
+
+**How to apply:** When touching guided execution, both planner prompts must stay in sync re: the JSON output contract. Watch prompt bloat on local models (existing memory: longer system prompt tanked Mistral Small canary); the fine planner prompt + 12-task ceiling means more sequential `_run_delegate` calls — keep prior-results blocks lean (don't raise `_GUIDED_CTX_CAP=800` for fine mode).

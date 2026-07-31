@@ -1,0 +1,35 @@
+---
+name: project_llm_wiki
+description: "LLM Wiki feature (v9.102–9.106, 2026-06-13) — user-visible editable markdown wiki = the agent's memory; replaced memory_* tools; wiki is sole feeder for chat-derived MemPalace wings"
+metadata: 
+  node_type: memory
+  type: project
+  originSessionId: 8eeb5ed9-ac69-42c4-b1fa-464947f21933
+---
+
+**LLM Wiki** — built & shipped to main 2026-06-13 across 5 phases (v9.102.0→9.106.0, commits 865d027→3a9b8f1). A user-visible, editable markdown wiki that IS the agent's long-term memory. **Why:** the user wanted MemPalace knowledge made visible/editable like an internal wiki, with chat→wiki memorization, auto-organization, versioning, and generation (summary/podcast/read-aloud/media).
+
+**Core architectural inversion:** the wiki is now the SOLE feeder for chat-derived MemPalace wings (`user__`/`team__`/`wiki_global`, `project_chat__<id>` for project-tagged pages). The old `mempalace-chat-sync` daemon is RETIRED (no-op + thread not launched in server.py). Ingested PROJECT knowledge (`project__<id>`, files/folders/web-URLs via project-sync) is UNCHANGED.
+
+**Where things live:**
+- `engine/wiki_store.py` — access-checked CRUD (global=anyone, user=owner, team=member; `WikiAccessError` fails closed) + MemPalace mirror (purge-by-source `wiki/<id>` then `tool_add_drawer` under `_palace_write_lock`). `_wing_for` routes project-tagged → `project_chat__<id>`. Versioning: `current_version`=MAX(version), only current is editable + mirrored. `promote_version` (copy old→new current, append-only). `upsert_from_source` (source_ref-keyed; LLM diff-merge preserves manual edits, no-op skips). `wiki_from_chat` (LLM-organize turns) + `wiki_from_artifact` (verbatim).
+- `engine/wiki_gen.py` — summary (LLM→child page), podcast (reuses audio_overview `_build_script_prompt`/`parse_dialogue`/`_voices_for_lang`/`_stitch`→MP3 artifact + child page), `save_media` (artifact + `[[image|audio|video:<id>]]` token).
+- `server_lib/db.py` — `wiki_pages` (tree via parent_id/position; scope/owner_id/team_id/project_id; source/source_ref/manually_edited/current_version) + `wiki_page_versions` (note); CRUD on ChatDB.
+- `handlers/wiki.py` (`WikiHandlerMixin`) — `/v1/wiki/*` (tree?filter=mine|team|global|all, pages CRUD, /versions[/n], /promote/n, /move, /generate, /media). Each runs in a `request_context` with caller's user/team ids.
+- `web/js/panels_wiki.js` + `#wiki-view` + nav.js case — tree + filter, **CodeMirror 5** raw editor (CM6 is ESM-only, can't load in the no-bundler SPA; textarea fallback) + marked render toggle, versions modal (built dynamically — a static `.modal-overlay` broke the smoke test's generic close selector), generate/media/read-aloud buttons. `api.js` wiki* methods. CDN: codemirror 5.65.16. `CodeMirror` added to gen-globals runtime list.
+- Agent tools: `wiki_write`/`wiki_read`/`wiki_delete`/`wiki_structure` (new `wiki` TOOL_GROUP) REPLACED the deleted `memory_store`/`recall`/`delete`/`shared`. `wiki_read(query)` searches across ALL accessible wings (user+teams+global) and merges — `mempalace_query` alone defaults to the user wing only.
+
+**Feeders (Phase 4):** chat 'merken' (`memorize_turns`→`wiki_from_chat`), Studio/Research outputs (`output_gen.save_report_output`→`wiki_from_artifact` source=studio), user profile (`server._write_user_profile_atomic`→ 'Profil & Aktivität' page source=activity).
+
+**GOTCHAS hit & fixed:**
+- `tool_add_drawer` resolves its palace from `MEMPALACE_PALACE_PATH` env (the retired chat-sync daemon used to seed it). Added a BOOT SEED in `server.py main()` (`os.environ.setdefault`) or it binds the stale `~/.mempalace/palace` chroma default → "backend resolution failed: contains chroma".
+- Standalone `python -c` test processes have no `server_config` → `_diff_merge`/`wiki_from_chat` LLM step no-ops to existing body (the never-probe-config-via-import footgun). LLM-quality paths MUST be tested through the running server (e.g. via the memorize endpoint).
+- MemoryStore kept but DEPRECATED (internal auto-memory-extract + context field still use it; the Memory-Summary daemon prompt repointed to wiki_write). relationship-discovery was already a disabled no-op. 3 stray `agents/main/*.md` memory files migrated → global wiki pages, archived `*.md.migrated`.
+
+**Enhancements (v9.108.0, committed bdb662b):** wiki_pages gained `tags`+`auto_tags` (JSON). LLM auto-suggests 1-5 topic tags on create/generate/update (background, merged — manual tags never auto-removed: manual = current minus previous auto_tags). UI (panels_wiki.js + main.css #wiki-view): 'Gruppieren nach' dropdown (Manuell editable tree+drag-drop / Thema / Projekt / Quelle / Erstellt von / Geändert von — computed modes read-only flat groups); NO emoji (inline-SVG icons brain-agent style, WIKI_ICONS const) + green MemPalace `mirrored` dot per row; typography parity (--font-ui/--text-100, tree+render === chat); drag-drop re-parent (POST /move, descendant-guard); inline rename/delete; tag-filter chip row; jump-to-source (source_ref→openSession/studioOpenOutput/navigateTo). Tree rows decorated (parsed tags + mirrored flag) + body_md stripped (lightweight). _decorate() normalizes tags. Verified headless Playwright. js_gate net-globals 1304→1324.
+
+**Cleanup DONE (stage 1 v9.107.0 commit 2be6780, stage 2 v9.109.0 commit 69bf766):** MemoryStore class + _memory_store global + ALL instantiations GONE; memory-summary subsystem RETIRED FULLY; relationship-discovery + auto-memory-extract GONE; co-recall cluster + _get_memory_store + _graph_expand_results GONE; the request-context `memory_store` field removed from RequestContext+ExecutionContext+init/clear. ~830 LOC out of brain.py. KEPT (still live, NOT MemoryStore-only): _parse_frontmatter/_yaml_escape/_add_related_to_file/_extract_entities/_find_entity_matches/_update_entity_index (NoteManager + server.py chat-index entity-linking), the qmd no-op STUBS (_qmd_rpc/_init_session/_ensure_collection/_debounced_embed — still CALLED by kept ProjectManager/IngestManager/NoteManager paths, so they stay as inert no-ops), the `memory_summary` tool-resolver PURPOSE (_VALID_PURPOSES, unrelated), admin_costs cost labels. Session search degraded to SQL title/summary. ⚠️ LESSON: a scripted block-delete (next-column-0-line heuristic) CORRUPTED brain.py twice by truncating inside multiline f-strings (a `name: {...}`/`}` at col 0 inside a triple-quoted string) → had to `git checkout HEAD -- brain.py` + redo as content-anchored Edits / symbol-boundary deletes. Don't mass-delete brain.py by line-range scripts; anchor on full constructs.
+
+**Fix v9.109.1 (commit d43bbdc):** #wiki-view leaked into the bottom of chat view — it lacked the base `#X-view{display:none}` + `.active{display:…}` CSS pair every other view has (nav.js toggles .active). Added it. Every NEW top-level SPA view MUST add that CSS pair.
+
+Skill brain-agent-guide updated each phase (01-api/02-tools/03-storage/05-internals/06-user-manual; now 1.49.0 / 9.108.0). See [[feedback_never_probe_server_config_via_import]], [[feedback_compile_check_brain_py]], [[feedback_never_sigkill_brain]].

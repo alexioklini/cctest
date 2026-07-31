@@ -35,9 +35,14 @@ config.json.bak-*
 # then negate the files we want, un-ignoring the hooks/ subdir on the way down.
 .claude/*
 !.claude/settings.json
+!.claude/settings.local.json
 !.claude/hooks/
 .claude/hooks/*
 !.claude/hooks/block-sigkill-brain.sh
+# Snapshot of Claude Code's persistent memory (lives in ~/.claude/projects/…/memory/
+# on each machine) — committed so development can move between machines.
+# See .claude/memory/RESTORE.md for how to install it on a new machine.
+!.claude/memory/
 agents/*/artifacts/
 agents/*/attachments/
 agents/*/chats-indexed/
