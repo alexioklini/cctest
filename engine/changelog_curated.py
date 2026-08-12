@@ -29,6 +29,20 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.415.0",
+        "date": "2026-08-12",
+        "title": "Lokales Voxtral für Live-Transkription",
+        "body": "Für Diktat und Live-Übersetzung steht neben Whisper jetzt "
+                "Voxtral Mini Realtime als lokales Transkriptionsmodell bereit "
+                "(Einstellungen → Service-Modelle → Transkription). Es läuft "
+                "vollständig im Haus auf eigener Hardware, versteht 13 Sprachen "
+                "und transkribiert kurze Sprachabschnitte besonders schnell. "
+                "Für lange Audio-Dateien bleibt Whisper die bessere Wahl, da "
+                "Voxtral keine Zeitmarken pro Satz liefert.",
+        "audience": "admin",
+        "versions": ["9.415.0"],
+    },
+    {
         "version": "9.414.0",
         "date": "2026-07-25",
         "title": "Diktieren im Chat + Browser-Stimmen",

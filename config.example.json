@@ -2730,6 +2730,26 @@
       "_caps_canonical": true,
       "is_local": true,
       "warmup": false
+    },
+    "voxtral-mini-realtime-mlx": {
+      "enabled": true,
+      "shortname": "voxtral-realtime-lokal",
+      "display_name": "Voxtral Mini Realtime (lokal)",
+      "icon": "🎤",
+      "priority": 30,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router-local",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "_audio_backfilled": true,
+      "_caps_canonical": true,
+      "max_context": 0,
+      "base_model_id": "voxtral-mini-realtime-mlx"
     }
   },
   "nodes": {},

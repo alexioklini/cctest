@@ -64,6 +64,54 @@ def _repo_for(model: str, default: str) -> str:
     return _REPO_ALIASES.get(model, model)
 
 
+# ── Voxtral Realtime lane (voxmlx) ─────────────────────────────────────────
+# Same endpoint, same GPU lock — a second local STT engine next to whisper.
+# Voxtral Realtime yields no timestamps, so the response synthesizes ONE
+# segment spanning the whole clip (fine for the 4–8s live-translation chunks
+# and dictation; for long media files whisper stays the better choice).
+_VOXTRAL_ALIASES = {
+    "voxtral-mini-realtime-mlx": "mlx-community/Voxtral-Mini-4B-Realtime-6bit",
+}
+_VOX_CACHE: dict = {}  # repo -> (model, sp, prompt_tokens, n_delay)
+
+
+def _voxtral_transcribe(wav_path: str, repo: str) -> str:
+    """Transcribe via a CACHED voxmlx model. voxmlx.transcribe() reloads the
+    model per call (0.0.2), so we cache load_model() and drive generate()
+    directly — pinned to the voxmlx 0.0.2 internals we ship in the venv."""
+    import voxmlx
+    from mistral_common.tokens.tokenizers.base import SpecialTokenPolicy
+    ent = _VOX_CACHE.get(repo)
+    if ent is None:
+        model, sp, _config = voxmlx.load_model(repo)
+        prompt_tokens, n_delay = voxmlx._build_prompt_tokens(sp)
+        ent = _VOX_CACHE[repo] = (model, sp, prompt_tokens, n_delay)
+    model, sp, prompt_tokens, n_delay = ent
+    tokens = voxmlx.generate(
+        model, wav_path, prompt_tokens,
+        n_delay_tokens=n_delay, temperature=0.0, eos_token_id=sp.eos_id,
+    )
+    return sp.decode(tokens, special_token_policy=SpecialTokenPolicy.IGNORE).strip()
+
+
+def _wav_duration_s(path: str) -> float | None:
+    """Clip length from the container (voxtral reports no duration itself).
+    WAV via stdlib; anything else via soundfile (a voxmlx dependency)."""
+    try:
+        import wave
+        with wave.open(path, "rb") as w:
+            fr = w.getframerate()
+            return round(w.getnframes() / fr, 2) if fr else None
+    except Exception:
+        pass
+    try:
+        import soundfile as sf
+        info = sf.info(path)
+        return round(info.frames / info.samplerate, 2) if info.samplerate else None
+    except Exception:
+        return None
+
+
 def _parse_multipart(body: bytes, boundary: bytes) -> dict:
     """Minimal multipart/form-data parser — enough for OpenAI's audio upload
     (a `file` part + a few text parts). Returns {name: bytes|str}."""
@@ -151,23 +199,38 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(audio, (bytes, bytearray)):
             self._send_json(400, {"error": "no audio file in request"})
             return
-        repo = _repo_for(fields.get("model") or "", self.default_model)
+        requested_model = fields.get("model") or ""
+        is_voxtral = requested_model in _VOXTRAL_ALIASES
+        repo = (_VOXTRAL_ALIASES[requested_model] if is_voxtral
+                else _repo_for(requested_model, self.default_model))
         language = fields.get("language") or None
         fd, path = tempfile.mkstemp(suffix=".wav", prefix="stt-")
         with os.fdopen(fd, "wb") as f:
             f.write(audio)
         t0 = time.time()
         try:
-            import mlx_whisper
-            kwargs = {"path_or_hf_repo": repo}
-            if language:
-                kwargs["language"] = language
-            with _lock:
-                result = mlx_whisper.transcribe(path, **kwargs)
-            text = (result.get("text") or "").strip()
-            segs = result.get("segments") or []
-            audio_s = segs[-1].get("end") if segs else None
-            detected_lang = result.get("language") or language or ""
+            if is_voxtral:
+                # Multilingual, no language hint supported; no timestamps →
+                # one synthesized segment over the whole clip below.
+                with _lock:
+                    text = _voxtral_transcribe(path, repo)
+                audio_s = _wav_duration_s(path)
+                # Text survival beats timestamps: emit the segment even when
+                # the duration probe failed (end 0.0), else downstream drops it.
+                segs = ([{"start": 0.0, "end": audio_s or 0.0, "text": text}]
+                        if text else [])
+                detected_lang = ""
+            else:
+                import mlx_whisper
+                kwargs = {"path_or_hf_repo": repo}
+                if language:
+                    kwargs["language"] = language
+                with _lock:
+                    result = mlx_whisper.transcribe(path, **kwargs)
+                text = (result.get("text") or "").strip()
+                segs = result.get("segments") or []
+                audio_s = segs[-1].get("end") if segs else None
+                detected_lang = result.get("language") or language or ""
         except Exception as e:
             with _lock:
                 _METRICS["requests_total"] += 1
