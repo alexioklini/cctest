@@ -167,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
             text = (result.get("text") or "").strip()
             segs = result.get("segments") or []
             audio_s = segs[-1].get("end") if segs else None
+            detected_lang = result.get("language") or language or ""
         except Exception as e:
             with _lock:
                 _METRICS["requests_total"] += 1
@@ -188,7 +189,28 @@ class Handler(BaseHTTPRequestHandler):
                 _METRICS["last_audio_s"] = round(audio_s, 1)
                 _METRICS["total_audio_s"] = round(
                     _METRICS["total_audio_s"] + audio_s, 1)
-        self._send_json(200, {"text": text})
+        # OpenAI verbose_json shape: Brain's live translation and the media tab
+        # build ALL their output from `segments` — a text-only response makes
+        # them silently produce nothing. language/duration/usage ride along so
+        # detected-language handling and per-minute billing see real values.
+        out_segments = []
+        for s in segs:
+            if not isinstance(s, dict):
+                continue
+            try:
+                out_segments.append({
+                    "id": len(out_segments),
+                    "start": float(s.get("start") or 0.0),
+                    "end": float(s.get("end") or 0.0),
+                    "text": (s.get("text") or "").strip(),
+                })
+            except (TypeError, ValueError):
+                pass
+        resp = {"text": text, "language": detected_lang, "segments": out_segments}
+        if audio_s is not None:
+            resp["duration"] = round(float(audio_s), 2)
+            resp["usage"] = {"seconds": round(float(audio_s), 2)}
+        self._send_json(200, resp)
 
 
 def main():
