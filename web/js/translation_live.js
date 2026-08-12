@@ -19,8 +19,9 @@ const trLiveState = {
   abortSse: null,
   segments: [],          // finalized segments {start,end,text,translation,detectedLang}
   partialIndex: -1,      // DOM/state index of the in-progress segment, if any
-  partialText: '',       // in-progress utterance transcript (realtime display)
-  currentChunkSeq: 0,    // seq of the utterance currently recording — gates stale partials
+  partialText: '',        // in-progress utterance transcript (realtime display)
+  partialTranslation: '', // in-progress translation of the partial (realtime display)
+  currentChunkSeq: 0,     // seq of the utterance currently recording — gates stale partials
   // Auto-TTS for translated segments. Played sequentially so utterances don't
   // overlap; mic is muted during playback so we don't transcribe our own audio.
   ttsEnabled: false,
@@ -263,6 +264,7 @@ async function trLiveStart() {
   trLiveState.segments = [];
   trLiveState.partialIndex = -1;
   trLiveState.partialText = '';
+  trLiveState.partialTranslation = '';
   trLiveState.currentChunkSeq = 0;
   trLiveState.ttsSpokenIdx = new Set();
   trLiveState.ttsQueue = [];
@@ -687,6 +689,7 @@ async function trLiveSubscribe(sessionId) {
       trLiveState.segments.push(seg);
       // The authoritative segment replaces whatever partial was showing.
       trLiveState.partialText = '';
+      trLiveState.partialTranslation = '';
       trLiveRenderSegments();
       // Replay path: translation already attached on the segment event itself.
       if (seg.translation) trLiveMaybeQueueTts(seg, idx);
@@ -695,6 +698,12 @@ async function trLiveSubscribe(sessionId) {
       // an utterance we already flushed (its final segment is coming).
       if ((payload.seq | 0) === trLiveState.currentChunkSeq && trLiveState.recording) {
         trLiveState.partialText = payload.text || '';
+        trLiveRenderSegments();
+      }
+    } else if (type === 'partial_translation') {
+      // Growing translation of the in-progress utterance — same seq gate.
+      if ((payload.seq | 0) === trLiveState.currentChunkSeq && trLiveState.recording) {
+        trLiveState.partialTranslation = payload.translation || '';
         trLiveRenderSegments();
       }
     } else if (type === 'translation') {
@@ -712,6 +721,7 @@ async function trLiveSubscribe(sessionId) {
     } else if (type === 'closed') {
       // Server finished flushing.
       trLiveState.partialText = '';
+      trLiveState.partialTranslation = '';
       trLiveRenderSegments();
       try { ctrl.abort(); } catch (_) {}
     }
@@ -740,10 +750,13 @@ function trLiveRenderSegments() {
   if (!wrap) return;
   // In-progress utterance (realtime partial) — grey/italic trailing block,
   // replaced by the authoritative segment when the chunk finalizes.
+  const partialTgt = trLiveState.partialTranslation
+    ? `<div class="tr-live-segment-tgt">${escapeHtml(trLiveState.partialTranslation)}…</div>`
+    : '';
   const partialHtml = trLiveState.partialText
     ? `<div class="tr-live-segment partial">
         <div class="tr-live-segment-time"></div>
-        <div><div class="tr-live-segment-src">${escapeHtml(trLiveState.partialText)}…</div></div>
+        <div><div class="tr-live-segment-src">${escapeHtml(trLiveState.partialText)}…</div>${partialTgt}</div>
       </div>`
     : '';
   if (!trLiveState.segments.length && !partialHtml) {
@@ -775,6 +788,7 @@ function trLiveClear() {
   if (trLiveState.recording) return;  // no-op while live
   trLiveState.segments = [];
   trLiveState.partialText = '';
+  trLiveState.partialTranslation = '';
   trLiveState.sessionId = '';
   trLiveRenderSegments();
   document.getElementById('tr-live-download-btn').disabled = true;

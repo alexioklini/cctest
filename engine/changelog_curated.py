@@ -33,12 +33,13 @@ CURATED_CHANGELOG: list[dict] = [
         "date": "2026-08-12",
         "title": "Live-Übersetzung zeigt Text beim Sprechen",
         "body": "Die Live-Übersetzung zeigt den erkannten Text jetzt schon "
-                "während Sie sprechen — als graue, mitwachsende Vorschau, die "
-                "beim Satzende durch das endgültige Segment samt Übersetzung "
-                "ersetzt wird. Außerdem erscheint das erste Transkript nach "
+                "während Sie sprechen — als graue, mitwachsende Vorschau, "
+                "darunter ebenso die vorläufige Übersetzung. Beim Satzende "
+                "ersetzt das endgültige Segment samt endgültiger Übersetzung "
+                "die Vorschau. Außerdem erscheint das erste Transkript nach "
                 "dem Start deutlich schneller.",
         "audience": "user",
-        "versions": ["9.416.0"],
+        "versions": ["9.416.0", "9.417.0"],
     },
     {
         "version": "9.415.0",

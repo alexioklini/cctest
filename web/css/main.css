@@ -10026,6 +10026,10 @@ textarea.wf-editor-field-input { min-height: 34px; line-height: 1.45; }
   color: var(--text-400);
   font-style: italic;
 }
+.tr-live-segment.partial .tr-live-segment-tgt {
+  opacity: 0.65;
+  font-style: italic;
+}
 .tr-live-segment.translating .tr-live-segment-tgt::after {
   content: '…';
   color: var(--text-400);

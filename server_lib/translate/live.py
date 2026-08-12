@@ -241,6 +241,11 @@ class LiveSession:
         # time, latest-wins — see add_partial().
         self._partial_busy = False
         self._partial_lock = threading.Lock()
+        # Realtime partial TRANSLATIONS: same discipline, own lane (the
+        # translation LLM is slower than STT — they must not block each other).
+        self._ptr_busy = False
+        self._ptr_lock = threading.Lock()
+        self._ptr_last_text = ""
 
     # ─── Subscriber API ────────────────────────────────────────────────
 
@@ -384,6 +389,7 @@ class LiveSession:
             text = (result.get("transcript") or "").strip()
             if text and not self.closed:
                 self._broadcast("partial", {"seq": seq, "text": text})
+                self._translate_partial_async(seq, text)
             self.updated_at = time.time()
             return True
         except Exception:
@@ -552,6 +558,41 @@ class LiveSession:
         if chunk_dur <= 0:
             chunk_dur = 4.0  # MediaRecorder timeslice default
         self._time_offset_s = offset + chunk_dur
+
+    def _translate_partial_async(self, seq: int, text: str) -> None:
+        """Best-effort translation of the in-progress partial transcript —
+        same latest-wins discipline: one in flight, identical text is not
+        retranslated. Display-only; the final segment's translation is the
+        authoritative one. Goes through the normal translate path, so every
+        call is cost-logged like a segment translation."""
+        if not self.target_lang or self.target_lang == (self.source_lang or "").lower():
+            return
+        with self._ptr_lock:
+            if self._ptr_busy or text == self._ptr_last_text:
+                return
+            self._ptr_busy = True
+            self._ptr_last_text = text
+
+        def _go() -> None:
+            try:
+                from .text import translate_text
+                r = translate_text(
+                    text, self.target_lang,
+                    source_lang=self.source_lang or "",
+                    glossary_slug=self.glossary,
+                    model=self.model,
+                )
+                tr = (r.get("translation") or "").strip()
+                if tr and not self.closed:
+                    self._broadcast("partial_translation",
+                                    {"seq": seq, "translation": tr})
+            except Exception:
+                pass  # cosmetic path — never surface errors
+            finally:
+                with self._ptr_lock:
+                    self._ptr_busy = False
+        threading.Thread(target=_go, name=f"live-ptr-{self.id}",
+                         daemon=True).start()
 
     def _translate_segment_async(self, idx: int, text: str) -> None:
         """Translate a single segment in a daemon thread so we don't block
