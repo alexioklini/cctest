@@ -239,7 +239,10 @@ Chat:
   **Browser-nativ** liefert den Text schon während des Sprechens, nutzt dafür
   aber die Spracherkennung des Browsers (Chrome/Edge senden das Audio an
   Google/Microsoft; Firefox kann es nicht und fällt automatisch auf den
-  Server-Weg zurück).
+  Server-Weg zurück). **Wichtig**: Das Mikrofon funktioniert nur über eine
+  sichere Verbindung — `https://…` oder `http://localhost` —, nicht über die
+  IP-Adresse (z. B. `http://192.168.…`); das ist eine Sicherheitsregel aller
+  Browser, die Meldung weist darauf hin.
 - 🧠 **Denk-Stufe** (Aus / Niedrig / Mittel / Hoch) — steuert, wie gründlich das
   Modell vor der Antwort nachdenkt. Die vier Stufen wirken bei **jedem** Modell,
   der Weg dahin unterscheidet sich aber: Cloud-Modelle bekommen die Stufe direkt
@@ -1568,6 +1571,8 @@ Seitenleiste → **Übersetzung**. Vier Tabs:
 
 ### Live-Mikrofon-Tab
 - Aufnahme klicken. Sprechen. Übersetzung erscheint während des Sprechens.
+- Wie beim Diktieren gilt: Mikrofonzugriff gibt es nur über `https://…` oder
+  `http://localhost`, nicht über die IP-Adresse (Browser-Sicherheitsregel).
 - **Modus**: Live-Untertitel vs. satzweise Stücke.
 - Stopp finalisiert; als SRT/VTT/TXT herunterladbar.
 - **Sprach-Engine** (Admin, Einstellungen → Service-Modelle → Sprach-Engines):

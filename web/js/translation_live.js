@@ -2,7 +2,8 @@
 
 /* ═══════════════════════════════════════════════════════════
    LIVE MICROPHONE TAB (C2)
-   Browser MediaRecorder → server-side rolling buffer → Voxtral
+   Browser mic capture (AudioContext/ScriptProcessor → WAV chunks)
+   → server-side rolling buffer → Voxtral
    per-chunk → translate-as-you-go. No WebSocket — we use POST
    chunks + an SSE event stream for results (same plumbing
    conventions as the rest of the app).
@@ -211,9 +212,13 @@ async function trLiveStart() {
 
   let stream = null;
   if (!useBrowserStt) {
-    // Browser support gate (server path records raw audio itself).
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      trLiveStatus('Mikrofon wird in diesem Browser nicht unterstützt.', true);
+    // Browser support gate (server path records raw audio itself). Browsers
+    // expose the mic API only in secure contexts (HTTPS or localhost) — over
+    // plain http://<ip> navigator.mediaDevices is simply undefined.
+    if (!navigator.mediaDevices?.getUserMedia) {
+      trLiveStatus(window.isSecureContext
+        ? 'Mikrofon wird in diesem Browser nicht unterstützt.'
+        : 'Mikrofonzugriff erfordert eine sichere Verbindung — bitte die Seite über https:// oder http://localhost öffnen (nicht über die IP-Adresse).', true);
       return;
     }
     trLiveStatus('Mikrofonzugriff wird angefragt…');

@@ -450,7 +450,10 @@ function _startDictationBrowser(SR) {
 async function _startDictationServer() {
   const s = _dictState;
   if (!navigator.mediaDevices?.getUserMedia) {
-    showToast('Mikrofon wird in diesem Browser nicht unterstützt.', true);
+    // Mic API exists only in secure contexts (HTTPS or localhost).
+    showToast(window.isSecureContext
+      ? 'Mikrofon wird in diesem Browser nicht unterstützt.'
+      : 'Mikrofonzugriff erfordert eine sichere Verbindung — bitte die Seite über https:// oder http://localhost öffnen (nicht über die IP-Adresse).', true);
     _dictState = null;
     return;
   }
