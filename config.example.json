@@ -2769,6 +2769,50 @@
       "base_model_id": "voxtral-mini-realtime-mlx",
       "profile": "balanced",
       "_caps_canonical": true
+    },
+    "gemma-4-E4B-it-qat-4bit": {
+      "enabled": true,
+      "shortname": "gemma-e4b-lokal",
+      "display_name": "Gemma-4 E4B (lokal, schnell)",
+      "icon": "⚡",
+      "priority": 40,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "reasoning_field",
+      "provider": "llm-router-local",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 32000,
+      "base_model_id": "gemma-4-E4B-it-qat-4bit",
+      "_caps_canonical": true
+    },
+    "llm-router/gemma-4-E4B-it-qat-4bit": {
+      "enabled": false,
+      "shortname": "gemma-4-E4B-it-qat-4bit",
+      "display_name": "gemma-4-E4B-it-qat-4bit",
+      "icon": "💎",
+      "priority": 35,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 32768,
+      "max_output": 8192,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [
+        "image/*"
+      ],
+      "provider": "llm-router",
+      "base_model_id": "gemma-4-E4B-it-qat-4bit",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

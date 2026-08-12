@@ -576,11 +576,30 @@ class LiveSession:
         def _go() -> None:
             try:
                 from .text import translate_text
+                import brain
+                # Partials may use a FASTER model than the final segments
+                # (tools_config.translation.partial_model): the grey preview
+                # tolerates slight roughness, the final translation stays on
+                # the session model. Unset → same chain as segments.
+                try:
+                    pmodel = ((brain.get_tool_config().get("translation") or {})
+                              .get("partial_model") or "").strip()
+                except Exception:
+                    pmodel = ""
+                # Language-detection shortcut: short partial fragments make
+                # lingua unsure → LLM-fallback per snapshot (12B on the same
+                # GPU!). Inherit the last finalized segment's detected
+                # language instead; only the very first partial detects.
+                src = self.source_lang or ""
+                if not src:
+                    with self._segments_lock:
+                        if self._segments:
+                            src = self._segments[-1].detected_lang or ""
                 r = translate_text(
                     text, self.target_lang,
-                    source_lang=self.source_lang or "",
+                    source_lang=src,
                     glossary_slug=self.glossary,
-                    model=self.model,
+                    model=pmodel or self.model,
                 )
                 tr = (r.get("translation") or "").strip()
                 if tr and not self.closed:
