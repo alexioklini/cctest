@@ -20,6 +20,46 @@ MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
 MAX_MEDIA_BYTES = 200 * 1024 * 1024
 
 
+def _prewarm_stt_model(transcribe_model: str) -> None:
+    """Fire-and-forget: load the live session's STT model NOW so the first
+    real chunk doesn't pay the model load (whisper/voxtral load lazily on
+    first use after an STT-service restart). LOCAL models only — cloud STT
+    has no load time and prewarm traffic would be un-logged upstream usage.
+    Transcribes ~0.2s of silence, result discarded; errors are irrelevant."""
+    def _go():
+        path = ""
+        try:
+            import tempfile
+            import wave as _wave
+            import brain as _brain
+            model_id, route = _brain._transcription_resolve(transcribe_model or "")
+            if not _brain.is_model_local(model_id):
+                return
+            wire = (route.get("wire") or "").lower()
+            fd, path = tempfile.mkstemp(suffix=".wav", prefix="stt-prewarm-")
+            with os.fdopen(fd, "wb") as fh:
+                with _wave.open(fh, "wb") as w:
+                    w.setnchannels(1)
+                    w.setsampwidth(2)
+                    w.setframerate(16000)
+                    w.writeframes(b"\x00\x00" * 3200)  # 0.2s silence
+            if wire == "openai_audio" and route.get("provider"):
+                _brain._transcribe_with_voxtral(
+                    path, _brain.get_api_model_id(model_id),
+                    route["provider"], None)
+            elif wire == "mlx_whisper":
+                _brain._transcribe_with_whisper(path, model_id, None)
+        except Exception:
+            pass
+        finally:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+    threading.Thread(target=_go, name="stt-prewarm", daemon=True).start()
+
+
 class TranslateHandlerMixin:
     """Mixin with /v1/translate/* handlers."""
 
@@ -955,6 +995,7 @@ class TranslateHandlerMixin:
             agent_id=agent_id,
             user_id=user_id,
         )
+        _prewarm_stt_model(transcribe_model)
         self._send_json({
             "id": sess.id,
             "target_lang": sess.target_lang,
@@ -1006,6 +1047,49 @@ class TranslateHandlerMixin:
         mime = (fields.get("mime") or "audio/webm").strip()
         sess.add_chunk(seq, file_bytes, mime)
         self._send_json({"ok": True, "seq": seq, "bytes": len(file_bytes)})
+
+    def _handle_live_partial(self, sess_id: str):
+        """POST /v1/translate/live/<id>/partial — in-progress utterance
+        snapshot for realtime display while speaking. Same multipart shape as
+        /chunk. Best-effort: the server transcribes it if idle (latest-wins)
+        and broadcasts a 'partial' SSE event; accepted=false means dropped."""
+        from server_lib.translate import LIVE_REGISTRY
+        sess = LIVE_REGISTRY.get(sess_id)
+        if not sess:
+            self._send_json({"error": "session not found"}, 404)
+            return
+        if sess.closed:
+            self._send_json({"error": "session closed"}, 409)
+            return
+        ctype = self.headers.get("Content-Type", "")
+        if not ctype.startswith("multipart/form-data"):
+            self._send_json({"error": "multipart/form-data required"}, 400)
+            return
+        boundary = None
+        for part in ctype.split(";"):
+            part = part.strip()
+            if part.startswith("boundary="):
+                boundary = part.split("=", 1)[1].strip('"')
+                break
+        if not boundary:
+            self._send_json({"error": "missing boundary"}, 400)
+            return
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0 or length > 25 * 1024 * 1024:
+            self._send_json({"error": "chunk too large"}, 413)
+            return
+        raw = self.rfile.read(length)
+        fields, _file_name, file_bytes = _parse_multipart(raw, boundary)
+        if not file_bytes:
+            self._send_json({"error": "missing chunk"}, 400)
+            return
+        try:
+            seq = int(fields.get("seq") or "0")
+        except ValueError:
+            seq = 0
+        mime = (fields.get("mime") or "audio/wav").strip()
+        accepted = sess.add_partial(seq, file_bytes, mime)
+        self._send_json({"ok": True, "accepted": bool(accepted)})
 
     def _handle_live_text(self, sess_id: str):
         """POST /v1/translate/live/<id>/text — browser-STT text segment.

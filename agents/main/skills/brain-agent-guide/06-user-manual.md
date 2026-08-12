@@ -1571,6 +1571,10 @@ Seitenleiste → **Übersetzung**. Vier Tabs:
 
 ### Live-Mikrofon-Tab
 - Aufnahme klicken. Sprechen. Übersetzung erscheint während des Sprechens.
+- **Echtzeit-Anzeige**: Schon während Sie sprechen erscheint der erkannte
+  Text grau und kursiv als Vorschau und wächst mit. Sobald der Satz fertig
+  ist, wird er durch das endgültige Segment ersetzt und übersetzt. Die graue
+  Vorschau ist vorläufig — kleine Korrekturen im finalen Text sind normal.
 - Wie beim Diktieren gilt: Mikrofonzugriff gibt es nur über `https://…` oder
   `http://localhost`, nicht über die IP-Adresse (Browser-Sicherheitsregel).
 - **Modus**: Live-Untertitel vs. satzweise Stücke.

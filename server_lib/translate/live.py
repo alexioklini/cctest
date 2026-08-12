@@ -237,6 +237,11 @@ class LiveSession:
         self._worker: Optional[threading.Thread] = None
         self._tmpdir = ""
 
+        # Realtime partial transcripts (display while speaking): one at a
+        # time, latest-wins — see add_partial().
+        self._partial_busy = False
+        self._partial_lock = threading.Lock()
+
     # ─── Subscriber API ────────────────────────────────────────────────
 
     def subscribe(self) -> queue.Queue:
@@ -316,6 +321,76 @@ class LiveSession:
         if "wav" in mime:
             return ".wav"
         return ".webm"
+
+    def _stt_resolve(self):
+        """(model_id, route) for this session's transcription model —
+        session dropdown pick wins, else tools-config default, else Voxtral."""
+        import brain
+        cfg = brain._transcription_config()
+        model_arg = self.transcribe_model or cfg.get("default_model") or "voxtral-mini-latest"
+        return brain._transcription_resolve(model_arg)
+
+    def _stt_transcribe(self, path: str, *, with_segments: bool) -> dict:
+        """Transcribe one audio file with the session's STT model — shared by
+        the final-chunk worker and the best-effort partial path. The result
+        dict additionally carries _model_id/_provider for billing capture."""
+        import brain
+        model_id, route = self._stt_resolve()
+        wire = (route.get("wire") or "").lower()
+        if wire == "openai_audio":
+            provider = route.get("provider") or ""
+            if not provider:
+                raise RuntimeError(f"model '{model_id}' has no provider")
+            result = brain._transcribe_with_voxtral(
+                path, brain.get_api_model_id(model_id), provider,
+                self.source_lang or None, with_segments=with_segments)
+        elif wire == "mlx_whisper":
+            result = brain._transcribe_with_whisper(
+                path, model_id, self.source_lang or None,
+                with_segments=with_segments)
+        else:
+            raise RuntimeError(f"unknown wire '{wire}'")
+        result["_model_id"] = model_id
+        result["_provider"] = route.get("provider") or ""
+        return result
+
+    def add_partial(self, seq: int, audio_bytes: bytes, mime: str) -> bool:
+        """Best-effort transcript of the IN-PROGRESS utterance so the user
+        sees text WHILE speaking. Latest-wins: while one partial transcribes,
+        newer snapshots are dropped (the client sends a fresh, longer one
+        ~every second anyway). Never translated, never billed, never stored —
+        the final chunk replaces it with the authoritative segment. LOCAL
+        models only: with a cloud STT model every snapshot would be real,
+        un-logged upstream spend."""
+        if self.closed:
+            return False
+        with self._partial_lock:
+            if self._partial_busy:
+                return False
+            self._partial_busy = True
+        try:
+            import brain
+            model_id, _route = self._stt_resolve()
+            if not brain.is_model_local(model_id):
+                return False
+            if not self._tmpdir:
+                import tempfile
+                self._tmpdir = tempfile.mkdtemp(prefix=f"brain-live-{self.id}-")
+            # One rolling file, overwritten per snapshot (nothing accumulates).
+            path = os.path.join(self._tmpdir, f"partial{self._ext_for_mime(mime)}")
+            with open(path, "wb") as f:
+                f.write(audio_bytes)
+            result = self._stt_transcribe(path, with_segments=False)
+            text = (result.get("transcript") or "").strip()
+            if text and not self.closed:
+                self._broadcast("partial", {"seq": seq, "text": text})
+            self.updated_at = time.time()
+            return True
+        except Exception:
+            return False  # partials are cosmetic — never surface errors
+        finally:
+            with self._partial_lock:
+                self._partial_busy = False
 
     def add_text_segment(self, text: str, *, start: float = 0.0,
                          end: float = 0.0, lang: str = "") -> int:
@@ -406,37 +481,8 @@ class LiveSession:
         the segment shows up as soon as the transcript lands, and the
         translation arrives a moment later.
         """
-        import brain  # late, avoids circular at module load
-
-        # Resolve transcription model — the session's dropdown pick wins,
-        # else the tools-config default, else Voxtral.
-        cfg = brain._transcription_config()
-        model_arg = self.transcribe_model or cfg.get("default_model") or "voxtral-mini-latest"
         try:
-            model_id, route = brain._transcription_resolve(model_arg)
-        except Exception as e:
-            self.error = f"resolve transcribe model failed: {e}"
-            self._broadcast("error", {"error": self.error})
-            return
-        wire = (route.get("wire") or "").lower()
-
-        try:
-            if wire == "openai_audio":
-                provider = route.get("provider") or ""
-                if not provider:
-                    raise RuntimeError(f"model '{model_id}' has no provider")
-                api_id = brain.get_api_model_id(model_id)
-                result = brain._transcribe_with_voxtral(
-                    chunk.path, api_id, provider,
-                    self.source_lang or None, with_segments=True,
-                )
-            elif wire == "mlx_whisper":
-                result = brain._transcribe_with_whisper(
-                    chunk.path, model_id, self.source_lang or None,
-                    with_segments=True,
-                )
-            else:
-                raise RuntimeError(f"unknown wire '{wire}'")
+            result = self._stt_transcribe(chunk.path, with_segments=True)
         except Exception as e:
             # Don't kill the session on a single chunk failure — just skip.
             self._broadcast("error", {"error": f"chunk {chunk.seq}: {e}"[:240]})
@@ -446,8 +492,8 @@ class LiveSession:
         # applied once in stop()). Capture the resolved model/provider so stop()
         # bills against the model that actually ran.
         self._billed_audio_s += float(result.get("duration_s") or 0.0)
-        self._resolved_model_id = model_id
-        self._resolved_provider = route.get("provider") or ""
+        self._resolved_model_id = result.get("_model_id") or ""
+        self._resolved_provider = result.get("_provider") or ""
 
         segments = result.get("segments") or []
         if not segments:

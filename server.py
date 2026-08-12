@@ -2350,6 +2350,9 @@ class BrainAgentHandler(
         elif path.startswith("/v1/translate/live/") and path.endswith("/chunk"):
             sid = path[len("/v1/translate/live/"):-len("/chunk")]
             self._handle_live_chunk(sid)
+        elif path.startswith("/v1/translate/live/") and path.endswith("/partial"):
+            sid = path[len("/v1/translate/live/"):-len("/partial")]
+            self._handle_live_partial(sid)
         elif path.startswith("/v1/translate/live/") and path.endswith("/text"):
             sid = path[len("/v1/translate/live/"):-len("/text")]
             self._handle_live_text(sid)

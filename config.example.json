@@ -2750,6 +2750,25 @@
       "_caps_canonical": true,
       "max_context": 0,
       "base_model_id": "voxtral-mini-realtime-mlx"
+    },
+    "llm-router/voxtral-mini-realtime-mlx": {
+      "enabled": false,
+      "shortname": "voxtral-mini-realtime-mlx",
+      "display_name": "voxtral-mini-realtime-mlx",
+      "icon": "🎤",
+      "priority": 45,
+      "capabilities": [
+        "audio_transcription"
+      ],
+      "thinking_format": "none",
+      "max_context": 32768,
+      "max_output": 4096,
+      "inference": {},
+      "raw_formats": [],
+      "provider": "llm-router",
+      "base_model_id": "voxtral-mini-realtime-mlx",
+      "profile": "balanced",
+      "_caps_canonical": true
     }
   },
   "nodes": {},

@@ -19,6 +19,8 @@ const trLiveState = {
   abortSse: null,
   segments: [],          // finalized segments {start,end,text,translation,detectedLang}
   partialIndex: -1,      // DOM/state index of the in-progress segment, if any
+  partialText: '',       // in-progress utterance transcript (realtime display)
+  currentChunkSeq: 0,    // seq of the utterance currently recording — gates stale partials
   // Auto-TTS for translated segments. Played sequentially so utterances don't
   // overlap; mic is muted during playback so we don't transcribe our own audio.
   ttsEnabled: false,
@@ -260,6 +262,8 @@ async function trLiveStart() {
   trLiveState.recording = true;
   trLiveState.segments = [];
   trLiveState.partialIndex = -1;
+  trLiveState.partialText = '';
+  trLiveState.currentChunkSeq = 0;
   trLiveState.ttsSpokenIdx = new Set();
   trLiveState.ttsQueue = [];
   trLiveState.startedAt = Date.now();
@@ -287,15 +291,19 @@ function trLiveStartBrowserSTT() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   const rec = new SR();
   rec.continuous = true;
-  rec.interimResults = false;
+  // Interim results feed the realtime display while speaking — shown locally
+  // as a grey partial, NEVER posted to the server (only finals become segments).
+  rec.interimResults = true;
   const src = (trState.sourceLangManual && trState.sourceLang) ? trState.sourceLang : '';
   rec.lang = src || navigator.language || '';
   rec.onresult = (ev) => {
+    let interim = '';
     for (let i = ev.resultIndex; i < ev.results.length; i++) {
       const r = ev.results[i];
-      if (!r.isFinal) continue;
+      if (!r.isFinal) { interim += (r[0]?.transcript || ''); continue; }
       const text = (r[0]?.transcript || '').trim();
       if (!text) continue;
+      trLiveState.partialText = '';
       // Browser STT delivers no timestamps — approximate: the segment ends
       // now and starts where the previous one ended.
       const end = (Date.now() - trLiveState.startedAt) / 1000;
@@ -306,6 +314,12 @@ function trLiveStartBrowserSTT() {
         headers: { ...trAuthHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, start, end, lang: _trNormLang(rec.lang) }),
       }).catch(e => console.warn('live text post failed', e));
+    }
+    // Realtime display: interim text (still being spoken) as grey partial.
+    const trimmed = interim.trim();
+    if (trimmed || trLiveState.partialText) {
+      trLiveState.partialText = trimmed;
+      trLiveRenderSegments();
     }
   };
   rec.onerror = (ev) => {
@@ -343,8 +357,22 @@ function trLiveStartBrowserSTT() {
  *    audio is below the current threshold (the "noise" branch). Speech is
  *    detected as RMS > floor × SPEECH_FACTOR.
  *  -------------------------------------------------------------------- */
+/* Realtime partial display: snapshot cadence of the in-progress utterance.
+ * Each snapshot re-transcribes the buffer-so-far (bounded by HARD_CAP), so
+ * the interval trades GPU load against display latency. Server drops
+ * snapshots while busy (latest-wins) — the cadence here is an upper bound. */
+const TR_LIVE_PARTIAL = {
+  INTERVAL_MS: 1200,
+  MIN_S: 0.8,   // don't bother transcribing less than this much audio
+};
+
 const TR_LIVE_VAD = {
   HARD_CAP_S: 8.0,
+  // The FIRST chunk caps earlier than HARD_CAP: time-to-first-text beats
+  // paragraph coherence exactly once, at the start (continuous speech would
+  // otherwise show nothing for HARD_CAP+transcribe ≈ 10s). Silence flushes
+  // (sentence ends) still win when the speaker pauses before this.
+  FIRST_CAP_S: 3.0,
   MIN_LEN_S: 1.0,
   SILENCE_HOLD_MS: 600,
   CALIBRATION_S: 1.2,
@@ -378,6 +406,7 @@ function trLiveStartRecorder() {
 
   // Buffer is sized for the hard cap — VAD may flush earlier on silence.
   const maxSamples = Math.round(sampleRate * TR_LIVE_VAD.HARD_CAP_S);
+  const firstCapSamples = Math.round(sampleRate * TR_LIVE_VAD.FIRST_CAP_S);
   const minSamples = Math.round(sampleRate * TR_LIVE_VAD.MIN_LEN_S);
   const calibrationSamples = Math.round(sampleRate * TR_LIVE_VAD.CALIBRATION_S);
   let buf = new Float32Array(maxSamples);
@@ -420,7 +449,35 @@ function trLiveStartRecorder() {
     buf = new Float32Array(maxSamples);
     bufFill = 0;
     silenceSamples = 0;
+    // Utterance boundary: partial events for the flushed utterance are stale
+    // from here on (its authoritative segment is on the way).
+    trLiveState.currentChunkSeq = chunkIdx;
   };
+
+  // ── Realtime partials: while an utterance is still recording, POST the
+  // buffer-so-far every ~1.2s. The server transcribes it when idle
+  // (latest-wins) and broadcasts a 'partial' event — text appears WHILE
+  // speaking, the final chunk replaces it. Client throttle: one in flight.
+  let partialInflight = false;
+  const partialTimer = setInterval(async () => {
+    if (!trLiveState.recording || partialInflight) return;
+    if (bufFill < sampleRate * TR_LIVE_PARTIAL.MIN_S) return;
+    const seq = chunkIdx;
+    const wav = trEncodeWav(buf.subarray(0, bufFill), sampleRate);
+    partialInflight = true;
+    try {
+      const fd = new FormData();
+      fd.append('chunk', wav, `partial-${seq}.wav`);
+      fd.append('seq', String(seq));
+      fd.append('mime', 'audio/wav');
+      await fetch(`/v1/translate/live/${encodeURIComponent(trLiveState.sessionId)}/partial`, {
+        method: 'POST',
+        headers: trAuthHeaders(),
+        body: fd,
+      });
+    } catch (_) { /* cosmetic — never surface partial errors */ }
+    partialInflight = false;
+  }, TR_LIVE_PARTIAL.INTERVAL_MS);
 
   proc.onaudioprocess = (ev) => {
     if (!trLiveState.recording) return;
@@ -465,9 +522,11 @@ function trLiveStartRecorder() {
     }
 
     // Flush decisions:
-    // 1. Hard cap reached — flush regardless of speech state.
-    if (bufFill >= maxSamples) {
-      flushAndReset('hard_cap');
+    // 1. Hard cap reached — flush regardless of speech state (first chunk
+    //    caps earlier, see FIRST_CAP_S; no status line for that one).
+    const capSamples = chunkIdx === 0 ? firstCapSamples : maxSamples;
+    if (bufFill >= capSamples) {
+      flushAndReset(chunkIdx === 0 ? 'first_cap' : 'hard_cap');
       return;
     }
     // 2. Past calibration AND past min-length AND silence held long enough.
@@ -486,6 +545,7 @@ function trLiveStartRecorder() {
     ctx, source, proc,
     flushTail: () => flushChunk(buf, bufFill, 'stop'),
     stop: () => {
+      clearInterval(partialTimer);
       try { proc.disconnect(); } catch (_) {}
       try { source.disconnect(); } catch (_) {}
       try { ctx.close(); } catch (_) {}
@@ -625,9 +685,18 @@ async function trLiveSubscribe(sessionId) {
       };
       const idx = trLiveState.segments.length;
       trLiveState.segments.push(seg);
+      // The authoritative segment replaces whatever partial was showing.
+      trLiveState.partialText = '';
       trLiveRenderSegments();
       // Replay path: translation already attached on the segment event itself.
       if (seg.translation) trLiveMaybeQueueTts(seg, idx);
+    } else if (type === 'partial') {
+      // In-progress utterance transcript — display-only. Ignore snapshots of
+      // an utterance we already flushed (its final segment is coming).
+      if ((payload.seq | 0) === trLiveState.currentChunkSeq && trLiveState.recording) {
+        trLiveState.partialText = payload.text || '';
+        trLiveRenderSegments();
+      }
     } else if (type === 'translation') {
       // Translation for an existing segment landed — match by index.
       const i = (typeof payload.index === 'number') ? payload.index : -1;
@@ -642,6 +711,8 @@ async function trLiveSubscribe(sessionId) {
       trLiveStatus(`Server: ${payload.error || 'Fehler'}`, true);
     } else if (type === 'closed') {
       // Server finished flushing.
+      trLiveState.partialText = '';
+      trLiveRenderSegments();
       try { ctrl.abort(); } catch (_) {}
     }
   };
@@ -667,7 +738,15 @@ async function trLiveSubscribe(sessionId) {
 function trLiveRenderSegments() {
   const wrap = document.getElementById('tr-live-stream');
   if (!wrap) return;
-  if (!trLiveState.segments.length) {
+  // In-progress utterance (realtime partial) — grey/italic trailing block,
+  // replaced by the authoritative segment when the chunk finalizes.
+  const partialHtml = trLiveState.partialText
+    ? `<div class="tr-live-segment partial">
+        <div class="tr-live-segment-time"></div>
+        <div><div class="tr-live-segment-src">${escapeHtml(trLiveState.partialText)}…</div></div>
+      </div>`
+    : '';
+  if (!trLiveState.segments.length && !partialHtml) {
     wrap.innerHTML = '<div class="tr-placeholder">Höre zu… sprechen Sie ins Mikrofon. Jedes fertiggestellte Segment erscheint hier.</div>';
     return;
   }
@@ -687,7 +766,7 @@ function trLiveRenderSegments() {
       <div>${text}${trans}</div>
     </div>`;
   }).join('');
-  wrap.innerHTML = html;
+  wrap.innerHTML = html + partialHtml;
   // Auto-scroll to newest line.
   wrap.scrollTop = wrap.scrollHeight;
 }
@@ -695,6 +774,7 @@ function trLiveRenderSegments() {
 function trLiveClear() {
   if (trLiveState.recording) return;  // no-op while live
   trLiveState.segments = [];
+  trLiveState.partialText = '';
   trLiveState.sessionId = '';
   trLiveRenderSegments();
   document.getElementById('tr-live-download-btn').disabled = true;

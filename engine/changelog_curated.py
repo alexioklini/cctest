@@ -29,6 +29,18 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.416.0",
+        "date": "2026-08-12",
+        "title": "Live-Übersetzung zeigt Text beim Sprechen",
+        "body": "Die Live-Übersetzung zeigt den erkannten Text jetzt schon "
+                "während Sie sprechen — als graue, mitwachsende Vorschau, die "
+                "beim Satzende durch das endgültige Segment samt Übersetzung "
+                "ersetzt wird. Außerdem erscheint das erste Transkript nach "
+                "dem Start deutlich schneller.",
+        "audience": "user",
+        "versions": ["9.416.0"],
+    },
+    {
         "version": "9.415.0",
         "date": "2026-08-12",
         "title": "Lokales Voxtral für Live-Transkription",
