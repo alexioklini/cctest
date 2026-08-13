@@ -18,6 +18,13 @@ Run (foreground):
 launchd KeepAlive: see MACMINI_SETUP.md section 4.
 
 Optional bearer auth via STT_API_KEY env.
+
+Streaming lane (ROUTERSTREAMINGSPEC): a WebSocket server on --ws-port
+(default 8003) speaks the partial/final protocol for Voxtral Realtime —
+one connection per utterance, binary PCM16-LE 16kHz mono in, cumulative
+'partial' JSON frames out, '{"type":"end"}' → 'final' + close. The llm-router
+proxies wss://…/v1/audio/transcriptions/stream to this port. Requires the
+`websockets` package in the venv (lane disables itself if missing).
 """
 from __future__ import annotations
 
@@ -108,23 +115,294 @@ def _release_unused(repo: str, is_voxtral: bool) -> None:
             pass
 
 
+def _voxtral_get(repo: str):
+    """Load-or-get the cached voxmlx model bundle (model, sp, prompt, delay)."""
+    import voxmlx
+    ent = _VOX_CACHE.get(repo)
+    if ent is None:
+        model, sp, _config = voxmlx.load_model(repo)
+        prompt_tokens, n_delay = voxmlx._build_prompt_tokens(sp)
+        ent = _VOX_CACHE[repo] = (model, sp, prompt_tokens, n_delay)
+    return ent
+
+
 def _voxtral_transcribe(wav_path: str, repo: str) -> str:
     """Transcribe via a CACHED voxmlx model. voxmlx.transcribe() reloads the
     model per call (0.0.2), so we cache load_model() and drive generate()
     directly — pinned to the voxmlx 0.0.2 internals we ship in the venv."""
     import voxmlx
     from mistral_common.tokens.tokenizers.base import SpecialTokenPolicy
-    ent = _VOX_CACHE.get(repo)
-    if ent is None:
-        model, sp, _config = voxmlx.load_model(repo)
-        prompt_tokens, n_delay = voxmlx._build_prompt_tokens(sp)
-        ent = _VOX_CACHE[repo] = (model, sp, prompt_tokens, n_delay)
-    model, sp, prompt_tokens, n_delay = ent
+    model, sp, prompt_tokens, n_delay = _voxtral_get(repo)
     tokens = voxmlx.generate(
         model, wav_path, prompt_tokens,
         n_delay_tokens=n_delay, temperature=0.0, eos_token_id=sp.eos_id,
     )
     return sp.decode(tokens, special_token_policy=SpecialTokenPolicy.IGNORE).strip()
+
+
+# ── Voxtral streaming lane (WebSocket, own port) ───────────────────────────
+# Port of voxmlx 0.0.2's stream.py mic loop into a feed()/finish() session:
+# incremental mel/encoder/decoder state, left-pad on the first chunk, prefill
+# once 38 positions exist, then token-by-token decode gated by how much real
+# audio arrived. Differences from the CLI: tokens are accumulated as IDS and
+# the cumulative text is re-decoded per emit (per-token decode would split
+# UTF-8 umlauts); on model EOS the sentence is committed and the incremental
+# state resets (the CLI does the same) — the session text keeps growing.
+_VOX_STREAM_N_LEFT = 32
+_VOX_STREAM_N_RIGHT = 17
+
+
+class _VoxStreamSession:
+    def __init__(self, repo: str):
+        import mlx.core as mx
+        model, sp, prompt_tokens, n_delay = _voxtral_get(repo)
+        self.m, self.sp = model, sp
+        self.prompt_tokens = prompt_tokens
+        self.prefix_len = len(prompt_tokens)
+        self.eos = sp.eos_id
+        self.t_cond = model.time_embedding(mx.array([n_delay], dtype=mx.float32))
+        mx.eval(self.t_cond)
+        self.text_embeds = model.language_model.embed(mx.array([prompt_tokens]))[0]
+        mx.eval(self.text_embeds)
+        self.n_layers = len(model.language_model.layers)
+        self.committed = ""   # text of EOS-closed sentences
+        self.ids: list[int] = []  # token ids of the open sentence
+        self.audio_s = 0.0
+        self._reset_incremental()
+
+    def _reset_incremental(self) -> None:
+        import numpy as np
+        self.cache = None
+        self.y = None
+        self.audio_tail = None
+        self.conv1_tail = None
+        self.conv2_tail = None
+        self.encoder_cache = None
+        self.ds_buf = None
+        self.pending = np.zeros(0, dtype=np.float32)
+        self.audio_embeds = None
+        self.n_fed = 0
+        self.n_decoded = 0
+        self.first_cycle = True
+        self.prefilled = False
+
+    def text(self) -> str:
+        from mistral_common.tokens.tokenizers.base import SpecialTokenPolicy
+        open_seg = (self.sp.decode(self.ids, special_token_policy=SpecialTokenPolicy.IGNORE)
+                    .strip() if self.ids else "")
+        return (self.committed + " " + open_seg).strip()
+
+    def _commit_segment(self) -> None:
+        from mistral_common.tokens.tokenizers.base import SpecialTokenPolicy
+        if self.ids:
+            seg = self.sp.decode(self.ids, special_token_policy=SpecialTokenPolicy.IGNORE).strip()
+            if seg:
+                self.committed = (self.committed + " " + seg).strip()
+            self.ids = []
+
+    def _decode_steps(self, n: int):
+        """Decode up to n positions. Returns (consumed, hit_eos)."""
+        import mlx.core as mx
+        for i in range(n):
+            tok_embed = self.m.language_model.embed(self.y.reshape(1, 1))[0, 0]
+            step = (self.audio_embeds[i] + tok_embed)[None, None, :]
+            logits = self.m.decode(step, self.t_cond, mask=None, cache=self.cache)
+            next_y = mx.argmax(logits[0, -1:], axis=-1).squeeze()
+            mx.async_eval(next_y)
+            tid = self.y.item()
+            if tid == self.eos:
+                self.cache = None
+                self.y = None
+                return i, True
+            self.ids.append(tid)
+            if i > 0 and i % 256 == 0:
+                mx.clear_cache()
+            self.y = next_y
+        return n, False
+
+    def _encode(self, chunk) -> None:
+        import mlx.core as mx
+        from voxmlx.audio import log_mel_spectrogram_step
+        mel, self.audio_tail = log_mel_spectrogram_step(chunk, self.audio_tail)
+        new_e, self.conv1_tail, self.conv2_tail, self.encoder_cache, self.ds_buf = (
+            self.m.encode_step(mel, self.conv1_tail, self.conv2_tail,
+                               self.encoder_cache, self.ds_buf))
+        if new_e is not None:
+            mx.eval(new_e)
+            self.audio_embeds = (new_e if self.audio_embeds is None
+                                 else mx.concatenate([self.audio_embeds, new_e]))
+
+    def feed(self, pcm) -> str | None:
+        """Feed float32 PCM (16kHz mono). Returns cumulative text when new
+        tokens were produced, else None."""
+        import numpy as np
+        import mlx.core as mx
+        from voxmlx.audio import SAMPLES_PER_TOKEN
+        from voxmlx.cache import RotatingKVCache
+        self.audio_s += len(pcm) / 16000.0
+        self.pending = np.append(self.pending, pcm.astype(np.float32))
+        if len(self.pending) >= SAMPLES_PER_TOKEN:
+            n_feed = (len(self.pending) // SAMPLES_PER_TOKEN) * SAMPLES_PER_TOKEN
+            chunk = self.pending[:n_feed]
+            self.pending = self.pending[n_feed:]
+            if self.first_cycle:
+                left = np.zeros(_VOX_STREAM_N_LEFT * SAMPLES_PER_TOKEN, dtype=np.float32)
+                chunk = np.concatenate([left, chunk])
+                self.first_cycle = False
+            self.n_fed += n_feed
+            self._encode(chunk)
+
+        produced = False
+        while self.audio_embeds is not None:
+            safe_total = _VOX_STREAM_N_LEFT + self.n_fed // SAMPLES_PER_TOKEN
+            n_dec = min(self.audio_embeds.shape[0], safe_total - self.n_decoded)
+            if n_dec <= 0:
+                break
+            if not self.prefilled:
+                if self.n_decoded + self.audio_embeds.shape[0] < self.prefix_len:
+                    break
+                self.cache = [RotatingKVCache(8192) for _ in range(self.n_layers)]
+                pre = (self.text_embeds + self.audio_embeds[:self.prefix_len])[None, :, :]
+                logits = self.m.decode(pre, self.t_cond, "causal", self.cache)
+                mx.eval(logits, *[x for c in self.cache for x in (c.keys, c.values)])
+                self.y = mx.argmax(logits[0, -1:], axis=-1).squeeze()
+                mx.async_eval(self.y)
+                rest = self.audio_embeds[self.prefix_len:]
+                self.audio_embeds = rest if rest.shape[0] > 0 else None
+                self.n_decoded = self.prefix_len
+                self.prefilled = True
+                continue
+            consumed, hit_eos = self._decode_steps(n_dec)
+            if consumed > 0:
+                produced = True
+            self.n_decoded += consumed
+            if self.audio_embeds is not None and self.audio_embeds.shape[0] > consumed:
+                self.audio_embeds = self.audio_embeds[consumed:]
+            else:
+                self.audio_embeds = None
+            if hit_eos:
+                # Sentence done — commit and start fresh (mirrors the CLI's
+                # reset_all_state; un-fed remainder audio restarts left-padded).
+                self._commit_segment()
+                self._reset_incremental()
+                break
+        return self.text() if produced else None
+
+    def finish(self) -> str:
+        """Right-pad flush + decode the remainder. Returns the final text."""
+        import numpy as np
+        from voxmlx.audio import SAMPLES_PER_TOKEN
+        if self.cache is not None and self.y is not None:
+            right = np.zeros(_VOX_STREAM_N_RIGHT * SAMPLES_PER_TOKEN, dtype=np.float32)
+            self._encode(np.concatenate([self.pending, right]))
+            self.pending = np.zeros(0, dtype=np.float32)
+            if self.audio_embeds is not None:
+                self._decode_steps(self.audio_embeds.shape[0])
+                self.audio_embeds = None
+            if self.y is not None:
+                tid = self.y.item()
+                if tid != self.eos:
+                    self.ids.append(tid)
+        self._commit_segment()
+        return self.committed
+
+
+_STREAM_SLOT = threading.Lock()   # one streaming session at a time (M4 GPU)
+
+
+def _ws_stream_handler(ws) -> None:
+    """One WS connection = one utterance (see ROUTERSTREAMINGSPEC): first frame
+    JSON config, then binary PCM16-LE 16kHz mono frames; server sends
+    cumulative 'partial' texts, '{"type":"end"}' triggers 'final' + close."""
+    import numpy as np
+    key = os.environ.get("STT_API_KEY", "")
+    if key:
+        auth = ws.request.headers.get("Authorization", "")
+        if auth != f"Bearer {key}":
+            ws.send(json.dumps({"type": "error", "message": "unauthorized"}))
+            return
+    try:
+        cfg = json.loads(ws.recv(timeout=10))
+    except Exception:
+        ws.send(json.dumps({"type": "error", "message": "expected JSON config frame"}))
+        return
+    requested = (cfg.get("model") or "").strip() or "voxtral-mini-realtime-mlx"
+    repo = _VOXTRAL_ALIASES.get(requested)
+    if repo is None:
+        ws.send(json.dumps({"type": "error",
+                            "message": f"model '{requested}' does not support streaming"}))
+        return
+    if not _STREAM_SLOT.acquire(blocking=False):
+        ws.send(json.dumps({"type": "error",
+                            "message": "busy: a streaming session is already active"}))
+        return
+    t0 = time.time()
+    sess = None
+    try:
+        # Hold the GPU lock for the WHOLE session: batch requests queue behind
+        # the stream (the stream is the latency-critical display) and the
+        # single-resident eviction can't pull voxtral out from under us.
+        with _lock:
+            _release_unused(repo, is_voxtral=True)
+            sess = _VoxStreamSession(repo)
+            last_emit = None
+            while True:
+                try:
+                    msg = ws.recv(timeout=30)
+                except TimeoutError:
+                    # 30s without frames → flush what we have and close.
+                    ws.send(json.dumps({"type": "final", "text": sess.finish()}))
+                    break
+                if isinstance(msg, (bytes, bytearray)):
+                    if not msg:
+                        continue
+                    pcm = np.frombuffer(msg, dtype=np.int16).astype(np.float32) / 32768.0
+                    text = sess.feed(pcm)
+                    if text is not None and text != last_emit:
+                        last_emit = text
+                        ws.send(json.dumps({"type": "partial", "text": text}))
+                else:
+                    try:
+                        mtype = json.loads(msg).get("type")
+                    except (ValueError, AttributeError):
+                        continue
+                    if mtype == "end":
+                        ws.send(json.dumps({"type": "final", "text": sess.finish()}))
+                        break
+    except Exception as e:
+        # Client-close mid-stream lands here too — nothing is persisted.
+        try:
+            ws.send(json.dumps({"type": "error", "message": str(e)[:300]}))
+        except Exception:
+            pass
+    finally:
+        _STREAM_SLOT.release()
+        with _lock:
+            _METRICS["requests_total"] += 1
+            _METRICS["model_loaded"] = True
+            _METRICS["last_model"] = repo
+            _METRICS["resident"] = f"voxtral:{repo}"
+            _METRICS["last_duration_s"] = round(time.time() - t0, 2)
+            if sess is not None and sess.audio_s > 0:
+                _METRICS["last_audio_s"] = round(sess.audio_s, 1)
+                _METRICS["total_audio_s"] = round(
+                    _METRICS["total_audio_s"] + sess.audio_s, 1)
+        try:
+            ws.close()
+        except Exception:
+            pass
+
+
+def _run_ws_server(host: str, port: int) -> None:
+    try:
+        from websockets.sync.server import serve
+    except ImportError:
+        sys.stderr.write("[whisper-stt] websockets not installed — streaming lane disabled\n")
+        return
+    sys.stderr.write(f"[whisper-stt] streaming lane on ws://{host}:{port}\n")
+    with serve(_ws_stream_handler, host, port, ping_interval=15,
+               max_size=8 * 1024 * 1024) as server:
+        server.serve_forever()
 
 
 def _wav_duration_s(path: str) -> float | None:
@@ -316,9 +594,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8001)
+    ap.add_argument("--ws-port", type=int, default=8003,
+                    help="Voxtral streaming WebSocket port (0 = disabled)")
     ap.add_argument("--default-model", default=_DEFAULT_MODEL)
     args = ap.parse_args()
     Handler.default_model = args.default_model
+    if args.ws_port:
+        threading.Thread(target=_run_ws_server, args=(args.host, args.ws_port),
+                         name="voxtral-stream-ws", daemon=True).start()
     print(f"[whisper-stt] ready on {args.host}:{args.port} "
           f"(default {args.default_model})", flush=True)
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
