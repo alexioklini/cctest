@@ -2813,6 +2813,24 @@
       "base_model_id": "gemma-4-E4B-it-qat-4bit",
       "profile": "balanced",
       "_caps_canonical": true
+    },
+    "gemma-4-E4B-it-oQ3-fp16": {
+      "enabled": true,
+      "shortname": "e4b-oq3-vorschau",
+      "display_name": "Gemma-4 E4B oQ3 (lokal, Vorschau)",
+      "icon": "⚡",
+      "priority": 45,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router-local",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 32000,
+      "base_model_id": "gemma-4-E4B-it-oQ3-fp16"
     }
   },
   "nodes": {},
