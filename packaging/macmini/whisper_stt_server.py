@@ -369,6 +369,15 @@ def _ws_stream_handler(ws) -> None:
                     if mtype == "end":
                         ws.send(json.dumps({"type": "final", "text": sess.finish()}))
                         break
+        # WBP-Bugfix: NOT closing right after the final send — a server-side
+        # close racing the buffered final through relay+Cloudflare reached
+        # clients as close 1006 WITHOUT the final. The client closes once it
+        # has the final; we only reap after a short grace. Deliberately
+        # OUTSIDE the GPU lock so the grace never delays the next utterance.
+        try:
+            ws.recv(timeout=2)
+        except Exception:
+            pass  # client closed (expected) or stayed silent — reap either way
     except Exception as e:
         # Client-close mid-stream lands here too — nothing is persisted.
         try:
