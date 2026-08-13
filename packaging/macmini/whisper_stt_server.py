@@ -44,6 +44,7 @@ _METRICS = {
     "last_duration_s": None,    # wall-clock of the last transcription
     "last_audio_s": None,       # decoded audio length of the last request
     "total_audio_s": 0.0,       # cumulative transcribed audio seconds
+    "resident": None,           # engine:repo currently held in RAM (single-resident policy)
 }
 
 # Map bare model ids Brain might send to full HF repos (mlx_whisper accepts a
@@ -73,6 +74,38 @@ _VOXTRAL_ALIASES = {
     "voxtral-mini-realtime-mlx": "mlx-community/Voxtral-Mini-4B-Realtime-6bit",
 }
 _VOX_CACHE: dict = {}  # repo -> (model, sp, prompt_tokens, n_delay)
+
+
+def _release_unused(repo: str, is_voxtral: bool) -> None:
+    """Single-resident-model policy (call under _lock, before transcribing):
+    drop whatever OTHER model is still cached — mlx_whisper's ModelHolder
+    keeps one whisper resident forever, _VOX_CACHE keeps voxtral — and hand
+    the freed Metal buffers back. Steady state on one engine = only that
+    engine in RAM (~1.6–4GB saved on the 24GB box); an alternating
+    voxtral↔whisper workload pays a reload per switch instead of holding
+    both. Whisper→whisper switches are handled by ModelHolder itself."""
+    changed = False
+    if is_voxtral:
+        mod = sys.modules.get("mlx_whisper.transcribe")
+        if mod is not None and getattr(mod.ModelHolder, "model", None) is not None:
+            mod.ModelHolder.model = None
+            mod.ModelHolder.model_path = None
+            changed = True
+        for k in [k for k in _VOX_CACHE if k != repo]:
+            _VOX_CACHE.pop(k, None)
+            changed = True
+    else:
+        if _VOX_CACHE:
+            _VOX_CACHE.clear()
+            changed = True
+    if changed:
+        import gc
+        gc.collect()
+        try:
+            import mlx.core as mx
+            mx.clear_cache()
+        except Exception:
+            pass
 
 
 def _voxtral_transcribe(wav_path: str, repo: str) -> str:
@@ -213,6 +246,7 @@ class Handler(BaseHTTPRequestHandler):
                 # Multilingual, no language hint supported; no timestamps →
                 # one synthesized segment over the whole clip below.
                 with _lock:
+                    _release_unused(repo, is_voxtral=True)
                     text = _voxtral_transcribe(path, repo)
                 audio_s = _wav_duration_s(path)
                 # Text survival beats timestamps: emit the segment even when
@@ -226,6 +260,7 @@ class Handler(BaseHTTPRequestHandler):
                 if language:
                     kwargs["language"] = language
                 with _lock:
+                    _release_unused(repo, is_voxtral=False)
                     result = mlx_whisper.transcribe(path, **kwargs)
                 text = (result.get("text") or "").strip()
                 segs = result.get("segments") or []
@@ -247,6 +282,7 @@ class Handler(BaseHTTPRequestHandler):
             _METRICS["requests_total"] += 1
             _METRICS["model_loaded"] = True
             _METRICS["last_model"] = repo
+            _METRICS["resident"] = f"{'voxtral' if is_voxtral else 'whisper'}:{repo}"
             _METRICS["last_duration_s"] = round(time.time() - t0, 2)
             if audio_s is not None:
                 _METRICS["last_audio_s"] = round(audio_s, 1)
