@@ -29,6 +29,19 @@ from __future__ import annotations
 
 CURATED_CHANGELOG: list[dict] = [
     {
+        "version": "9.419.0",
+        "date": "2026-08-13",
+        "title": "Vorschau-Übersetzungsmodell einstellbar",
+        "body": "Unter Einstellungen → Service-Modelle legen Sie jetzt fest, "
+                "welches Modell die graue Live-Vorschau der Live-Übersetzung "
+                "übersetzt (»Übersetzung – Live-Vorschau«). Ein kleines, "
+                "schnelles Modell macht die Vorschau reaktionsschneller; leer "
+                "gelassen nutzt die Vorschau dasselbe Modell wie die "
+                "endgültige Übersetzung.",
+        "audience": "admin",
+        "versions": ["9.419.0"],
+    },
+    {
         "version": "9.416.0",
         "date": "2026-08-12",
         "title": "Live-Übersetzung zeigt Text beim Sprechen",

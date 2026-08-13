@@ -1575,7 +1575,11 @@ Seitenleiste → **Übersetzung**. Vier Tabs:
   Text grau und kursiv als Vorschau und wächst mit — darunter ebenso die
   vorläufige Übersetzung. Sobald der Satz fertig ist, ersetzt das endgültige
   Segment samt endgültiger Übersetzung die Vorschau. Die graue Vorschau ist
-  vorläufig — kleine Korrekturen im finalen Text sind normal.
+  vorläufig — kleine Korrekturen im finalen Text sind normal. Welches Modell
+  die Vorschau übersetzt, stellt der Administrator unter Einstellungen →
+  Service-Modelle → „Übersetzung – Live-Vorschau" ein (leer = dasselbe
+  Modell wie die endgültige Übersetzung; ein kleines, schnelles Modell macht
+  die Vorschau flotter).
 - Wie beim Diktieren gilt: Mikrofonzugriff gibt es nur über `https://…` oder
   `http://localhost`, nicht über die IP-Adresse (Browser-Sicherheitsregel).
 - **Modus**: Live-Untertitel vs. satzweise Stücke.

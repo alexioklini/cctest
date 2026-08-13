@@ -1013,6 +1013,7 @@ class AdminObservabilityHandlers:
         ("translation_model", "Übersetzung", "tools", None),
         ("translation_rewrite_model", "Übersetzung – Ton-Glättung", "tools", None),
         ("translation_detect_fallback_model", "Übersetzung – Spracherkennung (LLM-Fallback)", "tools", None),
+        ("translation_partial_model", "Übersetzung – Live-Vorschau (leer = wie Übersetzung)", "tools", None),
         ("background_task_model", "Fan-out-Hintergrundmodell", "config", None),
         ("kg_extraction_model", "KG-Extraktion", "config", None),
         ("tts_model", "Text-to-Speech", "tools", "tts"),
@@ -1079,6 +1080,7 @@ class AdminObservabilityHandlers:
             "translation_model": (tool_cfg.get("translation") or {}).get("default_model", "") or "",
             "translation_rewrite_model": (tool_cfg.get("translation") or {}).get("rewrite_model", "") or "",
             "translation_detect_fallback_model": (tool_cfg.get("translation") or {}).get("detection_fallback_model", "") or "",
+            "translation_partial_model": (tool_cfg.get("translation") or {}).get("partial_model", "") or "",
         }
         ocr = cfg.get("ocr") or {}
         ocr_block = {
@@ -1381,6 +1383,12 @@ class AdminObservabilityHandlers:
                 # Empty is valid (lingua-only detection, no LLM fallback).
                 tr3["detection_fallback_model"] = _validate_model(body["translation_detect_fallback_model"])
                 tool_updates["translation"] = tr3
+            if "translation_partial_model" in body:
+                tr4 = dict(tool_updates.get("translation")
+                           or (_brain.get_tool_config().get("translation") or {}))
+                # Empty is valid (partials then use the same chain as finals).
+                tr4["partial_model"] = _validate_model(body["translation_partial_model"])
+                tool_updates["translation"] = tr4
             # Speech engines ('server'|'browser') — merged into the SAME
             # tool-config records the model slots use (don't clobber a
             # tts_model/transcribe_model update from this very request).
