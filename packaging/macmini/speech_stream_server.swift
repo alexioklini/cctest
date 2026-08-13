@@ -21,6 +21,7 @@
 
 import AVFoundation
 import Foundation
+import NaturalLanguage
 import Network
 import Speech
 
@@ -34,36 +35,37 @@ func log(_ s: String) {
 }
 
 // ── Locale-Auflösung ───────────────────────────────────────────────────────
-// Config-"language": ""/"de" → de_DE, "en" → en_US, sonst 1:1 als Identifier.
-func resolveLocale(_ language: String) -> Locale {
+// Config-"language": ""  → DUAL-LANE de_DE + en_US (SpeechTranscriber kann
+// keine Sprache erkennen — Session ist locale-fest; zwei Transcriber am
+// selben Analyzer hören dasselbe Audio, ein NL-Selektor kürt die Gewinner-
+// Spur und liefert deren Sprache ins Frame; WBP-language-Erweiterung).
+// "de"/"en"/BCP-47 → eine Spur (Schnellpfad, Sprache = Vorgabe).
+func resolveLanes(_ language: String) -> [(Locale, String)] {
     switch language.lowercased() {
-    case "", "de", "de-de", "de_de": return Locale(identifier: "de_DE")
-    case "en", "en-us", "en_us": return Locale(identifier: "en_US")
-    default: return Locale(identifier: language.replacingOccurrences(of: "-", with: "_"))
+    case "":
+        return [(Locale(identifier: "de_DE"), "de"), (Locale(identifier: "en_US"), "en")]
+    case "de", "de-de", "de_de": return [(Locale(identifier: "de_DE"), "de")]
+    case "en", "en-us", "en_us": return [(Locale(identifier: "en_US"), "en")]
+    default:
+        let ident = language.replacingOccurrences(of: "-", with: "_")
+        return [(Locale(identifier: ident), String(language.prefix(2)).lowercased())]
     }
 }
 
-// ── Eine Transkriptions-Session (ein Client = eine Wortmeldung) ────────────
+// ── Eine Transkriptions-Spur (Locale-fest) ─────────────────────────────────
 @available(macOS 26.0, *)
-final class TranscribeSession {
-    private let transcriber: SpeechTranscriber
-    private let analyzer: SpeechAnalyzer
-    private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
-    private let converter: AVAudioConverter
-    private let inputFormat: AVAudioFormat
-    private let analyzerFormat: AVAudioFormat
-    private var resultsTask: Task<Void, Never>?
-
-    // Kumulativer Stand: finalisierte Segmente + aktuelle volatile Hypothese.
-    private(set) var confirmed: String = ""
-    private(set) var volatileText: String = ""
-    var audioSeconds: Double = 0
+final class TranscribeLane {
+    let code: String  // ISO-639-1 fürs language-Feld ("de"/"en")
+    let transcriber: SpeechTranscriber
+    var confirmed = ""
+    var volatileText = ""
 
     var cumulative: String {
         (confirmed + " " + volatileText).trimmingCharacters(in: .whitespaces)
     }
 
-    init(locale: Locale, onUpdate: @escaping (String) -> Void) async throws {
+    init(locale: Locale, code: String) {
+        self.code = code
         transcriber = SpeechTranscriber(
             locale: locale,
             transcriptionOptions: [],
@@ -71,15 +73,71 @@ final class TranscribeSession {
             // Transcriber in ~10s-Fenstern (Partials kamen erst am Ende).
             reportingOptions: [.volatileResults, .fastResults],
             attributeOptions: [])
-        // Modell-Assets bei Bedarf nachladen (einmalig pro Locale).
-        if let request = try await AssetInventory.assetInstallationRequest(
-                supporting: [transcriber]) {
-            log("lade Speech-Assets für \(locale.identifier) …")
-            try await request.downloadAndInstall()
+    }
+}
+
+// ── Eine Transkriptions-Session (ein Client = eine Wortmeldung) ────────────
+// 1 Spur bei explizitem language, 2 Spuren (de+en) bei Auto: beide Module
+// hängen am SELBEN Analyzer und hören dasselbe Audio; der Selektor kürt die
+// Spur, deren Text laut NLLanguageRecognizer zu ihrer eigenen Locale passt
+// (Denglisch → Mehrheitssprache gewinnt). Frames tragen die Gewinner-Sprache.
+@available(macOS 26.0, *)
+final class TranscribeSession {
+    private let lanes: [TranscribeLane]
+    private let analyzer: SpeechAnalyzer
+    private let inputContinuation: AsyncStream<AnalyzerInput>.Continuation
+    private let converter: AVAudioConverter
+    private let inputFormat: AVAudioFormat
+    private let analyzerFormat: AVAudioFormat
+    private var resultsTasks: [Task<Void, Never>] = []
+    var audioSeconds: Double = 0
+    // Beide Lane-Tasks mutieren State und lesen im Selektor die JEWEILS
+    // ANDERE Lane — unsynchronisiert war das ein Data-Race (SIGSEGV beim
+    // Release). Alle State-Zugriffe laufen über diese serielle Queue.
+    private let stateQueue = DispatchQueue(label: "speech-session-state")
+
+    func winner() -> (text: String, language: String?) {
+        stateQueue.sync { winnerLocked() }
+    }
+
+    private func winnerLocked() -> (text: String, language: String?) {
+        if lanes.count == 1 {
+            let t = lanes[0].cumulative
+            return (t, t.isEmpty ? nil : lanes[0].code)
         }
-        analyzer = SpeechAnalyzer(modules: [transcriber])
+        var best: (lane: TranscribeLane, score: Double)?
+        for lane in lanes {
+            let t = lane.cumulative
+            if t.isEmpty { continue }
+            var score = Double(t.count)
+            let recognizer = NLLanguageRecognizer()
+            recognizer.processString(t)
+            if let dominant = recognizer.dominantLanguage?.rawValue.prefix(2),
+               dominant == lane.code {
+                score *= 2.0
+            }
+            if best == nil || score > best!.score { best = (lane, score) }
+        }
+        guard let b = best else { return ("", nil) }
+        // Sprach-Stabilität: unter 12 Zeichen ist NL-Erkennung Rauschen
+        // ("G" → en) — Feld weglassen, App nutzt solange ihre Heuristik.
+        let language = b.lane.cumulative.count >= 12 ? b.lane.code : nil
+        return (b.lane.cumulative, language)
+    }
+
+    init(lanes laneSpecs: [(Locale, String)],
+         onUpdate: @escaping (String, String?) -> Void) async throws {
+        lanes = laneSpecs.map { TranscribeLane(locale: $0.0, code: $0.1) }
+        for lane in lanes {
+            if let request = try await AssetInventory.assetInstallationRequest(
+                    supporting: [lane.transcriber]) {
+                log("lade Speech-Assets für \(lane.code) …")
+                try await request.downloadAndInstall()
+            }
+        }
+        analyzer = SpeechAnalyzer(modules: lanes.map { $0.transcriber })
         guard let best = await SpeechAnalyzer.bestAvailableAudioFormat(
-                compatibleWith: [transcriber]) else {
+                compatibleWith: lanes.map { $0.transcriber }) else {
             throw NSError(domain: "speech-stream", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "no analyzer audio format"])
         }
@@ -98,27 +156,33 @@ final class TranscribeSession {
         let stream = AsyncStream<AnalyzerInput> { continuation = $0 }
         inputContinuation = continuation
 
-        // Ergebnisse: volatile ersetzt die Hypothese, final wandert in confirmed.
-        resultsTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                for try await result in self.transcriber.results {
-                    let text = String(result.text.characters)
-                        .trimmingCharacters(in: .whitespaces)
-                    if result.isFinal {
-                        if !text.isEmpty {
-                            self.confirmed = (self.confirmed + " " + text)
-                                .trimmingCharacters(in: .whitespaces)
+        // Je Spur: volatile ersetzt die Hypothese, final wandert in confirmed;
+        // nach jedem Update entscheidet der Selektor, was emittiert wird.
+        for lane in lanes {
+            resultsTasks.append(Task { [weak self] in
+                guard let self else { return }
+                do {
+                    for try await result in lane.transcriber.results {
+                        let text = String(result.text.characters)
+                            .trimmingCharacters(in: .whitespaces)
+                        self.stateQueue.sync {
+                            if result.isFinal {
+                                if !text.isEmpty {
+                                    lane.confirmed = (lane.confirmed + " " + text)
+                                        .trimmingCharacters(in: .whitespaces)
+                                }
+                                lane.volatileText = ""
+                            } else {
+                                lane.volatileText = text
+                            }
+                            let w = self.winnerLocked()
+                            onUpdate(w.text, w.language)
                         }
-                        self.volatileText = ""
-                    } else {
-                        self.volatileText = text
                     }
-                    onUpdate(self.cumulative)
+                } catch {
+                    log("results stream (\(lane.code)) ended: \(error)")
                 }
-            } catch {
-                log("results stream ended: \(error)")
-            }
+            })
         }
         try await analyzer.start(inputSequence: stream)
     }
@@ -152,12 +216,21 @@ final class TranscribeSession {
         }
     }
 
-    func finish() async -> String {
+    private var finished = false
+    private var finalResult: (text: String, language: String?) = ("", nil)
+
+    func finish() async -> (text: String, language: String?) {
+        // Idempotent: der Teardown ruft finish() nach dem final-Pfad erneut —
+        // ein zweites finalizeAndFinish auf dem beendeten Analyzer crasht den
+        // Prozess (KeepAlive-Restart riss dann die NÄCHSTE Verbindung ab).
+        if finished { return finalResult }
+        finished = true
         inputContinuation.finish()
         try? await analyzer.finalizeAndFinishThroughEndOfInput()
-        resultsTask?.cancel()
-        // Nach finalize sind alle Segmente final — volatile Rest einrechnen.
-        return cumulative
+        for task in resultsTasks { task.cancel() }
+        // Nach finalize sind alle Segmente final — Selektor entscheidet.
+        finalResult = winner()
+        return finalResult
     }
 }
 
@@ -252,11 +325,14 @@ final class ConnectionHandler {
                 guard let self else { return }
                 do {
                     let s = try await TranscribeSession(
-                        locale: resolveLocale(language)) { [weak self] text in
+                        lanes: resolveLanes(language)) { [weak self] text, lang in
                         guard let self, !self.closed else { return }
-                        if !text.isEmpty && text != self.lastEmit {
-                            self.lastEmit = text
-                            wsSend(self.connection, json: ["type": "partial", "text": text])
+                        let emitKey = (lang ?? "") + "|" + text
+                        if !text.isEmpty && emitKey != self.lastEmit {
+                            self.lastEmit = emitKey
+                            var frame: [String: Any] = ["type": "partial", "text": text]
+                            if let lang { frame["language"] = lang }
+                            wsSend(self.connection, json: frame)
                         }
                     }
                     // Gepuffertes Frühaudio nachfüttern, dann normal weiter.
@@ -281,8 +357,10 @@ final class ConnectionHandler {
     private func sendFinalAndClose() async {
         guard !closed else { return }
         idleTimer?.cancel()
-        let text = await session?.finish() ?? ""
-        wsSend(connection, json: ["type": "final", "text": text])
+        let result = await session?.finish() ?? ("", nil)
+        var frame: [String: Any] = ["type": "final", "text": result.0]
+        if let lang = result.1 { frame["language"] = lang }
+        wsSend(connection, json: frame)
         // Grace: der Client schließt nach Empfang des final; wir räumen nach 2s.
         DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.teardown()
