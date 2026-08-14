@@ -120,3 +120,5 @@ test-results/
 agents/main/bench_official_cache.json
 .brain-trash/
 .venv_quant/
+eval/_ocr_ab_out/
+eval/_rerank_ab_results.json
