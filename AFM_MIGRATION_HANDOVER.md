@@ -7,6 +7,42 @@ NÄCHSTEN Schritte — welche Brain-LLM-Calls auf das Apple Foundation Model
 Embeddings über den llm-router laufen sollen. Nichts davon ist umgesetzt;
 alles ist config-/kleinteilig und einzeln rückholbar.
 
+## UMSETZUNGSSTAND (13.08. abends, Claude-Session)
+
+- ✅ `apple-fm-system` als Brain-Modell angelegt (provider llm-router-local,
+  is_local, thinking_format none, capabilities [chat], max_context 4096).
+- ✅ `chat_summary_model` + `next_prompt_model` → apple-fm-system, LIVE
+  verifiziert (Titel + Ghost via Router-request_log, Deutsch auf deutschem
+  Inhalt gut; bei gemischtsprachigem/technischem Inhalt kippt der Titel
+  gelegentlich ins Englische — beobachten).
+- ❌ `classifier_model` ZURÜCK auf mistral-small-latest: fm-serve lehnt in
+  Beta 5 JEDEN erzwungenen Tool-Call ab ("An unsupported generation guide
+  was used") — auch ein Ein-Feld-String-Schema ohne Enum/Array. Der
+  Klassifikator braucht `forced_tool` → AFM derzeit unmöglich.
+  **URSACHE wahrscheinlich geklärt** (Apple-Forums-Thread 841654): bekannte
+  Beta-5-Regression — Tool-Calling bricht nach dem Update durch
+  unvollständig geladene System-Language-Model-Assets; laut Apple-Staff kein
+  API-Limit. Abhilfe: Gerät NEU STARTEN + 5–10 Min Assets nachladen lassen
+  (fm-serve-Daemon-Restart allein reicht NICHT, 13.08. geprüft). Nach dem
+  M4-Reboot forced-tool-Probe wiederholen; bei Erfolg classifier_model
+  wieder auf apple-fm-system.
+- ⚠️ fm-serve antwortet IMMER als SSE-Stream, auch bei `stream:false` →
+  non-streaming Calls über den Router geben 502 "Upstream lieferte kein
+  JSON". Brains Loop streamt immer → für Brain-Zwecke egal, aber für
+  Router-Direktnutzer relevant (ggf. im Router aggregieren).
+- ✅ Embeddings via Router: Router-Modellzeile `embeddinggemma-300m-bf16`
+  (Provider Lokal) angelegt; Auth-Frage geklärt — der Remote-Embedder sendet
+  `Authorization: Bearer $MEMPALACE_EMBEDDING_API_KEY` (kein venv-Patch
+  nötig), Plist auf `http://127.0.0.1:8424` + Router-Key umgestellt, Brain
+  neu gestartet (läuft jetzt 9.424.0). Read- UND Write-Pfad verifiziert
+  (mempalace_query + Wiki-Mirror-Write, je request_log `endpoint=embeddings`),
+  kein ONNX-Latch. Rollback: Plist-URL zurück auf `:8000`, Key auf `brain`.
+- 🔎 NEBENBEFUND: der Remote-RERANKER (M4 :8002, infinity) timeoutet auf der
+  jeweils ersten echten Rerank-Anfrage nach Brain-Restart (Health 20ms, Latch
+  nach 2 Fehlern → Rerank für den Prozesslauf AUS — historisch oft passiert,
+  auch in diesem Lauf 1×). Vermutlich Modell-Kaltladung > Brain-Timeout.
+  Fix-Kandidaten: Timeout hoch / Reranker-Warmup nach Restart.
+
 ## Faktenlage (verifiziert 14.08.)
 
 - **Kein On-Device-Quota**: `fm quota-usage` → "System: Not applicable

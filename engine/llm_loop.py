@@ -281,10 +281,28 @@ def build_openai_payload(
     # constrain the model to it via tool_choice. The model's single tool_call
     # `arguments` IS the structured result — captured, never dispatched.
     if forced_tool:
-        payload["tool_choice"] = {
-            "type": "function",
-            "function": {"name": forced_tool["name"]},
-        }
+        if (engine.resolve_model_settings(model).get("forced_tool_wire")
+                == "response_format"):
+            # Wire variant for upstreams without wire tool-calls (Apple-FM
+            # bridge: every tool_choice request 500s with "unsupported
+            # generation guide", while guided generation via response_format
+            # works — same schema contract, different transport). The loop
+            # parses the JSON reply back into forced_tool_input.
+            payload.pop("tools", None)
+            payload.pop("parallel_tool_calls", None)
+            _schema = dict(forced_tool.get("input_schema")
+                           or forced_tool.get("parameters") or {})
+            _schema.setdefault("additionalProperties", False)
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": forced_tool["name"],
+                                "schema": _schema},
+            }
+        else:
+            payload["tool_choice"] = {
+                "type": "function",
+                "function": {"name": forced_tool["name"]},
+            }
 
     # Sampling — only forward what's set. Mirror the sidecar's "omit unset" rule.
     for key in ("temperature", "top_p"):
@@ -1403,6 +1421,25 @@ def run_loop(
                     break
             if forced_tool_input is not None:
                 break
+
+        # response_format wire variant (forced_tool_wire): no tool_call comes
+        # back — the guided-generation JSON text IS the structured result.
+        # Parse failure falls through to the normal finish so callers fail
+        # open exactly like a model that ignored tool_choice.
+        if (forced_tool and not tool_uses and rr.text.strip()
+                and engine.resolve_model_settings(model).get("forced_tool_wire")
+                == "response_format"):
+            _raw = rr.text.strip()
+            _s, _e = _raw.find("{"), _raw.rfind("}")
+            if _s != -1 and _e > _s:
+                try:
+                    _obj = json.loads(_raw[_s:_e + 1])
+                except Exception:
+                    _obj = None
+                if isinstance(_obj, dict):
+                    forced_tool_input = _obj
+                    final_stop_reason = "forced_tool"
+                    break
 
         if not tool_uses:
             if round_visible:
