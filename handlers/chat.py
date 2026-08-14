@@ -394,6 +394,89 @@ def _inject_web_preamble_into_wire(messages, preamble):
     return wire
 
 
+def _mini_handover_wire(session, sid):
+    """Mini-Modus (9.438.0): ab Turn 2 ersetzt ein kompaktes, vom Mini-Modell
+    SELBST geschriebenes Handover die Wire-Historie — jeder Turn startet wie
+    eine frische Session (User-Design: 'ab dem zweiten Turn kompaktes Handover
+    via AFM an eine frische Session übergeben, alles automatisch'). Grund: das
+    3B plappert ab Turn 2 kontaminierte Historie nach statt Tools zu rufen,
+    und die volle Historie frisst das 8k-Fenster. session.messages/DB bleiben
+    VOLL (UI zeigt alles) — reiner Wire-Ersatz, gleicher Split wie Websuche/
+    Caveman. Gecacht per Sig (Anzahl konversationaler Zeilen vor der
+    schwebenden User-Message) auf session._mini_handover; Fehler → None →
+    voller Verlauf (auto_lcm bleibt als Netz). Returns wire-Liste oder None."""
+    try:
+        ms = (engine.resolve_model_settings(session.model) or {})
+        if ms.get("mini_harness") is not True:
+            return None
+        if ms.get("mini_handover") is False:
+            return None
+    except Exception:
+        return None
+    msgs = session.messages
+    if not msgs or msgs[-1].get("role") != "user":
+        return None
+    conv = [m for m in msgs[:-1] if m.get("role") in ("user", "assistant")
+            and isinstance(m.get("content"), str) and m.get("content")]
+    if len(conv) < 2:  # Turn 1 (keine abgeschlossene Runde) → normal
+        return None
+    sig = len(conv)
+    cache = getattr(session, "_mini_handover", None)
+    text = cache.get("text") if (cache and cache.get("sig") == sig) else None
+    if not text:
+        # Delta-Eingabe: vorheriges Handover + nur die NEUEN Zeilen seither —
+        # hält den Generierungs-Input klein (8k-Fenster des Generators!).
+        prev = cache.get("text") if cache else ""
+        since = cache.get("sig", 0) if cache else 0
+        parts = []
+        if prev:
+            parts.append(f"[Bisheriges Handover]\n{prev}")
+        for m in conv[since:][-10:]:
+            who = "Nutzer" if m.get("role") == "user" else "Assistent"
+            parts.append(f"{who}: {str(m.get('content'))[:800]}")
+        gen_prompt = (
+            "Schreibe ein kompaktes Handover dieses Dialogs (max. 8 Zeilen): "
+            "1) Aufgabe/Thema, 2) wichtige Fakten WÖRTLICH (Zahlen, Namen, "
+            "Pfade), 3) letzte Antwort in einem Satz. Keine Einleitung, "
+            "keine Bewertung.\n\n" + "\n\n".join(parts))
+        try:
+            r = sidecar_proxy.background_call(
+                messages=[{"role": "user", "content": gen_prompt}],
+                model=session.model,
+                agent_id=session.agent_id,
+                user_id=session.user_id or "",
+                session_id=sid,
+                purpose="transform",
+                cost_purpose="mini_handover",
+                max_tokens=300,
+                timeout_s=60.0,
+            )
+            text = (r.get("reply") or r.get("text") or "").strip()
+        except Exception:
+            text = ""
+        if not text:
+            return None
+        session._mini_handover = {"sig": sig, "text": text}
+        try:  # Forensik-Datei (wie /tmp/mini_distill_log.txt)
+            with open("/tmp/mini_handover_log.txt", "a") as _f:
+                _f.write(f"--- sid={sid} sig={sig}\n{text}\n")
+        except Exception:
+            pass
+    # Framing als reiner HINTERGRUND (nicht als Aufgabe): 'arbeite damit
+    # weiter' + 'Verstanden.' ließ das 3B den Handover-Inhalt beantworten
+    # statt die neue Frage (Turn 2 antwortete Wetter statt uname).
+    wire = [
+        {"role": "user",
+         "content": ("[Hintergrund — Kurzfassung des bisherigen Dialogs. "
+                     "NUR Kontext, nicht wiederholen, nicht beantworten]\n"
+                     + text)},
+        {"role": "assistant",
+         "content": "Notiert als Hintergrund. Was ist deine neue Frage?"},
+        msgs[-1],  # Original-Objekt: spätere Wire-Injektionen greifen darauf
+    ]
+    return wire
+
+
 def _append_to_wire_user(messages, suffix):
     """Like _inject_web_preamble_into_wire but APPENDS `suffix` to the LAST user
     message (a trailing instruction reads better than a leading one for response-
@@ -5186,6 +5269,20 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                 )
                             except Exception:
                                 pass
+                    # Mini-Modus: ab Turn 2 kompaktes Handover statt voller
+                    # Historie auf dem Wire (frische-Session-Semantik; DB/UI
+                    # behalten alles). NACH dem PII-Block: in anonymisierenden
+                    # Sessions bleibt der klassische (pseudonymisierte) Wire —
+                    # das Handover trüge sonst Roh-Historie. Die schwebende
+                    # User-Message bleibt das Original-Objekt, damit die
+                    # folgenden Injektionen (Websuche/Pins/Caveman) greifen.
+                    if not _pii_decisions:
+                        try:
+                            _mini_wire = _mini_handover_wire(session, sid)
+                            if _mini_wire:
+                                _wire_messages = _mini_wire
+                        except Exception:
+                            pass
                     # Manual web-search: fetch the curated URLs FRESH now and
                     # prepend their content to the wire copy of the last user
                     # message only — ephemeral, never persisted into history, so
