@@ -31,7 +31,7 @@ def spotlight_answer(question: str, timeout: float = 240, retrieve_only: bool = 
     if cli_model:
         env += f"MODEL={_shq(cli_model)} CTX_BUDGET={ctx_budget} "
     proc = subprocess.run(
-        ["ssh", M4, "cd spotlight-eval && " + env + ".build/release/spotlight-qa " + _shq(question)],
+        ["ssh", M4, "cd spotlight-eval && " + env + ".build/out/Products/Release/spotlight-qa " + _shq(question)],
         capture_output=True, text=True, timeout=timeout)
     out = proc.stdout
     i = out.find("{")
@@ -60,7 +60,7 @@ class ServeClient:
             env += f"MODEL={_shq(cli_model)} "
         env += f"CTX_BUDGET={ctx_budget} "
         self.p = subprocess.Popen(
-            ["ssh", M4, f"cd spotlight-eval && {env}.build/release/spotlight-qa --serve"],
+            ["ssh", M4, f"cd spotlight-eval && {env}.build/out/Products/Release/spotlight-qa --serve"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, bufsize=1)
 
