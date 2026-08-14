@@ -165,16 +165,22 @@ sich.
 - CLT Beta 5 ist installiert → Swift-Toolchain kann jetzt auch die
   27er-SDK-Interfaces bauen (FoundationModels-`capabilities`-Probe möglich).
 
-## Referenz: M4-Dienste (alle launchd, gui/501)
+## Referenz: M4-Dienste (alle launchd, gui/501) — Stand 14.08. abends
 
 | Dienst | Port | Zweck |
 |---|---|---|
 | com.brain-agent.omlx-serve | 8000 | Gemma/EuroLLM/Llama + Embeddings (GPU) |
 | com.brain-agent.whisper-stt | 8001 | Whisper/Voxtral Batch-STT |
 | — (im STT-Prozess) | 8003 | Voxtral-Streaming-WS |
-| com.brain-agent.speech-stream | 8004 | SpeechAnalyzer-Streaming-WS (Dual-Lane, language-Feld) |
-| com.brain-agent.fm-serve | 8005 | Apple FM Chat-Completions |
-| com.brain-agent.apple-ocr | 8006 | Vision-OCR (blockiert bis Beta 5) |
+| com.brain-agent.speech-stream | 8004 | SpeechAnalyzer-Streaming-WS (Binary jetzt aus dem fm-agent-Package) |
+| ~~com.brain-agent.fm-serve~~ | ~~8005~~ | AUSGEMUSTERT 14.08. (Plist .disabled; alles via :8007) |
+| ~~com.brain-agent.apple-ocr~~ | ~~8006~~ | ABGELÖST durch :8007 (Router-Zeile umgezogen; Dienst läuft noch, kann nach OCR-A/B weg) |
+| com.brain-agent.fm-agent | 8007 | fm-agent: AFM (3 Varianten) + Vision-OCR + CoreAI-Zoo + Wire-Tool-Calling |
+
+`apple-fm-system` (Klassifikator/Titel/Ghost/Translate-Fallback) zeigt im
+Router seit 14.08. auf `apple-fm-agent` (upstream `apple-fm-agentic`) —
+verifiziert über alle drei Service-Zwecke. Rollback: provider_id=apple-fm,
+upstream_id=system, Plist zurückbenennen + bootstrap.
 
 Commits dieser Woche: cctest `1d5e3fc4`…`526ff84d` (v9.414.2–9.424.0),
 llm-router `5357c12`…`bcaa626`. Betriebswissen im Claude-Memory:
