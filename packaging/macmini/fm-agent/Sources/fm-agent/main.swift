@@ -60,6 +60,8 @@
 // Tool-Outputs bzw. einem Bild-Prompt hängt einen leeren Prompt-Eintrag an
 // (empirisch unauffällig, siehe Abnahmetests im Commit).
 
+import CoreAIKit
+import CoreAIKitCore
 import CoreGraphics
 import Foundation
 import FoundationModels
@@ -80,6 +82,78 @@ func log(_ s: String) {
 let DEFAULT_MODEL = "apple-fm-agentic"
 let OCR_MODEL = "apple-vision-ocr"
 let FM_VARIANTS = [DEFAULT_MODEL, "apple-fm-permissive", "apple-fm-contenttagging"]
+
+// ── CoreAI-Zoo-Modelle (CoreAIKit) ─────────────────────────────────────────
+// Modell-ID "coreai-<katalog-id>" (z. B. coreai-qwen3.5-0.8b) → KitLanguageModel
+// hinter FoundationModels' LanguageModel-Protokoll — DIESELBE Session-
+// Maschinerie wie AFM, inkl. unserer Tool-Calling-Bridge (Hermes/ChatML,
+// derzeit qwen3-Familie; andere Bundles: plain chat). NUR der eingebaute,
+// revisions-gepinnte Katalog (BuiltinPins) — kein Remote-Katalog-Fetch.
+// Gemma-4-Einträge (Decoder+PLE-Tabellen-Paar / Raw-Metal-Pack) brauchen
+// Spezial-Runtimes → ausgenommen. Download bei Erstnutzung (HF, gepinnt),
+// danach gecacht. SINGLE-RESIDENT wie der STT-Wrapper: ein Zoo-Modell
+// resident, Wechsel entlädt das vorige; Generierung SERIELL (die Engine
+// verträgt keine parallelen generate-Calls — trap).
+let COREAI_PREFIX = "coreai-"
+
+func coreaiModelIDs() -> [String] {
+    guard #available(macOS 27.0, *) else { return [] }
+    return ModelCatalog.builtin.available(.chat)
+        .filter { !$0.id.hasPrefix("gemma-4") && $0.modelID != nil }
+        .map { COREAI_PREFIX + $0.id }
+}
+
+// Serieller Generierungs-Gate (acquire überträgt den Lock an den nächsten Waiter).
+actor GenGate {
+    private var locked = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func acquire() async {
+        if !locked { locked = true; return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func release() {
+        if waiters.isEmpty { locked = false } else { waiters.removeFirst().resume() }
+    }
+}
+
+@available(macOS 27.0, *)
+actor CoreAIHost {
+    static let shared = CoreAIHost()
+    let gate = GenGate()
+    private var residentID: String?
+    private var resident: (any LanguageModel)?
+
+    func languageModel(catalogID: String) async throws -> any LanguageModel {
+        if residentID == catalogID, let m = resident { return m }
+        guard let entry = ModelCatalog.builtin.entry(id: catalogID),
+              let mid = entry.modelID, !catalogID.hasPrefix("gemma-4") else {
+            throw NSError(domain: "fm-agent", code: 400, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "unbekanntes/nicht unterstütztes CoreAI-Modell '\(catalogID)'"])
+        }
+        // Single-Resident: erst freigeben (RAM), dann laden.
+        resident = nil
+        residentID = nil
+        // Engine aus dem Katalog-Hint (das interne EngineVariant(catalogHint:)
+        // repliziert): .auto wählt bei manchen Bundles falsch — qwen3.5 traf
+        // ohne den "pipelined"-Hint einen Shape-Trap in CoreAIRuntime.
+        let variant: EngineVariant
+        switch entry.engine {
+        case "sequential": variant = .sequential
+        case "pipelined": variant = .pipelined
+        case "static-shape": variant = .staticShape
+        default: variant = .auto
+        }
+        log("coreai: lade '\(catalogID)' (engine=\(variant.rawValue); Erstnutzung lädt von HF, revisions-gepinnt) …")
+        let t0 = Date()
+        let model = try await KitLanguageModel(
+            model: mid, engineVariant: variant, modelID: COREAI_PREFIX + catalogID)
+        log(String(format: "coreai: '%@' bereit (%.1fs)", catalogID, Date().timeIntervalSince(t0)))
+        resident = model
+        residentID = catalogID
+        return model
+    }
+}
 
 @available(macOS 26.0, *)
 func resolveSystemModel(_ id: String) -> SystemLanguageModel? {
@@ -207,8 +281,18 @@ func parseRequest(_ body: [String: Any], capture: CallCapture) -> (WireRequest?,
     rq.stream = (body["stream"] as? Bool) ?? false
     rq.temperature = body["temperature"] as? Double
     rq.maxTokens = (body["max_tokens"] as? Int) ?? (body["max_completion_tokens"] as? Int)
-    if rq.modelID != OCR_MODEL, resolveSystemModel(rq.modelID) == nil {
-        return (nil, "unbekanntes Modell '\(rq.modelID)' — verfügbar: \(FM_VARIANTS + [OCR_MODEL])")
+    if rq.modelID.hasPrefix(COREAI_PREFIX) {
+        let cid = String(rq.modelID.dropFirst(COREAI_PREFIX.count))
+        var ok = false
+        if #available(macOS 27.0, *) {
+            ok = !cid.hasPrefix("gemma-4")
+                && ModelCatalog.builtin.entry(id: cid)?.modelID != nil
+        }
+        if !ok {
+            return (nil, "unbekanntes/nicht unterstütztes CoreAI-Modell '\(cid)' — verfügbar: \(coreaiModelIDs())")
+        }
+    } else if rq.modelID != OCR_MODEL, resolveSystemModel(rq.modelID) == nil {
+        return (nil, "unbekanntes Modell '\(rq.modelID)' — verfügbar: \(FM_VARIANTS + [OCR_MODEL] + coreaiModelIDs())")
     }
 
     // tools → Proxys + Definitionen
@@ -355,7 +439,7 @@ func parseRequest(_ body: [String: Any], capture: CallCapture) -> (WireRequest?,
 
 // ── Generierung ────────────────────────────────────────────────────────────
 @available(macOS 26.0, *)
-func buildSession(_ rq: WireRequest) -> LanguageModelSession {
+func buildSession(_ rq: WireRequest) async throws -> LanguageModelSession {
     var entries: [Transcript.Entry] = []
     if !rq.systemText.isEmpty || !rq.toolDefs.isEmpty {
         entries.append(.instructions(Transcript.Instructions(
@@ -364,6 +448,16 @@ func buildSession(_ rq: WireRequest) -> LanguageModelSession {
             toolDefinitions: rq.toolDefs)))
     }
     entries.append(contentsOf: rq.entries)
+    if rq.modelID.hasPrefix(COREAI_PREFIX) {
+        guard #available(macOS 27.0, *) else {
+            throw NSError(domain: "fm-agent", code: 400, userInfo: [
+                NSLocalizedDescriptionKey: "CoreAI-Modelle benötigen macOS 27"])
+        }
+        let cid = String(rq.modelID.dropFirst(COREAI_PREFIX.count))
+        let kit = try await CoreAIHost.shared.languageModel(catalogID: cid)
+        return LanguageModelSession(
+            model: kit, tools: rq.tools, transcript: Transcript(entries: entries))
+    }
     let model = resolveSystemModel(rq.modelID) ?? SystemLanguageModel.default
     return LanguageModelSession(
         model: model, tools: rq.tools, transcript: Transcript(entries: entries))
@@ -560,13 +654,17 @@ final class ConnectionHandler: @unchecked Sendable {
     func route(method: String, path: String, body: Data) {
         switch (method, path) {
         case ("GET", "/health"):
-            sendJSON(200, ["status": "ok", "models": FM_VARIANTS + [OCR_MODEL]])
+            sendJSON(200, ["status": "ok",
+                           "models": FM_VARIANTS + [OCR_MODEL] + coreaiModelIDs()])
         case ("GET", "/v1/models"):
             let now = Int(Date().timeIntervalSince1970)
-            sendJSON(200, ["object": "list", "data":
-                (FM_VARIANTS + [OCR_MODEL]).map {
-                    ["id": $0, "object": "model", "owned_by": "Apple", "created": now]
-                }])
+            let fm = (FM_VARIANTS + [OCR_MODEL]).map {
+                ["id": $0, "object": "model", "owned_by": "Apple", "created": now]
+            }
+            let zoo = coreaiModelIDs().map {
+                ["id": $0, "object": "model", "owned_by": "CoreAI-Zoo", "created": now]
+            }
+            sendJSON(200, ["object": "list", "data": fm + zoo])
         case ("POST", "/v1/chat/completions"):
             guard #available(macOS 26.0, *) else {
                 sendError(500, "FoundationModels benötigt macOS 26+"); return
@@ -611,14 +709,34 @@ final class ConnectionHandler: @unchecked Sendable {
             return
         }
 
-        let session = buildSession(rq)
         let opts = generationOptions(rq)
         let promptText = rq.promptText ?? ""   // leer = Fortsetzung (Tool-Outputs/Bild-Prompt im Transcript)
+        let isCoreAI = rq.modelID.hasPrefix(COREAI_PREFIX)
 
         Task {
             if rq.stream {
                 self.sendSSEHeader()
                 self.sendSSE(chunkObj(rid, rq.modelID, ["role": "assistant"]))
+            }
+            // CoreAI: Generierung SERIELL (Engine-Trap bei parallelen Calls);
+            // AFM bleibt unbeschränkt parallel.
+            if isCoreAI {
+                if #available(macOS 27.0, *) { await CoreAIHost.shared.gate.acquire() }
+            }
+            defer {
+                if isCoreAI {
+                    if #available(macOS 27.0, *) {
+                        Task { await CoreAIHost.shared.gate.release() }
+                    }
+                }
+            }
+            let session: LanguageModelSession
+            do {
+                session = try await buildSession(rq)
+            } catch {
+                self.failGeneration(rid: rid, rq: rq, status: 400,
+                                    code: "model_load_error", message: "\(error.localizedDescription)")
+                return
             }
             var emitted = ""
             var realUsage: [String: Any]? = nil
@@ -631,7 +749,7 @@ final class ConnectionHandler: @unchecked Sendable {
                     var lastJSON = ""
                     for try await snap in stream {
                         lastJSON = snap.content.jsonString
-                        realUsage = self.usageJSON(snap.usage)
+                        realUsage = self.usageJSON(snap.usage) ?? realUsage
                         if rq.stream {
                             let delta = String(lastJSON.dropFirst(
                                 emitted.commonPrefix(with: lastJSON).count))
@@ -646,7 +764,7 @@ final class ConnectionHandler: @unchecked Sendable {
                     let stream = session.streamResponse(to: Prompt(promptText), options: opts)
                     for try await snap in stream {
                         let cum = snap.content
-                        realUsage = self.usageJSON(snap.usage)
+                        realUsage = self.usageJSON(snap.usage) ?? realUsage
                         if rq.stream {
                             let delta = String(cum.dropFirst(
                                 emitted.commonPrefix(with: cum).count))
@@ -670,13 +788,15 @@ final class ConnectionHandler: @unchecked Sendable {
         }
     }
 
-    // Echte Token-Zahlen aus dem Snapshot (macOS 27); nil → Schätzung greift.
+    // Echte Token-Zahlen aus dem Snapshot (macOS 27); nil/leer → Schätzung greift.
     @available(macOS 26.0, *)
-    func usageJSON(_ usage: LanguageModelSession.Usage) -> [String: Any] {
+    func usageJSON(_ usage: LanguageModelSession.Usage) -> [String: Any]? {
+        let total = usage.input.totalTokenCount + usage.output.totalTokenCount
+        guard total > 0 else { return nil }   // Engine ohne Usage-Events (manche CoreAI-Pfade)
         return [
             "prompt_tokens": usage.input.totalTokenCount,
             "completion_tokens": usage.output.totalTokenCount,
-            "total_tokens": usage.input.totalTokenCount + usage.output.totalTokenCount,
+            "total_tokens": total,
             "prompt_tokens_details": ["cached_tokens": usage.input.cachedTokenCount],
         ]
     }
@@ -788,7 +908,9 @@ listener.newConnectionHandler = { conn in
     ConnectionHandler(conn).start()
 }
 listener.stateUpdateHandler = { st in
-    if case .ready = st { log("bereit auf Port \(port) — Modelle: \(FM_VARIANTS + [OCR_MODEL])") }
+    if case .ready = st {
+        log("bereit auf Port \(port) — AFM: \(FM_VARIANTS + [OCR_MODEL]), CoreAI: \(coreaiModelIDs().count) Zoo-Modelle")
+    }
     if case .failed(let e) = st { log("Listener-Fehler: \(e)"); exit(1) }
 }
 listener.start(queue: .global())
