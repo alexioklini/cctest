@@ -246,6 +246,64 @@ func wsSend(_ connection: NWConnection, json: [String: Any]) {
 }
 
 @available(macOS 26.0, *)
+// ── Status-Datei für SparkDash ─────────────────────────────────────────────
+// Der Port spricht ausschließlich WebSocket (NWProtocolWebSocket im Stack) —
+// ein HTTP-/status auf demselben Port ist nicht möglich. Monitoring liest
+// stattdessen ~/speech-stream-status.json (atomar geschrieben) + TCP-Check.
+let STATUS_FILE = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("speech-stream-status.json")
+let PROCESS_START = Date()
+
+final class SpeechStats {
+    static let shared = SpeechStats()
+    private let lock = NSLock()
+    private var sessionsTotal = 0
+    private var aborts = 0
+    private var busy = false
+    private var lastLanguage: String?
+    private var lastFinalChars = 0
+    private var lastSessionEnd: Date?
+
+    func sessionStarted() {
+        lock.lock(); sessionsTotal += 1; busy = true; lock.unlock()
+        write()
+    }
+    func sessionEnded(language: String?, finalChars: Int) {
+        lock.lock()
+        busy = false
+        if let l = language { lastLanguage = l }
+        lastFinalChars = finalChars
+        lastSessionEnd = Date()
+        lock.unlock()
+        write()
+    }
+    /// Teardown ohne final (Client weg/Fehler) — no-op, wenn die Session
+    /// bereits sauber beendet wurde (busy schon false).
+    func sessionAborted() {
+        lock.lock()
+        let wasBusy = busy
+        if wasBusy { busy = false; aborts += 1; lastSessionEnd = Date() }
+        lock.unlock()
+        if wasBusy { write() }
+    }
+    func write() {
+        lock.lock()
+        var obj: [String: Any] = [
+            "uptime_s": Int(Date().timeIntervalSince(PROCESS_START)),
+            "busy": busy,
+            "sessions_total": sessionsTotal,
+            "aborts": aborts,
+            "last_final_chars": lastFinalChars,
+        ]
+        if let l = lastLanguage { obj["last_language"] = l }
+        if let t = lastSessionEnd { obj["last_session_ts"] = Int(t.timeIntervalSince1970) }
+        lock.unlock()
+        if let d = try? JSONSerialization.data(withJSONObject: obj) {
+            try? d.write(to: STATUS_FILE, options: .atomic)
+        }
+    }
+}
+
 final class ConnectionHandler {
     let connection: NWConnection
     var session: TranscribeSession?
@@ -321,6 +379,7 @@ final class ConnectionHandler {
                 return
             }
             holdsSlot = true
+            SpeechStats.shared.sessionStarted()
             Task { [weak self] in
                 guard let self else { return }
                 do {
@@ -358,6 +417,7 @@ final class ConnectionHandler {
         guard !closed else { return }
         idleTimer?.cancel()
         let result = await session?.finish() ?? ("", nil)
+        SpeechStats.shared.sessionEnded(language: result.1, finalChars: result.0.count)
         var frame: [String: Any] = ["type": "final", "text": result.0]
         if let lang = result.1 { frame["language"] = lang }
         wsSend(connection, json: frame)
@@ -371,7 +431,7 @@ final class ConnectionHandler {
         guard !closed else { return }
         closed = true
         idleTimer?.cancel()
-        if holdsSlot { sessionSlot.signal(); holdsSlot = false }
+        if holdsSlot { sessionSlot.signal(); holdsSlot = false; SpeechStats.shared.sessionAborted() }
         if let s = session { Task { _ = await s.finish() } }
         session = nil
         connection.cancel()
@@ -409,5 +469,6 @@ listener.newConnectionHandler = { connection in
     }
 }
 listener.start(queue: .global())
+SpeechStats.shared.write()   // Status-Datei sofort anlegen (busy=false)
 log("streaming lane on ws://0.0.0.0:\(port) (SpeechAnalyzer)")
 RunLoop.main.run()

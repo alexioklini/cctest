@@ -800,7 +800,8 @@ final class ConnectionHandler: @unchecked Sendable {
     // ── Admin ──────────────────────────────────────────────────────────────
     func handleAdminStatus() {
         Task {
-            var coreai: [String: Any] = ["available": coreaiModelIDs().count]
+            var coreai: [String: Any] = ["available": coreaiModelIDs().count,
+                                         "available_ids": coreaiModelIDs()]
             if #available(macOS 27.0, *) {
                 if let r = await CoreAIHost.shared.currentResidentID {
                     coreai["resident"] = r
