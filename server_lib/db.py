@@ -73,6 +73,12 @@ def _purge_mempalace_session(session_id: str):
     """Remove MemPalace drawers and closets for a deleted session (background thread)."""
     def _do_purge():
         from server import _mp
+        # Serialize against the write daemons: the package's mine_palace_lock is
+        # non-blocking, so without Brain's RLock a concurrent mine REFUSES the
+        # delete (MineAlreadyRunning) and the orphan drawers silently survive.
+        # The lock makes the purge QUEUE instead. (server_lib/db.py cannot
+        # import server_daemons at top level — lazy import, no cycle.)
+        from server_daemons import _palace_write_lock
         try:
             if not _mp.ready:
                 return
@@ -82,24 +88,44 @@ def _purge_mempalace_session(session_id: str):
                 return
             col = _mp.get_collection(create=False)
             if col:
-                result = col.get(include=["metadatas"])
-                ids_to_delete = [
-                    did for did, m in zip(result["ids"], result["metadatas"])
-                    if (m.get("source_file") or "").startswith(prefix)
-                ]
-                if ids_to_delete:
-                    col.delete(ids=ids_to_delete)
-                    print(f"[mempalace-purge] deleted {len(ids_to_delete)} drawer(s) for session {session_id[:8]}")
+                with _palace_write_lock:
+                    # Preferred: wing/source prefix filter in the backend
+                    # (O(wing) instead of O(corpus)); fall back to a full scan
+                    # when the backend's where-translation doesn't support
+                    # `$prefix` (e.g. older qdrant adapter).
+                    try:
+                        result = col.get(
+                            where={"source_file": {"$prefix": prefix}},
+                            include=["metadatas"])
+                    except Exception:
+                        result = None
+                    if not result or not result.get("ids"):
+                        result = col.get(include=["metadatas"])
+                    ids_to_delete = [
+                        did for did, m in zip(result["ids"], result["metadatas"])
+                        if (m.get("source_file") or "").startswith(prefix)
+                    ]
+                    if ids_to_delete:
+                        col.delete(ids=ids_to_delete)
+                        print(f"[mempalace-purge] deleted {len(ids_to_delete)} drawer(s) for session {session_id[:8]}")
             ccol = _mp.get_closets_col(create=False)
             if ccol:
-                result = ccol.get(include=["metadatas"])
-                cids = [
-                    cid for cid, m in zip(result["ids"], result["metadatas"])
-                    if (m.get("source_file") or "").startswith(prefix)
-                ]
-                if cids:
-                    ccol.delete(ids=cids)
-                    print(f"[mempalace-purge] deleted {len(cids)} closet(s) for session {session_id[:8]}")
+                with _palace_write_lock:
+                    try:
+                        cresult = ccol.get(
+                            where={"source_file": {"$prefix": prefix}},
+                            include=["metadatas"])
+                    except Exception:
+                        cresult = None
+                    if not cresult or not cresult.get("ids"):
+                        cresult = ccol.get(include=["metadatas"])
+                    cids = [
+                        cid for cid, m in zip(cresult["ids"], cresult["metadatas"])
+                        if (m.get("source_file") or "").startswith(prefix)
+                    ]
+                    if cids:
+                        ccol.delete(ids=cids)
+                        print(f"[mempalace-purge] deleted {len(cids)} closet(s) for session {session_id[:8]}")
         except Exception as e:
             print(f"[mempalace-purge] error for {session_id[:8]}: {type(e).__name__}: {e}")
 
@@ -117,6 +143,7 @@ def _purge_mempalace_turns(session_id: str, turn_ids: list[int]):
 
     def _do_purge():
         from server import _mp
+        from server_daemons import _palace_write_lock  # lazy — avoids import cycle
         try:
             if not _mp.ready:
                 return
@@ -129,24 +156,26 @@ def _purge_mempalace_turns(session_id: str, turn_ids: list[int]):
 
             col = _mp.get_collection(create=False)
             if col:
-                result = col.get(include=["metadatas"])
-                ids_to_delete = [
-                    did for did, m in zip(result["ids"], result["metadatas"])
-                    if _matches(m.get("source_file") or "")
-                ]
-                if ids_to_delete:
-                    col.delete(ids=ids_to_delete)
-                    print(f"[mempalace-purge] deleted {len(ids_to_delete)} drawer(s) "
-                          f"for {len(turn_ids)} turn(s) in session {session_id[:8]}")
+                with _palace_write_lock:
+                    result = col.get(include=["metadatas"])
+                    ids_to_delete = [
+                        did for did, m in zip(result["ids"], result["metadatas"])
+                        if _matches(m.get("source_file") or "")
+                    ]
+                    if ids_to_delete:
+                        col.delete(ids=ids_to_delete)
+                        print(f"[mempalace-purge] deleted {len(ids_to_delete)} drawer(s) "
+                              f"for {len(turn_ids)} turn(s) in session {session_id[:8]}")
             ccol = _mp.get_closets_col(create=False)
             if ccol:
-                result = ccol.get(include=["metadatas"])
-                cids = [
-                    cid for cid, m in zip(result["ids"], result["metadatas"])
-                    if _matches(m.get("source_file") or "")
-                ]
-                if cids:
-                    ccol.delete(ids=cids)
+                with _palace_write_lock:
+                    result = ccol.get(include=["metadatas"])
+                    cids = [
+                        cid for cid, m in zip(result["ids"], result["metadatas"])
+                        if _matches(m.get("source_file") or "")
+                    ]
+                    if cids:
+                        ccol.delete(ids=cids)
         except Exception as e:
             print(f"[mempalace-purge-turns] error for {session_id[:8]}: "
                   f"{type(e).__name__}: {e}")
@@ -270,33 +299,37 @@ def _memorize_mempalace_turns(session_id: str, turn_ids: list[int]):
 
         msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
         current_turn_id = 0
-        for msg in msgs:
-            mid = int(msg.get("id") or 0)
-            role = (msg.get("role") or "").strip()
-            if role == "user":
-                current_turn_id = mid
-            if current_turn_id not in turn_id_set:
-                continue
-            if role not in include_roles:
-                continue
-            content = msg.get("content")
-            text = content if isinstance(content, str) else str(content)
-            body = f"[{role}] {text}"[:max_chars].strip()
-            if not body:
-                continue
-            engine.mempalace_activity.store_begin()
-            try:
-                res = _mp.add_drawer(
-                    wing=wing, room=default_room, content=body,
-                    source_file=f"session/{session_id}#turn/{current_turn_id}",
-                    added_by="brain-chat-manual")
-                if isinstance(res, dict) and res.get("success") and \
-                        res.get("reason") != "already_exists":
-                    filed += 1
-            except Exception:
-                pass
-            finally:
-                engine.mempalace_activity.store_end()
+        # Serialize the writes against the miner/project-sync daemons (their
+        # non-blocking package lock would silently refuse a concurrent write).
+        from server_daemons import _palace_write_lock  # lazy — avoids import cycle
+        with _palace_write_lock:
+            for msg in msgs:
+                mid = int(msg.get("id") or 0)
+                role = (msg.get("role") or "").strip()
+                if role == "user":
+                    current_turn_id = mid
+                if current_turn_id not in turn_id_set:
+                    continue
+                if role not in include_roles:
+                    continue
+                content = msg.get("content")
+                text = content if isinstance(content, str) else str(content)
+                body = f"[{role}] {text}"[:max_chars].strip()
+                if not body:
+                    continue
+                engine.mempalace_activity.store_begin()
+                try:
+                    res = _mp.add_drawer(
+                        wing=wing, room=default_room, content=body,
+                        source_file=f"session/{session_id}#turn/{current_turn_id}",
+                        added_by="brain-chat-manual")
+                    if isinstance(res, dict) and res.get("success") and \
+                            res.get("reason") != "already_exists":
+                        filed += 1
+                except Exception:
+                    pass
+                finally:
+                    engine.mempalace_activity.store_end()
     except Exception as e:
         print(f"[mempalace-memorize-turns] error for {session_id[:8]}: "
               f"{type(e).__name__}: {e}")
@@ -3556,6 +3589,7 @@ class ChatDB:
     mempalace_load_new_messages = staticmethod(_mp_sync.mempalace_load_new_messages)
     mempalace_last_user_id_before = staticmethod(_mp_sync.mempalace_last_user_id_before)
     mempalace_update_cursor = staticmethod(_mp_sync.mempalace_update_cursor)
+    mempalace_cursor_clamp = staticmethod(_mp_sync.mempalace_cursor_clamp)
 
     @staticmethod
     @_db_safe(default=list)

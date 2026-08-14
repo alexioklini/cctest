@@ -1831,6 +1831,7 @@
     "TR_DOC_MAX_BYTES": "writable",
     "TR_LANG_NAMES": "writable",
     "TR_LANGS": "writable",
+    "TR_LIVE_PARTIAL": "writable",
     "TR_LIVE_VAD": "writable",
     "TR_MEDIA_DL_LABELS": "writable",
     "TR_MEDIA_DL_ORDER": "writable",

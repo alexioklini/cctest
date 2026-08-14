@@ -3274,43 +3274,68 @@ def _purge_drawers_by_room_and_source(wing: str, room: str, source_prefix: str =
     except ImportError:
         return 0
     deleted = 0
-    while True:
-        try:
-            res = tool_list_drawers(wing=wing, room=room, limit=200, offset=0)
-        except Exception as e:
-            print(f"[profile-purge] list failed wing={wing} room={room}: {e}", flush=True)
-            break
-        # tool_list_drawers returns {drawers:[…], count, offset, limit}
-        if isinstance(res, dict):
-            rows = res.get("drawers") or []
-        elif isinstance(res, list):
-            rows = res
-        else:
-            rows = []
-        if not rows:
-            break
-        for r in rows:
-            did = (r.get("drawer_id") or r.get("id")) if isinstance(r, dict) else None
-            if not did:
-                continue
+    no_progress_rounds = 0
+    # Serialize against the write daemons: the package's mine_palace_lock is
+    # non-blocking, so a concurrent mine would refuse EVERY delete
+    # (MineAlreadyRunning) — previously each refusal was still counted as
+    # "deleted" and the loop re-listed + re-deleted the same rows forever (a
+    # hot livelock in the caller thread). Holding Brain's RLock makes refusals
+    # become waits instead of failures.
+    with server_daemons._palace_write_lock:
+        while True:
             try:
-                tool_delete_drawer(drawer_id=did)
-                deleted += 1
+                res = tool_list_drawers(wing=wing, room=room, limit=200, offset=0)
             except Exception as e:
-                print(f"[profile-purge] delete failed id={did}: {e}", flush=True)
-        # Re-list after deleting; if MemPalace pagination is offset-based
-        # against a shrinking set, we'd skip rows. Fixed-offset 0 + delete-all
-        # converges in O(rows/page) iterations.
-        if len(rows) < 200:
-            # Re-check whether we cleared everything (pagination edge case)
-            try:
-                check = tool_list_drawers(wing=wing, room=room, limit=1, offset=0)
-                if isinstance(check, dict) and not check.get("drawers"):
-                    break
-                if isinstance(check, list) and not check:
-                    break
-            except Exception:
+                print(f"[profile-purge] list failed wing={wing} room={room}: {e}", flush=True)
                 break
+            # tool_list_drawers returns {drawers:[…], count, offset, limit}
+            if isinstance(res, dict):
+                rows = res.get("drawers") or []
+            elif isinstance(res, list):
+                rows = res
+            else:
+                rows = []
+            if not rows:
+                break
+            round_deleted = 0
+            for r in rows:
+                did = (r.get("drawer_id") or r.get("id")) if isinstance(r, dict) else None
+                if not did:
+                    continue
+                try:
+                    dres = tool_delete_drawer(drawer_id=did)
+                    # Count ONLY real deletions. A refused/failed delete
+                    # (success=False) leaves the row in place — counting it
+                    # inflated the count and hid the lack of progress.
+                    if isinstance(dres, dict) and dres.get("success"):
+                        round_deleted += 1
+                except Exception as e:
+                    print(f"[profile-purge] delete failed id={did}: {e}", flush=True)
+            deleted += round_deleted
+            if round_deleted == 0:
+                # No progress this round: re-listing + re-deleting the same rows
+                # forever is a livelock — bail after a few failed rounds and
+                # let the next profile write retry.
+                no_progress_rounds += 1
+                if no_progress_rounds >= 3:
+                    print(f"[profile-purge] no progress ({no_progress_rounds} rounds) "
+                          f"wing={wing} room={room} — aborting purge", flush=True)
+                    break
+            else:
+                no_progress_rounds = 0
+            # Re-list after deleting; if MemPalace pagination is offset-based
+            # against a shrinking set, we'd skip rows. Fixed-offset 0 + delete-all
+            # converges in O(rows/page) iterations.
+            if len(rows) < 200:
+                # Re-check whether we cleared everything (pagination edge case)
+                try:
+                    check = tool_list_drawers(wing=wing, room=room, limit=1, offset=0)
+                    if isinstance(check, dict) and not check.get("drawers"):
+                        break
+                    if isinstance(check, list) and not check:
+                        break
+                except Exception:
+                    break
     return deleted
 
 def _purge_user_profile_drawers(uid: str) -> int:
@@ -3328,26 +3353,31 @@ def _mirror_user_profile_to_mempalace(uid: str, content: str):
         from mempalace.mcp_server import tool_add_drawer
     except ImportError:
         return
-    try:
-        _purge_user_profile_drawers(uid)
-    except Exception:
-        pass
-    wing = _user_wing(uid)
-    sections = _split_profile_sections(content)
-    for title, body in sections.items():
-        if title == "_intro" or not body:
-            continue
-        slug = "".join(c.lower() if c.isalnum() else "_" for c in title).strip("_")
+    # Hold Brain's write lock across the whole purge-then-add so a concurrent
+    # mine can't interleave (refuse the deletes mid-way and then have new
+    # sections stack on stale ones). RLock → _purge_user_profile_drawers'
+    # inner acquisition is reentrant.
+    with server_daemons._palace_write_lock:
         try:
-            tool_add_drawer(
-                wing=wing,
-                room="user_profile",
-                content=f"# {title}\n\n{body}"[:8000],
-                source_file=f"user/{uid}#profile/{slug}",
-                added_by="brain-user-profile",
-            )
-        except Exception as e:
-            print(f"[profile] add_drawer {title!r} failed uid={uid}: {e}", flush=True)
+            _purge_user_profile_drawers(uid)
+        except Exception:
+            pass
+        wing = _user_wing(uid)
+        sections = _split_profile_sections(content)
+        for title, body in sections.items():
+            if title == "_intro" or not body:
+                continue
+            slug = "".join(c.lower() if c.isalnum() else "_" for c in title).strip("_")
+            try:
+                tool_add_drawer(
+                    wing=wing,
+                    room="user_profile",
+                    content=f"# {title}\n\n{body}"[:8000],
+                    source_file=f"user/{uid}#profile/{slug}",
+                    added_by="brain-user-profile",
+                )
+            except Exception as e:
+                print(f"[profile] add_drawer {title!r} failed uid={uid}: {e}", flush=True)
 
 def _write_user_profile_atomic(uid: str, content: str, *, source: str = "manual") -> dict:
     """Atomic write with versioned history. Returns {path, bytes, prior_kept}.
@@ -4666,33 +4696,56 @@ def main():
                 msgs = ChatDB.mempalace_load_new_messages(session_id, 0) or []
                 filed = 0
                 current_turn_id = 0
-                for msg in msgs:
-                    mid = int(msg.get("id") or 0)
-                    role = (msg.get("role") or "").strip()
-                    if role == "user":
-                        current_turn_id = mid
-                    turn_suffix = f"#turn/{current_turn_id}" if current_turn_id else ""
-                    if role not in include_roles:
-                        continue
-                    content = msg.get("content")
-                    text = content if isinstance(content, str) else str(content)
-                    body = f"[{role}] {text}"[:max_chars]
-                    if body.strip():
-                        engine.mempalace_activity.store_begin()
-                        try:
-                            res = tool_add_drawer(wing=wing, room=default_room,
-                                                  content=body, source_file=f"session/{session_id}{turn_suffix}",
-                                                  added_by="brain-chat-sync")
-                            if res.get("success") and res.get("reason") != "already_exists":
-                                filed += 1
-                        except Exception:
-                            pass
-                        finally:
-                            engine.mempalace_activity.store_end()
+                lowest_failed = None  # lowest msg id whose drawer write failed
+                new_cursor = 0
+                # Serialize against the miner/project-sync daemons: the palace
+                # package's own mine_palace_lock is NON-BLOCKING, so a concurrent
+                # mine would silently REFUSE this write (MineAlreadyRunning).
+                # Holding Brain's blocking RLock makes us queue instead of
+                # colliding — and makes the cursor clamp below meaningful.
+                with server_daemons._palace_write_lock:
+                    for msg in msgs:
+                        mid = int(msg.get("id") or 0)
+                        role = (msg.get("role") or "").strip()
+                        if role == "user":
+                            current_turn_id = mid
+                        turn_suffix = f"#turn/{current_turn_id}" if current_turn_id else ""
+                        if role not in include_roles:
+                            continue
+                        content = msg.get("content")
+                        text = content if isinstance(content, str) else str(content)
+                        body = f"[{role}] {text}"[:max_chars]
+                        if body.strip():
+                            engine.mempalace_activity.store_begin()
+                            try:
+                                res = tool_add_drawer(wing=wing, room=default_room,
+                                                      content=body, source_file=f"session/{session_id}{turn_suffix}",
+                                                      added_by="brain-chat-sync")
+                                if not isinstance(res, dict) or not res.get("success"):
+                                    # Refused/failed write — remember the lowest
+                                    # message id so the cursor is clamped below it
+                                    # and the content is retried, not lost forever.
+                                    if lowest_failed is None or mid < lowest_failed:
+                                        lowest_failed = mid
+                                elif res.get("reason") != "already_exists":
+                                    filed += 1
+                            except Exception:
+                                # Write raised — same failure handling as above.
+                                if lowest_failed is None or mid < lowest_failed:
+                                    lowest_failed = mid
+                            finally:
+                                engine.mempalace_activity.store_end()
                 max_id = max((int(m.get("id") or 0) for m in msgs), default=0)
                 if max_id:
-                    ChatDB.mempalace_update_cursor(session_id, max_id)
-                print(f"[mempalace-sync] immediate: filed {filed} drawer(s) for {session_id[:8]}", flush=True)
+                    # v9.60.4 write-loss guard: never advance past a message
+                    # whose drawer write failed — clamp so the next sync
+                    # retries from there (dedup makes re-files cheap).
+                    new_cursor = ChatDB.mempalace_cursor_clamp(max_id, lowest_failed)
+                    ChatDB.mempalace_update_cursor(session_id, new_cursor)
+                note = f" (cursor clamped to {new_cursor} — retry pending)" \
+                    if lowest_failed is not None else ""
+                print(f"[mempalace-sync] immediate: filed {filed} drawer(s) for {session_id[:8]}{note}",
+                      flush=True)
             except Exception as e:
                 print(f"[mempalace-sync] immediate sync error: {e}", flush=True)
         threading.Thread(target=_do_sync, daemon=True).start()

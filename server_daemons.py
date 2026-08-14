@@ -201,39 +201,42 @@ def _purge_orphan_chroma_queue(palace_path: str):
         if not os.path.isfile(db_path):
             return
         con = sqlite3.connect(db_path)
-        cur = con.cursor()
-        # Find segments without a max_seq_id row — those are the orphans
-        orphan_segments = [r[0] for r in cur.execute(
-            "SELECT s.id FROM segments s "
-            "LEFT JOIN max_seq_id m ON m.segment_id = s.id "
-            "WHERE m.seq_id IS NULL"
-        ).fetchall()]
-        if not orphan_segments:
+        try:
+            cur = con.cursor()
+            # Find segments without a max_seq_id row — those are the orphans
+            orphan_segments = [r[0] for r in cur.execute(
+                "SELECT s.id FROM segments s "
+                "LEFT JOIN max_seq_id m ON m.segment_id = s.id "
+                "WHERE m.seq_id IS NULL"
+            ).fetchall()]
+            if not orphan_segments:
+                return
+            # Each segment belongs to a collection; queue rows reference the
+            # collection via topic suffix (last 36 chars = collection UUID).
+            collection_uuids = [r[0] for r in cur.execute(
+                "SELECT DISTINCT collection FROM segments WHERE id IN ({})".format(
+                    ",".join("?" * len(orphan_segments))
+                ),
+                orphan_segments,
+            ).fetchall()]
+            total = 0
+            for cuid in collection_uuids:
+                # Only purge rows older than 24h — leave today's writes alone
+                cutoff = time.time() - 86400
+                n = cur.execute(
+                    "DELETE FROM embeddings_queue "
+                    "WHERE topic LIKE ? AND strftime('%s', created_at) < ?",
+                    (f"%{cuid}", str(int(cutoff))),
+                ).rowcount
+                total += n
+            con.commit()
+            if total:
+                print(f"[mempalace-miner] purged {total} stale queue row(s) "
+                      f"(orphan segments: {len(orphan_segments)})", flush=True)
+        finally:
+            # Close on EVERY path — the old code leaked the connection when an
+            # exception hit between connect and close (mempalace review N3).
             con.close()
-            return
-        # Each segment belongs to a collection; queue rows reference the
-        # collection via topic suffix (last 36 chars = collection UUID).
-        collection_uuids = [r[0] for r in cur.execute(
-            "SELECT DISTINCT collection FROM segments WHERE id IN ({})".format(
-                ",".join("?" * len(orphan_segments))
-            ),
-            orphan_segments,
-        ).fetchall()]
-        total = 0
-        for cuid in collection_uuids:
-            # Only purge rows older than 24h — leave today's writes alone
-            cutoff = time.time() - 86400
-            n = cur.execute(
-                "DELETE FROM embeddings_queue "
-                "WHERE topic LIKE ? AND strftime('%s', created_at) < ?",
-                (f"%{cuid}", str(int(cutoff))),
-            ).rowcount
-            total += n
-        con.commit()
-        con.close()
-        if total:
-            print(f"[mempalace-miner] purged {total} stale queue row(s) "
-                  f"(orphan segments: {len(orphan_segments)})", flush=True)
     except Exception as e:
         print(f"[mempalace-miner] queue cleanup failed: {type(e).__name__}: {e}", flush=True)
 
@@ -512,13 +515,19 @@ def _mempalace_miner_loop(srv):
                             continue
                         wing = f"{agent_id}_artifacts"
                         try:
-                            res = tool_add_drawer(
-                                wing=wing,
-                                room="artifacts",
-                                content=text[:8000],
-                                source_file=f"session/{sid_prefix}#artifact/{fname}",
-                                added_by="brain-miner-sched",
-                            )
+                            # Inside server_daemons the module-level
+                            # _palace_write_lock is directly available: hold it
+                            # so a concurrent mine QUEUES instead of silently
+                            # refusing this write (MineAlreadyRunning → the
+                            # artifact would be skipped for the cycle).
+                            with _palace_write_lock:
+                                res = tool_add_drawer(
+                                    wing=wing,
+                                    room="artifacts",
+                                    content=text[:8000],
+                                    source_file=f"session/{sid_prefix}#artifact/{fname}",
+                                    added_by="brain-miner-sched",
+                                )
                             if isinstance(res, dict) and res.get("success") \
                                and res.get("reason") != "already_exists":
                                 drawers_filed += 1
@@ -1090,9 +1099,16 @@ def _load_weburl_state(folder):
 
 
 def _save_weburl_state(folder, state):
+    # Atomic write (temp + rename): a crash mid-write used to corrupt the
+    # state file, making the next cycle treat every URL as never-fetched (one
+    # extra full re-fetch + re-mine; self-healing but wasteful) — mempalace
+    # review N3.
     try:
-        with open(os.path.join(folder, _WEBURL_STATE_FILE), "w", encoding="utf-8") as f:
+        path = os.path.join(folder, _WEBURL_STATE_FILE)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(state, f)
+        os.replace(tmp, path)
     except OSError:
         pass
 

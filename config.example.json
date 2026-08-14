@@ -3354,7 +3354,6 @@
       ],
       "max_triples_per_drawer": 12,
       "min_confidence": 0.5,
-      "batch_size": 20,
       "max_drawer_chars": 6000,
       "chunking_mode": "source_file",
       "source_chunk_chars": 3500,
@@ -3363,7 +3362,8 @@
       "method": "llm",
       "wiki": true,
       "wiki_method": "rules",
-      "wiki_profile": "generic"
+      "wiki_profile": "generic",
+      "parallel_workers": 0
     },
     "reranker": {
       "enabled": true,
@@ -3372,7 +3372,9 @@
       "top_k_in": 40,
       "max_chars_per_passage": 1500,
       "batch_size": 16,
-      "url": "http://192.168.1.214:8002"
+      "url": "http://192.168.1.214:8002",
+      "remote_timeout_s": 8.0,
+      "api_key": "YOUR_API_KEY"
     },
     "citation_reround": {
       "enabled": true,

@@ -156,7 +156,7 @@ Legacy `tools.md` is gone — anchored blocks one-shot migrated into `tool_setti
 
 **Constraints**:
 - `execute_command`: no TTY/stdin, `TERM=dumb`. Banned commands in its description.
-- Memory is MemPalace **direct, not MCP**: `mempalace_query` (+ `save_chat_to_memory`, `mempalace_get_drawer`, `mempalace_list_drawers`).
+- Memory is MemPalace **direct, not MCP**: `mempalace_query` (+ `save_chat_to_memory` + the `mempalace_kg_*` tools). The `mempalace_get_drawer`/`mempalace_list_drawers` pair was rolled back — it exists NOWHERE in the tool registry; only stale names survive in exclude/deanon sets (mempalace-review L5).
 - **Adding a tool** = 4 sites / 3 files: schema in `TOOL_DEFINITIONS` (`engine/tool_schemas.py`), `TOOL_GROUPS` (`brain.py`), the `tool_*` fn (`engine/tools/<group>.py`, reaches brain via lazy `import brain as _brain`), `TOOL_DISPATCH` entry (`brain.py`). **Dispatch-identity rule**: `TOOL_DISPATCH` value must be a direct fn ref, not a `lambda args: tool_X(args)` forwarder, or the 4-site checks fail. Prose added later via UI.
 - **Pre-existing bug**: 4 tools (`memory_delete`/`memory_recall`/`memory_shared`/`memory_persist`) missing from `TOOL_GROUPS` → surface as `(ungrouped)`.
 
@@ -173,9 +173,9 @@ Legacy `tools.md` is gone — anchored blocks one-shot migrated into `tool_setti
 
 **Topic A/B split**: Topic A (search-first, query discipline, 3-step retrieval flow, `read_path`/`.md`/BINARY DOCUMENTS, KG decision rule) lives in `tool_settings.{mempalace_query,read_document,mempalace_kg_search,mempalace_kg_query}.description`, gated by tool presence + `applies_with: ["mempalace_query"]` (project chats only), admin-editable. Topic B (REFUSAL/PRECISION/CITATION) lives in `config.json → research_mode_disciplines` (admin-editable, `GET/POST /v1/research-mode/disciplines`, per-section opt-out via empty string, defaults `RESEARCH_MODE_DISCIPLINE_DEFAULTS`), gated by project + research_mode.
 
-**Mode ON** (Q&A/policy/compliance): soft `PROJECT MEMORY` block ("MUST consult memory tools first"); detailed flow via tool descriptions; 3 discipline sections injected; server-side citation validator + synchronous re-round on violation (>30% uncited or ≥2 unverified quotes), gated by `mempalace.citation_reround.enabled`.
+**Mode ON** (Q&A/policy/compliance): soft `PROJECT MEMORY` block ("MUST consult memory tools first"); detailed flow via tool descriptions; 3 discipline sections injected; server-side citation validator + a reload-stable **warning badge** on violation (the synchronous re-round was REMOVED in v8.40.0 — `run_citation_reround` is dead code, `mempalace.citation_reround.enabled` has no reader; mempalace-review L6).
 
-**Mode OFF** (codegen/drafting): soft `PROJECT MEMORY` ("use mempalace_query when relevant"); Topic A tool descriptions still render; `research_mode_disciplines` NOT injected (model falls back on training); validator + re-round skipped.
+**Mode OFF** (codegen/drafting): soft `PROJECT MEMORY` ("use mempalace_query when relevant"); Topic A tool descriptions still render; `research_mode_disciplines` NOT injected (model falls back on training); validator + warning badge skipped.
 
 - **Owner `instructions`** is purely additive in both modes (appended verbatim). Never a fallback for disciplines (that was v8.23, replaced).
 - **Legacy migration**: `_project_research_mode(cfg)` — absent `research_mode` field: empty `instructions` → True; non-empty → False.
@@ -244,7 +244,7 @@ Imported as Python package — no MCP, no subprocess.
 
 `mempalace_query`: when `project` set, **force-scopes** to `project__<id>` (refuses if id missing rather than leak). Else defaults `user__<current_user_id>`. Unspecified-wing visibility filter: drops `project__*`, matches `user__/team__` against caller, treats untyped as shared.
 
-**Chat sync classifier gate**: LLM classifies message pairs before filing. `fact`/`preference`/`decision`/`reference` filed; `generic`/`refusal`/`chitchat` skipped. Non-streaming, `max_tokens:20`, fail-open. Per-session 3-state: `0=off`, `1=on`, `2=auto`. `save_chat_to_memory` tool enables on "remember this". Per-turn control via palace-icon menu → `memorize_turns`/`purge_turns` (`turn_ids` or `{scope, anchor_turn_id}`). Disable-with-purge prompt when toggling on/auto → off w/ drawers present.
+**Chat sync classifier gate — RETIRED** (mempalace-review M8): the LLM classifier that gated message-pair filing was retired with the chat-sync daemon (LLM-Wiki migration); its config keys `enabled`/`model`/`categories_to_file`/`min_turns` have NO live consumer. The surviving key is `mempalace.chat_sync.classifier.default_mode` — the new-chat memory default read by `handlers/chat.py`. Per-session 3-state: `0=off`, `1=on`, `2=auto`. `save_chat_to_memory` tool enables on "remember this" (immediate, cursor-clamped sync — see Daemon 2 note below). Per-turn control via palace-icon menu → `memorize_turns`/`purge_turns` (`turn_ids` or `{scope, anchor_turn_id}`). Disable-with-purge prompt when toggling on/auto → off w/ drawers present.
 
 **Session delete cleanup**: `delete_session` purges drawers + closets `source_file LIKE session/<sid>%`. **Archive leaves drawers intact.**
 
@@ -254,12 +254,9 @@ Imported as Python package — no MCP, no subprocess.
 - Startup `_purge_orphan_chroma_queue()`: detects HNSW segments missing `max_seq_id`, deletes >24h `embeddings_queue` rows.
 - plist `PYTHONUNBUFFERED=1` so `[mempalace-miner]` reaches log immediately.
 
-**Daemon 2 — `mempalace-chat-sync`** (60s default): mirrors to wings:
-- Chat turns → `room=chat`, `source_file=session/<sid>#turn/<user_msg_id>` (anchor = opening user msg DB id)
-- Summaries → `room=chat_summary`, content-hashed
-- Attachment metadata (filename/mime/size, NOT bytes) → `room=chat_attachment`
-- Allowlisted tool_results (`exa_search`/`web_fetch`/`read_document`) → `room=reference`
-- Uses `mempalace.mcp_server.tool_add_drawer` (fn). Reads `MEMPALACE_PALACE_PATH` from `mempalace.palace_path` before import.
-- **Closet rebuild** per dirty group: `purge_file_closets` + `build_closet_lines` + `upsert_closet_lines` (else chat memories miss closet boost). Gated by `mempalace.chat_sync.build_closets`.
-- **Cursor**: `chat_mempalace_sync (session_id PK, last_message_id, last_summary_hash, updated_at)` in chats.db.
+**Daemon 2 — `mempalace-chat-sync` — RETIRED** (mempalace-review M8): the loop returns at `server_daemons.py:645` and server.py no longer launches it (LLM-Wiki migration; its whole body below is dead code). Chat content reaches the palace ON DEMAND instead:
+- `save_chat_to_memory` → immediate sync (`server.py:_save_chat_to_memory_callback._do_sync`): files ALL messages for the session via `tool_add_drawer` under `_palace_write_lock`, and **clamps the cursor below the lowest failed message id** so a refused write retries on the next sync instead of being lost forever (the v9.60.4 write-loss guard, mempalace-review H2).
+- Per-turn `memorize_turns` / `purge_turns` (`server_lib/db.py:_memorize_mempalace_turns` / `_purge_mempalace_turns`, both under the write lock).
+- Session delete → `_purge_mempalace_session` (drawer+closet purge under the lock).
+- Drawer shape unchanged: `room=chat`, `source_file=session/<sid>#turn/<user_msg_id>` (anchor = opening user msg DB id); summaries `room=chat_summary`, content-hashed; attachment metadata `room=chat_attachment`; allowlisted tool_results (`exa_search`/`web_fetch`/`read_document`) `room=reference`.
 - **Not mined**: attachment bytes, artifact version history, tool_result outside allowlist.

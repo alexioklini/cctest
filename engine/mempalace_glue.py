@@ -136,6 +136,22 @@ def _is_hnsw_corruption(err_text: str) -> bool:
 
 
 def _rebuild_via_sqlite_swap(palace_path: str, _log) -> bool:
+    """Recover the #1308 corruption class under the palace write lock.
+
+    The swap (two renames below) must be serialized against the write daemons:
+    without Brain's RLock, a daemon upsert landing between the renames goes
+    into the renamed-aside directory and is silently missing from the "live"
+    palace until a full re-mine (mempalace review M5). Holding the lock for
+    the WHOLE rebuild (not just the swap) also prevents writes from landing in
+    the pre-swap palace after the sqlite snapshot was taken. Lazy import —
+    server_daemons imports brain/engine; this module must not import it at top
+    level (cycle)."""
+    from server_daemons import _palace_write_lock as _pw_lock
+    with _pw_lock:
+        return _rebuild_via_sqlite_swap_unlocked(palace_path, _log)
+
+
+def _rebuild_via_sqlite_swap_unlocked(palace_path: str, _log) -> bool:
     """Recover the #1308 corruption class (every chroma read raises, sqlite
     intact) WITHOUT the in-place `clear_system_cache()` that would invalidate
     every live PersistentClient the daemons hold (the package's own warning).
@@ -144,7 +160,9 @@ def _rebuild_via_sqlite_swap(palace_path: str, _log) -> bool:
     clear — see repair.py warning, cross-palace use is safe), verify it has rows,
     then atomically swap it in (rename old aside, rename new into place). The
     next get_collection in any thread opens a fresh client against the swapped
-    dir. Returns True only on a verified non-empty rebuild."""
+    dir. Returns True only on a verified non-empty rebuild.
+
+    MUST be called with `_palace_write_lock` held (see the wrapper above)."""
     import os as _os
     import shutil as _shutil
     from mempalace import repair as _mp_repair
@@ -248,7 +266,9 @@ def _try_rebuild_palace(palace_path: str) -> bool:
 def _load_mempalace_config() -> dict:
     """Read the 'mempalace' block from config.json. 10s cache."""
     global _mempalace_config_cache, _mempalace_config_cache_time
-    now = time.time()
+    # monotonic, not wall-clock: a backward clock step must not freeze the
+    # cache indefinitely (mempalace review N2).
+    now = time.monotonic()
     if _mempalace_config_cache is not None and (now - _mempalace_config_cache_time) < 10:
         return _mempalace_config_cache
     cfg_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
@@ -387,16 +407,19 @@ def tool_mempalace_query(args: dict) -> str:
         # Default to the user's own wing when nothing else is specified.
         wing = f"user__{current_user_id}"
 
-    # SECURITY (C3 gate, pre-check): when NOT project-pinned and NOT helpdesk,
-    # an explicit caller-supplied `wing` must be visible to the caller. Without
-    # this, a model (or a prompt-injected one) could pass wing="user__<other>" /
+    # SECURITY (C3 gate, pre-check): when NOT project-pinned, an explicit
+    # caller-supplied `wing` must be visible to the caller. Without this, a
+    # model (or a prompt-injected one) could pass wing="user__<other>" /
     # "project__<other>" / "team__<foreign>" and read another tenant's private
     # drawers — the explicit-wing path otherwise skipped the visibility filter
     # entirely. Project-pinned queries already force-scoped `wing` to the caller's
-    # own project__ above (caller arg discarded), so they're exempt; helpdesk
-    # additively reads the shared brain_code wing by design. Refuse rather than
-    # silently widen. The unconditional post-filter below is the second layer.
-    if wing and not project_pinned and not get_request_context().helpdesk_mode:
+    # own project__ above (caller arg discarded), so they're exempt. The ONLY
+    # helpdesk exemption is wing="brain_code" (Brainy's additive shared source
+    # wing, searched separately below); narrowing it to the exact wing keeps
+    # foreign-wing probes from even running a Chroma query (a presence oracle)
+    # while still defaulting to the unconditional post-filter as layer 2.
+    _helpdesk = bool(get_request_context().helpdesk_mode)
+    if wing and not project_pinned and not (_helpdesk and wing == "brain_code"):
         _own_user_pc = f"user__{current_user_id}" if current_user_id else ""
         _own_teams_pc = {f"team__{tid}" for tid in current_team_ids}
         if not _wing_visible(wing, _own_user_pc, _own_teams_pc):
@@ -704,6 +727,15 @@ def tool_mempalace_query(args: dict) -> str:
     try:
         _rr_cfg = (cfg.get("reranker") or {}) if isinstance(cfg, dict) else {}
         _rr_enabled = bool(_rr_cfg.get("enabled", False))
+        # PII-egress gate (mempalace review H1): the remote reranker POSTs RAW
+        # drawer text (up to top_k_in×max_chars_per_passage) to an external
+        # /rerank endpoint — in an anonymising session that is a network egress
+        # of project PII BEFORE the L3b result seam ever runs (the seam sits at
+        # the end of this function). Skip the REMOTE device when an anonymise
+        # mapping is active; the in-process/local reranker stays on-machine and
+        # keeps its quality benefit, and non-anonymising sessions are unchanged.
+        if _reranker_egress_blocked(cfg):
+            _rr_enabled = False
         if _rr_enabled and raw_results:
             top_boost = float((raw_results[0] or {}).get("filename_boost") or 0)
             if top_boost < 0.20:
@@ -1062,6 +1094,11 @@ def tool_mempalace_query(args: dict) -> str:
         _text = r.get("text") or ""
         if _has_readable and _text and full_path and "/" in full_path:
             _text = _stitch_neighbours(full_path, _text)
+        # Payload cap (mempalace review M7): no-file drawers can carry
+        # unbounded verbatim text; bound the serialized drawer so a single
+        # query can't push >n_results×cap into the LLM context.
+        if len(_text) > _MEMPALACE_DRAWER_TEXT_CAP:
+            _text = _text[:_MEMPALACE_DRAWER_TEXT_CAP] + "\n…[gekürzt]"
         drawers.append({
             "wing": r.get("wing", ""),
             "room": r.get("room", ""),
@@ -1131,15 +1168,23 @@ def tool_mempalace_query(args: dict) -> str:
     # project/user knowledge — the only read-tool path that shipped raw PII
     # to the model until v9.336.0 (the deliberate v9.96.0 "verified raw
     # today" decision, reversed by PII_ANALYSIS_PARITY_HANDOVER.md L3b).
-    # No-op without an active anonymise mapping. Names inside read_path get
-    # pseudonymised too — the args-deanon (L3a) translates them back when
-    # the model passes them to read_document, so the round-trip works.
+    # No-op without an active anonymise mapping. The seam covers drawer TEXT;
+    # `read_path` is deliberately left real (path integrity is L3a's job —
+    # the args-deanon translates the model's fakes back to real paths at
+    # dispatch, so the read_document round-trip closes). NOTE: underscore-
+    # joined filename forms (Bonnie_Stark_KYC.pdf) are NOT swept by the
+    # pseudonymiser (word boundaries exclude `_`), so such real names stay
+    # visible in paths — an accepted trade-off, not an oversight.
     return _brain._gdpr_anon_tool_text(_ok({
         "query": query,
         "wing": wing,
         "room": room,
         "count": len(drawers),
-        "total_before_filter": (results or {}).get("total_before_filter"),
+        # Count oracle (mempalace review L1): in the multi-wing user-filter
+        # mode the pre-filter count spans ALL wings — a cross-tenant metadata
+        # oracle. Null it there; wing-scoped counts (project/user/team) stay.
+        "total_before_filter": (None if _needs_user_filter
+                                else (results or {}).get("total_before_filter")),
         "drawers": drawers,
         # Hint to the model: every drawer has a `read_path` field that's a
         # ready-to-use absolute path for read_document — no string-joining
@@ -1232,13 +1277,19 @@ class _RemoteReranker:
                 i = int(r.get("index", -1))
                 if 0 <= i < len(docs):
                     scores[i] = float(r.get("relevance_score") or 0.0)
-            _remote_rerank_fails = 0
+            with _reranker_lock:
+                _remote_rerank_fails = 0
             return scores
         except Exception as e:
-            _remote_rerank_fails += 1
-            try:
-                if _remote_rerank_fails >= _REMOTE_RERANK_MAX_FAILS:
+            # Latch accounting under _reranker_lock (mempalace review N2):
+            # concurrent queries mutate the process-wide counters.
+            with _reranker_lock:
+                _remote_rerank_fails += 1
+                _latched = _remote_rerank_fails >= _REMOTE_RERANK_MAX_FAILS
+                if _latched:
                     _remote_rerank_latched_off = True
+            try:
+                if _latched:
                     logging.warning(
                         f"[reranker] remote endpoint {self.base_url} failed "
                         f"{_remote_rerank_fails}x ({e}) — LATCHING remote rerank OFF "
@@ -1263,8 +1314,9 @@ def _get_reranker_model(model_id: str, device_pref: str = "auto",
     if not model_id:
         return None
     if device_pref == "remote":
-        if _remote_rerank_latched_off:
-            return None
+        with _reranker_lock:
+            if _remote_rerank_latched_off:
+                return None
         url = str((reranker_cfg or {}).get("url") or "").strip()
         if not url:
             return None
@@ -1295,35 +1347,44 @@ def _get_reranker_model(model_id: str, device_pref: str = "auto",
     else:
         device = device_pref
     key = (model_id, device)
+    # Cache check under the lock; the expensive CrossEncoder load runs OUTSIDE
+    # it so the first concurrent queries after cold start don't serialize on a
+    # multi-second stall (mempalace review N2). Duplicate loads are harmless —
+    # the last one publishes under the lock; a second thread re-checks before
+    # publishing so it reuses a load that finished first.
     with _reranker_lock:
         m = _reranker_cache.get(key)
-        if m is not None:
-            return m
-        # Make sure the mempalace venv site-packages is on sys.path so we
-        # find sentence_transformers / torch (we install it there to keep
-        # all heavy ML deps in one place).
-        ok, _err_msg = _ensure_mempalace_importable()
-        if not ok:
-            return None
+    if m is not None:
+        return m
+    # Make sure the mempalace venv site-packages is on sys.path so we
+    # find sentence_transformers / torch (we install it there to keep
+    # all heavy ML deps in one place).
+    ok, _err_msg = _ensure_mempalace_importable()
+    if not ok:
+        return None
+    try:
+        from sentence_transformers import CrossEncoder
+    except Exception:
+        return None
+    try:
+        t0 = time.time()
+        m = CrossEncoder(model_id, device=device, max_length=512)
         try:
-            from sentence_transformers import CrossEncoder
+            logging.info(f"[reranker] loaded {model_id} on {device} in {time.time()-t0:.1f}s")
         except Exception:
-            return None
-        try:
-            t0 = time.time()
-            m = CrossEncoder(model_id, device=device, max_length=512)
-            try:
-                logging.info(f"[reranker] loaded {model_id} on {device} in {time.time()-t0:.1f}s")
-            except Exception:
-                pass
+            pass
+        with _reranker_lock:
+            existing = _reranker_cache.get(key)
+            if existing is not None:
+                return existing
             _reranker_cache[key] = m
-            return m
-        except Exception as e:
-            try:
-                logging.warning(f"[reranker] failed to load {model_id} on {device}: {e}")
-            except Exception:
-                pass
-            return None
+        return m
+    except Exception as e:
+        try:
+            logging.warning(f"[reranker] failed to load {model_id} on {device}: {e}")
+        except Exception:
+            pass
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1441,8 +1502,11 @@ def tool_wiki_read(args: dict) -> str:
             merged = {}
             for w in wings:
                 try:
+                    # Pass n_results, not limit — tool_mempalace_query only
+                    # reads n_results (mempalace review L3: limit was silently
+                    # ignored, capping every per-wing search at 5).
                     r = tool_mempalace_query({"query": query, "room": "wiki",
-                                              "wing": w, "limit": limit})
+                                              "wing": w, "n_results": limit})
                     d = _json.loads(r)
                     for dr in d.get("drawers", []):
                         key = dr.get("source_file") or dr.get("read_path") or id(dr)
@@ -1646,6 +1710,35 @@ def _kg_has_span_column(palace_path: str) -> bool:
 # corrupt row can't bloat the result.
 _KG_SPAN_CAP = 400  # generous over the 200-char authoring limit; guards outliers
 
+# Serialized-result budget for the KG tools (mempalace review M7): the triples/
+# edges lists are bounded by count (200/300) but a pathological row set can
+# still serialize to >100KB into the LLM context (~30-40k tokens). Cap the
+# total JSON size of the returned list — the model gets the top-N within budget
+# and the count field reports what was actually returned.
+_KG_RESULT_CHAR_BUDGET = 30_000
+
+
+def _cap_result_list(items: list, budget: int = _KG_RESULT_CHAR_BUDGET) -> list:
+    """Truncate a list of dicts once its serialized size exceeds `budget` chars.
+    Keeps the head (highest-relevance) rows; the caller's count reflects the
+    truncated list. Cheap: n ≤ 300, so the per-item json.dumps is negligible."""
+    out: list = []
+    size = 0
+    for it in items:
+        s = json.dumps(it, ensure_ascii=False, default=str)
+        if out and size + len(s) > budget:
+            break
+        out.append(it)
+        size += len(s)
+    return out
+
+
+# Per-drawer text cap for mempalace_query output (mempalace review M7): file-
+# backed drawers are stitched to a ~2-2.5KB window, but no-file drawers
+# (chat/profile legacy) can carry verbatim text without bound. Cap at the
+# chat-sync write cap so output can never exceed it.
+_MEMPALACE_DRAWER_TEXT_CAP = 8000
+
 
 def _kg_normalize_span(t: dict) -> dict:
     if isinstance(t, dict) and isinstance(t.get("span"), str) \
@@ -1664,6 +1757,27 @@ _KG_READ_HINT = (
     "source rather than guessing. If the span fully answers the question, "
     "answer from it directly. Never build an answer on a span that doesn't "
     "actually support the claim.")
+
+
+def _kg_scope_sql(prefixes: list) -> tuple[str, list]:
+    """Build the source_file scope filter (clause, params) for a project's
+    prefixes. `instr(source_file, ?) = 1` = exact, case-sensitive, wildcard-
+    free startswith — see tool_mempalace_kg_search for the leak rationale
+    (mempalace-review M3)."""
+    return " OR ".join(["instr(source_file, ?) = 1"] * len(prefixes)), list(prefixes)
+
+
+def _reranker_egress_blocked(cfg: dict) -> bool:
+    """True when the configured reranker would egress RAW drawer text to a
+    network endpoint in an anonymising session (mempalace-review H1):
+    device=remote AND an anonymise mapping is active on the request context.
+    Local/in-process rerankers stay on-machine and are never blocked."""
+    rr = (cfg or {}).get("reranker") or {}
+    if not rr.get("enabled"):
+        return False
+    if str(rr.get("device", "auto")) != "remote":
+        return False
+    return bool(get_request_context()._gdpr_mapping_id)
 
 
 def tool_mempalace_kg_query(args: dict) -> str:
@@ -1700,13 +1814,17 @@ def tool_mempalace_kg_query(args: dict) -> str:
         if _kg_source_in_scope(sf, prefixes):
             in_scope.append(t)
     # L3b results-anonymisation seam — KG triples carry raw names/values.
+    _triples_out = _cap_result_list(
+        [_kg_normalize_span(t) for t in in_scope[:200]])
     return _brain._gdpr_anon_tool_text(_ok({
         "entity": entity,
         "direction": direction,
         "as_of": as_of,
-        "count": len(in_scope),
-        "total_before_scope_filter": len(triples),
-        "triples": [_kg_normalize_span(t) for t in in_scope[:200]],
+        "count": len(_triples_out),
+        # Deliberately NO total_before_scope_filter: the KG is shared per-
+        # palace across ALL projects, so the pre-scope count is a cross-project
+        # metadata oracle (mempalace review L1).
+        "triples": _triples_out,
         "read_hint": _KG_READ_HINT,
     }), "mempalace_kg_query")
 
@@ -1759,7 +1877,14 @@ def tool_mempalace_kg_search(args: dict) -> str:
     conn.row_factory = _sql.Row
     try:
         # Build source_file scope filter from the project's prefixes.
-        scope_clause = " OR ".join(["source_file LIKE ? || '%'"] * len(prefixes))
+        # `instr(source_file, ?) = 1` = "starts with exactly this prefix":
+        # case-sensitive, no SQL LIKE wildcards. The previous
+        # `source_file LIKE ? || '%'` was ASCII-case-insensitive and treated
+        # `_` as a single-char wildcard, so a sibling dir sharing a name
+        # prefix (/data/my_project/ vs /data/myXproject/) could leak triples
+        # across projects (the agent-facing path was inconsistent with
+        # _kg_source_in_scope's exact startswith used by the other KG tools).
+        scope_clause, scope_params = _kg_scope_sql(prefixes)
         sql_head = (
             "SELECT t.subject AS sub_id, e1.name AS sub_name, "
             "       t.predicate, "
@@ -1779,7 +1904,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
                 f"WHERE t.predicate = ? AND ({scope_clause}) "
                 "AND t.valid_to IS NULL "
             )
-            params: list = [predicate] + list(prefixes)
+            params: list = [predicate] + scope_params
             if subj_q:
                 sql += " AND LOWER(e1.name) LIKE ? "
                 params.append(f"%{subj_q}%")
@@ -1797,7 +1922,7 @@ def tool_mempalace_kg_search(args: dict) -> str:
                 "     OR LOWER(t.predicate) LIKE ? "
                 "     OR LOWER(COALESCE(e2.name, t.object)) LIKE ?) "
             )
-            params = list(prefixes) + [like, like, like]
+            params = scope_params + [like, like, like]
         sql += " ORDER BY t.confidence DESC, t.extracted_at DESC LIMIT ?"
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
@@ -1819,6 +1944,9 @@ def tool_mempalace_kg_search(args: dict) -> str:
                     else (r["span"] or ""),
             "valid_from": r["valid_from"] or "",
         })
+    # Cap the serialized payload (mempalace review M7) — count reflects the
+    # returned (possibly truncated) list.
+    triples = _cap_result_list(triples)
     # L3b results-anonymisation seam — KG triples carry raw names/values.
     return _brain._gdpr_anon_tool_text(_ok({
         "mode": "structured" if predicate else "free_text",
@@ -1894,13 +2022,14 @@ def tool_mempalace_kg_neighbors(args: dict) -> str:
         except Exception: pass
 
     # L3b results-anonymisation seam — KG edges carry raw names/values.
+    edges_capped = _cap_result_list(edges[:300])
     return _brain._gdpr_anon_tool_text(_ok({
         "entity": entity,
         "depth": depth,
         "predicate_filter": pred_filter,
         "entities_reached": sorted(visited),
-        "edge_count": len(edges),
-        "edges": edges[:300],
+        "edge_count": len(edges_capped),
+        "edges": edges_capped,
         "read_hint": _KG_READ_HINT,
     }), "mempalace_kg_neighbors")
 

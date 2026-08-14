@@ -155,9 +155,9 @@ Or `GET /v1/quotas/me` for limits + current usage.
 
 In a project chat: use `mempalace_query(query="X")` directly — it auto-scopes.
 
-Outside a project, or to inspect cross-wing:
+Outside a project, or to inspect cross-wing (ADMIN only — the endpoint is admin-gated; params are `wing`/`room`):
 ```bash
-curl -s -H "$AUTH" "http://127.0.0.1:8420/v1/mempalace/drawers?wing=user__<uid>&q=<term>&limit=20" | jq
+curl -s -H "$AUTH" "http://127.0.0.1:8420/v1/mempalace/drawers?wing=user__<uid>" | jq
 ```
 
 For the global KG:
@@ -261,8 +261,8 @@ grep "inprocess-loop" ~/.brain-agent/server.error.log | tail -20
 curl -s -H "$AUTH" "http://127.0.0.1:8420/v1/services/log?name=mempalace-miner&lines=200" | jq -r .lines[]
 ```
 
-Available service names: `mempalace-miner`, `mempalace-chat-sync`,
-`mempalace-project-sync`, `user-profile`, `scheduler`, `telegram`.
+Available service names: `mempalace-miner`, `mempalace-project-sync`,
+`user-profile`, `scheduler`, `telegram` (the `mempalace-chat-sync` daemon is retired — chat memory is on-demand via `save_chat_to_memory` / per-turn memorize).
 
 ---
 

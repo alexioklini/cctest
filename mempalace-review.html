@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MemPalace Integration — Code Review</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --ink: #1c2330;
+    --muted: #5c6675;
+    --line: #e3e7ee;
+    --crit: #c62828;
+    --high: #e65100;
+    --med: #b58900;
+    --low: #1976d2;
+    --nit: #607d8b;
+    --ok: #2e7d32;
+    --code-bg: #eef1f6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    background: linear-gradient(135deg, #1c2330 0%, #2d3a52 100%);
+    color: #fff;
+    padding: 36px 24px 28px;
+  }
+  header .wrap { max-width: 980px; margin: 0 auto; }
+  header h1 { margin: 0 0 6px; font-size: 26px; }
+  header p { margin: 4px 0; color: #c8d0dd; }
+  header .meta { font-size: 13px; color: #9aa7ba; margin-top: 10px; }
+  main { max-width: 980px; margin: 24px auto 64px; padding: 0 16px; }
+  .summary {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+  }
+  .summary h2 { margin: 0 0 12px; font-size: 16px; }
+  .counts { display: flex; gap: 10px; flex-wrap: wrap; }
+  .count {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 14px;
+    font-size: 13px;
+    background: #fafbfc;
+  }
+  .count b { font-size: 18px; display: block; line-height: 1.2; }
+  .count.crit b { color: var(--crit); }
+  .count.high b { color: var(--high); }
+  .count.med b { color: var(--med); }
+  .count.low b { color: var(--low); }
+  .count.ok b { color: var(--ok); }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+  }
+  section h2 {
+    margin: 0 0 14px;
+    font-size: 17px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  article {
+    border: 1px solid var(--line);
+    border-left-width: 4px;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 14px;
+  }
+  article.crit { border-left-color: var(--crit); }
+  article.high { border-left-color: var(--high); }
+  article.med  { border-left-color: var(--med); }
+  article.low  { border-left-color: var(--low); }
+  article.nit  { border-left-color: var(--nit); }
+  article h3 { margin: 0 0 8px; font-size: 14.5px; }
+  .badge {
+    display: inline-block;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: #fff;
+    border-radius: 4px;
+    padding: 2px 7px;
+    margin-right: 8px;
+    vertical-align: 1px;
+  }
+  .badge.crit { background: var(--crit); }
+  .badge.high { background: var(--high); }
+  .badge.med  { background: var(--med); }
+  .badge.low  { background: var(--low); }
+  .badge.nit  { background: var(--nit); }
+  .badge.ok   { background: var(--ok); }
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12.5px;
+    background: var(--code-bg);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
+  }
+  .loc { color: var(--muted); font-size: 12.5px; }
+  .loc code { background: transparent; padding: 0; }
+  .fix {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+    font-size: 13.5px;
+  }
+  .fix b { color: var(--ink); }
+  ol.order { margin: 6px 0 0; padding-left: 22px; }
+  ol.order li { margin-bottom: 6px; }
+  .solid li { margin-bottom: 6px; }
+  footer {
+    max-width: 980px;
+    margin: 0 auto 40px;
+    padding: 0 16px;
+    color: var(--muted);
+    font-size: 12.5px;
+  }
+  @media print {
+    body { background: #fff; }
+    header { background: #1c2330; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <h1>MemPalace Integration — Code Review</h1>
+    <p>Brain-Agent (cctest) · review of the MemPalace integration on <code>main</code></p>
+    <div class="meta">
+      Reviewed: <code>b6e39ff4</code> · Method: three parallel read-only audits (agent tools &amp; security gate · writer daemons &amp; persistence · admin surface / tests / config), every CRITICAL/HIGH finding re-verified directly in the source.
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <div class="summary">
+    <h2>Verdict</h2>
+    <p>The integration's <strong>query-side security model is strong</strong> — wing isolation is multi-layered and fails closed, and the GDPR dispatch symmetry for mempalace tools is correct. The problems are concentrated on the <strong>write side</strong> (lock discipline, cursor bookkeeping, silent write loss) and the <strong>admin surface</strong> (two cross-tenant authz leaks, one inert config endpoint).</p>
+    <div class="counts">
+      <div class="count crit"><b>1</b>CRITICAL</div>
+      <div class="count high"><b>4</b>HIGH</div>
+      <div class="count med"><b>10</b>MEDIUM</div>
+      <div class="count low"><b>9</b>LOW / NIT</div>
+      <div class="count ok"><b>6</b>solid areas</div>
+    </div>
+  </div>
+
+  <section>
+    <h2>CRITICAL</h2>
+
+    <article class="crit">
+      <h3><span class="badge crit">Critical</span>C1 — <code>/v1/mempalace/drawers</code> admin gate bypass via trailing slash</h3>
+      <p class="loc"><code>server.py:1545</code> (<code>path = self.path.split("?")[0]</code>, no <code>rstrip("/")</code>) → <code>_auth_gate</code> (<code>server.py:1436-1460</code>) checks <em>exact</em> membership in <code>_ADMIN_GET_EXACT</code>/<code>_ADMIN_GET_PATHS</code> (<code>server.py:1292, 1317</code>). Dispatch uses <code>path.startswith("/v1/mempalace/drawers")</code> (<code>server.py:1822</code>).</p>
+      <p><code>GET /v1/mempalace/drawers/?wing=user__&lt;victim&gt;</code> (trailing slash) passes <code>_require_auth()</code> for a <strong>non-admin</strong>, and <code>_handle_mempalace_drawers</code> (<code>handlers/admin_observability.py:1853-1915</code>) has no authz of its own — it dumps the first 300 chars of every drawer (plus closets) in any wing, including <code>project__*</code>.</p>
+      <p class="fix"><b>Fix:</b> normalize <code>path.rstrip("/")</code> before gate+dispatch (covers all endpoints), or add <code>_require_role("admin")</code> inside the handler.</p>
+    </article>
+
+  </section>
+
+  <section>
+    <h2>HIGH</h2>
+
+    <article class="high">
+      <h3><span class="badge high">High</span>H1 — Remote reranker egresses RAW drawer text before the GDPR seam</h3>
+      <p class="loc"><code>engine/mempalace_glue.py:704-740</code> · <code>config.json:2812-2820</code></p>
+      <p>Rerank runs on <code>raw_results</code> <strong>before</strong> <code>_gdpr_anon_tool_text</code> (<code>mempalace_glue.py:1137</code>). <code>_RemoteReranker.predict</code> POSTs <code>{query, documents}</code> — up to 40 passages × 1500 chars of raw project PII — to <code>http://192.168.1.214:8002</code> (prod config: <code>reranker.enabled=true</code>, <code>device="remote"</code>). Not covered by the web-egress gate, args-deanon, or the result seam. PII leaves the machine in anonymising sessions.</p>
+      <p class="fix"><b>Fix:</b> in anonymising sessions (<code>_gdpr_mapping_id</code> set), skip remote rerank or run it on the anonymised result.</p>
+    </article>
+
+    <article class="high">
+      <h3><span class="badge high">High</span>H2 — <code>save_chat_to_memory</code> immediate sync advances the cursor past unwritten messages</h3>
+      <p class="loc"><code>server.py:4631-4696</code> (<code>_do_sync</code>)</p>
+      <p>Each <code>tool_add_drawer</code> is wrapped in <code>try/except Exception: pass</code> (<code>server.py:4685</code>), failures are <strong>not tracked</strong>, and <code>mempalace_update_cursor(session_id, max_id)</code> runs unconditionally (<code>server.py:4691</code>). A lock-refused write (mine in progress) is swallowed and the turn is permanently absent from memory — the retired chat-sync daemon had a clamp for this (<code>server_daemons.py:1002-1006</code>), the live replacement doesn't. This is the exact v9.60.4 data-loss class, now unrecoverable.</p>
+      <p class="fix"><b>Fix:</b> take <code>_palace_write_lock</code> around the write; clamp the cursor to <code>min(max_id, lowest_failed - 1)</code>.</p>
+    </article>
+
+    <article class="high">
+      <h3><span class="badge high">High</span>H3 — <code>POST /v1/mempalace/kg/config</code> writes to the wrong file — KG settings save is inert</h3>
+      <p class="loc"><code>handlers/admin_observability.py:807-808</code></p>
+      <p><code>os.path.dirname(os.path.abspath(__file__)) + "/config.json"</code> resolves to the checked-in <code>handlers/config.json</code> 17-line stub, while every reader (<code>_load_mempalace_config</code>, the GET handler, the daemons) uses the repo-root <code>config.json</code>. The changelog even acknowledges this (<code>brain.py:536</code>, v9.113.0) and it was never fixed. UI shows old values on reload; the cursor-invalidation block reads an empty <code>palace_path</code> → no purge.</p>
+      <p class="fix"><b>Fix:</b> double-dirname (as sibling handlers do at <code>admin_observability.py:321, 357, 391</code>) and delete the stub.</p>
+    </article>
+
+    <article class="high">
+      <h3><span class="badge high">High</span>H4 — <code>/v1/mempalace/session-turns</code> has no session-ownership check</h3>
+      <p class="loc"><code>server.py:1820</code> · <code>handlers/admin_observability.py:251-302</code></p>
+      <p>Startswith dispatch, not in any admin list; the handler never calls <code>_session_access_check</code>. A non-admin can probe any <code>session_id</code> and learn which turns are memorized — a cross-user metadata leak.</p>
+      <p class="fix"><b>Fix:</b> gate via <code>self._session_access_check(sid)</code> (owner/team/admin), matching every other session endpoint.</p>
+    </article>
+
+  </section>
+
+  <section>
+    <h2>MEDIUM</h2>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M1 — <code>_palace_write_lock</code> does NOT serialize "ALL MemPalace writes" as documented</h3>
+      <p class="loc"><code>CLAUDE.md:251</code> · <code>server_lib/db.py:91, 138, 289</code> · <code>server.py:3329-3345, 4680</code> · <code>server_daemons.py:515-521</code></p>
+      <p>Bypassing writers: <code>_purge_mempalace_session</code>/<code>_purge_mempalace_turns</code> → <code>col.delete</code> (also an O(corpus) unfiltered <code>col.get</code> per session deletion), <code>_memorize_mempalace_turns</code>, the profile mirror purge+add, and sched-artifact writes. All fail closed <em>silently</em> — a refused write just disappears.</p>
+      <p class="fix"><b>Fix:</b> hold the lock around every purge/add cycle; surface refusals instead of swallowing them.</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M2 — <code>_purge_drawers_by_room_and_source</code> can livelock</h3>
+      <p class="loc"><code>server.py:3259-3311</code></p>
+      <p>Line <code>3294-3295</code> counts <code>success:False</code> as deleted. With ≥200 drawers and persistent refusals (e.g. a long project-sync mine) the <code>while True</code> re-lists 200 and re-deletes 200 forever — a hot livelock in the caller thread (miner startup-purge, user-profile daemon, profile-doc endpoint).</p>
+      <p class="fix"><b>Fix:</b> count only real successes; add a no-progress iteration bail; wrap in <code>_palace_write_lock</code> so refusals become waits.</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M3 — <code>tool_mempalace_kg_search</code> uses an unescaped, case-insensitive <code>LIKE</code> — cross-project triple leak</h3>
+      <p class="loc"><code>engine/mempalace_glue.py:1762-1763, 1782, 1800</code></p>
+      <p><code>LIKE '&lt;prefix&gt;%'</code> without escaping <code>_</code>/<code>%</code> and without <code>COLLATE BINARY</code>: <code>/my_project/</code> matches triples from <code>/myXproject/</code>; case collides too. The extraction side already solved this (<code>_anchored_prefix_sql</code>, <code>engine/kg_extract.py:254-265</code>) but the agent-facing tool doesn't use it; the other two KG tools use exact <code>startswith</code> — this path is the inconsistent (leaky) one.</p>
+      <p class="fix"><b>Fix:</b> reuse <code>_anchored_prefix_sql</code> semantics (exact <code>= prefix</code> OR escaped-prefix <code>LIKE</code>) with <code>COLLATE BINARY</code> / <code>instr(source_file, prefix) = 1</code>.</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M4 — GDPR seams fail OPEN on internal errors</h3>
+      <p class="loc"><code>brain.py:4248-4254</code> · <code>brain.py:4024-4028</code></p>
+      <p><code>_gdpr_anon_tool_text</code> returns raw text if the pseudonymiser sweeps throw (comment: avoid "silently hiding content") — for retrieval sources this is exactly the fail-closed boundary the retrieval dialog builds. <code>_gdpr_retrieval_guard</code> swallows its own scan errors and falls back to apply-only, so fresh PII passes raw. A transient pseudonymizer crash silently ships raw project PII to the chat LLM in an anonymising session.</p>
+      <p class="fix"><b>Fix:</b> for sources in <code>_RETRIEVAL_PII_SOURCES</code>, return the refusal envelope (or audit a fail-open event) instead of raw text.</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M5 — <code>_rebuild_via_sqlite_swap</code> races the write daemons</h3>
+      <p class="loc"><code>engine/mempalace_glue.py:138-200</code></p>
+      <p>The recovery swaps the live palace via two <code>os.rename</code>s while daemons may concurrently upsert (daemons hold <code>_palace_write_lock</code>, this path does not). A write landing between the renames goes into the renamed-aside directory — new drawers silently missing from the "live" palace until a full re-mine. The verification step can't detect it.</p>
+      <p class="fix"><b>Fix:</b> perform the swap under <code>_palace_write_lock</code>; verify the aside dir's newest writes are served after swap.</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M6 — Partial-write "skipped forever" in project-sync</h3>
+      <p class="loc"><code>server_daemons.py:1806-1836</code> + miner chunk batches (1000/drawer-batch)</p>
+      <p><code>process_file</code> deletes a file's old drawers, then writes chunks in sub-batches stamped with <code>source_mtime</code> per chunk. A mid-file failure (e.g. broken extraction model) leaves partial drawers carrying the current mtime; every subsequent cycle's mtime pre-filter skips the file — a re-mine can end up <strong>permanently truncated</strong>.</p>
+      <p class="fix"><b>Fix:</b> stamp <code>source_mtime</code> only after all sub-batches succeed (or verify stored chunk count matches).</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M7 — No tool-result size cap on the agent-facing path</h3>
+      <p class="loc"><code>engine/mempalace_glue.py:995-1092, 1062, 1709, 1823-1832, 1897-1905</code> · <code>engine/tool_exec.py:615-620</code></p>
+      <p>Up to 25 drawers with <strong>unbounded</strong> <code>text</code>, 200 triples + 300 edges → ~100KB+ single calls into the LLM context. <code>_apply_tool_result_budget</code> is "currently NOT called on the interactive chat path". Cost and context-bloat vector.</p>
+      <p class="fix"><b>Fix:</b> cap the serialized payload (truncate text/span/triple/edge counts past ~30KB) and/or wire the budget middleware into the interactive path.</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M8 — chat-sync daemon is RETIRED but docs + admin surface still present it as live</h3>
+      <p class="loc"><code>server_daemons.py:637-646</code> · <code>server.py:4571-4573</code> · docs: <code>CLAUDE.md:298-301</code>, <code>INVARIANTS.md:247-265</code>, <code>README.md:46</code></p>
+      <p>The loop prints and returns; server.py no longer launches it. <code>GET/POST /v1/mempalace/classifier</code> edits 4 keys (<code>model, enabled, categories_to_file, min_turns</code>) with <strong>no live consumer</strong> (only <code>default_mode</code> is read, <code>handlers/chat.py:7321</code>). Dead machinery still documented as running.</p>
+      <p class="fix"><b>Fix:</b> delete the dead body + shrink the classifier surface to <code>default_mode</code>, or update the docs (skill <code>05-internals.md</code> already has the correct text).</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M9 — Zero test coverage of the write side and authz</h3>
+      <p class="loc"><code>tests/</code> — grep for <code>_palace_write_lock</code>, <code>session-turns</code>, <code>mempalace/stats</code>, <code>mempalace/drawers</code>, cursor/daemon names: zero hits</p>
+      <p>Nothing pins: write-side wing isolation, cursor clamp/retry, lock discipline across writers, admin-surface authz (the C1/H4 leaks were never pinned), KG endpoint per-user isolation. Existing tests (14 wing-isolation + 5 reranker) are query-side only.</p>
+      <p class="fix"><b>Fix:</b> handler-level authz tests (mirror the trailing-slash bypass) + daemon/wing-write tests.</p>
+    </article>
+
+    <article class="med">
+      <h3><span class="badge med">Medium</span>M10 — Config drift in the mempalace block</h3>
+      <p class="loc"><code>config.example.json:2746-2836</code> vs readers <code>engine/kg_extract.py:860</code>, <code>engine/mempalace_glue.py:1277-1278</code></p>
+      <p>Code reads keys absent from <code>config.example.json</code>: <code>kg.parallel_workers</code>, <code>reranker.remote_timeout_s</code>, <code>reranker.api_key</code>. <code>kg.batch_size: 20</code> ships with no reader anywhere. The "currently on chroma backend" note is stale (Qdrant).</p>
+      <p class="fix"><b>Fix:</b> add the missing keys, drop or wire <code>kg.batch_size</code>, refresh the backend note.</p>
+    </article>
+
+  </section>
+
+  <section>
+    <h2>LOW / NIT</h2>
+
+    <article class="low">
+      <h3><span class="badge low">Low</span>L1 — Cross-project count oracle</h3>
+      <p class="loc"><code>engine/mempalace_glue.py:1708</code> (<code>total_before_scope_filter</code>) · <code>:1142</code> (<code>total_before_filter</code>)</p>
+      <p>Content is filtered correctly, but the counts reveal how many matching triples/drawers exist in other tenants' wings for the same entity — a metadata oracle.</p>
+      <p class="fix"><b>Fix:</b> return counts only when the pre-filter scope is single-tenant, else <code>null</code>.</p>
+    </article>
+
+    <article class="low">
+      <h3><span class="badge low">Low</span>L2 — Helpdesk mode exempts the explicit-wing pre-check</h3>
+      <p class="loc"><code>engine/mempalace_glue.py:399</code></p>
+      <p>In helpdesk mode a prompt-injected Brainy can target a foreign wing; the unconditional post-filter still drops rows (fail-closed today), but it is a wing-presence oracle and an ordering hazard if the branch is ever moved before the post-filter.</p>
+      <p class="fix"><b>Fix:</b> narrow the exemption to <code>wing in {"brain_code"}</code>.</p>
+    </article>
+
+    <article class="low">
+      <h3><span class="badge low">Low</span>L3 — <code>tool_wiki_read</code> passes <code>limit</code> but the query tool only reads <code>n_results</code></h3>
+      <p class="loc"><code>engine/mempalace_glue.py:1444-1445</code> vs <code>:407</code></p>
+      <p>Per-wing wiki search silently fetches exactly 5 results regardless of the requested limit — merged wiki search always truncated at 5/wing. Functional bug, no security impact.</p>
+      <p class="fix"><b>Fix:</b> pass <code>"n_results": limit</code>.</p>
+    </article>
+
+    <article class="low">
+      <h3><span class="badge low">Low</span>L4 — Names in <code>read_path</code> are NOT pseudonymised for underscore-joined filenames</h3>
+      <p class="loc"><code>engine/mempalace_glue.py:1075-1076, 1134-1136</code> · <code>pseudonymizer.py:2206, 2214-2224</code></p>
+      <p>The comment claims names in <code>read_path</code> get pseudonymised too, but <code>_</code> is a <code>\w</code> char — <code>/docs/Bonnie_Stark_KYC.pdf</code> keeps the real name visible to the LLM (word boundary + fuzzy sweep both blocked). Documented trade-off, overstated comment.</p>
+      <p class="fix"><b>Fix:</b> drop the over-broad comment, or register basename split-forms into the mapping reverse; do not rewrite paths (breaks the read_document round-trip).</p>
+    </article>
+
+    <article class="low">
+      <h3><span class="badge low">Low</span>L5 — Docs cite rolled-back tools</h3>
+      <p class="loc"><code>CLAUDE.md:228</code> · <code>INVARIANTS.md:159</code> vs <code>brain.py:2419-2421</code></p>
+      <p><code>mempalace_get_drawer</code>/<code>mempalace_list_drawers</code> exist nowhere in <code>TOOL_DEFINITIONS</code>/<code>TOOL_GROUPS</code>/<code>TOOL_DISPATCH</code> (rolled back); they survive only as stale names in exclude/deanon sets (<code>brain.py:9338</code>, <code>handlers/chat.py:6991</code>, <code>web/js/chat_tools.js:172</code>).</p>
+    </article>
+
+    <article class="low">
+      <h3><span class="badge low">Low</span>L6 — Dead citation re-round machinery + config still described as live</h3>
+      <p class="loc"><code>brain.py:17454-17602</code> (no callers) · <code>config.example.json:2821-2826</code> (no reader) · <code>CLAUDE.md:276</code>, <code>INVARIANTS.md:176/178</code></p>
+      <p><code>run_citation_reround</code>/<code>build_citation_reround_feedback</code> unreachable since v8.40.0; SSE handlers <code>citation_reround_start/done</code> are no-ops (<code>web/js/chat_send.js:1358/1365</code>).</p>
+    </article>
+
+    <article class="nit">
+      <h3><span class="badge nit">Nit</span>N1 — <code>/v1/mempalace/kg/config</code> GET is not admin-gated</h3>
+      <p class="loc"><code>handlers/admin_observability.py:779</code> · <code>server.py:1287-1338</code></p>
+      <p>Any logged-in user can read the extraction model/profile/method knobs — asymmetric with the admin-only POST. <code>/v1/mempalace/activity</code> likewise open (benign counters).</p>
+    </article>
+
+    <article class="nit">
+      <h3><span class="badge nit">Nit</span>N2 — Thread-safety nits in the glue module</h3>
+      <p class="loc"><code>engine/mempalace_glue.py:1193-1194, 1212-1250</code> · <code>:1298-1326</code> · <code>:248-263</code> · <code>:271-283</code></p>
+      <p>Reranker latch globals mutated without a lock (benign); 5-8s <code>CrossEncoder</code> load runs inside <code>_reranker_lock</code> (cold-start serialization); config cache keyed on wall-clock <code>time.time()</code> (backward clock step freezes it — use <code>time.monotonic()</code>); failed imports re-probed on every query.</p>
+    </article>
+
+    <article class="nit">
+      <h3><span class="badge nit">Nit</span>N3 — Misc cleanup</h3>
+      <p class="loc"><code>server_daemons.py:203-238</code> · <code>server_daemons.py:1092-1097</code> · <code>mempalace_sync.py:47-62</code></p>
+      <p><code>_purge_orphan_chroma_queue</code> leaks its SQLite connection on error; web-url <code>.fetch-state.json</code> written non-atomically (self-healing, one extra re-fetch); <code>mempalace_sessions_needing_sync</code> is O(sessions × messages) — retired path.</p>
+    </article>
+
+  </section>
+
+  <section>
+    <h2>What looks solid</h2>
+    <ul class="solid">
+      <li><strong>Query-side wing isolation is genuinely multi-layered and fails closed</strong> — <code>_wing_visible</code> (<code>mempalace_glue.py:286-315</code>) default-denies malformed tenant prefixes; explicit-wing pre-check (<code>:399-405</code>) + unconditional post-filter (<code>:546-551</code>); project force-scope refuses on missing id (<code>:385</code>). Pinned by 14 tests.</li>
+      <li><strong>GDPR dispatch symmetry for mempalace tools is correct</strong> — args-deanon whitelist membership (<code>GDPR_ARGS_DEANON_TOOLS</code>), every result through <code>_gdpr_anon_tool_text</code> with retrieval-guard sourcing, dialog fail-closed paths (background/scheduler/timeout/cancel return kinds-only refusals). Pinned by <code>test_gdpr_retrieval_dialog.py</code>, <code>test_dispatch_symmetry.py</code>, <code>test_project_pii_curation.py</code>.</li>
+      <li><strong>Lock design is right where applied</strong> — the RLock composes correctly with the package's per-thread-reentrant file flock, no deadlock path found; miner and project-sync hold it on all main mine/delete paths.</li>
+      <li><strong>Crash-safety of the retired daemon cursor logic</strong> — drawer writes commit before the cursor advances; a crash between just re-processes and hits dedup. The clamp (<code>server_daemons.py:1002-1006</code>) is well-designed dead code worth resurrecting.</li>
+      <li><strong>Per-project error isolation + fingerprint convergence</strong> in project-sync — <code>sync_log</code> run row closed on every path; no skip-loops.</li>
+      <li><strong>4-site tool wiring complete</strong> for all five memory tools; HNSW corruption rebuild cooldown-gated and globally serialised; KG tool hygiene (<code>kg.close()</code> in finally, capped BFS/spans).</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Suggested fix order</h2>
+    <ol class="order">
+      <li><strong>C1 + H4</strong> — authz (one-line-ish each, cross-tenant read).</li>
+      <li><strong>H1</strong> — reranker egress gate (PII off-machine).</li>
+      <li><strong>H2 + M1</strong> — lock + cursor clamp on the live immediate-sync path (silent data loss).</li>
+      <li><strong>H3</strong> — KG config write target.</li>
+      <li>Then M3/M4 (retrieval leaks, fail-open), M5/M6 (races), docs cleanup (M8, L5, L6).</li>
+    </ol>
+  </section>
+
+</main>
+
+<footer>
+  Generated from the MemPalace integration review · Brain-Agent (cctest) · repo state <code>main @ b6e39ff4</code>
+</footer>
+
+</body>
+</html>

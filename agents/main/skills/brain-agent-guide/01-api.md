@@ -574,8 +574,8 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
 
 ## MemPalace
 
-- `GET /v1/mempalace/stats` — wing/room/drawer counts
-- `GET /v1/mempalace/classifier` / `POST` — chat-sync classifier config
+- `GET /v1/mempalace/stats` — wing/room/drawer counts (admin-gated)
+- `GET /v1/mempalace/classifier` / `POST` (admin) — chat-sync classifier config; the daemon + classifier are RETIRED, only `default_mode` (new-chat memory default) has a live consumer — the other keys are legacy
 - `GET /v1/composer/defaults` (any logged-in user) / `POST` (admin) — new-chat
   composer defaults `{thinking_level, caveman_mode, memory_mode,
   goal_mode_enabled, goal_max_iterations}`. thinking + caveman + the two
@@ -586,14 +586,14 @@ omitting it returns all visible schedules (the agent-global Zeitplan tab).
   `mempalace.chat_sync.classifier.default_mode` (single source). Configured
   in General Settings → Server → „Eingabefeld-Standards".
 - `GET /v1/mempalace/activity` — live miner state
-- `GET /v1/mempalace/session-turns?session_id=` — drawer ids per turn
-- `GET /v1/mempalace/drawers?wing=&room=&q=&limit=` — list drawers
+- `GET /v1/mempalace/session-turns?session_id=` — drawer ids per turn (owner/team/admin only)
+- `GET /v1/mempalace/drawers?wing=&room=` — list drawers (ADMIN only, enforced in the handler)
 - `GET /v1/mempalace/kg/stats` — KG global stats
-- `GET /v1/mempalace/kg/wing?wing=` — KG per-wing detail
-- `GET /v1/mempalace/kg/entity?wing=&entity=` — entity neighborhood
-- `GET /v1/mempalace/kg/extraction-log?wing=` — extraction history
-- `GET /v1/mempalace/kg/config` / `POST` — extraction config
-- `POST /v1/mempalace/kg/reextract` — `{wing, source_file?}` re-run
+- `GET /v1/mempalace/kg/wing?agent_id=&project=` — KG per-wing detail
+- `GET /v1/mempalace/kg/entity?agent_id=&project=&entity=` — entity neighborhood
+- `GET /v1/mempalace/kg/extraction-log?agent_id=&project=` — extraction history
+- `GET /v1/mempalace/kg/config` / `POST` (admin) — extraction config
+- `POST /v1/mempalace/kg/reextract` — `{agent_id, project, source_prefix?}` re-run
 
 ## Tools (admin)
 
@@ -965,7 +965,7 @@ Once a feedback row exists, user and admin exchange short one-line messages
   (style="<name>"). Powers Settings → Allgemein → **Dokument-Stile** (a WYSIWYG
   form editor — color pickers, font dropdowns, header/footer/logo controls, live
   preview — that builds the YAML; storage stays YAML on disk).
-- `GET /v1/services` — daemon status (mempalace-miner, chat-sync, …)
+- `GET /v1/services` — daemon status (mempalace-miner, mempalace-project-sync, …; chat-sync retired)
 - `GET /v1/services/log?name=&lines=` — tail a service log
 - `POST /v1/services/telegram` / `/services/server` — start/stop/restart.
   `/services/server` also persists `config.default_model` (the

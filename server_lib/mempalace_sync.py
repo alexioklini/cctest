@@ -112,6 +112,16 @@ def mempalace_last_user_id_before(session_id, before_id):
         return int(row[0]) if row else 0
 
 
+def mempalace_cursor_clamp(max_id: int, lowest_failed) -> int:
+    """Cursor write-loss guard (mempalace-review H2): never advance the sync
+    cursor past a message whose drawer write failed — clamp below it so the
+    next sync retries from there (dedup makes re-files cheap). `lowest_failed`
+    is the lowest message id that failed, or None/0 when nothing failed."""
+    if not lowest_failed:
+        return int(max_id)
+    return max(0, min(int(max_id), int(lowest_failed) - 1))
+
+
 @_db_safe(default=None)
 def mempalace_update_cursor(session_id, last_message_id, last_summary_hash=None):
     with _db_conn() as conn:

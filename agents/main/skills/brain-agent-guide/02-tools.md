@@ -617,8 +617,7 @@ matching DOB.
     claim.)
 - `save_chat_to_memory()` — flip current chat's `save_to_memory` to ON
 
-(`mempalace_get_drawer`, `mempalace_list_drawers` are admin-side; see
-`03-storage.md` for direct SQLite if you need to inspect MemPalace.)
+(`mempalace_get_drawer` / `mempalace_list_drawers` were ROLLED BACK — they exist nowhere in the tool registry; use `mempalace_query` to search and the admin APIs to inspect.)
 
 ### Wiki tools (the agent's long-term memory = the user-visible LLM Wiki)
 

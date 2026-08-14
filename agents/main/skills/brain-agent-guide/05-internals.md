@@ -1106,8 +1106,8 @@ turns the project into a working-directory agent instead of a MemPalace-backed
 one. When on: NO ingest / NO MemPalace; the chat's cwd IS the project's
 `working_dir` (a user-picked path, validated to exist). File tools read/edit/
 create THERE — `apply_domain_context` sets `ctx.working_dir` and excludes the
-MemPalace tools (mempalace_query, save_chat_to_memory, mempalace_get_drawer,
-mempalace_list_drawers, read_document); `_resolve_artifact_dir` + execute_command/
+MemPalace tools (mempalace_query, save_chat_to_memory, mempalace_kg_*; the
+mempalace_get_drawer/mempalace_list_drawers pair was rolled back), read_document); `_resolve_artifact_dir` + execute_command/
 python_exec cwd prefer working_dir, and `_resolve_under_cwd` (file_tools.py)
 resolves RELATIVE paths in read_file/list_directory/search_files under
 working_dir (non-code-mode keeps process-cwd abspath).
@@ -2459,14 +2459,11 @@ Imported as a Python package — no MCP, no subprocess.
    classifies by folder name (`sched-*` → scheduled artifacts;
    `<sid>` → chat folders). Scheduled folders file output-role files
    only (skips intermediates). Chat folders gated on `save_to_memory > 0`.
-2. `mempalace-chat-sync` (every 60s): mirrors:
-   - chat turns → `room=chat`
-   - session summaries → `room=chat_summary`
-   - attachment metadata (NOT bytes) → `room=chat_attachment`
-   - allowlisted tool_results (`exa_search`, `web_fetch`, `read_document`)
-     → `room=reference`
-
-   Closet rebuild per dirty group (`build_closet_lines + upsert`).
+2. `mempalace-chat-sync` — RETIRED (mempalace-review M8): the loop returns
+   at `server_daemons.py:645` and server.py no longer launches it. Chat
+   content reaches the palace ON DEMAND instead: the `save_chat_to_memory`
+   immediate sync (cursor-clamped, `server.py:_save_chat_to_memory_callback`)
+   and per-turn memorize/purge (`memorize_turns` / `purge_turns`).
 
 ### Knowledge Graph
 

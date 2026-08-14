@@ -260,6 +260,12 @@ class AdminObservabilityHandlers:
         if not sid:
             self._send_json({"error": "session_id required"}, 400)
             return
+        # Ownership gate: this endpoint scans the whole palace for
+        # `session/<sid>` drawer prefixes and reports which turns are
+        # memorized — a cross-user metadata oracle. Gate it like every other
+        # session endpoint (owner/team/admin). Sends 403/404 itself on fail.
+        if self._session_access_check(sid) is None:
+            return
         turn_ids: set[int] = set()
         legacy_count = 0  # drawers without #turn/<id> suffix
         try:
@@ -776,7 +782,10 @@ class AdminObservabilityHandlers:
 
     def _handle_kg_config_get(self):
         """GET /v1/mempalace/kg/config — current KG settings."""
-        if self._require_auth() is None:
+        # Admin-gated, symmetric with the POST — the GET leaks extraction
+        # model/profile/method knobs that non-admins have no business reading
+        # (and the path is absent from the server's admin GET table).
+        if self._require_role("admin") is None:
             return
         mcfg = engine._load_mempalace_config()
         kg_cfg = mcfg.get("kg") or {}
@@ -804,8 +813,13 @@ class AdminObservabilityHandlers:
         if user is None:
             return
         body = self._read_json() or {}
+        # Repo-root config.json — the file EVERY reader uses
+        # (_load_mempalace_config, the GET handler, the daemons). The previous
+        # single-dirname path resolved to the checked-in handlers/config.json
+        # STUB, so saves appeared to succeed but never applied (and the cursor
+        # invalidation read an empty palace_path → no purge).
         config_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "config.json")
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
         try:
             cfg_disk = {}
             if os.path.exists(config_path):
@@ -1860,6 +1874,13 @@ class AdminObservabilityHandlers:
 
     def _handle_mempalace_drawers(self):
         """GET /v1/mempalace/drawers?wing=X&room=Y — list drawers for treemap drill-down."""
+        # Admin gate INSIDE the handler, not just in the server's path table:
+        # dispatch matches `path.startswith("/v1/mempalace/drawers")` while the
+        # admin whitelist matches exact paths, so a trailing-slash variant
+        # (`/v1/mempalace/drawers/`) previously bypassed the table and reached
+        # this handler as any authenticated user — a cross-tenant drawer read.
+        if self._require_role("admin") is None:
+            return
         params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         wing = (params.get("wing") or [None])[0]
         room = (params.get("room") or [None])[0]
