@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.438.2"
+VERSION = "9.438.3"
 VERSION_DATE = "2026-08-14"
 CHANGELOG = [
+    ("9.438.3", "2026-08-14", "fix(Mini-Modus: Klassifikator-Tool-Gating hat Mini-Tools UNERREICHBAR gemacht — 'führe top aus' → 'top existiert nicht' ohne jeden Tool-Call): User-Report Session ea2592fc Anfrage 7. FORENSIK an den Turn-Metadaten: tool_gating applied:true, analysis.tools=['web'] — der Per-Turn-Klassifikator stufte 'führe top aus' als Web-Aufgabe ein und DEFERRTE die übrigen Gruppen. Für Default-Modelle ist Deferral harmlos (tool_search-discoverable), im Mini-Modus aber FATAL: tool_search ist entfernt + tools_refresh eingefroren (9.434.0) — deferrt = weg. execute_command fehlte auf dem Wire, das 3B konfabulierte 'Die ausführbare Datei top existiert nicht' (und beantwortete den df-Folge-Turn mit CPU-Prosa). FIX: classifier_tool_deferral bailt für mini_harness-Modelle mit ([], []) aus (wie für warmup-geschützte) — das Mini-Toolset ist bereits handverdichtet-minimal, es gibt nichts sinnvoll zu gaten; classifier_gating_decision meldet applied:false mit Mini-Begründung (Inspector-Modal zeigt die Wahrheit). Der Klassifikator läuft weiter (auto_route-Metadaten/Modal bleiben). NB fürs Protokoll: 'top' wäre auch MIT Tool gescheitert (interaktiv, kein TTY — top -l 1 wäre die Batch-Form), aber ehrlich gescheitert statt konfabuliert. py_compile OK. Server-Restart nötig."),
     ("9.438.2", "2026-08-14", "feat(Mini-Handover sichtbar im Aktivitäten-Panel): User-Befund an Session 71fe866d (3 Turns, 'sehe keine mini handovers') — die Handovers LIEFEN (Forensik-Log sig=2+4), waren aber unsichtbar. Wie beim Destillat (9.435.1): synthetisches tool_call/tool_result-Paar 'mini_handover' ({zeilen: sig}; Ergebnis = der Handover-TEXT selbst, im Panel aufklappbar), emittiert über den event_callback des Chat-Workers — der aggregiert in _partial_tools → metadata.tools (reload-stabil) UND emittiert live. Nur bei REGENERATION (Cache-Hit = keine Arbeit = kein Eintrag). Deutsches Label in chat_tools.js ('Handover: Verlauf komprimiert (N Zeilen) → frischer Kontext'). py_compile OK, js_gate GRÜN (Smoke 4/4). Server-Restart nötig."),
     ("9.438.1", "2026-08-14", "fix(Websuche-Qualität: SearXNG-Engine-Pool re-kuratiert + Mini-Schema ohne num_results): User-Befund 'die searxng-Suche war völlig sinnlos' — für 'Wetter Wien heute' stand eine LOTTERIE-PRESSEMITTEILUNG mit score 1.0 auf Platz 1. ZWEI Ursachen: (1) ENGINE-DRIFT (searxng_settings.yml, per-machine): der zwischenzeitlich kuratierte Pool (brave/ddg/mojeek/presearch/yep an, google/bing aus) war live auf ddg+yep zusammengeschrumpft (brave 'too many requests', startpage CAPTCHA, presearch timeout, mojeek leer) — und die Per-Engine-Messung (production path /search?engines=<name>) zeigte: yep = DIE Giftquelle (0/5 relevante Treffer, Top = der SEO-Spam), während bing sich GEDREHT hat (5/5 relevant, korrekter Top-Treffer; die alte 'bing poisons consensus'-Notiz gilt nicht mehr) und ddg gesund ist. NEU: Pool = bing + duckduckgo; yep/brave/mojeek/presearch disabled, google (liefert leer)/qwant/startpage bleiben aus; Messwerte als Kommentar im File. Nach /v1/searxng/restart: alle Top-6 wetter-relevant, Top-Score 4.00 (bing+ddg-Konsens), ORF-Wetter Platz 2. GOTCHA dokumentiert: Brains WebCache (TTL 900s, Key inkl. num_results) hält alte Ergebnisse nach — Verifikation nach Engine-Änderungen mit variiertem num_results oder 15 min Wartezeit. (2) SELBSTSABOTAGE: das 3B wählte num_results=1 und bekam genau den einen Spam-Treffer — num_results aus dem searxng-Mini-Schema ENTFERNT, es gilt immer der Server-Default 5. py_compile OK. Brain-Restart nötig (Schema); SearXNG-Neustart bereits erfolgt."),
     ("9.438.0", "2026-08-14", "feat(Mini-Modus: automatisches Kompakt-Handover ab Turn 2 — jeder Turn startet wie eine frische Session): User-Design ('ab dem zweiten Turn kompaktes Handover via AFM machen und an eine frische Session übergeben, alles automatisch') gegen den dokumentierten Turn-2-Verfall (3B plappert kontaminierte Historie nach statt Tools zu rufen; volle Historie frisst das 8k-Fenster). MECHANIK (handlers/chat.py _mini_handover_wire + Hook an der Wire-Seam): bei mini_harness-Modellen ab Turn 2 wird die Wire-Historie KOMPLETT ersetzt durch [Handover-User-Message, 'Verstanden.'-Assistant, Original-User-Message] — das Handover (max. 8 Zeilen: Aufgabe, Fakten WÖRTLICH, letzte Antwort) schreibt das Mini-Modell SELBST via background_call (purpose=transform, cost_purpose=mini_handover, max_tokens 300, unqueued-by-Design — läuft VOR run_turn, kein Slot gehalten, kein Deadlock). session.messages/DB bleiben VOLL (UI zeigt den ganzen Verlauf) — reiner Wire-Ersatz, derselbe wire≠stored-Split wie Websuche/Caveman. DELTA-CACHE: Handover gecacht per Sig (Anzahl konversationaler Zeilen) auf session._mini_handover; Regeneration nimmt vorheriges Handover + NUR die neuen Zeilen (je 800 Zeichen gekappt, max. 10) als Input — der Generator-Input bleibt selbst im 8k-Fenster. GRENZEN bewusst: (a) NACH dem PII-Block gehookt und nur wenn KEINE pii_decisions aktiv — anonymisierende Sessions behalten den klassischen pseudonymisierten Wire (das Handover trüge sonst Roh-Historie); (b) Fehler/leeres Handover → None → voller Verlauf wie bisher (auto_lcm bleibt als Sicherheitsnetz AN); (c) multimodale Zeilen (content=Liste) fließen nicht in den Handover-Input. Die schwebende User-Message bleibt das ORIGINAL-Objekt am Listenende, damit die nachfolgenden Wire-Injektionen (Websuche-Präambel, Pins, Caveman-Suffix) unverändert greifen. mini_handover:false am Modell schaltet ab. py_compile OK. Server-Restart nötig. KEIN kuratierter Eintrag (experimenteller Modus)."),
@@ -15138,6 +15139,18 @@ def classifier_tool_deferral(model: str, tool_groups: list[str] | None) -> tuple
     """
     if tool_groups is None:
         return [], []
+    # Mini-Harness-Modelle (9.438.3): NIE klassifikator-deferren. Ihr Toolset
+    # ist bereits handverdichtet-minimal (5 kompakte Tools), tool_search ist
+    # ENTFERNT und tools_refresh eingefroren — ein deferrtes Tool ist im
+    # Mini-Modus also UNERREICHBAR, nicht 'discoverable'. Live-Schaden
+    # (Session ea2592fc): Klassifikator sagte tools=[web] für 'führe top
+    # aus' → execute_command fehlte auf dem Wire → 3B konfabulierte
+    # 'top existiert nicht'.
+    try:
+        if (resolve_model_settings(model) or {}).get("mini_harness") is True:
+            return [], []
+    except Exception:
+        pass
     # Cache-priced models are reshaped too (their tool set grows monotonically),
     # but a warmup-protected model still bails — model_tool_reshape_allowed is the
     # combined gate (see its docstring). The CALLER decides turn-1-only freezing.
@@ -15182,6 +15195,13 @@ def classifier_gating_decision(model: str, tool_groups: list[str] | None) -> dic
     if tool_groups is None:
         return {"applied": False, "reason": "no classification signal (keyword mode miss or fail-open)",
                 "kept_groups": [], "excluded_groups": [], "needed_groups": needed}
+    try:
+        if (resolve_model_settings(model) or {}).get("mini_harness") is True:
+            return {"applied": False,
+                    "reason": "mini_harness — Toolset ist fix-minimal, Deferral wäre unerreichbar (kein tool_search)",
+                    "kept_groups": [], "excluded_groups": [], "needed_groups": needed}
+    except Exception:
+        pass
     if not model_tool_reshape_allowed(model):
         why = ("local model, warmup enabled" if is_model_local(model) else "warmup enabled")
         return {"applied": False,
