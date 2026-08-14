@@ -103,6 +103,26 @@ func coreaiModelIDs() -> [String] {
         .map { COREAI_PREFIX + $0.id }
 }
 
+// ── Ops-Zähler + Admin ─────────────────────────────────────────────────────
+// Für GET /admin/status (Router-GUI-Panel). Optionaler Schutz: ist
+// FM_AGENT_ADMIN_KEY (Env) gesetzt, verlangen die /admin-Routen den Header
+// X-Admin-Key; ohne Env bleiben sie offen wie die übrigen M4-LAN-Dienste.
+let SERVER_START = Date()
+let ADMIN_KEY = ProcessInfo.processInfo.environment["FM_AGENT_ADMIN_KEY"] ?? ""
+
+final class OpsStats: @unchecked Sendable {
+    static let shared = OpsStats()
+    private let lock = NSLock()
+    private var counters: [String: Int] = [:]
+    func bump(_ key: String) {
+        lock.lock(); counters[key, default: 0] += 1; lock.unlock()
+    }
+    var snapshot: [String: Int] {
+        lock.lock(); defer { lock.unlock() }
+        return counters
+    }
+}
+
 // Serieller Generierungs-Gate (acquire überträgt den Lock an den nächsten Waiter).
 actor GenGate {
     private var locked = false
@@ -122,6 +142,31 @@ actor CoreAIHost {
     let gate = GenGate()
     private var residentID: String?
     private var resident: (any LanguageModel)?
+
+    var currentResidentID: String? { residentID }
+
+    /// Entlädt das residente Zoo-Modell (RAM frei, Disk-Cache bleibt).
+    func evict() -> String? {
+        let was = residentID
+        resident = nil
+        residentID = nil
+        if let w = was { log("coreai: '\(w)' entladen (Admin-Evict)") }
+        return was
+    }
+
+    /// Vorab-Download eines Katalog-Modells in den Disk-Cache (macht es NICHT
+    /// resident) — erspart dem ersten echten Request die Erstladezeit.
+    func predownload(catalogID: String) async throws {
+        guard let entry = ModelCatalog.builtin.entry(id: catalogID),
+              let mid = entry.modelID, !catalogID.hasPrefix("gemma-4") else {
+            throw NSError(domain: "fm-agent", code: 400, userInfo: [
+                NSLocalizedDescriptionKey: "unbekanntes CoreAI-Modell '\(catalogID)'"])
+        }
+        let t0 = Date()
+        _ = try await ModelStore.default.download(mid)
+        log(String(format: "coreai: '%@' vorab geladen (%.1fs)", catalogID,
+                   Date().timeIntervalSince(t0)))
+    }
 
     func languageModel(catalogID: String) async throws -> any LanguageModel {
         if residentID == catalogID, let m = resident { return m }
@@ -653,16 +698,18 @@ final class ConnectionHandler: @unchecked Sendable {
         guard parts.count >= 2 else { self.close(); return true }
         let method = parts[0], path = parts[1]
         var contentLength = 0
+        var headers: [String: String] = [:]
         for l in lines.dropFirst() {
             let kv = l.split(separator: ":", maxSplits: 1)
-            if kv.count == 2, kv[0].lowercased() == "content-length" {
-                contentLength = Int(kv[1].trimmingCharacters(in: .whitespaces)) ?? 0
+            if kv.count == 2 {
+                headers[kv[0].lowercased()] = kv[1].trimmingCharacters(in: .whitespaces)
             }
         }
+        contentLength = Int(headers["content-length"] ?? "") ?? 0
         let bodyStart = headerEnd.upperBound
         guard buffer.count - bodyStart >= contentLength else { return false }
         let body = buffer.subdata(in: bodyStart..<(bodyStart + contentLength))
-        route(method: method, path: path, body: body)
+        route(method: method, path: path, body: body, headers: headers)
         // Nach Request-Start weiter auf EOF horchen: ohne ausstehendes receive
         // meldet Network.framework den Peer-Close NICHT (der Cancel-Test lief
         // sonst als Zombie bis max_tokens durch) — der Detektor cancelt die
@@ -684,7 +731,46 @@ final class ConnectionHandler: @unchecked Sendable {
         }
     }
 
-    func route(method: String, path: String, body: Data) {
+    func route(method: String, path: String, body: Data, headers: [String: String]) {
+        // /admin: optionaler Key-Schutz (FM_AGENT_ADMIN_KEY → X-Admin-Key)
+        if path.hasPrefix("/admin"), !ADMIN_KEY.isEmpty,
+           headers["x-admin-key"] != ADMIN_KEY {
+            sendError(401, "X-Admin-Key fehlt oder falsch")
+            return
+        }
+        if method == "GET", path == "/admin/status" {
+            handleAdminStatus()
+            return
+        }
+        // POST /admin/models/<katalog-id>/{download|evict}
+        if method == "POST", path.hasPrefix("/admin/models/") {
+            let rest = path.dropFirst("/admin/models/".count)
+            let comps = rest.split(separator: "/").map(String.init)
+            guard comps.count == 2, #available(macOS 27.0, *) else {
+                sendError(400, "erwartet /admin/models/<katalog-id>/{download|evict}")
+                return
+            }
+            let cid = comps[0].hasPrefix(COREAI_PREFIX)
+                ? String(comps[0].dropFirst(COREAI_PREFIX.count)) : comps[0]
+            switch comps[1] {
+            case "download":
+                // Async: Antwort sofort, Fortschritt/Abschluss im Log +
+                // sichtbar über /admin/status (downloaded).
+                Task {
+                    do { try await CoreAIHost.shared.predownload(catalogID: cid) }
+                    catch { log("admin-download '\(cid)' fehlgeschlagen: \(error.localizedDescription)") }
+                }
+                sendJSON(202, ["started": true, "model": cid])
+            case "evict":
+                Task {
+                    let was = await CoreAIHost.shared.evict()
+                    self.sendJSON(200, ["evicted": (was as Any?) ?? NSNull()])
+                }
+            default:
+                sendError(400, "unbekannte Aktion '\(comps[1])'")
+            }
+            return
+        }
         switch (method, path) {
         case ("GET", "/health"):
             sendJSON(200, ["status": "ok",
@@ -711,6 +797,32 @@ final class ConnectionHandler: @unchecked Sendable {
         }
     }
 
+    // ── Admin ──────────────────────────────────────────────────────────────
+    func handleAdminStatus() {
+        Task {
+            var coreai: [String: Any] = ["available": coreaiModelIDs().count]
+            if #available(macOS 27.0, *) {
+                if let r = await CoreAIHost.shared.currentResidentID {
+                    coreai["resident"] = r
+                } else {
+                    coreai["resident"] = NSNull()
+                }
+                coreai["downloaded"] = ModelStore.default.downloadedModels().map {
+                    ["bundle": $0.url.lastPathComponent,
+                     "size_mb": Int($0.sizeBytes / (1 << 20))]
+                }
+            }
+            self.sendJSON(200, [
+                "status": "ok",
+                "uptime_s": Int(Date().timeIntervalSince(SERVER_START)),
+                "afm_models": FM_VARIANTS + [OCR_MODEL],
+                "coreai": coreai,
+                "counters": OpsStats.shared.snapshot,
+                "admin_key_required": !ADMIN_KEY.isEmpty,
+            ])
+        }
+    }
+
     // ── Chat ───────────────────────────────────────────────────────────────
     @available(macOS 26.0, *)
     func handleChat(_ body: [String: Any]) {
@@ -719,6 +831,8 @@ final class ConnectionHandler: @unchecked Sendable {
         guard let rq = rqOpt else { sendError(400, perr ?? "parse error"); return }
         let rid = "chatcmpl-" + UUID().uuidString
 
+        OpsStats.shared.bump(rq.modelID == OCR_MODEL ? "requests_ocr"
+            : rq.modelID.hasPrefix(COREAI_PREFIX) ? "requests_coreai" : "requests_afm")
         // OCR-Modell: kein LLM — Vision direkt.
         if rq.modelID == OCR_MODEL {
             guard !rq.ocrImages.isEmpty else {
@@ -812,6 +926,7 @@ final class ConnectionHandler: @unchecked Sendable {
                 // ohne Throw ab) — hier explizit erkennen: nichts mehr senden,
                 // Abbruch loggen (Ops-Sicht für die latest-wins-Translate-Lane).
                 if Task.isCancelled {
+                    OpsStats.shared.bump("aborts")
                     log("generation: Client weg — abgebrochen (\(rq.modelID), \(emitted.count) Zeichen verworfen)")
                     return
                 }
@@ -890,6 +1005,8 @@ final class ConnectionHandler: @unchecked Sendable {
 
     @available(macOS 26.0, *)
     func failGeneration(rid: String, rq: WireRequest, status: Int, code: String, message: String) {
+        OpsStats.shared.bump("errors")
+        OpsStats.shared.bump("error_" + code)
         if rq.stream {
             sendSSE(["error": ["message": message, "type": status >= 500 ? "server_error" : "invalid_request_error",
                                "code": code]], event: "error")
