@@ -1,39 +1,143 @@
-// spotlight-qa — Core-Spotlight-RAG: Stufe 1 findet Dokumente über das native
-// SpotlightSearchTool (Datei-Index-Ranking), Stufe 2 liest die Companion-
-// Markdowns der Treffer und beantwortet die Frage aus dem ECHTEN Inhalt in
-// einer zweiten AFM-Session (das Tool selbst liefert dem Modell nur Metadaten
-// — textContent fließt aus dem Datei-Index nicht mit, gemessen 566 Zeichen).
-// Usage: spotlight-qa "<Frage>" [corpus-dir]   → JSON auf stdout
+// spotlight-qa — Core-Spotlight-RAG, alles Apple/ml-explore-Standard:
+// Stufe 1 Dokument-Discovery (natives SpotlightSearchTool + mdfind-Zweitquelle),
+// Stufe 2 Antwort aus Companion-Markdown-Auszügen — beides in EINER
+// LanguageModelSession-Familie mit austauschbarem Backend (MODEL-Env):
+//   afm | coreai:<bundle-pfad> | mlx:<hf-repo-id>
+// Modi:  spotlight-qa "<Frage>" [corpus]           (Einzelfrage)
+//        spotlight-qa --serve [corpus]             (Modell RESIDENT; Fragen
+//          zeilenweise via stdin, je Antwort EINE Zeile "@@RESULT@@{json}")
 import Foundation
 import CoreSpotlight
 import FoundationModels
+import CoreAILanguageModels
+import HuggingFace
+import MLXFoundationModels
+import MLXHuggingFace
+import MLXLLM
+import MLXLMCommon
+import Tokenizers
+
+@available(macOS 27.0, *)
+func makeModel(_ spec: String) async throws -> any FoundationModels.LanguageModel {
+    if spec.hasPrefix("coreai:") {
+        let path = String(spec.dropFirst("coreai:".count))
+        let url = URL(fileURLWithPath: NSString(string: path).expandingTildeInPath,
+                      isDirectory: true)
+        return try await CoreAILanguageModel(resourcesAt: url)
+    }
+    if spec.hasPrefix("mlx:") {
+        let id = String(spec.dropFirst("mlx:".count))
+        let cfg = ModelConfiguration(id: id)
+        return MLXLanguageModel(
+            configuration: cfg,
+            capabilities: [],
+            weightsLocation: { rid in
+                let cache = HubCache.default
+                guard let repo = Repo.ID(rawValue: rid) else { return cache.cacheDirectory }
+                if let commit = cache.resolveRevision(repo: repo, kind: .model, ref: "main"),
+                   let snapshot = try? cache.snapshotPath(repo: repo, kind: .model, commitHash: commit) {
+                    return snapshot
+                }
+                return cache.repoDirectory(repo: repo, kind: .model)
+            },
+            load: { configuration, progressHandler in
+                try await loadModelContainer(
+                    from: #hubDownloader(),
+                    using: #huggingFaceTokenizerLoader(),
+                    configuration: configuration,
+                    progressHandler: progressHandler)
+            })
+    }
+    return SystemLanguageModel(guardrails: .permissiveContentTransformations)
+}
 
 @main
 struct SpotlightQA {
     static func main() async {
+        guard #available(macOS 27.0, *) else {
+            print("{\"error\": \"braucht macOS 27\"}"); exit(3)
+        }
+        await run()
+    }
+
+    @available(macOS 27.0, *)
+    static func run() async {
         let args = CommandLine.arguments
         guard args.count >= 2 else {
-            FileHandle.standardError.write("usage: spotlight-qa \"<frage>\" [corpus-dir]\n".data(using: .utf8)!)
+            FileHandle.standardError.write("usage: [MODEL=…] spotlight-qa \"<frage>\"|--serve [corpus-dir]\n".data(using: .utf8)!)
             exit(2)
         }
-        let question = args[1]
+        let serve = (args[1] == "--serve")
         let corpus = args.count >= 3 ? args[2]
             : NSString(string: "~/spotlight-eval/corpus").expandingTildeInPath
+        let modelSpec = ProcessInfo.processInfo.environment["MODEL"] ?? "afm"
 
-        // ── Stufe 1: Dokument-Discovery via SpotlightSearchTool ─────────────
+        let model: any FoundationModels.LanguageModel
+        do {
+            model = try await makeModel(modelSpec)
+        } catch {
+            print("{\"error\": \"model-load: \(String(describing: error).replacingOccurrences(of: "\"", with: "'"))\"}")
+            exit(1)
+        }
+
+        // Companion-Map einmal bauen (serve: bleibt über alle Fragen stehen).
+        var mdByBase: [String: String] = [:]
+        if let en = FileManager.default.enumerator(atPath: corpus) {
+            var mdRels: [String] = []
+            while let rel = en.nextObject() as? String {
+                if rel.hasSuffix(".md") { mdRels.append(rel) }
+            }
+            for rel in mdRels {
+                let base = (rel as NSString).lastPathComponent
+                    .replacingOccurrences(of: ".md", with: "")
+                mdByBase[base] = corpus + "/" + rel
+            }
+        }
+
+        if serve {
+            FileHandle.standardError.write("bereit (\(modelSpec))\n".data(using: .utf8)!)
+            while let line = readLine(strippingNewline: true) {
+                let q = line.trimmingCharacters(in: .whitespaces)
+                if q.isEmpty { continue }
+                if q == "@@QUIT@@" { break }
+                let out = await answerOne(question: q, corpus: corpus,
+                                          model: model, mdByBase: mdByBase)
+                emitResult(out, marker: true)
+            }
+        } else {
+            let out = await answerOne(question: args[1], corpus: corpus,
+                                      model: model, mdByBase: mdByBase)
+            emitResult(out, marker: false)
+        }
+    }
+
+    @available(macOS 27.0, *)
+    static func emitResult(_ out: [String: Any], marker: Bool) {
+        let opts: JSONSerialization.WritingOptions = marker ? [] : [.prettyPrinted]
+        if let data = try? JSONSerialization.data(withJSONObject: out, options: opts),
+           let s = String(data: data, encoding: .utf8) {
+            print((marker ? "@@RESULT@@" : "") + s)
+        } else {
+            print((marker ? "@@RESULT@@" : "") + "{\"error\": \"json serialization failed\"}")
+        }
+        fflush(stdout)
+    }
+
+    @available(macOS 27.0, *)
+    static func answerOne(question: String, corpus: String,
+                          model: any FoundationModels.LanguageModel,
+                          mdByBase: [String: String]) async -> [String: Any] {
+        // ── Stufe 1: Discovery via natives SpotlightSearchTool ──────────────
         var fileSource = FileSource(fetchAttributes: [.title, .path, .contentURL, .displayName])
         fileSource.scopes = [URL(fileURLWithPath: corpus, isDirectory: true)]
-        // NB Beta-Befund: scopes wird vom Tool NICHT respektiert (Treffer aus
-        // fremden Home-Verzeichnissen beobachtet) — deshalb unten der harte
-        // Korpus-Filter über die Companion-Map; 8 Slots gegen Junk-Verdrängung.
+        // Beta-Befund: scopes wird NICHT respektiert → harter Korpus-Filter
+        // unten über die Companion-Map; 8 Slots gegen Junk-Verdrängung.
         fileSource.maximumResultCount = 8
-
         var config = SpotlightSearchTool.Configuration(sources: [.files(fileSource)])
         config.guide = SpotlightSearchTool.Guide(
             level: .focused(.documents), format: .compact)
         let tool = SpotlightSearchTool(configuration: config)
 
-        let model = SystemLanguageModel(guardrails: .permissiveContentTransformations)
         let searchSession = LanguageModelSession(model: model, tools: [tool], instructions: """
             Finde die für die Frage relevanten Dokumente. Du MUSST das \
             Spotlight-Suchwerkzeug aufrufen. Suche mit 1-2 Kernbegriffen (alle \
@@ -42,11 +146,7 @@ struct SpotlightQA {
             nur mit den gefundenen Dateinamen.
             """)
 
-        // Treffer-Pfade aus dem Reply-Stream einsammeln
-        final class ReplyBox: @unchecked Sendable {
-            var paths: [String] = []
-            var debug: [String] = []
-        }
+        final class ReplyBox: @unchecked Sendable { var paths: [String] = [] }
         let box = ReplyBox()
         let collector = Task {
             for await reply in tool.searchResults {
@@ -54,15 +154,12 @@ struct SpotlightQA {
                 switch reply.content {
                 case .items(let arr): items = arr
                 case .scoredItems(let arr): items = arr.map { $0.item }
-                default:
-                    box.debug.append("reply: " + String(describing: reply.content).prefix(120).description)
+                default: break
                 }
                 for si in items {
-                    let a = si.item.attributeSet
                     // path/contentURL sind im Datei-Index-Reply nil (gemessen)
-                    // — displayName trägt den Dateinamen, das reicht fürs
-                    // Companion-Mapping.
-                    if let d = a.displayName { box.paths.append(d) }
+                    // — displayName trägt den Dateinamen.
+                    if let d = si.item.attributeSet.displayName { box.paths.append(d) }
                 }
             }
         }
@@ -86,19 +183,8 @@ struct SpotlightQA {
             }
         }
 
-        // ── Companion-Auflösung: PDF-Treffer → .brain-extracted/<name>.pdf.md
-        var mdByBase: [String: String] = [:]  // "<datei>.pdf" → companion-Pfad
-        if let en = FileManager.default.enumerator(atPath: corpus) {
-            for case let rel as String in en where rel.hasSuffix(".md") {
-                let base = (rel as NSString).lastPathComponent
-                    .replacingOccurrences(of: ".md", with: "")
-                mdByBase[base] = corpus + "/" + rel
-            }
-        }
-        // Deterministische Zweitquelle: mdfind -onlyin corpus pro Frage-
-        // Begriff (derselbe Spotlight-Index, aber zuverlässig gescoped — das
-        // native Tool ignoriert scopes und sucht launisch). Ranking: Dokumente
-        // nach Anzahl getroffener Begriffe.
+        // Deterministische Zweitquelle: mdfind -onlyin corpus pro Frage-Begriff
+        // (scopes-Bug + UND-Verknüpfung der Tool-Keywords).
         let stopEarly: Set<String> = ["welche", "werden", "müssen", "wie", "wird",
                                       "sind", "eine", "einen", "gilt", "oft", "wer",
                                       "was", "ist", "von", "bei", "für", "und",
@@ -106,7 +192,7 @@ struct SpotlightQA {
         let qTerms = question.lowercased()
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { $0.count > 3 && !stopEarly.contains($0) }
-        var hitCount: [String: Int] = [:]  // pfad → #begriffe
+        var hitCount: [String: Int] = [:]
         for term in qTerms.prefix(6) {
             let proc = Process()
             proc.executableURL = URL(fileURLWithPath: "/usr/bin/mdfind")
@@ -119,16 +205,14 @@ struct SpotlightQA {
             proc.waitUntilExit()
             for line in (String(data: data, encoding: .utf8) ?? "").split(separator: "\n") {
                 let p = String(line)
-                guard !p.contains("/.brain-extracted/") else { continue }  // Companions nicht doppelt
+                guard !p.contains("/.brain-extracted/") else { continue }
                 hitCount[p, default: 0] += 1
             }
         }
         let mdfindRanked = hitCount.sorted { ($0.value, $0.key) > ($1.value, $1.key) }
             .map { ($0.key as NSString).lastPathComponent }
 
-        // Kandidaten-Union: Tool-Treffer zuerst (modell-gewählte Query),
-        // dann mdfind-Ranking. HART auf den Korpus gefiltert (mdByBase
-        // enthält nur Korpus-Companions; Home-Index-Fremdtreffer fallen raus).
+        // Kandidaten-Union, HART auf den Korpus gefiltert (Companion-Map).
         var docTexts: [(name: String, text: String)] = []
         var seen = Set<String>()
         for p in box.paths + mdfindRanked {
@@ -143,18 +227,12 @@ struct SpotlightQA {
             if docTexts.count >= 3 { break }
         }
 
-        // ── Kontext-Fenster: Absätze nach Frage-Begriffen ranken, je Doc kappen
-        let stop: Set<String> = ["welche", "werden", "müssen", "wie", "wird", "sind",
-                                 "eine", "einen", "der", "die", "das", "und", "für",
-                                 "gilt", "oft", "wer", "was", "ist", "in", "von", "bei"]
-        let terms = question.lowercased()
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { $0.count > 3 && !stop.contains($0) }
+        // Kontext-Fenster: Absätze nach Frage-Begriffen ranken, je Doc kappen.
         func windows(_ text: String, budget: Int) -> String {
             let paras = text.components(separatedBy: "\n\n")
             let scored = paras.enumerated().map { (i, p) -> (Int, Int, String) in
                 let lp = p.lowercased()
-                let s = terms.reduce(0) { $0 + (lp.contains($1) ? 1 : 0) }
+                let s = qTerms.reduce(0) { $0 + (lp.contains($1) ? 1 : 0) }
                 return (s, i, p)
             }.sorted { ($0.0, -$0.1) > ($1.0, -$1.1) }
             var out: [(Int, String)] = []
@@ -173,18 +251,13 @@ struct SpotlightQA {
             context += "=== \(name) ===\n" + windows(text, budget: perDoc) + "\n\n"
         }
 
-        // --retrieve-only: nur Discovery+Kontext liefern (Antwortmodell
-        // extern austauschbar — 12B-Arm des Evals).
         if ProcessInfo.processInfo.environment["RETRIEVE_ONLY"] == "1" {
-            let ro: [String: Any] = [
+            return [
                 "docs": docTexts.map { $0.name },
                 "context": context,
                 "tool_calls": toolCalls,
                 "duration_s": Double(Int(Date().timeIntervalSince(t0) * 10)) / 10,
             ]
-            if let data = try? JSONSerialization.data(withJSONObject: ro),
-               let s = String(data: data, encoding: .utf8) { print(s) }
-            return
         }
 
         // ── Stufe 2: Antwort aus dem echten Inhalt ──────────────────────────
@@ -214,15 +287,9 @@ struct SpotlightQA {
             "tool_calls": toolCalls,
             "docs": docTexts.map { $0.name },
             "context_chars": context.count,
-            "debug": box.debug,
             "duration_s": Double(Int(dur * 10)) / 10,
         ]
         if let e = errorText { out["error"] = e }
-        if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted]),
-           let s = String(data: data, encoding: .utf8) {
-            print(s)
-        } else {
-            print("{\"error\": \"json serialization failed\"}")
-        }
+        return out
     }
 }

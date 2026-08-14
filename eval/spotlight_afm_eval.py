@@ -26,10 +26,12 @@ evalrun = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(evalrun)
 
 
-def spotlight_answer(question: str, timeout: float = 240, retrieve_only: bool = False) -> dict:
-    env = "RETRIEVE_ONLY=1 CTX_BUDGET=24000 " if retrieve_only else ""
+def spotlight_answer(question: str, timeout: float = 240, retrieve_only: bool = False, ctx_budget: str = "24000", cli_model: str = "") -> dict:
+    env = f"RETRIEVE_ONLY=1 CTX_BUDGET={ctx_budget} " if retrieve_only else ""
+    if cli_model:
+        env += f"MODEL={_shq(cli_model)} CTX_BUDGET={ctx_budget} "
     proc = subprocess.run(
-        ["ssh", M4, "cd spotlight-eval && " + env + "./spotlight-qa " + _shq(question)],
+        ["ssh", M4, "cd spotlight-eval && " + env + ".build/release/spotlight-qa " + _shq(question)],
         capture_output=True, text=True, timeout=timeout)
     out = proc.stdout
     i = out.find("{")
@@ -45,13 +47,54 @@ def _shq(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def router_answer(model: str, question: str, context: str) -> str:
-    """Antwortstufe über den llm-router (z.B. gemma-4-12B) — identischer
+class ServeClient:
+    """Persistente spotlight-qa --serve Instanz auf dem M4: Modell bleibt
+    RESIDENT über alle Fragen (statt 6-GB-Reload pro Frage). Protokoll:
+    Frage als Zeile rein, eine '@@RESULT@@{json}'-Zeile raus."""
+
+    def __init__(self, cli_model: str, ctx_budget: str, retrieve_only: bool = False):
+        env = ""
+        if retrieve_only:
+            env += "RETRIEVE_ONLY=1 "
+        if cli_model:
+            env += f"MODEL={_shq(cli_model)} "
+        env += f"CTX_BUDGET={ctx_budget} "
+        self.p = subprocess.Popen(
+            ["ssh", M4, f"cd spotlight-eval && {env}.build/release/spotlight-qa --serve"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, bufsize=1)
+
+    def ask(self, question: str) -> dict:
+        self.p.stdin.write(question.replace("\n", " ") + "\n")
+        self.p.stdin.flush()
+        while True:
+            line = self.p.stdout.readline()
+            if not line:
+                raise RuntimeError("serve-Prozess beendet")
+            if line.startswith("@@RESULT@@"):
+                return json.loads(line[len("@@RESULT@@"):])
+
+    def close(self):
+        try:
+            self.p.stdin.write("@@QUIT@@\n")
+            self.p.stdin.flush()
+            self.p.wait(timeout=10)
+        except Exception:
+            self.p.kill()
+
+
+def router_answer(model: str, question: str, context: str, base: str = "") -> str:
+    """Antwortstufe über den llm-router (z.B. gemma-4-12B) oder — mit
+    explizitem base — direkt über fm-agent (CoreAI-Zoo-Modelle). Identischer
     Prompt wie die AFM-Stufe-2 in spotlight_qa.swift."""
     import urllib.request
-    cfg = json.load(open(os.path.join(REPO, "config.json")))
-    m = cfg["models"][model]
-    p = cfg["providers"][m["provider"]]
+    if base:
+        m = {"base_model_id": model}
+        p = {"base_url": base, "api_key": "none"}
+    else:
+        cfg = json.load(open(os.path.join(REPO, "config.json")))
+        m = cfg["models"][model]
+        p = cfg["providers"][m["provider"]]
     body = {
         "model": m.get("base_model_id") or model,
         "messages": [
@@ -82,6 +125,13 @@ def main() -> int:
     ap.add_argument("--only", default="")
     ap.add_argument("--answer-model", default="",
                     help="statt AFM-3B: Router-Modell (z.B. gemma-4-12B...) beantwortet aus dem Spotlight-Kontext")
+    ap.add_argument("--answer-base", default="",
+                    help="expliziter OpenAI-Base-URL für die Antwortstufe (z.B. http://192.168.1.214:8007/v1 für CoreAI via fm-agent)")
+    ap.add_argument("--ctx-budget", default="24000")
+    ap.add_argument("--serve", action="store_true",
+                    help="EINE persistente spotlight-qa-Instanz für alle Fragen (Modell bleibt geladen)")
+    ap.add_argument("--cli-model", default="",
+                    help="MODEL-Spec für spotlight-qa selbst (afm | coreai:<bundle-pfad> | mlx:<hf-id>) — volle Pipeline im Binary")
     args = ap.parse_args()
 
     cfg = json.load(open(os.path.join(REPO, "eval", "config.json")))
@@ -93,6 +143,9 @@ def main() -> int:
     only = {x.strip() for x in args.only.split(",") if x.strip()}
     if only:
         questions = [q for q in questions if q["id"] in only]
+
+    serve = ServeClient(args.cli_model, args.ctx_budget,
+                        retrieve_only=bool(args.answer_model)) if args.serve else None
 
     ts = time.strftime("%Y%m%dT%H%M%S")
     outdir = os.path.join(REPO, "eval", "results", f"{ts}_{args.label}")
@@ -106,17 +159,21 @@ def main() -> int:
 
         t0 = time.time()
         if args.answer_model:
-            sp = spotlight_answer(q["question"], retrieve_only=True)
+            sp = (serve.ask(q["question"]) if serve else
+                  spotlight_answer(q["question"], retrieve_only=True, ctx_budget=args.ctx_budget))
             ctx = sp.get("context", "")
             if ctx:
-                sp_text = router_answer(args.answer_model, q["question"], ctx)
+                sp_text = router_answer(args.answer_model, q["question"], ctx, base=args.answer_base)
             else:
                 sp_text = ("Die Dokumente enthalten keine Antwort auf diese "
                            "Frage (keine relevanten Treffer im Regelwerk).")
             sp["answer"] = sp_text
             sp.pop("context", None)
         else:
-            sp = spotlight_answer(q["question"])
+            sp = (serve.ask(q["question"]) if serve else
+                  spotlight_answer(q["question"], timeout=600,
+                                   ctx_budget=args.ctx_budget,
+                                   cli_model=args.cli_model))
         sp_text = sp.get("answer", "") or ""
         dur = time.time() - t0
         print(f"[{qid}] docs={sp.get('docs')} dur={dur:.1f}s answer={sp_text[:90]!r}", flush=True)
@@ -146,6 +203,8 @@ def main() -> int:
                "mean_total": round(mean, 3), "rows": rows}
     json.dump(summary, open(os.path.join(outdir, "summary.json"), "w"),
               ensure_ascii=False, indent=1)
+    if serve:
+        serve.close()
     print(f"\nMEAN total = {mean:.3f} über {len(totals)}/{len(rows)} Fragen → {outdir}", flush=True)
     return 0
 
