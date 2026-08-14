@@ -2848,7 +2848,7 @@
       "is_local": true,
       "warmup": false,
       "manual": true,
-      "max_context": 4096,
+      "max_context": 8192,
       "max_output": 1024,
       "_caps_canonical": true,
       "base_model_id": "apple-fm-system",
@@ -3242,10 +3242,50 @@
       "is_local": true,
       "warmup": false,
       "manual": true,
-      "max_context": 4096,
+      "max_context": 8192,
       "max_output": 1024,
       "_caps_canonical": true,
       "base_model_id": "apple-fm-agentic"
+    },
+    "apple-fm-permissive": {
+      "enabled": true,
+      "shortname": "apple-fm-permissive",
+      "display_name": "Apple FM (permissive, Übersetzung)",
+      "icon": "🔓",
+      "priority": 28,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router-local",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 8192,
+      "max_output": 1024,
+      "_caps_canonical": true,
+      "base_model_id": "apple-fm-permissive"
+    },
+    "apple-fm-contenttagging": {
+      "enabled": true,
+      "shortname": "apple-fm-contenttagging",
+      "display_name": "Apple FM (Content-Tagging)",
+      "icon": "🏷",
+      "priority": 28,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router-local",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 8192,
+      "max_output": 1024,
+      "_caps_canonical": true,
+      "base_model_id": "apple-fm-contenttagging"
     }
   },
   "nodes": {},
