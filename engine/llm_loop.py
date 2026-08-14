@@ -949,7 +949,8 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
 
 def _mini_distill_tool_result(model: str, tool_name: str, result_str: str,
                               question: str, cap: int,
-                              chunk_chars: int = 6000, max_chunks: int = 8):
+                              chunk_chars: int = 6000, max_chunks: int = 8,
+                              emit_step=None):
     """Mini-Harness-Destillat: langes Tool-Ergebnis (web_fetch/read_document/…)
     in Fenster-taugliche Schnipsel teilen und mit dem MINI-MODELL SELBST
     parallel extrahieren (User-Design: viele kleine schnelle Aufrufe statt
@@ -993,8 +994,28 @@ def _mini_distill_tool_result(model: str, tool_name: str, result_str: str,
             return None
         return t
 
+    # Live-Fortschritt (9.438.4): jeder Schnipsel emittiert sein Panel-Paar,
+    # SOBALD er fertig ist (as_completed) — vorher kam alles erst nach dem
+    # Pool auf einmal ('es passiert lange nichts, dann ist alles da', User-
+    # Befund). Thread-Sicherheit: der Loop-Thread blockiert hier auf dem
+    # Pool (emittiert also nicht konkurrierend), LiveStream.emit ist
+    # gelockt, list.append GIL-atomar. Completion-Reihenfolge ≠ Abschnitts-
+    # Reihenfolge — das Label 'i/N' hält die Zuordnung.
+    raw_parts: list = [None] * len(chunks)
     with _cf.ThreadPoolExecutor(max_workers=min(6, len(chunks))) as ex:
-        raw_parts = list(ex.map(_map, enumerate(chunks)))
+        futs = {ex.submit(_map, (i, ch)): i for i, ch in enumerate(chunks)}
+        for fut in _cf.as_completed(futs):
+            i = futs[fut]
+            try:
+                p = fut.result()
+            except Exception:
+                p = None
+            raw_parts[i] = p
+            if emit_step:
+                try:
+                    emit_step(i + 1, len(p) if p else 0, len(chunks))
+                except Exception:
+                    pass
     parts = [p for p in raw_parts if p]
     steps = [(i + 1, len(p) if p else 0) for i, p in enumerate(raw_parts)]
     try:
@@ -1711,44 +1732,53 @@ def run_loop(
                         if _lm.get("role") == "user":
                             _q = str(_lm.get("content") or "")[:400]
                             break
-                    _dsteps = []
-                    try:
-                        _t0d = time.time()
-                        _distilled, _dsteps = _mini_distill_tool_result(
-                            model, tu["name"], result_str, _q, _mini_cap,
-                            chunk_chars=int(_mcfg.get("mini_tool_chunk_chars", 6000) or 6000))
-                    except Exception as _de:
-                        print(f"[mini-distill] fehlgeschlagen ({_de}) — Kappe greift", flush=True)
-                    # Panel-Subtasks: jeder Destillat-Schritt als synthetisches
-                    # tool_call/tool_result-Paar (das Aktivitäten-Panel rendert
-                    # das Vokabular generisch) + tool_events für die
-                    # Reload-Sicht. Sequenziell NACH dem Pool emittiert
-                    # (LiveStream-Ordnung, keine Thread-Emits).
-                    for _i, _chars in _dsteps:
-                        _did = f"distill_{tu['id']}_{_i}"
+                    # Referenz auf das ORIGINAL-Tool-Event festhalten, BEVOR
+                    # die Destillat-Schritte tool_events verlängern — das
+                    # result_distilled-Audit gehört ans Original (seit
+                    # 9.435.1 landete es via tool_events[-1] fälschlich am
+                    # letzten mini_distill-Schritt).
+                    _orig_ev = tool_events[-1] if tool_events else None
+
+                    # Panel-Subtasks LIVE: jeder fertige Schnipsel emittiert
+                    # sofort sein tool_call/tool_result-Paar (as_completed im
+                    # Pool) + tool_events für die Reload-Sicht.
+                    def _emit_distill_step(_i, _chars, _n,
+                                           _tuid=tu["id"], _tname=tu["name"]):
+                        _did = f"distill_{_tuid}_{_i}"
                         _dres = (f"{_chars} Zeichen extrahiert" if _chars
                                  else "nichts Relevantes")
-                        _dargs = {"abschnitt": f"{_i}/{len(_dsteps)}",
-                                  "tool": tu["name"]}
+                        _dargs = {"abschnitt": f"{_i}/{_n}", "tool": _tname}
                         emit("tool_call", {"name": "mini_distill",
                                            "args": _dargs, "tool_use_id": _did,
                                            "tool_round": round_no})
                         emit("tool_result", {"name": "mini_distill",
                                              "tool_use_id": _did,
-                                             "result": _dres, "is_error": False})
+                                             "result": _dres,
+                                             "is_error": False})
                         tool_events.append({
                             "round": round_no, "name": "mini_distill",
                             "args": _dargs, "elapsed_ms": 0,
                             "result_chars": len(_dres), "is_error": False,
                             "result_text": _dres, "tool_use_id": _did,
                         })
+
+                    try:
+                        _t0d = time.time()
+                        _distilled, _dsteps = _mini_distill_tool_result(
+                            model, tu["name"], result_str, _q, _mini_cap,
+                            chunk_chars=int(_mcfg.get("mini_tool_chunk_chars", 6000) or 6000),
+                            emit_step=_emit_distill_step)
+                    except Exception as _de:
+                        print(f"[mini-distill] fehlgeschlagen ({_de}) — Kappe greift", flush=True)
                 if _distilled:
                     result_str = _distilled
-                    # Audit: das Destillat zusätzlich am Tool-Event ablegen —
-                    # der Event-Log behält das Original, der Inspector zeigt
-                    # damit BEIDES (was ankam vs. was das Modell sah).
+                    # Audit: das Destillat zusätzlich am ORIGINAL-Tool-Event
+                    # ablegen — der Event-Log behält das Original, der
+                    # Inspector zeigt damit BEIDES (was ankam vs. was das
+                    # Modell sah).
                     try:
-                        tool_events[-1]["result_distilled"] = _distilled
+                        if _orig_ev is not None:
+                            _orig_ev["result_distilled"] = _distilled
                     except Exception:
                         pass
                 else:
