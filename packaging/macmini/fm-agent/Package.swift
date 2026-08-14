@@ -31,5 +31,15 @@ let package = Package(
             // Swift-5-Modus erspart die strict-concurrency-Umschreibung.
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
+        // ZWEITES Binary, EIGENER Prozess (launchd com.brain-agent.speech-stream,
+        // :8004): die SpeechAnalyzer-WS-Transkription der Bank-App. Bewusst NICHT
+        // in den fm-agent-Prozess gezogen — CoreAI-Runtime-Fehler sind fatale
+        // Traps (14.08. live gesehen) und dürfen keine laufende Kundencall-
+        // Transkription reißen; fm-agent wird zudem deutlich öfter deployt.
+        // EIN Package = ein Build/Deploy/Review-Stand, ZWEI Prozesse = Isolation.
+        .executableTarget(
+            name: "speech-stream",
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
     ]
 )

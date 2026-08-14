@@ -595,6 +595,15 @@ final class ConnectionHandler: @unchecked Sendable {
     let conn: NWConnection
     let id: Int
     var buffer = Data()
+    // Laufende Generierung dieser Verbindung — wird bei Verbindungsende
+    // GECANCELT (Cancel-on-Disconnect): die Translate-Lane des Routers fährt
+    // latest-wins und cancelt pro Partial-Snapshot den Upstream-Request; ohne
+    // Abbruch liefe jede verworfene Generierung als Zombie bis max_tokens
+    // weiter (ANE-/GPU-Zyklen, und bei CoreAI blockiert sie den seriellen
+    // GenGate). Swift-Concurrency bricht kooperativ: der for-await über den
+    // ResponseStream wirft CancellationError, der GenGate-Release im defer
+    // läuft trotzdem.
+    var activeTask: Task<Void, Never>? = nil
     static var registry: [Int: ConnectionHandler] = [:]   // globaler Retain
     static let registryLock = NSLock()
     static var nextID = 0
@@ -610,8 +619,14 @@ final class ConnectionHandler: @unchecked Sendable {
 
     func start() {
         conn.stateUpdateHandler = { [weak self] st in
-            if case .failed = st { self?.close() }
-            if case .cancelled = st { self?.unregister() }
+            if case .failed = st {
+                self?.activeTask?.cancel()
+                self?.close()
+            }
+            if case .cancelled = st {
+                self?.activeTask?.cancel()
+                self?.unregister()
+            }
         }
         conn.start(queue: .global())
         receive()
@@ -648,7 +663,25 @@ final class ConnectionHandler: @unchecked Sendable {
         guard buffer.count - bodyStart >= contentLength else { return false }
         let body = buffer.subdata(in: bodyStart..<(bodyStart + contentLength))
         route(method: method, path: path, body: body)
+        // Nach Request-Start weiter auf EOF horchen: ohne ausstehendes receive
+        // meldet Network.framework den Peer-Close NICHT (der Cancel-Test lief
+        // sonst als Zombie bis max_tokens durch) — der Detektor cancelt die
+        // laufende Generierung, sobald der Client die Verbindung schließt.
+        armCloseDetector()
         return true
+    }
+
+    func armCloseDetector() {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: 65536) {
+            [weak self] _, _, complete, err in
+            guard let self else { return }
+            if complete || err != nil {
+                self.activeTask?.cancel()
+                self.close()
+            } else {
+                self.armCloseDetector()   // Nachzügler-Daten ignorieren, weiter horchen
+            }
+        }
     }
 
     func route(method: String, path: String, body: Data) {
@@ -692,7 +725,7 @@ final class ConnectionHandler: @unchecked Sendable {
                 sendError(400, "apple-vision-ocr erwartet mindestens ein Bild (image_url, data:-URI)")
                 return
             }
-            Task {
+            activeTask = Task {
                 if rq.stream {
                     self.sendSSEHeader()
                     self.sendSSE(chunkObj(rid, rq.modelID, ["role": "assistant"]))
@@ -701,6 +734,8 @@ final class ConnectionHandler: @unchecked Sendable {
                     let md = try await runOCR(rq.ocrImages)
                     if rq.stream { self.sendSSE(chunkObj(rid, rq.modelID, ["content": md])) }
                     self.finishText(rid: rid, rq: rq, text: md, realUsage: nil)
+                } catch is CancellationError {
+                    log("ocr: Client weg — abgebrochen")
                 } catch {
                     self.failGeneration(rid: rid, rq: rq,
                                         status: 500, code: "ocr_error", message: "\(error)")
@@ -713,7 +748,7 @@ final class ConnectionHandler: @unchecked Sendable {
         let promptText = rq.promptText ?? ""   // leer = Fortsetzung (Tool-Outputs/Bild-Prompt im Transcript)
         let isCoreAI = rq.modelID.hasPrefix(COREAI_PREFIX)
 
-        Task {
+        activeTask = Task {
             if rq.stream {
                 self.sendSSEHeader()
                 self.sendSSE(chunkObj(rid, rq.modelID, ["role": "assistant"]))
@@ -773,7 +808,19 @@ final class ConnectionHandler: @unchecked Sendable {
                         emitted = cum
                     }
                 }
+                // Cancel-on-Disconnect endet je nach Engine LEISE (Stream bricht
+                // ohne Throw ab) — hier explizit erkennen: nichts mehr senden,
+                // Abbruch loggen (Ops-Sicht für die latest-wins-Translate-Lane).
+                if Task.isCancelled {
+                    log("generation: Client weg — abgebrochen (\(rq.modelID), \(emitted.count) Zeichen verworfen)")
+                    return
+                }
                 self.finishText(rid: rid, rq: rq, text: emitted, realUsage: realUsage)
+            } catch is CancellationError {
+                // Cancel-on-Disconnect (latest-wins der Translate-Lane): Client
+                // hat die Verbindung geschlossen — nichts senden, GenGate-defer
+                // räumt auf, kein Zombie bis max_tokens.
+                log("generation: Client weg — abgebrochen (\(rq.modelID))")
             } catch {
                 let calls = capture.snapshot
                 if !calls.isEmpty {
