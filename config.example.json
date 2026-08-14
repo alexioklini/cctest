@@ -3226,6 +3226,26 @@
       "base_model_id": "gemma-4-E4B-it-qat-oQ4",
       "profile": "speed",
       "_caps_canonical": true
+    },
+    "apple-fm-agentic": {
+      "enabled": true,
+      "shortname": "apple-fm-agentic",
+      "display_name": "Apple FM (agentisch)",
+      "icon": "🍏",
+      "priority": 28,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router-local",
+      "is_local": true,
+      "warmup": false,
+      "manual": true,
+      "max_context": 4096,
+      "max_output": 1024,
+      "_caps_canonical": true,
+      "base_model_id": "apple-fm-agentic"
     }
   },
   "nodes": {},

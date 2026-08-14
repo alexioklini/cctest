@@ -43,6 +43,26 @@ alles ist config-/kleinteilig und einzeln rückholbar.
   auch in diesem Lauf 1×). Vermutlich Modell-Kaltladung > Brain-Timeout.
   Fix-Kandidaten: Timeout hoch / Reranker-Warmup nach Restart.
 
+## NACHTRAG 14.08. (v9.425.0 + v9.426.0)
+
+- ✅ **Klassifikator läuft jetzt DOCH auf AFM** (v9.425.0): Der Beta-5-Bruch
+  betrifft nur Wire-Tool-Calls; Guided Generation via `response_format
+  json_schema` funktioniert — auch mit dem vollen Klassifikator-Schema.
+  Neues Modell-Flag `forced_tool_wire: "response_format"` übersetzt
+  forced_tool generisch am Wire-Builder (engine/llm_loop.py); apple-fm-system
+  trägt das Flag, `classifier_model` = apple-fm-system, live verifiziert
+  (auto_route_classify | apple-fm-system | echte Tokens; Analyse korrekt).
+  Damit sind ALLE drei Sofort-Switches aus Abschnitt 1 live.
+- ✅ **Eigener FM-Inferenz-Server mit agentischem Tool-Calling** (v9.426.0):
+  `packaging/macmini/fm_agent_server.swift` → M4 :8007, launchd
+  `com.brain-agent.fm-agent`; Router-Provider `apple-fm-agent` + Modell
+  `apple-fm-agentic` (auch als Brain-Modell registriert, max_context 4096).
+  Echte Wire-tool_calls + voller agentischer Round-Trip verifiziert (direkt
+  UND durch den Router). Wichtig: Natives FoundationModels-Tool-Calling
+  FUNKTIONIERT auf Beta 5 — kaputt ist nur die fm-serve-Bridge
+  (tool_calls_override-Asset). fm-serve (:8005) bleibt für die
+  Nicht-Tool-Zwecke (Titel/Ghost/Klassifikator/Übersetzungs-Partials).
+
 ## Faktenlage (verifiziert 14.08.)
 
 - **Kein On-Device-Quota**: `fm quota-usage` → "System: Not applicable
