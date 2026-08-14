@@ -260,6 +260,7 @@ function toolDescribe(name, args) {
     git_worktree: () => `Git-Worktree: ${a.action || ''}${a.slug ? ' ' + a.slug : ''}`,
     tool_search: () => `Werkzeuge nachladen: „${String(a.query || '...').substring(0, 50)}"`,
     mini_distill: () => `Destillat ${a.abschnitt || ''}: ${a.tool || 'Tool'}-Ergebnis eindampfen`,
+    mini_handover: () => `Handover: Verlauf komprimiert (${a.zeilen || '?'} Zeilen) → frischer Kontext`,
     helpdesk_session_info: () => `Helpdesk: Sitzungs-Info lesen`,
     helpdesk_user_context: () => `Helpdesk: Nutzerprofil lesen`,
     helpdesk_config: () => `Helpdesk: Einstellungen lesen${a.section ? ' (' + a.section + ')' : ''}`,

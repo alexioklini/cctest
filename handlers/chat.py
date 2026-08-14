@@ -394,7 +394,7 @@ def _inject_web_preamble_into_wire(messages, preamble):
     return wire
 
 
-def _mini_handover_wire(session, sid):
+def _mini_handover_wire(session, sid, emit=None):
     """Mini-Modus (9.438.0): ab Turn 2 ersetzt ein kompaktes, vom Mini-Modell
     SELBST geschriebenes Handover die Wire-Historie — jeder Turn startet wie
     eine frische Session (User-Design: 'ab dem zweiten Turn kompaktes Handover
@@ -462,6 +462,21 @@ def _mini_handover_wire(session, sid):
                 _f.write(f"--- sid={sid} sig={sig}\n{text}\n")
         except Exception:
             pass
+        # Sichtbarkeit (9.438.2): synthetisches Tool-Paar wie mini_distill —
+        # über event_callback läuft es live ins Panel UND in _partial_tools
+        # → metadata.tools (reload-stabil). Nur bei REGENERATION (Cache-Hit
+        # = keine Arbeit = kein Eintrag).
+        if emit:
+            try:
+                _hid = f"handover_{sid[:8]}_{sig}"
+                emit("tool_call", {"name": "mini_handover",
+                                   "args": {"zeilen": sig},
+                                   "tool_use_id": _hid, "tool_round": 0})
+                emit("tool_result", {"name": "mini_handover",
+                                     "tool_use_id": _hid,
+                                     "result": text, "is_error": False})
+            except Exception:
+                pass
     # Framing als reiner HINTERGRUND (nicht als Aufgabe): 'arbeite damit
     # weiter' + 'Verstanden.' ließ das 3B den Handover-Inhalt beantworten
     # statt die neue Frage (Turn 2 antwortete Wetter statt uname).
@@ -5278,7 +5293,8 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # folgenden Injektionen (Websuche/Pins/Caveman) greifen.
                     if not _pii_decisions:
                         try:
-                            _mini_wire = _mini_handover_wire(session, sid)
+                            _mini_wire = _mini_handover_wire(
+                                session, sid, emit=event_callback)
                             if _mini_wire:
                                 _wire_messages = _mini_wire
                         except Exception:
