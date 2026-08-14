@@ -892,7 +892,11 @@ final class ConnectionHandler: @unchecked Sendable {
             var realUsage: [String: Any]? = nil
             do {
                 if let schema = rq.responseSchema {
-                    // Guided Generation — Stream liefert kumulative Snapshots.
+                    // Guided Generation — die Snapshots sind NICHT präfix-stabil
+                    // ({} → {"score": 8}: der Closing-Brace wandert), eine
+                    // Delta-Zerlegung erzeugt also kaputtes JSON beim Client
+                    // (live gesehen: '{}"score": 8}'). Deshalb KEINE
+                    // Zwischen-Deltas — das finale JSON kommt als EIN Chunk.
                     let stream = session.streamResponse(
                         to: Prompt(promptText), schema: schema,
                         includeSchemaInPrompt: true, options: opts)
@@ -900,14 +904,9 @@ final class ConnectionHandler: @unchecked Sendable {
                     for try await snap in stream {
                         lastJSON = snap.content.jsonString
                         realUsage = self.usageJSON(snap.usage) ?? realUsage
-                        if rq.stream {
-                            let delta = String(lastJSON.dropFirst(
-                                emitted.commonPrefix(with: lastJSON).count))
-                            if !delta.isEmpty {
-                                self.sendSSE(chunkObj(rid, rq.modelID, ["content": delta]))
-                                emitted = lastJSON
-                            }
-                        }
+                    }
+                    if rq.stream, !lastJSON.isEmpty, !Task.isCancelled {
+                        self.sendSSE(chunkObj(rid, rq.modelID, ["content": lastJSON]))
                     }
                     emitted = lastJSON
                 } else {
