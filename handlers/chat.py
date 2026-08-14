@@ -5537,7 +5537,15 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                     # working_dir is set on the context only for code-mode projects.
                     _code_mode_chat = bool(engine.get_request_context().working_dir)
                     _discipline_meta = None
-                    if _code_mode_chat:
+                    if engine.effective_chat_purpose(session.model) != "interactive":
+                        # Mini-Harness-Modelle: die Grounded-Answer-/Citation-
+                        # Disziplin (~7.8k Zeichen Wire-Präambel!) sprengt das
+                        # kleine Fenster und überfordert 3B-Modelle (live:
+                        # Begrüßungs-Schleife statt Antworten). Kein Zitat-
+                        # Validator-Anspruch im Kompakt-Modus.
+                        session._citation_discipline_active = False
+                        _discipline_meta = {"active": False, "trigger": "mini_harness"}
+                    elif _code_mode_chat:
                         session._citation_discipline_active = False
                         _discipline_meta = {"active": False, "trigger": "code_mode"}
                     elif engine.classifier_is_llm():
@@ -5731,7 +5739,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                             api_key=session.api_key,
                             base_url=session.base_url,
                             system_prompt=_system_prompt,
-                            purpose="interactive",
+                            purpose=engine.effective_chat_purpose(session.model),
                             tool_context=_tool_context,
                             sampling=_sampling,
                             thinking_level=(thinking_level if thinking_level and thinking_level != "none" else None),
@@ -5792,7 +5800,7 @@ def run_session_turn(session, *, sid, message, user_content, chat_mode, thinking
                                     api_key=session.api_key,
                                     base_url=session.base_url,
                                     system_prompt=_system_prompt,
-                                    purpose="interactive",
+                                    purpose=engine.effective_chat_purpose(_fb),
                                     tool_context=_tool_context,
                                     sampling={
                                         "temperature": _lfp.get("temperature"),

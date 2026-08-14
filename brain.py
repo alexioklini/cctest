@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.433.1"
+VERSION = "9.434.0"
 VERSION_DATE = "2026-08-14"
 CHANGELOG = [
+    ("9.434.0", "2026-08-14", "feat(Mini-Harness-Modus für Klein-Kontext-Modelle — AFM-Chat funktioniert): User-Wunsch nach dem 8k-Overflow-Befund ('eigener Mini-Modus mit ganz wenigen Tools, kleinem System-Prompt, LCM permanent verdichten'). Per-Modell-Flags: mini_harness:true + auto_lcm:true (auto_lcm EXISTIERTE bereits als Pre-Turn-Verdichtung — nur gesetzt) + mini_tool_result_chars (Default 4000). VIER Bausteine, alle an bestehenden Seams: (1) effective_chat_purpose(model) lenkt den Chat-Kanal in build_first_turn_prefix (Warmup+Chat byte-identisch) UND an den run_turn-Callsites auf research_minimal um → Minimal-Toolset aus der Per-Use-Case-Tabelle (admin-konfigurierbar, GETEILT mit Scheduled Tasks). (2) NEUER Mini-System-Prompt (_build_mini_system_prompt, ~60 Tokens, aus den REAL aufgelösten Toolnamen gebaut) statt der research_minimal-Prosa — die trug veraltete Fragmente (exa-Workflow-Anleitung) und Rollen-Text, der das 3B verwirrte (User-Befund); tool_search wird im Mini-Modus aus dem Toolset GEFILTERT und tools_refresh (Undefer-nach-Discovery) im Loop EINGEFROREN — Discovery hätte mitten im Turn Dutzende Tools nachdeklariert. (3) llm_loop-Kappen: Tool-Ergebnisse auf mini_tool_result_chars gekürzt (Kopf+Schwanz; live sprengte EIN 50k-Zeichen-Suchtreffer das Fenster mitten im Turn — die Overflows kamen NICHT vom Harness, sondern vom Rundenwachstum) + max_tokens auf max_output geklemmt (Default 16000 gegen 8k-Fenster). (4) Grounded-Answer-/Citation-Disziplin (die ~7.8k-Zeichen-Wire-Präambel, die schon das nackte 'hi' aufblähte — zweiter User-Befund) für Mini-Modelle ABGESCHALTET (trigger:mini_harness in der discipline_meta; kein Zitat-Validator-Anspruch im Kompakt-Modus). fm-agent-seitig (eigenes Repo, ff312c37+Folge): Session-Cache trägt jetzt die CallCapture-Box MIT (gecachte Sessions hielten Proxy-Tools mit toter Box des Vorrequests → Tool-Turn-500) und die Fortsetzung nach Tool-Outputs nutzt einen expliziten Nudge-Prompt statt Leerstring (3B kippte sonst in den Begrüßungs-Reflex). VERIFIZIERT (5-Turn-Session apple-fm-agentic): Gruß 2.8s, Wissensfrage 2.9s, ZWEI Web-Such-Turns mit korrekten Wetter-Zusammenfassungen (7.9s/3.0s — Session-Cache greift), Gedächtnisfragen über Turns korrekt. Debug-Falle protokolliert: die vermeintliche Harness-Größe (25k) war in Wahrheit Runden-Wachstum + Disziplin-Präambel — Wire-Dump vor Theoriebildung. py_compile OK. Server-Restart nötig. KEIN kuratierter Eintrag (experimenteller Modus, config-only aktivierbar)."),
     ("9.433.1", "2026-08-14", "chore(Repo-Split): fm-agent aus packaging/macmini/ in ein EIGENES privates Repo github.com/alexioklini/fm-agent ausgelagert (User-Wunsch; Historie der Package-Ära v9.428-9.431 via git subtree split erhalten — die Einzeldatei-Ära v9.426-9.427 bleibt in dieser Historie). Verweis packaging/macmini/FM-AGENT-MOVED.md; Build-/Deploy-Doku + Toolchain-Fallen im dortigen README. Gleichzeitig sind heute llm-router (github.com/alexioklini/llm-router) und sparkdash (github.com/alexioklini/sparkdash) als private Repos angelegt worden — SparkDash-Quelle der Wahrheit ist jetzt das Repo, NICHT mehr ~/sparkdash.py auf dem M4. Alle drei secret-gescannt (Configs/Keys leben außerhalb der Repos). Kein Code-Change."),
     ("9.433.0", "2026-08-14", "fix(MemPalace-Review-Welle M4/M10/N3 + Doku — Commit des vorbereiteten Stands): Einspielen der VOR dieser Session vorbereiteten Review-Fixes (Arbeitskopie lag seit b6abfb6e bereit; jetzt getestet und committet). KERN: (1) M4 GDPR-FAIL-CLOSED für Retrieval-Quellen (brain.py _gdpr_retrieval_guard/_gdpr_anon_tool_text): Scanner-CRASH auf Retrieval-Inhalten liefert jetzt eine kind-lose REFUSAL statt des Roh-Texts — ein Scan-Fehler darf nie ungeprüfte Projekt-/User-Inhalte ans Modell shippen; Nicht-Retrieval-Reads behalten das Legacy-Verhalten (Original zurück statt Inhalt verstecken). (2) N3 Connection-Hygiene (server_daemons/server.py/db.py): Qdrant-/SQLite-Verbindungen schließen auch auf Exception-Pfaden (Leak zwischen connect und close). (3) H2-Vervollständigung: ChatDB.mempalace_cursor_clamp als geteilter Helper (server_lib/db.py) für die Write-Loss-Guards. (4) NEU scripts/patch_mempalace_miner.py (M6): venv-Patch, der Miner-Sub-Batch-Writes bei Fehler ZURÜCKROLLT (sonst skippt der mtime-Pre-Filter eine halb indexierte Datei für immer) — Muster [[project_mempalace_venv_patches]], nach jedem mempalace-Upgrade neu anwenden. (5) M10 Config-Coverage: NEU tests/test_mempalace_review_fixes.py (25 Tests) erzwingt u. a., dass gelesene Keys in config.example.json existieren — dafür in config.json nachgetragen: mempalace.reranker.remote_timeout_s (8.0 — der Timeout-Knopf für den Reranker-Kaltstart EXISTIERT also bereits, relevant fürs RERANKER_OPTIMIZATION_HANDOVER) + reranker.api_key ('') + kg.parallel_workers (0=auto); toter Key kg.batch_size ENTFERNT (kein Reader). (6) Doku-Gleichzug: CLAUDE.md/INVARIANTS.md/README/AGENTS + brain-agent-guide-Skills 01/02/04/05 (chat-sync-Daemon-Retirement, _palace_write_lock, Review-Findings), admin_observability-Detailanzeigen, mempalace-review.html (der Review-Bericht selbst) versioniert. Tests: 25/25 grün (python3 -m unittest tests.test_mempalace_review_fixes). py_compile OK über alle berührten Module. Server-Restart nötig (GDPR-Pfad). KEIN kuratierter Eintrag (Sicherheits-/Robustheits-Interna)."),
     ("9.432.1", "2026-08-14", "fix(SparkDash: Model-Spalte in der Inference Activity + zwei Folgefixes): User-Wunsch Modell-Spalte — das Feld war in den Events längst da (oMLX wie Dienste-Poller), nur nicht gerendert: neue Spalte zwischen Endpoint und Status, Anzeige als letzter Pfadteil (mlx-community/GLM-OCR-8bit → GLM-OCR-8bit). Dabei ZWEI Folgefehler der 9.430er-Patches gefixt: (1) Detail-Zeilen (colspan=5) spannten nach den neuen CPU/ANE-Spalten zu wenig → CPU/ANE-Zellen angehängt; Idle-Zeile colspan 10→13. (2) Der Dienste-Poller setzte gen_tps IMMER (0.0) — damit fielen Reranker/STT/Speech-Zeilen aus dem Detail-Rendering-Zweig ('N call(s), Xs' verschwand); jetzt nur noch bei echten last_call-Daten. Patches ausschliesslich mit exakten Text-Ankern + assert (Lektion aus dem async-tickActivity-Vorfall, der 'leere Daten' verursacht hatte: rfind-Insertion hatte async von der Funktionsdeklaration getrennt → SyntaxError → GESAMTES Inline-Skript tot; Debug via jsc new Function, node fehlt auf dem M4). Verifiziert: JS-Syntax OK, Aktivitätszeile mit model=apple-fm-permissive/23 t/s/ANE-Haken. Kein Brain-Code-Change (nur Version/Changelog)."),
@@ -9468,6 +9469,12 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
     Returns (system_prompt, active_tools, active_tool_names).
     """
     get_request_context()._current_model = model
+    # Mini-Harness-Modelle: den Default-Kanal 'interactive' auf den lean
+    # research_minimal-Kanal umlenken — HIER, damit Warmup und Chat-Turn
+    # denselben Prefix bauen. Explizit übergebene Nicht-Default-Purposes
+    # (helpdesk, memory_summary, …) bleiben unangetastet.
+    if purpose == "interactive":
+        purpose = effective_chat_purpose(model)
     active_tools = resolve_active_tools(
         purpose=purpose,
         agent_id=agent_id,
@@ -9476,6 +9483,17 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
         is_openai_shape=is_openai_shape,
         breakdown=breakdown,
     )
+    _is_mini = False
+    try:
+        _is_mini = (resolve_model_settings(model) or {}).get("mini_harness") is True
+    except Exception:
+        pass
+    if _is_mini:
+        # Kein tool_search im Mini-Modus: Discovery würde mitten im Turn
+        # Dutzende Tools nachdeklarieren und das kleine Fenster sprengen.
+        active_tools = [t for t in active_tools
+                        if ((t.get("function", {}) or {}).get("name", "")
+                            or t.get("name", "")) != "tool_search"]
     active_tool_names = {
         (t.get("function", {}) or {}).get("name", "") or t.get("name", "")
         for t in active_tools
@@ -9485,6 +9503,8 @@ def build_first_turn_prefix(model: str, agent_id: str, *,
     # exact text, else the KV prefix misses on the first Brainy turn.
     if system_prompt_override is not None:
         system_prompt = system_prompt_override
+    elif _is_mini:
+        system_prompt = _build_mini_system_prompt(active_tool_names)
     else:
         system_prompt = _build_system_prompt(
             include_memory_summary=True,
@@ -12081,6 +12101,36 @@ class ContextManager:
         still_over = after_tokens >= threshold_tokens
         _emit("compacted", _result(changed, still_over))
         return _result(changed, still_over)
+
+
+def _build_mini_system_prompt(active_tool_names: set[str]) -> str:
+    """Winziger System-Prompt für mini_harness-Modelle (~60 Tokens). BEWUSST
+    ohne die research_minimal-Prosa: die trägt veraltete Fragmente (exa-
+    Workflow, Citation-Disziplin) und Rollen-Anleitung, die ein 3B-Modell im
+    8k-Fenster nur verwirrt/verbrennt. Nur: Identität, Sprache, Tool-Basics,
+    Anti-Halluzinations-Anker (das 'hi'→Kernel-Neustart-Verhalten)."""
+    tools = ", ".join(sorted(n for n in active_tool_names if n)) or "keine"
+    return (
+        "Du bist der Brain-Assistent (Kompakt-Modus). Antworte auf Deutsch, "
+        "kurz und direkt. Verfügbare Werkzeuge: " + tools + ". Rufe ein "
+        "Werkzeug nur auf, wenn die Frage es wirklich erfordert — bei Gruß "
+        "oder Wissensfragen antworte einfach. Erfinde keine Aufgaben.")
+
+
+def effective_chat_purpose(model: str) -> str:
+    """Chat-Kanal für das FINAL aufgelöste Modell. Klein-Kontext-Modelle
+    (per-Modell `mini_harness: true`, z. B. AFM mit 8k-Fenster) chatten über
+    den vorhandenen research_minimal-Kanal: lean Prompt + Minimal-Toolset
+    (per-Use-Case-Tabelle, admin-konfigurierbar — GETEILT mit Scheduled
+    Tasks!). Zusammen mit `auto_lcm: true` ergibt das den Mini-Modus:
+    Brains Voll-Harness (~9.4k Tokens) passt in solche Modelle nicht.
+    Default-Modelle bleiben unverändert 'interactive'."""
+    try:
+        if (resolve_model_settings(model) or {}).get("mini_harness") is True:
+            return "research_minimal"
+    except Exception:
+        pass
+    return "interactive"
 
 
 def _auto_lcm_enabled(model: str) -> bool:

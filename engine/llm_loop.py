@@ -258,6 +258,15 @@ def build_openai_payload(
         wire_messages.append({"role": "system", "content": system_prompt})
     wire_messages.extend(messages)
 
+    # Mini-Harness: angeforderte Completion auf max_output des Modells klemmen
+    # (live: Default 16000 gegen AFMs 8k-Fenster → Overflow noch vor Antwort).
+    try:
+        _mcfg_mt = engine.resolve_model_settings(model) or {}
+        if _mcfg_mt.get("mini_harness") is True:
+            max_tokens = min(int(max_tokens),
+                             int(_mcfg_mt.get("max_output") or 2048))
+    except Exception:
+        pass
     payload: dict[str, Any] = {
         "model": engine.get_api_model_id(model),
         "max_tokens": int(max_tokens),
@@ -1170,8 +1179,14 @@ def run_loop(
         # tool_search found something new (see docstring). Only ever REPLACES
         # when the caller signals a change, so the prompt prefix stays stable
         # on turns that discover nothing.
+        _mini_frozen = False
+        try:
+            _mini_frozen = (engine.resolve_model_settings(model) or {}).get(
+                "mini_harness") is True
+        except Exception:
+            pass
         if (tools_refresh is not None and round_idx > 0 and not forced_tool
-                and not no_more_tools):
+                and not no_more_tools and not _mini_frozen):
             try:
                 _refreshed = tools_refresh()
             except Exception:
@@ -1611,6 +1626,22 @@ def run_loop(
                 "result_chars": len(result_str), "is_error": is_error,
                 "result_text": (result_str or "")[:100000],
             })
+            # Mini-Harness-Modelle (Klein-Kontext, z. B. AFM 8k): EIN unge-
+            # kapptes Tool-Ergebnis (live: 50k-Zeichen-Suchtreffer) sprengt das
+            # Fenster mitten im Turn. Per-Modell-Kappe mini_tool_result_chars
+            # (Default 4000, 0 = aus) — Kopf+Schwanz, Hinweis in der Mitte.
+            _mini_cap = 0
+            try:
+                _mcfg = engine.resolve_model_settings(model) or {}
+                if _mcfg.get("mini_harness") is True:
+                    _mini_cap = int(_mcfg.get("mini_tool_result_chars", 4000) or 0)
+            except Exception:
+                _mini_cap = 0
+            if _mini_cap and len(result_str) > _mini_cap:
+                _head = result_str[: int(_mini_cap * 0.7)]
+                _tail = result_str[-int(_mini_cap * 0.3):]
+                result_str = (_head + f"\n… [gekürzt: {len(result_str)} Zeichen "
+                              f"gesamt — mini_harness-Kappe {_mini_cap}] …\n" + _tail)
             loop_messages.append({
                 "role": "tool", "tool_call_id": tu["id"], "content": result_str,
             })
