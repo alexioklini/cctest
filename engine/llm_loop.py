@@ -966,7 +966,7 @@ def _mini_distill_tool_result(model: str, tool_name: str, result_str: str,
         text = text[: int(hard * 0.7)] + "\n…\n" + text[-int(hard * 0.3):]
     chunks = [text[i:i + chunk_chars] for i in range(0, len(text), chunk_chars)]
     if len(chunks) < 1:
-        return None
+        return None, []
 
     def _map(item):
         idx, ch = item
@@ -996,20 +996,21 @@ def _mini_distill_tool_result(model: str, tool_name: str, result_str: str,
     with _cf.ThreadPoolExecutor(max_workers=min(6, len(chunks))) as ex:
         raw_parts = list(ex.map(_map, enumerate(chunks)))
     parts = [p for p in raw_parts if p]
+    steps = [(i + 1, len(p) if p else 0) for i, p in enumerate(raw_parts)]
     try:
         with open("/tmp/mini_distill_log.txt", "a") as _lf:
             _lf.write(f"tool={tool_name} chunks={len(chunks)} parts={len(parts)} "
-                      f"lens={[len(p) if p else 0 for p in raw_parts]}\n")
+                      f"lens={[c for _, c in steps]}\n")
     except Exception:
         pass
     if not parts:
-        return None
+        return None, steps
     body = "\n".join(f"- {p}" for p in parts)
     if len(body) > cap:
         body = body[:cap]
     return (f"[Destillat eines {len(result_str)}-Zeichen-{tool_name}-Ergebnisses "
             f"({len(parts)}/{len(chunks)} Abschnitte relevant, extrahiert von "
-            f"{model}]\n" + body)
+            f"{model}]\n" + body), steps
 
 
 def run_loop(
@@ -1710,17 +1711,37 @@ def run_loop(
                         if _lm.get("role") == "user":
                             _q = str(_lm.get("content") or "")[:400]
                             break
+                    _dsteps = []
                     try:
                         _t0d = time.time()
-                        _distilled = _mini_distill_tool_result(
+                        _distilled, _dsteps = _mini_distill_tool_result(
                             model, tu["name"], result_str, _q, _mini_cap,
                             chunk_chars=int(_mcfg.get("mini_tool_chunk_chars", 6000) or 6000))
-                        if _distilled:
-                            print(f"[mini-distill] {tu['name']}: {len(result_str)}→"
-                                  f"{len(_distilled)} Zeichen in "
-                                  f"{time.time()-_t0d:.1f}s", flush=True)
                     except Exception as _de:
                         print(f"[mini-distill] fehlgeschlagen ({_de}) — Kappe greift", flush=True)
+                    # Panel-Subtasks: jeder Destillat-Schritt als synthetisches
+                    # tool_call/tool_result-Paar (das Aktivitäten-Panel rendert
+                    # das Vokabular generisch) + tool_events für die
+                    # Reload-Sicht. Sequenziell NACH dem Pool emittiert
+                    # (LiveStream-Ordnung, keine Thread-Emits).
+                    for _i, _chars in _dsteps:
+                        _did = f"distill_{tu['id']}_{_i}"
+                        _dres = (f"{_chars} Zeichen extrahiert" if _chars
+                                 else "nichts Relevantes")
+                        _dargs = {"abschnitt": f"{_i}/{len(_dsteps)}",
+                                  "tool": tu["name"]}
+                        emit("tool_call", {"name": "mini_distill",
+                                           "args": _dargs, "tool_use_id": _did,
+                                           "tool_round": round_no})
+                        emit("tool_result", {"name": "mini_distill",
+                                             "tool_use_id": _did,
+                                             "result": _dres, "is_error": False})
+                        tool_events.append({
+                            "round": round_no, "name": "mini_distill",
+                            "args": _dargs, "elapsed_ms": 0,
+                            "result_chars": len(_dres), "is_error": False,
+                            "result_text": _dres, "tool_use_id": _did,
+                        })
                 if _distilled:
                     result_str = _distilled
                     # Audit: das Destillat zusätzlich am Tool-Event ablegen —

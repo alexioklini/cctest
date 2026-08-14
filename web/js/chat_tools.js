@@ -259,6 +259,7 @@ function toolDescribe(name, args) {
     ast_grep_replace: () => `Struktur-Umbau im Code: „${String(a.pattern || '...').substring(0, 50)}"`,
     git_worktree: () => `Git-Worktree: ${a.action || ''}${a.slug ? ' ' + a.slug : ''}`,
     tool_search: () => `Werkzeuge nachladen: „${String(a.query || '...').substring(0, 50)}"`,
+    mini_distill: () => `Destillat ${a.abschnitt || ''}: ${a.tool || 'Tool'}-Ergebnis eindampfen`,
     helpdesk_session_info: () => `Helpdesk: Sitzungs-Info lesen`,
     helpdesk_user_context: () => `Helpdesk: Nutzerprofil lesen`,
     helpdesk_config: () => `Helpdesk: Einstellungen lesen${a.section ? ' (' + a.section + ')' : ''}`,
