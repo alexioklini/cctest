@@ -947,6 +947,71 @@ def dispatch_tool(name: str, args: dict) -> tuple[str, bool]:
 
 # ---------- The core loop ----------
 
+def _mini_distill_tool_result(model: str, tool_name: str, result_str: str,
+                              question: str, cap: int,
+                              chunk_chars: int = 6000, max_chunks: int = 8):
+    """Mini-Harness-Destillat: langes Tool-Ergebnis (web_fetch/read_document/…)
+    in Fenster-taugliche Schnipsel teilen und mit dem MINI-MODELL SELBST
+    parallel extrahieren (User-Design: viele kleine schnelle Aufrufe statt
+    eines großen Summarizers — AFM ist parallel, schnell und kostenlos auf
+    der ANE). Relevante Extrakte werden akkumuliert und als Sukkus
+    zurückgegeben; None → Aufrufer fällt auf die Kopf/Schwanz-Kappe zurück.
+    background_call ist per Architektur UNQUEUED — kein Deadlock mit dem
+    laufenden Turn (LocalProviderQueue-Regel)."""
+    from handlers import sidecar_proxy as _sp
+    import concurrent.futures as _cf
+    text = result_str
+    hard = chunk_chars * max_chunks
+    if len(text) > hard:   # jenseits von ~48k: erst grob eindampfen
+        text = text[: int(hard * 0.7)] + "\n…\n" + text[-int(hard * 0.3):]
+    chunks = [text[i:i + chunk_chars] for i in range(0, len(text), chunk_chars)]
+    if len(chunks) < 1:
+        return None
+
+    def _map(item):
+        idx, ch = item
+        prompt = (
+            f"Anfrage des Nutzers: {question}\n\n"
+            f"Ausschnitt {idx + 1}/{len(chunks)} eines {tool_name}-Ergebnisses:\n"
+            f"{ch}\n\n"
+            "Extrahiere NUR die für die Anfrage relevanten Fakten aus diesem "
+            "Ausschnitt — wörtlich, mit exakten Zahlen und Namen, "
+            "stichpunktartig, ohne Deutung. Wenn nichts Relevantes enthalten "
+            "ist, antworte exakt: NICHTS")
+        try:
+            r = _sp.background_call(
+                messages=[{"role": "user", "content": prompt}],
+                model=model, purpose="transform",
+                cost_purpose="mini_tool_distill",
+                max_tokens=350, max_rounds=1, timeout_s=60, temperature=0.1)
+        except Exception:
+            return None
+        if r.get("error"):
+            return None
+        t = (r.get("reply") or "").strip()
+        if not t or t.upper().startswith("NICHTS"):
+            return None
+        return t
+
+    with _cf.ThreadPoolExecutor(max_workers=min(6, len(chunks))) as ex:
+        raw_parts = list(ex.map(_map, enumerate(chunks)))
+    parts = [p for p in raw_parts if p]
+    try:
+        with open("/tmp/mini_distill_log.txt", "a") as _lf:
+            _lf.write(f"tool={tool_name} chunks={len(chunks)} parts={len(parts)} "
+                      f"lens={[len(p) if p else 0 for p in raw_parts]}\n")
+    except Exception:
+        pass
+    if not parts:
+        return None
+    body = "\n".join(f"- {p}" for p in parts)
+    if len(body) > cap:
+        body = body[:cap]
+    return (f"[Destillat eines {len(result_str)}-Zeichen-{tool_name}-Ergebnisses "
+            f"({len(parts)}/{len(chunks)} Abschnitte relevant, extrahiert von "
+            f"{model}]\n" + body)
+
+
 def run_loop(
     *,
     model: str,
@@ -1638,10 +1703,38 @@ def run_loop(
             except Exception:
                 _mini_cap = 0
             if _mini_cap and len(result_str) > _mini_cap:
-                _head = result_str[: int(_mini_cap * 0.7)]
-                _tail = result_str[-int(_mini_cap * 0.3):]
-                result_str = (_head + f"\n… [gekürzt: {len(result_str)} Zeichen "
-                              f"gesamt — mini_harness-Kappe {_mini_cap}] …\n" + _tail)
+                _distilled = None
+                if _mcfg.get("mini_tool_distill", True):
+                    _q = ""
+                    for _lm in reversed(loop_messages):
+                        if _lm.get("role") == "user":
+                            _q = str(_lm.get("content") or "")[:400]
+                            break
+                    try:
+                        _t0d = time.time()
+                        _distilled = _mini_distill_tool_result(
+                            model, tu["name"], result_str, _q, _mini_cap,
+                            chunk_chars=int(_mcfg.get("mini_tool_chunk_chars", 6000) or 6000))
+                        if _distilled:
+                            print(f"[mini-distill] {tu['name']}: {len(result_str)}→"
+                                  f"{len(_distilled)} Zeichen in "
+                                  f"{time.time()-_t0d:.1f}s", flush=True)
+                    except Exception as _de:
+                        print(f"[mini-distill] fehlgeschlagen ({_de}) — Kappe greift", flush=True)
+                if _distilled:
+                    result_str = _distilled
+                    # Audit: das Destillat zusätzlich am Tool-Event ablegen —
+                    # der Event-Log behält das Original, der Inspector zeigt
+                    # damit BEIDES (was ankam vs. was das Modell sah).
+                    try:
+                        tool_events[-1]["result_distilled"] = _distilled
+                    except Exception:
+                        pass
+                else:
+                    _head = result_str[: int(_mini_cap * 0.7)]
+                    _tail = result_str[-int(_mini_cap * 0.3):]
+                    result_str = (_head + f"\n… [gekürzt: {len(result_str)} Zeichen "
+                                  f"gesamt — mini_harness-Kappe {_mini_cap}] …\n" + _tail)
             loop_messages.append({
                 "role": "tool", "tool_call_id": tu["id"], "content": result_str,
             })
