@@ -119,9 +119,21 @@ final class OpsStats: @unchecked Sendable {
         lock.lock(); counters[key, default: 0] += 1; lock.unlock()
     }
     /// Pro-Call-Metriken für die Monitoring-Spalten (SparkDash Gen t/s etc.).
+    /// `compute`: welche Rechenwerke der Call nutzt — modellabhängig statisch
+    /// (eine numerische ANE-Auslastung ist ohne Root nicht auslesbar):
+    /// AFM-Varianten → ANE (GPU-frei, A/B-verifiziert), Vision-OCR → ANE+CPU,
+    /// CoreAI-Zoo → GPU+CPU (gpu-pipelined-Bundles, konkurriert mit oMLX).
     func recordCall(model: String, promptTokens: Int, completionTokens: Int,
                     durationS: Double) {
         let tps = durationS > 0.05 ? Double(completionTokens) / durationS : 0
+        let compute: [String]
+        if model.hasPrefix(COREAI_PREFIX) {
+            compute = ["gpu", "cpu"]
+        } else if model == OCR_MODEL {
+            compute = ["ane", "cpu"]
+        } else {
+            compute = ["ane"]
+        }
         lock.lock()
         counters["tokens_out_total", default: 0] += completionTokens
         lastCall = [
@@ -131,6 +143,7 @@ final class OpsStats: @unchecked Sendable {
             "completion_tokens": completionTokens,
             "duration_s": (durationS * 100).rounded() / 100,
             "gen_tps": (tps * 10).rounded() / 10,
+            "compute": compute,
         ]
         lock.unlock()
     }
@@ -141,6 +154,132 @@ final class OpsStats: @unchecked Sendable {
     var lastCallSnapshot: [String: Any]? {
         lock.lock(); defer { lock.unlock() }
         return lastCall
+    }
+}
+
+// ── AFM-Session-Cache (Prefix-KV-Reuse) ────────────────────────────────────
+// Der Server ist stateless (OpenAI-Wire) — ohne Cache baut jeder Turn das
+// Transcript neu und zahlt den vollen Prefill (cached_tokens blieb 0). AFMs
+// KV-Cache ist NICHT direkt steuerbar (kein Quantisierungs-/SSD-API — er
+// lebt im OS auf der ANE), aber eine WEITERVERWENDETE LanguageModelSession
+// cached framework-intern. Deshalb: LRU von Konversations-Hash → lebender
+// Session; passt der Request-Präfix, wird nur der neue User-Turn respond()et.
+// NUR für AFM-Varianten und reine Text-Chats (keine Tool-Historie, kein
+// Schema, keine Bilder) — CoreAI bleibt draußen (Session hielte die Engine
+// am Leben und würde den Admin-Evict entwerten).
+@available(macOS 26.0, *)
+actor AFMSessionCache {
+    static let shared = AFMSessionCache()
+    private struct Entry { let session: LanguageModelSession; var lastUsed: Date }
+    private var entries: [String: Entry] = [:]
+    private let cap = 8
+
+    func take(_ key: String) -> LanguageModelSession? {
+        guard let e = entries.removeValue(forKey: key) else { return nil }
+        return e.session
+    }
+    func put(_ key: String, _ session: LanguageModelSession) {
+        entries[key] = Entry(session: session, lastUsed: Date())
+        if entries.count > cap,
+           let oldest = entries.min(by: { $0.value.lastUsed < $1.value.lastUsed })?.key {
+            entries.removeValue(forKey: oldest)
+        }
+    }
+}
+
+import CryptoKit
+
+func convHash(_ s: String) -> String {
+    SHA256.hash(data: Data(s.utf8)).map { String(format: "%02x", $0) }.joined()
+}
+
+// ── ANE-Power-Sampler (IOReport, privates Framework via dlsym) ─────────────
+// macOS bietet KEIN öffentliches ANE-Auslastungs-API; ohne Root liefert nur
+// IOReport (libIOReport.dylib, Gruppe "Energy Model") die ANE-Energiezähler.
+// Daraus: Watt = ΔJoule/Δt, geschätzte Auslastung = Watt / FM_AGENT_ANE_MAX_W
+// (Default 8.0 — macmon-Ansatz; die ANE hat keine offizielle Maximalangabe).
+// Fällt bei API-Änderungen STILL aus (dann fehlt der "ane"-Block im Status).
+final class ANESampler: @unchecked Sendable {
+    static let shared = ANESampler()
+    private let lock = NSLock()
+    private var powerW: Double?
+    private let maxW = Double(ProcessInfo.processInfo.environment["FM_AGENT_ANE_MAX_W"] ?? "") ?? 8.0
+
+    var snapshot: [String: Any]? {
+        lock.lock(); defer { lock.unlock() }
+        guard let w = powerW else { return nil }
+        return ["power_w": (w * 100).rounded() / 100,
+                "util_pct": max(0, min(100, Int((w / maxW * 100).rounded()))),
+                "max_w": maxW]
+    }
+
+    func start() {
+        Thread.detachNewThread { [weak self] in self?.run() }
+    }
+
+    private func run() {
+        typealias CopyChannelsF = @convention(c) (CFString?, CFString?, UInt64, UInt64, UInt64) -> Unmanaged<CFMutableDictionary>?
+        typealias CreateSubF = @convention(c) (UnsafeMutableRawPointer?, CFMutableDictionary?, UnsafeMutablePointer<Unmanaged<CFMutableDictionary>?>?, UInt64, CFTypeRef?) -> UnsafeMutableRawPointer?
+        typealias CreateSamplesF = @convention(c) (UnsafeMutableRawPointer?, CFMutableDictionary?, CFTypeRef?) -> Unmanaged<CFDictionary>?
+        typealias SamplesDeltaF = @convention(c) (CFDictionary?, CFDictionary?, CFTypeRef?) -> Unmanaged<CFDictionary>?
+        typealias ChStringF = @convention(c) (CFDictionary?) -> Unmanaged<CFString>?
+        typealias SimpleIntF = @convention(c) (CFDictionary?, Int32) -> Int64
+
+        guard let lib = dlopen("/usr/lib/libIOReport.dylib", RTLD_NOW),
+              let pCopy = dlsym(lib, "IOReportCopyChannelsInGroup"),
+              let pSub = dlsym(lib, "IOReportCreateSubscription"),
+              let pSamples = dlsym(lib, "IOReportCreateSamples"),
+              let pDelta = dlsym(lib, "IOReportCreateSamplesDelta"),
+              let pName = dlsym(lib, "IOReportChannelGetChannelName"),
+              let pUnit = dlsym(lib, "IOReportChannelGetUnitLabel"),
+              let pInt = dlsym(lib, "IOReportSimpleGetIntegerValue") else {
+            log("ane-sampler: libIOReport nicht ladbar — ANE-Anzeige entfällt")
+            return
+        }
+        let copyChannels = unsafeBitCast(pCopy, to: CopyChannelsF.self)
+        let createSub = unsafeBitCast(pSub, to: CreateSubF.self)
+        let createSamples = unsafeBitCast(pSamples, to: CreateSamplesF.self)
+        let samplesDelta = unsafeBitCast(pDelta, to: SamplesDeltaF.self)
+        let chName = unsafeBitCast(pName, to: ChStringF.self)
+        let chUnit = unsafeBitCast(pUnit, to: ChStringF.self)
+        let simpleInt = unsafeBitCast(pInt, to: SimpleIntF.self)
+
+        guard let channels = copyChannels("Energy Model" as CFString, nil, 0, 0, 0)?
+            .takeRetainedValue() else {
+            log("ane-sampler: Energy-Model-Kanäle nicht verfügbar"); return
+        }
+        var subbed: Unmanaged<CFMutableDictionary>?
+        guard let sub = createSub(nil, channels, &subbed, 0, nil),
+              let subbedDict = subbed?.takeUnretainedValue() else {
+            log("ane-sampler: Subscription fehlgeschlagen"); return
+        }
+        _ = sub
+        var prev = createSamples(sub, subbedDict, nil)?.takeRetainedValue()
+        let intervalS = 2.0
+        while true {
+            Thread.sleep(forTimeInterval: intervalS)
+            guard let cur = createSamples(sub, subbedDict, nil)?.takeRetainedValue() else { continue }
+            defer { prev = cur }
+            guard let p = prev,
+                  let delta = samplesDelta(p, cur, nil)?.takeRetainedValue() else { continue }
+            guard let arr = (delta as NSDictionary)["IOReportChannels"] as? [Any] else { continue }
+            var joules = 0.0
+            for chAny in arr {
+                let ch = chAny as! CFDictionary
+                // Get-Semantik → unretained (nicht releasen)
+                guard let name = chName(ch)?.takeUnretainedValue() as String?,
+                      name.uppercased().contains("ANE") else { continue }
+                let v = Double(simpleInt(ch, 0))
+                let unit = (chUnit(ch)?.takeUnretainedValue() as String?) ?? "mJ"
+                switch unit.trimmingCharacters(in: .whitespaces) {
+                case "nJ": joules += v / 1e9
+                case "uJ", "µJ": joules += v / 1e6
+                case "mJ": joules += v / 1e3
+                default: joules += v
+                }
+            }
+            lock.lock(); powerW = joules / intervalS; lock.unlock()
+        }
     }
 }
 
@@ -338,6 +477,7 @@ struct WireRequest {
     var stream = false
     var promptCharCount = 0
     var ocrImages: [Data] = []                 // nur für apple-vision-ocr
+    var cacheSerial: String? = nil             // Präfix-Serialisierung für den AFM-Session-Cache
 }
 
 @available(macOS 26.0, *)
@@ -430,6 +570,8 @@ func parseRequest(_ body: [String: Any], capture: CallCapture) -> (WireRequest?,
     }
     var pending: [Transcript.Entry] = []
     var lastPromptHadImages = false
+    var cacheParts: [String] = []              // kanonische Historie für den Session-Cache
+    var cacheEligible = true                   // nur reine Text-Chats (keine Tools-Historie/Bilder)
     for m in messages {
         let role = (m["role"] as? String) ?? ""
         let (text, images) = partsOf(m)
@@ -438,6 +580,7 @@ func parseRequest(_ body: [String: Any], capture: CallCapture) -> (WireRequest?,
         case "system", "developer":
             rq.systemText += (rq.systemText.isEmpty ? "" : "\n") + text
         case "user":
+            if images.isEmpty { cacheParts.append("user:" + text) } else { cacheEligible = false }
             rq.ocrImages.append(contentsOf: images)
             var segs: [Transcript.Segment] = []
             if !text.isEmpty { segs.append(.text(Transcript.TextSegment(content: text))) }
@@ -457,6 +600,7 @@ func parseRequest(_ body: [String: Any], capture: CallCapture) -> (WireRequest?,
         case "assistant":
             lastPromptHadImages = false
             if let tcs = m["tool_calls"] as? [[String: Any]], !tcs.isEmpty {
+                cacheEligible = false
                 var calls: [Transcript.ToolCall] = []
                 for tc in tcs {
                     guard let fn = tc["function"] as? [String: Any],
@@ -474,11 +618,13 @@ func parseRequest(_ body: [String: Any], capture: CallCapture) -> (WireRequest?,
                 }
                 pending.append(.toolCalls(Transcript.ToolCalls(calls)))
             } else {
+                cacheParts.append("assistant:" + text)
                 pending.append(.response(Transcript.Response(
                     assetIDs: [],
                     segments: [.text(Transcript.TextSegment(content: text))])))
             }
         case "tool":
+            cacheEligible = false
             lastPromptHadImages = false
             let cid = (m["tool_call_id"] as? String) ?? UUID().uuidString
             let tname = (m["name"] as? String) ?? "tool"
@@ -498,6 +644,20 @@ func parseRequest(_ body: [String: Any], capture: CallCapture) -> (WireRequest?,
             if case .text(let t) = $0 { return t.content } else { return nil }
         }.joined(separator: "\n")
         pending.removeLast()
+        if !cacheParts.isEmpty { cacheParts.removeLast() }   // letzter user-Part gehört zum Prompt, nicht zum Präfix
+    }
+    // Session-Cache-Schlüssel: nur AFM-Varianten, reine Text-Historie, kein
+    // Schema (Guided-Streams wachsen anders). Deklarierte Tools zählen zum
+    // Schlüssel (identische Instructions), Tool-HISTORIE disqualifiziert.
+    if cacheEligible, rq.promptText != nil, rq.responseSchema == nil,
+       rq.modelID.hasPrefix("apple-fm") {
+        var toolsJSON = ""
+        if let t = body["tools"],
+           let d = try? JSONSerialization.data(withJSONObject: t, options: [.sortedKeys]) {
+            toolsJSON = String(data: d, encoding: .utf8) ?? ""
+        }
+        rq.cacheSerial = "m:\(rq.modelID)|sys:\(rq.systemText)|tools:\(toolsJSON)|"
+            + cacheParts.map { "\u{1}" + $0 }.joined()
     }
     rq.entries = pending
     return (rq, nil)
@@ -843,6 +1003,7 @@ final class ConnectionHandler: @unchecked Sendable {
                 "admin_key_required": !ADMIN_KEY.isEmpty,
             ]
             if let lc = OpsStats.shared.lastCallSnapshot { payload["last_call"] = lc }
+            if let ane = ANESampler.shared.snapshot { payload["ane"] = ane }
             self.sendJSON(200, payload)
         }
     }
@@ -904,14 +1065,23 @@ final class ConnectionHandler: @unchecked Sendable {
                     }
                 }
             }
-            let session: LanguageModelSession
-            do {
-                session = try await buildSession(rq)
-            } catch {
-                self.failGeneration(rid: rid, rq: rq, status: 400,
-                                    code: "model_load_error", message: "\(error.localizedDescription)")
-                return
+            var session: LanguageModelSession
+            var fromCache = false
+            if let serial = rq.cacheSerial,
+               let hit = await AFMSessionCache.shared.take(convHash(serial)) {
+                session = hit
+                fromCache = true
+                log("session-cache: hit (\(rq.modelID))")
+            } else {
+                do {
+                    session = try await buildSession(rq)
+                } catch {
+                    self.failGeneration(rid: rid, rq: rq, status: 400,
+                                        code: "model_load_error", message: "\(error.localizedDescription)")
+                    return
+                }
             }
+            _ = fromCache
             var emitted = ""
             var realUsage: [String: Any]? = nil
             let genStart = Date()
@@ -956,6 +1126,12 @@ final class ConnectionHandler: @unchecked Sendable {
                     return
                 }
                 self.finishText(rid: rid, rq: rq, text: emitted, realUsage: realUsage, startedAt: genStart)
+                // Saubere Text-Antwort → Session für den Folge-Turn cachen
+                // (Schlüssel = Präfix + dieser Turn; Tool-/Fehlerpfade cachen NIE).
+                if let serial = rq.cacheSerial {
+                    let after = serial + "\u{1}user:\(promptText)\u{1}assistant:\(emitted)"
+                    await AFMSessionCache.shared.put(convHash(after), session)
+                }
             } catch is CancellationError {
                 // Cancel-on-Disconnect (latest-wins der Translate-Lane): Client
                 // hat die Verbindung geschlossen — nichts senden, GenGate-defer
@@ -1124,5 +1300,8 @@ if #available(macOS 26.0, *) {
         log("prewarm angestoßen")
     }
 }
+
+// ANE-Power-Sampling für die Monitoring-Gauge (SparkDash).
+ANESampler.shared.start()
 
 dispatchMain()
