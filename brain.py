@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.436.1"
+VERSION = "9.437.0"
 VERSION_DATE = "2026-08-14"
 CHANGELOG = [
+    ("9.437.0", "2026-08-14", "feat(Mini-Modus voll arbeitsfähig: read_file + execute_command als Mini-Zusatz-Tools, write_file kann append — alles kompakt): User-Design 'kompakte Versionen von read_file und bash, Ergebnisse via Destillation, write_file geblockt in kleinen Häppchen, read_file bevorzugt Segmente'. (1) NEU _MINI_EXTRA_TOOLS=(read_file, execute_command): im Mini-Modus ZUSÄTZLICH zum research_minimal-Kanal auf dem Wire — bewusst am Modell-Gate im Resolver-Schwanz statt in der Kanal-Tabelle (die ist mit Scheduled Tasks auf großen Modellen GETEILT; deren Surface — Membership UND Schemas — bleibt unverändert); global inaktiv geschaltete Tools werden respektiert (resolve_tool_state_for-Check, Admin-Kill wirkt auch hier). Der Mini-Block läuft jetzt VOR dem Breakdown (Inspector zeigt die echte Wire-Liste) und re-sortiert nach dem Hinzufügen (KV-Prefix deterministisch). (2) Mini-Schemas maximal kompakt: read_file (path/offset/limit, 'Lies NUR den benötigten Ausschnitt — nie ganze große Dateien'; offset/limit EXISTIERTEN schon im Prod-Schema), execute_command (nur command, 'Ausgabe kurz halten — head/grep/wc nutzen'; cwd/timeout/node weg), write_file ergänzt um append:true ('Große Dateien in kleinen Häppchen'). (3) write_file-APPEND ist NEU in der Impl (engine/tools/file_tools.py: mode 'a' wenn append UND Datei existiert — append auf nicht-existente Datei = normales Schreiben; _after_file_write 'modified', status 'appended' → Artifact-Versionierung läuft normal weiter) + additiv im Prod-Schema (tool_schemas.py; alle Modelle dürfen häppchenweise schreiben, einmalige KV-Prefix-Invalidierung nach Restart). (4) Destillation für die neuen Tools: NICHTS zu tun — die mini_tool_result_chars-Kappe im Loop greift generisch für JEDES Tool-Ergebnis, lange read_file-/Shell-Ausgaben laufen automatisch durchs Map-Reduce-Destillat. Mini-Wire damit: execute_command, read_file, searxng_search, web_fetch, write_file (5 Tools, alle handverdichtet). py_compile OK. Server-Restart nötig. KEIN kuratierter Eintrag (experimenteller Modus)."),
     ("9.436.1", "2026-08-14", "chore(Mini-Modus: toter exa_search-Eintrag aus _MINI_TOOL_SCHEMAS entfernt): User-Hinweis 'exa web ist tot seit ewigkeiten' — Prüfung ergab: exa_search ist in der Per-Use-Case-states-Map längst ÜBERALL inactive (und es ist kein Exa-API-Key konfiguriert); die Legacy-'purposes'-Liste im tool_settings-Eintrag suggerierte fälschlich Kanal-Mitgliedschaft (nur die states-Map zählt, 9.101.1). Der echte research_minimal-Wire = genau 3 Tools: searxng_search, web_fetch, write_file — alle handverdichtet. NEBENBEFUND dokumentiert: tool_settings trägt zwei VERWAISTE Einträge read_chunk_window + retrieve (research_minimal active, aber NICHT in TOOL_DEFINITIONS → erreichen den Wire nie; vermutlich Relikte eines früheren Experiments, harmlos). py_compile OK."),
     ("9.436.0", "2026-08-14", "feat(Mini-Modus: Tool-Schemas eingedampft — ~650 Tokens gespart + web_fetch-Falle entfernt): User-Wunsch 'vielleicht auch die tool beschreibung minimieren'. Die 4 research_minimal-Kanal-Tools (web_fetch/searxng_search/exa_search/write_file) trugen ihre vollen Produktions-Schemas auf den Mini-Wire: 4121 Bytes JSON (≈1000+ Tokens, ~8%% des 8k-Fensters) UND Parameter, die das 3B nachweislich falsch benutzte (web_fetch bot method/body/headers an → die beobachtete URL-im-body-Flakiness war eine SCHEMA-Falle, keine reine Modell-Laune). NEU brain._MINI_TOOL_SCHEMAS: handverdichtete deutsche Ersatz-Schemas (nur essentielle Parameter: web_fetch nur url; searxng behält die Workflow-Kerninfo 'NUR Titel+URLs — Inhalte danach mit web_fetch laden'; write_file nur path+content, node/category/max_length weg) + _minify_tool_def (beide Wire-Shapes; unbekannte Tools — Admin erweitert den Kanal — kriegen nur die Erster-Satz-Kürzung der Beschreibung, Schema UNVERÄNDERT → Dispatch garantiert kompatibel). SEAM: EIN Anwendungspunkt am Ende von resolve_active_tools (nach dem Breakdown — Inspector zeigt echte Namen), gegated über das TURN-MODELL (get_request_context()._current_model, von build_first_turn_prefix/_apply_bg_context gebunden), bewusst NICHT über den Purpose: research_minimal ist mit Scheduled Tasks auf großen Modellen GETEILT, die behalten die vollen Schemas. Statische Tabelle + neue Dicts (TOOL_DEFINITIONS unangetastet) → KV-Prefix deterministisch, Warmup und Live-Turn byte-identisch (beide laufen durch denselben Resolver-Schwanz). Messung: 4121→1506 Bytes (−2615, ≈650 Tokens). py_compile OK, Offline-Shape-Tests (anthropic+openai+Fallback) grün. Server-Restart nötig. KEIN kuratierter Eintrag (experimenteller Modus)."),
     ("9.435.1", "2026-08-14", "feat(Mini-Destillat: Schritte als Subtasks im Aktivitäten-Panel): Jeder Destillat-Schritt wird als synthetisches tool_call/tool_result-Paar emittiert (Name mini_distill, args {abschnitt:'3/9', tool:'web_fetch'}, Ergebnis 'N Zeichen extrahiert'/'nichts Relevantes') UND in tool_events persistiert — das Panel rendert das Vokabular generisch, für Live UND Reload; deutsches Label in chat_tools.js ('Destillat 3/9: web_fetch-Ergebnis eindampfen'), js_gate GRÜN (ESLint+Globals+Playwright 5/5). Emission sequenziell NACH dem ThreadPool (LiveStream-Ordnung, keine Thread-Emits). VERIFIKATIONSSTAND ehrlich: Persistenz E2E bewiesen (9 mini_distill-Einträge nach web_fetch in metadata.tools); die LIVE-Emission nutzt denselben emit-Pfad wie alle Loop-Events (identischer Mechanismus), ein direkter Live-Mitschnitt scheiterte an 3B-Launen (Modell fetchte in den Beobachtungs-Turns nicht bzw. steckte die URL in body statt url — bekannte Kleinmodell-Flakiness). NEBENBEI gelernt: Brains SSE trägt den Event-Typ in der event:-ZEILE, nicht im data-JSON — Test-Parser müssen event:-Zeilen tracken (zwei frühere Mitschnitte waren deshalb blind). Server-Restart nötig."),
@@ -2600,20 +2601,59 @@ _MINI_TOOL_SCHEMAS = {
         },
     },
     "write_file": {
-        "description": ("Schreibt eine Datei. Relativer Dateiname "
-                        "(z. B. bericht.md) landet im Artefakt-Ordner."),
+        "description": ("Schreibt eine Datei (relativer Name → "
+                        "Artefakt-Ordner). Große Dateien in kleinen "
+                        "Häppchen: weitere Teile mit append:true."),
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {"type": "string",
                          "description": "Relativer Dateiname"},
                 "content": {"type": "string",
-                            "description": "Vollständiger Dateiinhalt"},
+                            "description": "Inhalt (klein halten)"},
+                "append": {"type": "boolean",
+                           "description": "true = anhängen"},
             },
             "required": ["path", "content"],
         },
     },
+    "read_file": {
+        "description": ("Liest eine Textdatei. Lies NUR den benötigten "
+                        "Ausschnitt (offset+limit), nie ganze große "
+                        "Dateien."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Dateipfad"},
+                "offset": {"type": "integer",
+                           "description": "Startzeile (1-basiert)"},
+                "limit": {"type": "integer",
+                          "description": "max. Zeilen (z. B. 100)"},
+            },
+            "required": ["path"],
+        },
+    },
+    "execute_command": {
+        "description": ("Führt einen Shell-Befehl aus (kein TTY). "
+                        "Ausgabe kurz halten (head/grep/wc nutzen)."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string",
+                            "description": "Shell-Befehl"},
+            },
+            "required": ["command"],
+        },
+    },
 }
+
+# Mini-Zusatz-Tools: im Mini-Modus ZUSÄTZLICH zum research_minimal-Kanal auf
+# den Wire (Lesen + Shell machen den Minimal-Weg voll arbeitsfähig; Ergebnisse
+# laufen durch die Destillat-Kappe im Loop). BEWUSST am Modell-Gate statt in
+# der Kanal-Tabelle: die Tabelle ist mit Scheduled Tasks auf großen Modellen
+# geteilt — deren Surface bleibt unverändert. Global inaktive Tools werden
+# respektiert (Admin-Kill wirkt auch hier).
+_MINI_EXTRA_TOOLS = ("read_file", "execute_command")
 
 
 def _minify_tool_def(t: dict, is_openai_shape: bool) -> dict:
@@ -2774,6 +2814,48 @@ def resolve_active_tools(
         else:
             tools.sort(key=lambda t: t.get("name", ""))
 
+    # Mini-Harness (9.436.0/9.437.0): Zusatz-Tools + eingedampfte Schemas.
+    # Gate über das Turn-Modell (_current_model — von build_first_turn_prefix
+    # bzw. _apply_bg_context gebunden), NICHT über den Purpose:
+    # research_minimal ist mit Scheduled Tasks auf großen Modellen GETEILT —
+    # deren Surface (Membership UND Schemas) bleibt unverändert. Läuft VOR dem
+    # Breakdown, damit der Inspector die echte Wire-Liste zeigt. Re-Sort nach
+    # dem Hinzufügen hält den KV-Prefix deterministisch.
+    try:
+        _mini_model = get_request_context()._current_model or ""
+        if _mini_model and (resolve_model_settings(_mini_model) or {}).get(
+                "mini_harness") is True:
+            _have = {_name_of(t) for t in tools}
+            for _extra in _MINI_EXTRA_TOOLS:
+                if _extra in _have:
+                    continue
+                try:
+                    if resolve_tool_state_for(_extra, agent_id,
+                                              "interactive") == "inactive":
+                        continue  # Admin-Kill gilt auch im Mini-Modus
+                except Exception:
+                    pass
+                _def = next((d for d in TOOL_DEFINITIONS
+                             if d.get("name") == _extra), None)
+                if _def is None:
+                    continue
+                if is_openai_shape:
+                    tools.append({"type": "function", "function": {
+                        "name": _def["name"],
+                        "description": _def.get("description", ""),
+                        "parameters": _def.get("input_schema", {})}})
+                else:
+                    tools.append({"name": _def["name"],
+                                  "description": _def.get("description", ""),
+                                  "input_schema": _def.get("input_schema", {})})
+            tools = [_minify_tool_def(t, is_openai_shape) for t in tools]
+            if is_openai_shape:
+                tools.sort(key=lambda t: (t.get("function", {}) or {}).get("name", ""))
+            else:
+                tools.sort(key=lambda t: t.get("name", ""))
+    except Exception:
+        pass
+
     if breakdown is not None:
         # GROUND TRUTH for the inspector. in_prompt = the final wire names.
         # deferred = the names resolution pushed to tool_search-only this turn
@@ -2787,19 +2869,6 @@ def resolve_active_tools(
             n for n in deferred_names
             if n not in _in_prompt and n not in _discovered)
         breakdown["excluded"] = sorted(_excluded) if _excluded else []
-
-    # Mini-Harness: Beschreibungen+Schemas eindampfen (9.436.0). Gate über
-    # das Turn-Modell (_current_model — von build_first_turn_prefix bzw.
-    # _apply_bg_context gebunden), NICHT über den Purpose: research_minimal
-    # ist mit Scheduled Tasks auf großen Modellen GETEILT, die die vollen
-    # Schemas behalten. Namen unverändert → Whitelist/Dispatch unberührt.
-    try:
-        _mini_model = get_request_context()._current_model or ""
-        if _mini_model and (resolve_model_settings(_mini_model) or {}).get(
-                "mini_harness") is True:
-            tools = [_minify_tool_def(t, is_openai_shape) for t in tools]
-    except Exception:
-        pass
 
     return tools
 

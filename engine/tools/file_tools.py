@@ -195,12 +195,15 @@ def tool_write_file(args: dict) -> str:
         if err:
             return err
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        with open(path, "w") as f:
+        _append = bool(args.get("append")) and os.path.exists(path)
+        with open(path, "a" if _append else "w") as f:
             f.write(content)
         size = os.path.getsize(path)
         agent = get_request_context().current_agent or _brain._current_agent
-        _brain._after_file_write(path, "created", agent.agent_id if agent else "main")
-        return _ok({"path": path, "size": size, "status": "written"})
+        _brain._after_file_write(path, "modified" if _append else "created",
+                                 agent.agent_id if agent else "main")
+        return _ok({"path": path, "size": size,
+                    "status": "appended" if _append else "written"})
     except Exception as e:
         return _err(f"write_file: {e}")
 

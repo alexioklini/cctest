@@ -53,6 +53,7 @@ TOOL_DEFINITIONS = [
             "properties": {
                 "path": {"type": "string", "description": "Relative filename for the output (lands in your session artifact folder). Absolute paths and '..' escapes are refused."},
                 "content": {"type": "string", "description": "The full content to write to the file"},
+                "append": {"type": "boolean", "description": "Append to the file instead of overwriting (default: false)"},
                 "node": {"type": "string", "description": "Remote node name or 'tag:NAME' to execute on a remote node instead of locally"},
             },
             "required": ["path", "content"],
