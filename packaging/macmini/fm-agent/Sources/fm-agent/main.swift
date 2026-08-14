@@ -114,12 +114,33 @@ final class OpsStats: @unchecked Sendable {
     static let shared = OpsStats()
     private let lock = NSLock()
     private var counters: [String: Int] = [:]
+    private var lastCall: [String: Any]? = nil
     func bump(_ key: String) {
         lock.lock(); counters[key, default: 0] += 1; lock.unlock()
+    }
+    /// Pro-Call-Metriken für die Monitoring-Spalten (SparkDash Gen t/s etc.).
+    func recordCall(model: String, promptTokens: Int, completionTokens: Int,
+                    durationS: Double) {
+        let tps = durationS > 0.05 ? Double(completionTokens) / durationS : 0
+        lock.lock()
+        counters["tokens_out_total", default: 0] += completionTokens
+        lastCall = [
+            "ts": Int(Date().timeIntervalSince1970),
+            "model": model,
+            "prompt_tokens": promptTokens,
+            "completion_tokens": completionTokens,
+            "duration_s": (durationS * 100).rounded() / 100,
+            "gen_tps": (tps * 10).rounded() / 10,
+        ]
+        lock.unlock()
     }
     var snapshot: [String: Int] {
         lock.lock(); defer { lock.unlock() }
         return counters
+    }
+    var lastCallSnapshot: [String: Any]? {
+        lock.lock(); defer { lock.unlock() }
+        return lastCall
     }
 }
 
@@ -813,14 +834,16 @@ final class ConnectionHandler: @unchecked Sendable {
                      "size_mb": Int($0.sizeBytes / (1 << 20))]
                 }
             }
-            self.sendJSON(200, [
+            var payload: [String: Any] = [
                 "status": "ok",
                 "uptime_s": Int(Date().timeIntervalSince(SERVER_START)),
                 "afm_models": FM_VARIANTS + [OCR_MODEL],
                 "coreai": coreai,
                 "counters": OpsStats.shared.snapshot,
                 "admin_key_required": !ADMIN_KEY.isEmpty,
-            ])
+            ]
+            if let lc = OpsStats.shared.lastCallSnapshot { payload["last_call"] = lc }
+            self.sendJSON(200, payload)
         }
     }
 
@@ -845,10 +868,11 @@ final class ConnectionHandler: @unchecked Sendable {
                     self.sendSSEHeader()
                     self.sendSSE(chunkObj(rid, rq.modelID, ["role": "assistant"]))
                 }
+                let t0 = Date()
                 do {
                     let md = try await runOCR(rq.ocrImages)
                     if rq.stream { self.sendSSE(chunkObj(rid, rq.modelID, ["content": md])) }
-                    self.finishText(rid: rid, rq: rq, text: md, realUsage: nil)
+                    self.finishText(rid: rid, rq: rq, text: md, realUsage: nil, startedAt: t0)
                 } catch is CancellationError {
                     log("ocr: Client weg — abgebrochen")
                 } catch {
@@ -890,6 +914,7 @@ final class ConnectionHandler: @unchecked Sendable {
             }
             var emitted = ""
             var realUsage: [String: Any]? = nil
+            let genStart = Date()
             do {
                 if let schema = rq.responseSchema {
                     // Guided Generation — die Snapshots sind NICHT präfix-stabil
@@ -930,7 +955,7 @@ final class ConnectionHandler: @unchecked Sendable {
                     log("generation: Client weg — abgebrochen (\(rq.modelID), \(emitted.count) Zeichen verworfen)")
                     return
                 }
-                self.finishText(rid: rid, rq: rq, text: emitted, realUsage: realUsage)
+                self.finishText(rid: rid, rq: rq, text: emitted, realUsage: realUsage, startedAt: genStart)
             } catch is CancellationError {
                 // Cancel-on-Disconnect (latest-wins der Translate-Lane): Client
                 // hat die Verbindung geschlossen — nichts senden, GenGate-defer
@@ -939,7 +964,7 @@ final class ConnectionHandler: @unchecked Sendable {
             } catch {
                 let calls = capture.snapshot
                 if !calls.isEmpty {
-                    self.finishToolCalls(rid: rid, rq: rq, calls: calls, realUsage: realUsage)
+                    self.finishToolCalls(rid: rid, rq: rq, calls: calls, realUsage: realUsage, startedAt: genStart)
                 } else {
                     let (status, code, message) = mapGenerationError(error)
                     log("generation error [\(code)]: \(message)")
@@ -964,9 +989,16 @@ final class ConnectionHandler: @unchecked Sendable {
     }
 
     @available(macOS 26.0, *)
-    func finishText(rid: String, rq: WireRequest, text: String, realUsage: [String: Any]?) {
+    func finishText(rid: String, rq: WireRequest, text: String, realUsage: [String: Any]?,
+                    startedAt: Date? = nil) {
         let usage = realUsage ?? estimatedUsage(promptChars: rq.promptCharCount,
                                                completionChars: text.count)
+        if let t0 = startedAt {
+            OpsStats.shared.recordCall(model: rq.modelID,
+                promptTokens: usage["prompt_tokens"] as? Int ?? 0,
+                completionTokens: usage["completion_tokens"] as? Int ?? 0,
+                durationS: Date().timeIntervalSince(t0))
+        }
         if rq.stream {
             sendSSE(chunkObj(rid, rq.modelID, [:], finish: "stop", usage: usage))
             sendSSEDone()
@@ -983,8 +1015,14 @@ final class ConnectionHandler: @unchecked Sendable {
     @available(macOS 26.0, *)
     func finishToolCalls(rid: String, rq: WireRequest,
                          calls: [(id: String, name: String, argsJSON: String)],
-                         realUsage: [String: Any]?) {
+                         realUsage: [String: Any]?, startedAt: Date? = nil) {
         let tcs = toolCallsJSON(calls)
+        if let t0 = startedAt, let u = realUsage {
+            OpsStats.shared.recordCall(model: rq.modelID,
+                promptTokens: u["prompt_tokens"] as? Int ?? 0,
+                completionTokens: u["completion_tokens"] as? Int ?? 0,
+                durationS: Date().timeIntervalSince(t0))
+        }
         let usage = realUsage ?? estimatedUsage(
             promptChars: rq.promptCharCount,
             completionChars: calls.reduce(0) { $0 + $1.argsJSON.count })
