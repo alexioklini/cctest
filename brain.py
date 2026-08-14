@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Brain Agent — Agentic CLI for interacting with LLM APIs."""
 
-VERSION = "9.435.1"
+VERSION = "9.436.0"
 VERSION_DATE = "2026-08-14"
 CHANGELOG = [
+    ("9.436.0", "2026-08-14", "feat(Mini-Modus: Tool-Schemas eingedampft — ~650 Tokens gespart + web_fetch-Falle entfernt): User-Wunsch 'vielleicht auch die tool beschreibung minimieren'. Die 4 research_minimal-Kanal-Tools (web_fetch/searxng_search/exa_search/write_file) trugen ihre vollen Produktions-Schemas auf den Mini-Wire: 4121 Bytes JSON (≈1000+ Tokens, ~8%% des 8k-Fensters) UND Parameter, die das 3B nachweislich falsch benutzte (web_fetch bot method/body/headers an → die beobachtete URL-im-body-Flakiness war eine SCHEMA-Falle, keine reine Modell-Laune). NEU brain._MINI_TOOL_SCHEMAS: handverdichtete deutsche Ersatz-Schemas (nur essentielle Parameter: web_fetch nur url; searxng behält die Workflow-Kerninfo 'NUR Titel+URLs — Inhalte danach mit web_fetch laden'; write_file nur path+content, node/category/max_length weg) + _minify_tool_def (beide Wire-Shapes; unbekannte Tools — Admin erweitert den Kanal — kriegen nur die Erster-Satz-Kürzung der Beschreibung, Schema UNVERÄNDERT → Dispatch garantiert kompatibel). SEAM: EIN Anwendungspunkt am Ende von resolve_active_tools (nach dem Breakdown — Inspector zeigt echte Namen), gegated über das TURN-MODELL (get_request_context()._current_model, von build_first_turn_prefix/_apply_bg_context gebunden), bewusst NICHT über den Purpose: research_minimal ist mit Scheduled Tasks auf großen Modellen GETEILT, die behalten die vollen Schemas. Statische Tabelle + neue Dicts (TOOL_DEFINITIONS unangetastet) → KV-Prefix deterministisch, Warmup und Live-Turn byte-identisch (beide laufen durch denselben Resolver-Schwanz). Messung: 4121→1506 Bytes (−2615, ≈650 Tokens). py_compile OK, Offline-Shape-Tests (anthropic+openai+Fallback) grün. Server-Restart nötig. KEIN kuratierter Eintrag (experimenteller Modus)."),
     ("9.435.1", "2026-08-14", "feat(Mini-Destillat: Schritte als Subtasks im Aktivitäten-Panel): Jeder Destillat-Schritt wird als synthetisches tool_call/tool_result-Paar emittiert (Name mini_distill, args {abschnitt:'3/9', tool:'web_fetch'}, Ergebnis 'N Zeichen extrahiert'/'nichts Relevantes') UND in tool_events persistiert — das Panel rendert das Vokabular generisch, für Live UND Reload; deutsches Label in chat_tools.js ('Destillat 3/9: web_fetch-Ergebnis eindampfen'), js_gate GRÜN (ESLint+Globals+Playwright 5/5). Emission sequenziell NACH dem ThreadPool (LiveStream-Ordnung, keine Thread-Emits). VERIFIKATIONSSTAND ehrlich: Persistenz E2E bewiesen (9 mini_distill-Einträge nach web_fetch in metadata.tools); die LIVE-Emission nutzt denselben emit-Pfad wie alle Loop-Events (identischer Mechanismus), ein direkter Live-Mitschnitt scheiterte an 3B-Launen (Modell fetchte in den Beobachtungs-Turns nicht bzw. steckte die URL in body statt url — bekannte Kleinmodell-Flakiness). NEBENBEI gelernt: Brains SSE trägt den Event-Typ in der event:-ZEILE, nicht im data-JSON — Test-Parser müssen event:-Zeilen tracken (zwei frühere Mitschnitte waren deshalb blind). Server-Restart nötig."),
     ("9.435.0", "2026-08-14", "feat(Mini-Modus: Tool-Ergebnis-DESTILLAT statt Kappe — Map-Reduce mit dem Mini-Modell selbst): User-Design ('gleiches Modell, viele kleine schnelle Aufrufe, die je ein Snippet interpretieren und die relevanten Ergebnisse akkumulieren — wichtig bei file_read/web_fetch'). engine/llm_loop._mini_distill_tool_result: langes Tool-Ergebnis (> mini_tool_result_chars) wird in ~6k-Zeichen-Schnipsel geteilt (mini_tool_chunk_chars; jenseits ~48k erst grob eingedampft), JEDER Schnipsel geht als PARALLELER Mini-Call (ThreadPool ≤6, background_call — per Architektur UNQUEUED, kein Deadlock mit dem laufenden Turn; cost_purpose=mini_tool_distill) an DASSELBE Mini-Modell mit Extraktions-Prompt ('nur wörtliche, relevante Fakten; sonst NICHTS'); Treffer werden akkumuliert und ersetzen das Tool-Ergebnis als '[Destillat …]'; Kopf/Schwanz-Kappe bleibt FALLBACK (mini_tool_distill:false schaltet ab). WIRKUNG verifiziert (Wetter-Turn, 50k-web_fetch): 9 Schnipsel → 9 relevante Extrakte, Antwort zitiert erstmals WÖRTLICHE Quellwerte inkl. 'Wind 16 km/h SO' — GEGEN DIE LIVE-SEITE VERIFIZIERT (String steht exakt dort). KORREKTUR zur 9.434.1-Forensik: auch das frühere '8 km/h OSO' steht real auf der Seite (anderer Tagesabschnitt) — die 'frei erfunden'-Einstufung beruhte auf dem bei ~5k gekappten EVENT-LOG, nicht dem vollen 50k-Fetch; die Zeitbezugs-Kritik bleibt, die Zahlen-Kritik war überzogen (Lektion: Halluzinations-Forensik gegen die VOLLE Quelle, nicht gegen gekürzte Logs). Ops-Sicht: /tmp/mini_distill_log.txt (tool/chunks/parts je Destillat — als DATEI, weil sich Loop-Prints im Log-Routing als unzuverlässig erwiesen; Ursache offen, siehe auch stdout/stderr-Split server.log vs server.error.log). Latenz ~10-30s bei 50k-Ergebnissen (9 parallele ANE-Calls) — Preis für Grounding im 8k-Fenster. Server-Restart nötig."),
     ("9.434.1", "2026-08-14", "docs+guard(Mini-Modus: Halluzinations-Prüfung Chat c3757d20 — Teilbefund + dokumentierte Grenze): User meldete verdächtige Wetterangabe. FORENSIK (Tool-Log des Turns): 29°C/sonnig/0% Niederschlag stammen KORREKT aus der gefetchten wetter.at-Morgen-Bezirkstabelle; die Windangabe ist TEILHALLUZINIERT — Richtung 'Nordost bis Ost' aus dem HEUTE-Absatz der Seite übernommen (falscher Zeitbezug) und '8 km/h' frei erfunden ('km/h' kommt im gesamten Tool-Ergebnis nicht vor; das Modell quantifiziert das qualitative 'schwach'). GUARD ergänzt (_build_mini_system_prompt: 'Zahlen/Fakten NUR wörtlich aus Werkzeug-Ergebnissen — nichts schätzen') — Nachtest zeigt ihn WIRKUNGSLOS: identische '8 km/h' erneut; die Quantifizierungs-Neigung sitzt als Prior im 3B, Prompt-Text richtet das nicht zuverlässig. Der Satz bleibt (billig, hilft ggf. marginal), aber die GRENZE ist dokumentiert: Zahlen aus Mini-Modus-Antworten sind Komfort-Niveau, NICHT belastbar — für belastbare Fakten Default-Modelle nutzen (dort greifen Citation-Disziplin + Validator, die im Mini-Modus bewusst aus sind). Nebenbefund: SearXNG lieferte Rauschen (Amazon-Music-Treffer Platz 2), Quellenwahl des Modells war trotzdem korrekt."),
@@ -2565,6 +2566,93 @@ def _minimal_tool_blurbs() -> list[tuple[str, str]]:
     return [(t["name"], t["minimal_role"]) for t in items]
 
 
+# Mini-Harness (per-Modell `mini_harness: true`, z. B. AFM 8k-Fenster):
+# handverdichtete Ersatz-Schemas für die research_minimal-Kanal-Tools. Die
+# Produktions-Schemas kosten ~4.1 KB JSON (≈1000+ Tokens) und tragen Parameter,
+# die ein 3B nachweislich falsch benutzt (web_fetch method/body/headers → URL
+# landete im body). Beschreibungen DEUTSCH (passend zum Mini-System-Prompt),
+# nur essentielle Parameter. Statische Tabelle → deterministischer KV-Prefix.
+_MINI_TOOL_SCHEMAS = {
+    "web_fetch": {
+        "description": "Lädt eine Webseite und liefert ihren Text.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string",
+                        "description": "Vollständige URL (https://…)"},
+            },
+            "required": ["url"],
+        },
+    },
+    "searxng_search": {
+        "description": ("Websuche. Liefert NUR Titel+URLs (keine Inhalte). "
+                        "Du MUSST danach web_fetch auf den besten Treffer "
+                        "aufrufen — Titel allein sind KEIN Beleg."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Suchanfrage"},
+                "num_results": {"type": "integer",
+                                "description": "max. Treffer (Default 5)"},
+            },
+            "required": ["query"],
+        },
+    },
+    "exa_search": {
+        "description": ("Semantische Websuche (nach Bedeutung). "
+                        "Liefert Titel+URLs."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Suchanfrage"},
+                "num_results": {"type": "integer",
+                                "description": "max. Treffer (Default 5)"},
+            },
+            "required": ["query"],
+        },
+    },
+    "write_file": {
+        "description": ("Schreibt eine Datei. Relativer Dateiname "
+                        "(z. B. bericht.md) landet im Artefakt-Ordner."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string",
+                         "description": "Relativer Dateiname"},
+                "content": {"type": "string",
+                            "description": "Vollständiger Dateiinhalt"},
+            },
+            "required": ["path", "content"],
+        },
+    },
+}
+
+
+def _minify_tool_def(t: dict, is_openai_shape: bool) -> dict:
+    """Ersetzt Beschreibung+Schema eines Tools durch die Mini-Variante
+    (neue Dicts — TOOL_DEFINITIONS bleibt unangetastet). Unbekannte Tools
+    (Admin erweitert den Kanal): nur die Beschreibung auf den ersten Satz
+    kürzen, Schema unverändert — Dispatch bleibt garantiert kompatibel."""
+    if is_openai_shape:
+        fn = t.get("function", {}) or {}
+        name = fn.get("name", "")
+        mini = _MINI_TOOL_SCHEMAS.get(name)
+        if mini:
+            new_fn = dict(fn, description=mini["description"],
+                          parameters=mini["input_schema"])
+        else:
+            desc = (fn.get("description") or "").split(". ")[0][:160]
+            new_fn = dict(fn, description=desc)
+        return dict(t, function=new_fn)
+    name = t.get("name", "")
+    mini = _MINI_TOOL_SCHEMAS.get(name)
+    if mini:
+        return dict(t, description=mini["description"],
+                    input_schema=mini["input_schema"])
+    desc = (t.get("description") or "").split(". ")[0][:160]
+    return dict(t, description=desc)
+
+
 def resolve_active_tools(
     *,
     purpose: str,
@@ -2711,6 +2799,19 @@ def resolve_active_tools(
             n for n in deferred_names
             if n not in _in_prompt and n not in _discovered)
         breakdown["excluded"] = sorted(_excluded) if _excluded else []
+
+    # Mini-Harness: Beschreibungen+Schemas eindampfen (9.436.0). Gate über
+    # das Turn-Modell (_current_model — von build_first_turn_prefix bzw.
+    # _apply_bg_context gebunden), NICHT über den Purpose: research_minimal
+    # ist mit Scheduled Tasks auf großen Modellen GETEILT, die die vollen
+    # Schemas behalten. Namen unverändert → Whitelist/Dispatch unberührt.
+    try:
+        _mini_model = get_request_context()._current_model or ""
+        if _mini_model and (resolve_model_settings(_mini_model) or {}).get(
+                "mini_harness") is True:
+            tools = [_minify_tool_def(t, is_openai_shape) for t in tools]
+    except Exception:
+        pass
 
     return tools
 
