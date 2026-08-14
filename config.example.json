@@ -3286,6 +3286,97 @@
       "max_output": 1024,
       "_caps_canonical": true,
       "base_model_id": "apple-fm-contenttagging"
+    },
+    "llm-router/apple-fm-agentic": {
+      "enabled": false,
+      "shortname": "apple-fm-agentic",
+      "display_name": "apple-fm-agentic",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "apple-fm-agentic",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/apple-fm-contenttagging": {
+      "enabled": false,
+      "shortname": "apple-fm-contenttagging",
+      "display_name": "apple-fm-contenttagging",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "apple-fm-contenttagging",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router/apple-fm-permissive": {
+      "enabled": false,
+      "shortname": "apple-fm-permissive",
+      "display_name": "apple-fm-permissive",
+      "icon": "🤖",
+      "priority": 10,
+      "capabilities": [
+        "chat"
+      ],
+      "raw_formats": [],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "base_model_id": "apple-fm-permissive",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "coreai-qwen3.5-0.8b": {
+      "enabled": false,
+      "shortname": "coreai-qwen3.5-0.8b",
+      "display_name": "coreai-qwen3.5-0.8b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true
+    },
+    "llm-router-local/coreai-qwen3.5-0.8b": {
+      "enabled": false,
+      "shortname": "coreai-qwen3.5-0.8b",
+      "display_name": "coreai-qwen3.5-0.8b",
+      "icon": "🐼",
+      "priority": 50,
+      "capabilities": [
+        "chat"
+      ],
+      "thinking_format": "reasoning_field",
+      "max_context": 131072,
+      "max_output": 16384,
+      "inference": {
+        "temperature": 0.7,
+        "top_p": 0.9
+      },
+      "raw_formats": [],
+      "provider": "llm-router-local",
+      "base_model_id": "coreai-qwen3.5-0.8b",
+      "profile": "speed",
+      "_caps_canonical": true
     }
   },
   "nodes": {},
