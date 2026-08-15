@@ -2,7 +2,7 @@
 // Stufe 1 Dokument-Discovery (natives SpotlightSearchTool + mdfind-Zweitquelle),
 // Stufe 2 Antwort aus Companion-Markdown-Auszügen — beides in EINER
 // LanguageModelSession-Familie mit austauschbarem Backend (MODEL-Env):
-//   afm | coreai:<bundle-pfad> | mlx:<hf-repo-id> | omlx:<omlx-modell-id>
+//   afm | coreai:<pfad> | mlx:<hf-id> | omlx:<id> | router:<router-modell-id>
 // Modi:  spotlight-qa "<Frage>" [corpus]           (Einzelfrage)
 //        spotlight-qa --serve [corpus]             (Modell RESIDENT; Fragen
 //          zeilenweise via stdin, je Antwort EINE Zeile "@@RESULT@@{json}")
@@ -52,7 +52,25 @@ func makeModel(_ spec: String) async throws -> any FoundationModels.LanguageMode
         let id = String(spec.dropFirst("omlx:".count))
         let base = ProcessInfo.processInfo.environment["OMLX_URL"] ?? "http://localhost:8000/v1"
         let key = ProcessInfo.processInfo.environment["OMLX_KEY"] ?? "brain"
-        return OMLXLanguageModel(baseURL: base, apiKey: key, model: id)
+        return WireLanguageModel(baseURL: base, apiKey: key, model: id)
+    }
+    if spec.hasPrefix("router:") {
+        let id = String(spec.dropFirst("router:".count))
+        let base = ProcessInfo.processInfo.environment["ROUTER_URL"] ?? "http://localhost:8424/v1"
+        let key = ProcessInfo.processInfo.environment["ROUTER_KEY"] ?? ""
+        // Capabilities pro Modell via Env (CSV) — bis der Router sie in
+        // /v1/models ausweist. Default konservativ: guided nur auf Zuruf.
+        var caps: [LanguageModelCapabilities.Capability] = []
+        let capsCSV = ProcessInfo.processInfo.environment["ROUTER_CAPS"] ?? "tool,reasoning"
+        for c in capsCSV.split(separator: ",") {
+            switch c.trimmingCharacters(in: .whitespaces) {
+            case "tool": caps.append(.toolCalling)
+            case "guided": caps.append(.guidedGeneration)
+            case "reasoning": caps.append(.reasoning)
+            default: break
+            }
+        }
+        return WireLanguageModel(baseURL: base, apiKey: key, model: id, capabilities: caps)
     }
     return SystemLanguageModel(guardrails: .permissiveContentTransformations)
 }
