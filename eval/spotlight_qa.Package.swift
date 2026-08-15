@@ -12,6 +12,7 @@ let package = Package(
     name: "spotlight-qa",
     platforms: [.macOS("27.0")],
     dependencies: [
+        .package(path: "../fm-agent"),
         .package(path: "../fm-agent/Packages/coreai-models"),
         // Offizieller MLX-Adapter (ml-explore): MLXLanguageModel conforming
         // to FoundationModels.LanguageModel.
@@ -22,6 +23,7 @@ let package = Package(
         .executableTarget(
             name: "spotlight-qa",
             dependencies: [
+                .product(name: "WireLanguageModel", package: "fm-agent"),
                 .product(name: "CoreAILM", package: "coreai-models"),
                 .product(name: "MLXFoundationModels", package: "mlx-swift-lm"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),

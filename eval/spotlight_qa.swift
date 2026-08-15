@@ -10,6 +10,7 @@ import Foundation
 import CoreSpotlight
 import FoundationModels
 import CoreAILanguageModels
+import WireLanguageModel
 import HuggingFace
 import MLXFoundationModels
 import MLXHuggingFace
