@@ -17,6 +17,32 @@ import MLXLLM
 import MLXLMCommon
 import Tokenizers
 
+// Capabilities eines Router-Modells aus GET /v1/models (capabilities-Feld).
+@available(macOS 27.0, *)
+func routerCapabilities(base: String, key: String, model: String) async
+    -> [LanguageModelCapabilities.Capability]? {
+    guard let url = URL(string: base + "/models") else { return nil }
+    var req = URLRequest(url: url)
+    req.timeoutInterval = 5
+    req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+    guard let (data, _) = try? await URLSession.shared.data(for: req),
+          let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let list = obj["data"] as? [[String: Any]],
+          let entry = list.first(where: { ($0["id"] as? String) == model }),
+          let strs = entry["capabilities"] as? [String] else { return nil }
+    var caps: [LanguageModelCapabilities.Capability] = []
+    for c in strs {
+        switch c {
+        case "tools": caps.append(.toolCalling)
+        case "guided": caps.append(.guidedGeneration)
+        case "reasoning": caps.append(.reasoning)
+        case "vision": caps.append(.vision)
+        default: break
+        }
+    }
+    return caps.isEmpty ? nil : caps
+}
+
 @available(macOS 27.0, *)
 func makeModel(_ spec: String) async throws -> any FoundationModels.LanguageModel {
     if spec.hasPrefix("coreai:") {
@@ -58,17 +84,23 @@ func makeModel(_ spec: String) async throws -> any FoundationModels.LanguageMode
         let id = String(spec.dropFirst("router:".count))
         let base = ProcessInfo.processInfo.environment["ROUTER_URL"] ?? "http://localhost:8424/v1"
         let key = ProcessInfo.processInfo.environment["ROUTER_KEY"] ?? ""
-        // Capabilities pro Modell via Env (CSV) — bis der Router sie in
-        // /v1/models ausweist. Default konservativ: guided nur auf Zuruf.
-        var caps: [LanguageModelCapabilities.Capability] = []
-        let capsCSV = ProcessInfo.processInfo.environment["ROUTER_CAPS"] ?? "tool,reasoning"
-        for c in capsCSV.split(separator: ",") {
-            switch c.trimmingCharacters(in: .whitespaces) {
-            case "tool": caps.append(.toolCalling)
-            case "guided": caps.append(.guidedGeneration)
-            case "reasoning": caps.append(.reasoning)
-            default: break
+        var caps: [LanguageModelCapabilities.Capability] = [.toolCalling, .guidedGeneration]
+        if let capsCSV = ProcessInfo.processInfo.environment["ROUTER_CAPS"] {
+            // Expliziter Override (Debug/Experimente)
+            caps = []
+            for c in capsCSV.split(separator: ",") {
+                switch c.trimmingCharacters(in: .whitespaces) {
+                case "tool", "tools": caps.append(.toolCalling)
+                case "guided": caps.append(.guidedGeneration)
+                case "reasoning": caps.append(.reasoning)
+                case "vision": caps.append(.vision)
+                default: break
+                }
             }
+        } else if let fetched = await routerCapabilities(base: base, key: key, model: id) {
+            // Single Source of Truth: der Router weist die Capabilities pro
+            // Modell in GET /v1/models aus (berechnete Defaults ∪ extras).
+            caps = fetched
         }
         return WireLanguageModel(baseURL: base, apiKey: key, model: id, capabilities: caps)
     }
