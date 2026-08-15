@@ -2,7 +2,7 @@
 // Stufe 1 Dokument-Discovery (natives SpotlightSearchTool + mdfind-Zweitquelle),
 // Stufe 2 Antwort aus Companion-Markdown-Auszügen — beides in EINER
 // LanguageModelSession-Familie mit austauschbarem Backend (MODEL-Env):
-//   afm | coreai:<bundle-pfad> | mlx:<hf-repo-id>
+//   afm | coreai:<bundle-pfad> | mlx:<hf-repo-id> | omlx:<omlx-modell-id>
 // Modi:  spotlight-qa "<Frage>" [corpus]           (Einzelfrage)
 //        spotlight-qa --serve [corpus]             (Modell RESIDENT; Fragen
 //          zeilenweise via stdin, je Antwort EINE Zeile "@@RESULT@@{json}")
@@ -48,7 +48,39 @@ func makeModel(_ spec: String) async throws -> any FoundationModels.LanguageMode
                     progressHandler: progressHandler)
             })
     }
+    if spec.hasPrefix("omlx:") {
+        let id = String(spec.dropFirst("omlx:".count))
+        let base = ProcessInfo.processInfo.environment["OMLX_URL"] ?? "http://localhost:8000/v1"
+        let key = ProcessInfo.processInfo.environment["OMLX_KEY"] ?? "brain"
+        return OMLXLanguageModel(baseURL: base, apiKey: key, model: id)
+    }
     return SystemLanguageModel(guardrails: .permissiveContentTransformations)
+}
+
+// Echo-Tool für den Tool-Calling-E2E-Test (--probe; File-Scope — attached
+// macros sind auf lokalen Typen verboten).
+@available(macOS 27.0, *)
+struct WetterTool: FoundationModels.Tool {
+    let name = "wetter"
+    let description = "Liefert das aktuelle Wetter für einen Ort."
+    @Generable
+    struct Arguments {
+        @Guide(description: "Ortsname")
+        var ort: String
+    }
+    func call(arguments: Arguments) async throws -> String {
+        return "Wetter in \(arguments.ort): sonnig, 25 Grad"
+    }
+}
+
+// Probe-Zieltyp für den Guided-Generation-E2E-Test (--probe).
+@available(macOS 27.0, *)
+@Generable
+struct ProbeStadt {
+    @Guide(description: "Name der Stadt")
+    var stadt: String
+    @Guide(description: "Ungefähre Einwohnerzahl")
+    var einwohner: Int
 }
 
 @main
@@ -58,6 +90,39 @@ struct SpotlightQA {
             print("{\"error\": \"braucht macOS 27\"}"); exit(3)
         }
         await run()
+    }
+
+    // --probe: die drei Protokoll-Säulen des gewählten Backends nacheinander
+    // testen — Chat, Guided Generation (@Generable), Tool-Calling.
+    @available(macOS 27.0, *)
+    static func probe(model: any FoundationModels.LanguageModel) async {
+        var out: [String: Any] = [:]
+        // 1) Chat
+        do {
+            let s = LanguageModelSession(model: model)
+            let r = try await s.respond(to: "Antworte mit genau einem Wort: OK")
+            out["chat"] = r.content
+        } catch { out["chat_error"] = "\(error)" }
+        // 2) Guided Generation
+        do {
+            let s = LanguageModelSession(model: model)
+            let r = try await s.respond(
+                to: "Nenne eine Stadt in Österreich mit Einwohnerzahl.",
+                generating: ProbeStadt.self)
+            out["guided"] = ["stadt": r.content.stadt,
+                             "einwohner": r.content.einwohner]
+        } catch { out["guided_error"] = "\(error)" }
+        // 3) Tool-Calling (triviales Echo-Tool, File-Scope wegen Macro)
+        do {
+            let s = LanguageModelSession(model: model, tools: [WetterTool()])
+            let r = try await s.respond(to: "Wie ist das Wetter in Wien? Nutze das Wetter-Werkzeug.")
+            var calls = 0
+            for e in s.transcript { if case .toolCalls(let c) = e { calls += c.count } }
+            out["tool_calls"] = calls
+            out["tool_answer"] = String(r.content.prefix(120))
+        } catch { out["tool_error"] = "\(error)" }
+        if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted]),
+           let s = String(data: data, encoding: .utf8) { print(s) }
     }
 
     @available(macOS 27.0, *)
@@ -78,6 +143,11 @@ struct SpotlightQA {
         } catch {
             print("{\"error\": \"model-load: \(String(describing: error).replacingOccurrences(of: "\"", with: "'"))\"}")
             exit(1)
+        }
+
+        if args[1] == "--probe" {
+            await probe(model: model)
+            return
         }
 
         // Companion-Map einmal bauen (serve: bleibt über alle Fragen stehen).
