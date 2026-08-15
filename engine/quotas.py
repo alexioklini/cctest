@@ -185,6 +185,12 @@ def _get_cost_rate(model: str) -> dict[str, float]:
     function. This cost path always resolves a sane cache_read rate regardless."""
     import brain as _brain
     cfg = _brain._models_config.get(model, {})
+    # Zeitabhängige Phasen-Preise (z. B. DeepSeek Peak/Off-Peak ab 16.08.2026):
+    # `price_schedule` am Modell ODER `schedule` am cost_rates-Eintrag gewinnt
+    # vor den statischen Feldern. Phase wird zur Verbuchungszeit bestimmt.
+    sr = _schedule_rate(cfg.get("price_schedule"))
+    if sr is not None:
+        return sr
     ci = cfg.get("cost_input")
     co = cfg.get("cost_output")
     ccr = cfg.get("cost_cache_read")
@@ -198,9 +204,41 @@ def _get_cost_rate(model: str) -> dict[str, float]:
     if hit is None:
         hit = _match_rate_table(model, _cost_rates)
     if hit is not None:
+        sr = _schedule_rate(hit.get("schedule"))
+        if sr is not None:
+            return sr
         return {"input": hit["input"], "output": hit["output"],
                 "cache_read": hit.get("cache_read", hit["input"] * 0.1)}
     return {"input": 0.0, "output": 0.0, "cache_read": 0.0}
+
+
+def _schedule_rate(sched) -> dict | None:
+    """Preissatz der aktuellen Phase aus einem price_schedule-Dict:
+    {effective_from: ISO, peak_hours_utc: [[von,bis],…],
+     peak: {input,output,cache_read}, offpeak: {…}} — identische Semantik wie
+    llm-router billing._schedule_rates (dort verbucht der Router, hier Brains
+    eigene cost_log-Zeilen). None → Aufrufer nutzt die statischen Preise."""
+    if not isinstance(sched, dict):
+        return None
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    eff = sched.get("effective_from")
+    if eff:
+        try:
+            if now < _dt.datetime.fromisoformat(str(eff).replace("Z", "+00:00")):
+                return None
+        except ValueError:
+            pass
+    hour = now.hour + now.minute / 60.0
+    peak = any(float(a) <= hour < float(b)
+               for a, b in (sched.get("peak_hours_utc") or []))
+    r = sched.get("peak" if peak else "offpeak") or {}
+    if r.get("input") is None or r.get("output") is None:
+        return None
+    inp = float(r["input"])
+    return {"input": inp, "output": float(r["output"]),
+            "cache_read": float(r["cache_read"])
+                if r.get("cache_read") is not None else inp * 0.1}
 
 
 def _match_rate_table(model: str, table: dict) -> dict | None:
