@@ -43,6 +43,20 @@ v9.247.0). Tool calls are dispatched directly on the loop's thread via
   AND a watcher thread closes the stream socket mid-generation. Background
   turns register a `turn_id → Event` in `sidecar_proxy`;
   `sidecar_proxy.cancel_turn(turn_id)` trips it.
+- **Upstream-executed tools** (models marked `tool_execution: "upstream"` in
+  `config.json` — today the `ocp/*` Claude-CLI models behind OCP): those
+  upstreams own their own agentic loop and never return `tool_calls`, so tools
+  offered on the wire are silently ignored and the turn still looks successful.
+  For them `run_turn` takes the other route: `server_lib/tool_mcp_server.py`
+  publishes the turn's resolved tools as a loopback HTTP **MCP server**, the
+  upstream calls it itself, and `_tools` is emptied so nothing is offered twice.
+  The per-turn bearer token is minted in `open_turn()` and revoked in the
+  worker's `finally` — it is the whole lifetime of the upstream's access to
+  `TOOL_DISPATCH`, and the tool list doubles as the dispatch allow-list, so the
+  turn's resolved scope still binds. Each dispatch rebuilds the request context
+  (session, project, GDPR mapping) exactly as the retired sidecar endpoint did.
+  Latency note: the CLI keeps ONE process per turn, so N tool rounds cost one
+  process start (~3 s), not N.
 - **Stream stability (9.277.0)** — reinstates what the deleted Anthropic SDK
   provided implicitly: a stream that ends WITHOUT the `[DONE]` marker is a
   TRUNCATED partial, not a finished answer — the loop auto-resumes it

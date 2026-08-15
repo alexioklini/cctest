@@ -3875,6 +3875,254 @@
       "base_model_id": "auto-cheap/gpt-5.6-terra",
       "profile": "speed",
       "_caps_canonical": true
+    },
+    "ocp/claude-opus-5": {
+      "enabled": true,
+      "shortname": "claude-opus-5",
+      "display_name": "Claude Opus 5 (Max-Abo)",
+      "icon": "🧠",
+      "priority": 95,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "manual": true,
+      "max_context": 1000000,
+      "max_output": 64000,
+      "cost_input": 0,
+      "cost_output": 0,
+      "cost_cache_read": 0,
+      "base_model_id": "ocp/claude-opus-5",
+      "coding_plan": "claude-max-200",
+      "background_task_model": "auto",
+      "note": "Ueber OCP (~/ocp, :3456) auf die Claude-Max-200-Subscription. GRENZE: OCP ist eine reine TEXT-Bridge und liefert NIE tool_calls -> NICHT fuer agentische Turns/Tools geeignet, nur Chat/Transform/Vision. usage=0 (keine Token-Messung moeglich).",
+      "tool_execution": "upstream"
+    },
+    "ocp/claude-opus-4-8": {
+      "enabled": true,
+      "shortname": "claude-opus-4-8",
+      "display_name": "Claude Opus 4.8 (Max-Abo)",
+      "icon": "🧠",
+      "priority": 92,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "manual": true,
+      "max_context": 1000000,
+      "max_output": 64000,
+      "cost_input": 0,
+      "cost_output": 0,
+      "cost_cache_read": 0,
+      "base_model_id": "ocp/claude-opus-4-8",
+      "coding_plan": "claude-max-200",
+      "background_task_model": "auto",
+      "note": "Ueber OCP (~/ocp, :3456) auf die Claude-Max-200-Subscription. GRENZE: OCP ist eine reine TEXT-Bridge und liefert NIE tool_calls -> NICHT fuer agentische Turns/Tools geeignet, nur Chat/Transform/Vision. usage=0 (keine Token-Messung moeglich).",
+      "tool_execution": "upstream"
+    },
+    "ocp/claude-opus-4-7": {
+      "enabled": true,
+      "shortname": "claude-opus-4-7",
+      "display_name": "Claude Opus 4.7 (Max-Abo)",
+      "icon": "🧠",
+      "priority": 90,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "manual": true,
+      "max_context": 1000000,
+      "max_output": 64000,
+      "cost_input": 0,
+      "cost_output": 0,
+      "cost_cache_read": 0,
+      "base_model_id": "ocp/claude-opus-4-7",
+      "coding_plan": "claude-max-200",
+      "background_task_model": "auto",
+      "note": "Ueber OCP (~/ocp, :3456) auf die Claude-Max-200-Subscription. GRENZE: OCP ist eine reine TEXT-Bridge und liefert NIE tool_calls -> NICHT fuer agentische Turns/Tools geeignet, nur Chat/Transform/Vision. usage=0 (keine Token-Messung moeglich).",
+      "tool_execution": "upstream"
+    },
+    "ocp/claude-opus-4-6": {
+      "enabled": true,
+      "shortname": "claude-opus-4-6",
+      "display_name": "Claude Opus 4.6 (Max-Abo)",
+      "icon": "🧠",
+      "priority": 88,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "manual": true,
+      "max_context": 200000,
+      "max_output": 64000,
+      "cost_input": 0,
+      "cost_output": 0,
+      "cost_cache_read": 0,
+      "base_model_id": "ocp/claude-opus-4-6",
+      "coding_plan": "claude-max-200",
+      "background_task_model": "auto",
+      "note": "Ueber OCP (~/ocp, :3456) auf die Claude-Max-200-Subscription. GRENZE: OCP ist eine reine TEXT-Bridge und liefert NIE tool_calls -> NICHT fuer agentische Turns/Tools geeignet, nur Chat/Transform/Vision. usage=0 (keine Token-Messung moeglich).",
+      "tool_execution": "upstream"
+    },
+    "ocp/claude-sonnet-5": {
+      "enabled": true,
+      "shortname": "claude-sonnet-5",
+      "display_name": "Claude Sonnet 5 (Max-Abo)",
+      "icon": "🧠",
+      "priority": 85,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "manual": true,
+      "max_context": 1000000,
+      "max_output": 64000,
+      "cost_input": 0,
+      "cost_output": 0,
+      "cost_cache_read": 0,
+      "base_model_id": "ocp/claude-sonnet-5",
+      "coding_plan": "claude-max-200",
+      "background_task_model": "auto",
+      "note": "Ueber OCP (~/ocp, :3456) auf die Claude-Max-200-Subscription. GRENZE: OCP ist eine reine TEXT-Bridge und liefert NIE tool_calls -> NICHT fuer agentische Turns/Tools geeignet, nur Chat/Transform/Vision. usage=0 (keine Token-Messung moeglich).",
+      "tool_execution": "upstream"
+    },
+    "ocp/claude-sonnet-4-6": {
+      "enabled": true,
+      "shortname": "claude-sonnet-4-6",
+      "display_name": "Claude Sonnet 4.6 (Max-Abo)",
+      "icon": "🧠",
+      "priority": 80,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "manual": true,
+      "max_context": 200000,
+      "max_output": 32000,
+      "cost_input": 0,
+      "cost_output": 0,
+      "cost_cache_read": 0,
+      "base_model_id": "ocp/claude-sonnet-4-6",
+      "coding_plan": "claude-max-200",
+      "background_task_model": "auto",
+      "note": "Ueber OCP (~/ocp, :3456) auf die Claude-Max-200-Subscription. GRENZE: OCP ist eine reine TEXT-Bridge und liefert NIE tool_calls -> NICHT fuer agentische Turns/Tools geeignet, nur Chat/Transform/Vision. usage=0 (keine Token-Messung moeglich).",
+      "tool_execution": "upstream"
+    },
+    "ocp/claude-haiku-4-5": {
+      "enabled": true,
+      "shortname": "claude-haiku-4-5",
+      "display_name": "Claude Haiku 4.5 (Max-Abo)",
+      "icon": "🧠",
+      "priority": 60,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "manual": true,
+      "max_context": 200000,
+      "max_output": 32000,
+      "cost_input": 0,
+      "cost_output": 0,
+      "cost_cache_read": 0,
+      "base_model_id": "ocp/claude-haiku-4-5",
+      "coding_plan": "claude-max-200",
+      "background_task_model": "auto",
+      "note": "Ueber OCP (~/ocp, :3456) auf die Claude-Max-200-Subscription. GRENZE: OCP ist eine reine TEXT-Bridge und liefert NIE tool_calls -> NICHT fuer agentische Turns/Tools geeignet, nur Chat/Transform/Vision. usage=0 (keine Token-Messung moeglich).",
+      "tool_execution": "upstream"
+    },
+    "ocp/claude-fable-5": {
+      "enabled": false,
+      "shortname": "claude-fable-5",
+      "display_name": "Claude Fable 5 (Max-Abo)",
+      "icon": "🧠",
+      "priority": 98,
+      "capabilities": [
+        "chat",
+        "image"
+      ],
+      "raw_formats": [
+        "image/*"
+      ],
+      "thinking_format": "none",
+      "provider": "llm-router",
+      "profile": "balanced",
+      "_caps_canonical": true,
+      "is_local": false,
+      "warmup": false,
+      "manual": true,
+      "max_context": 1000000,
+      "max_output": 64000,
+      "cost_input": 0,
+      "cost_output": 0,
+      "cost_cache_read": 0,
+      "base_model_id": "ocp/claude-fable-5",
+      "coding_plan": "claude-max-200",
+      "background_task_model": "auto",
+      "note": "DEAKTIVIERT: OCPs models.json listet claude-fable-5 nicht (die CLI kann es). Erst aktivieren, wenn der Katalog upstream ergaenzt ist. Ueber OCP (~/ocp, :3456) auf die Claude-Max-200-Subscription. GRENZE: reine TEXT-Bridge, liefert NIE tool_calls -> nicht fuer agentische Turns. Denken ist bei Fable 5 immer aktiv.",
+      "tool_execution": "upstream"
     }
   },
   "nodes": {},
@@ -4417,7 +4665,14 @@
     "nanbeige4.2-8bit",
     "nanbeige4.2-oq6e",
     "llm-router/gemma-4-12b-coder",
-    "gemma-4-12b-coder"
+    "gemma-4-12b-coder",
+    "llm-router-local/ocp/claude-haiku-4-5",
+    "llm-router-local/ocp/claude-opus-4-6",
+    "llm-router-local/ocp/claude-opus-4-7",
+    "llm-router-local/ocp/claude-opus-4-8",
+    "llm-router-local/ocp/claude-opus-5",
+    "llm-router-local/ocp/claude-sonnet-4-6",
+    "llm-router-local/ocp/claude-sonnet-5"
   ],
   "gdpr_scanner": {
     "enabled": true,
@@ -7833,6 +8088,15 @@
       "balance_usd": 18.98,
       "anchor": "2026-07-12",
       "since": "2026-07-12 06:19:10"
+    },
+    {
+      "id": "claude-max-200",
+      "name": "Claude Max 200 (Subscription)",
+      "type": "flat",
+      "price": "$200/Monat",
+      "quota_note": "Subscription-Kontingent (5h-Fenster + Wochenlimit). Verbrauch NICHT messbar: OCP meldet usage=0. Echte Auslastung via 'ocp usage' bzw. http://127.0.0.1:3456/usage",
+      "url": "https://claude.ai/settings/usage",
+      "since": "2026-08-15"
     }
   ],
   "workflow_gen_model": "mistral-medium-3.5",

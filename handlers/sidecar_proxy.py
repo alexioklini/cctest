@@ -106,6 +106,26 @@ def _build_tool_list_openai(*, purpose: str, agent_id: str | None,
         mcp_manager=mcp_manager, is_openai_shape=True, breakdown=breakdown)
 
 
+def _tools_run_upstream(model: str) -> bool:
+    """True when this model's upstream executes tools itself and never returns
+    tool_calls — so offering tools on the wire would be silently ignored.
+
+    Read from the model's `tool_execution: "upstream"` marker in config.json,
+    which mirrors the router's `no_client_tools` capability (llm-router
+    router/api/proxy.py `_llm_capabilities`). A separate field on purpose:
+    Brain's own `capabilities` list is a MODALITY vocabulary (chat/image/audio/
+    …) governed by `_caps_canonical`, and folding a transport fact into it would
+    be rewritten by the next canonicalisation pass.
+
+    Unknown model or missing marker → False, i.e. today's behaviour.
+    """
+    try:
+        cfg = (getattr(engine, "_models_config", None) or {}).get(model) or {}
+    except Exception:
+        return False
+    return (cfg.get("tool_execution") or "") == "upstream"
+
+
 def _dispatchable_allowed_tools(tools: list[dict], breakdown: dict) -> list[dict]:
     """The dispatch enforcement whitelist. A DEFERRED tool is hidden from the
     prompt but still DISPATCHABLE (tool_search-recoverable), so the whitelist is
@@ -251,6 +271,29 @@ def run_turn(
         mcp_manager=getattr(engine, "_mcp_manager", None), breakdown=_tb)
     allowed_tools = _dispatchable_allowed_tools(_tools, _tb)
     tool_context["allowed_tools"] = allowed_tools
+
+    # Upstreams that own their own agentic loop (`no_client_tools`, today the
+    # ocp/* models behind the Claude CLI) never hand tool_calls back, so tools
+    # offered on the wire are silently ignored — the model answers from memory
+    # and the turn LOOKS successful. For those, the tools travel the only route
+    # that upstream accepts: an MCP server it calls itself, declared per request.
+    # `_tools` is emptied so nothing is offered twice, and it doubles as the
+    # server's allow-list, so the turn's resolved scope still binds.
+    _mcp_token = ""
+    _request_mcp = None
+    if _tools and _tools_run_upstream(model):
+        try:
+            from server_lib import tool_mcp_server
+            _url, _mcp_token, _request_mcp = tool_mcp_server.open_turn(
+                tools=_tools, context={**tool_context, "model": model,
+                                       "turn_id": turn_id})
+            _tools = []
+        except Exception as e:
+            # Fail loud rather than silently answering without tools: a turn
+            # that needed retrieval and got none reads as a confident wrong
+            # answer, which is the failure this whole path exists to prevent.
+            raise RuntimeError(
+                f"tool-MCP handoff failed for {model}: {type(e).__name__}: {e}") from e
     # Mirror the whitelist onto the worker's request context so tool_search
     # only surfaces tools that are actually dispatchable this turn (a disabled
     # tool must not be discoverable — chat 2cb5a9dd).
@@ -299,6 +342,9 @@ def run_turn(
         _ctx.event_callback = make_artifact_event_callback(sid) if sid else None
     except Exception:
         _ctx.event_callback = None
+    # Carried into the wire payload by llm_loop.build_openai_payload; cleared in
+    # the finally alongside the token it belongs to.
+    _ctx.request_mcp_servers = (_request_mcp or {}).get("mcpServers") if _request_mcp else None
     _gdpr_mid = tool_context.get("gdpr_mapping_id") or ""
     # M1: bind via the rehydrating helper, not a bare assign. The interactive
     # worker's mapping is always in the registry, but a SCHEDULED run reaches
@@ -446,12 +492,23 @@ def run_turn(
                     agent_id=tool_context.get("agent_id") or "main")
             except Exception:
                 pass
+        # Revoke the tool-MCP turn token. This is the whole lifetime of the
+        # upstream's access to TOOL_DISPATCH, so it must run on EVERY exit path
+        # — a leaked token is an open tool surface for as long as the process
+        # lives (the 30-min TTL in the server is a backstop, not the design).
+        if _mcp_token:
+            try:
+                from server_lib import tool_mcp_server
+                tool_mcp_server.close_turn(_mcp_token)
+            except Exception:
+                pass
         # Restore the worker context's callback state (reused for downstream
         # post-turn work — summariser, next-prompt, etc.).
         try:
             _ctx.event_callback = _prev_ecb
             _ctx._gdpr_after_file_write_cb = _prev_gdpr_cb
             _ctx._gdpr_mapping_id = _prev_gdpr_mid
+            _ctx.request_mcp_servers = None
         except Exception:
             pass
         if sid:

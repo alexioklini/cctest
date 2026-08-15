@@ -274,6 +274,22 @@ def build_openai_payload(
         "stream": True,
         "stream_options": {"include_usage": True},
     }
+
+    # Upstream-executed tools (ocp/* behind the Claude CLI): the turn's tools are
+    # not on the wire — they are an MCP server the upstream calls itself, declared
+    # per request. Set by sidecar_proxy.run_turn for the length of one turn; the
+    # router passes unknown fields through untouched (its passthrough fastpath),
+    # so this reaches OCP verbatim. Absent for every other model.
+    try:
+        _rmcp = getattr(engine.get_request_context(), "request_mcp_servers", None)
+        if _rmcp:
+            # `ocp_` prefix: this is OCP's vendor extension, deliberately NOT the
+            # unprefixed name (which OpenAI could ship and which would then
+            # collide). See OCP ADR 0019.
+            payload["ocp_mcp_servers"] = _rmcp
+    except Exception:
+        pass
+
     if tools:
         payload["tools"] = tools
         # Parallel tool use: disable_parallel_tool_use → parallel_tool_calls:false
